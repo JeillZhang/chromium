@@ -7,17 +7,14 @@
 #include <memory>
 #include <tuple>
 
-#include "ash/constants/ash_features.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "chrome/browser/ash/arc/locked_fullscreen/arc_locked_fullscreen_manager.h"
 #include "chrome/browser/ash/arc/test/test_arc_session_manager.h"
 #include "chrome/browser/ash/settings/scoped_cros_settings_test_helper.h"
-#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
@@ -29,6 +26,8 @@
 #include "chromeos/ash/experiences/arc/test/arc_util_test_support.h"
 #include "chromeos/ash/experiences/arc/test/fake_arc_session.h"
 #include "components/account_id/account_id.h"
+#include "components/prefs/pref_service.h"
+#include "components/session_manager/core/fake_session_manager_delegate.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/fake_user_manager_delegate.h"
 #include "components/user_manager/test_helper.h"
@@ -49,14 +48,6 @@ constexpr char kUserGaiaId[] = "1234567890";
 class ArcLockedFullscreenManagerTest
     : public ::testing::TestWithParam<std::tuple<bool, bool>> {
  protected:
-  ArcLockedFullscreenManagerTest() {
-    // Force the test to mute ARC audio instead of adopting the deprecated flow
-    // that disables ARC. The deprecated flow is already tested with ARC session
-    // manager browser tests.
-    scoped_feature_list_.InitAndEnableFeature(
-        ash::features::kBocaOnTaskMuteArcAudio);
-  }
-
   void SetUp() override {
     ASSERT_TRUE(profile_manager_.SetUp());
 
@@ -74,7 +65,8 @@ class ArcLockedFullscreenManagerTest
     // Initialize a testing profile and the user manager. Needed to test ARC.
     user_manager_ = std::make_unique<user_manager::UserManagerImpl>(
         std::make_unique<user_manager::FakeUserManagerDelegate>(),
-        local_state_.Get(), ash::CrosSettings::Get());
+        TestingBrowserProcess::GetGlobal()->local_state(),
+        ash::CrosSettings::Get());
     user_manager_->Initialize();
 
     const AccountId account_id(
@@ -123,13 +115,12 @@ class ArcLockedFullscreenManagerTest
  private:
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
-  base::test::ScopedFeatureList scoped_feature_list_;
   ash::ScopedCrosSettingsTestHelper cros_settings_helper_;
-  ScopedTestingLocalState local_state_{TestingBrowserProcess::GetGlobal()};
+
   std::unique_ptr<user_manager::UserManagerImpl> user_manager_;
-  TestingProfileManager profile_manager_{TestingBrowserProcess::GetGlobal(),
-                                         &local_state_};
-  session_manager::SessionManager session_manager_;
+  TestingProfileManager profile_manager_{TestingBrowserProcess::GetGlobal()};
+  session_manager::SessionManager session_manager_{
+      std::make_unique<session_manager::FakeSessionManagerDelegate>()};
   raw_ptr<TestingProfile> profile_;
   std::unique_ptr<ArcSessionManager> arc_session_manager_;
   std::unique_ptr<ArcLockedFullscreenManager> arc_locked_fullscreen_manager_;

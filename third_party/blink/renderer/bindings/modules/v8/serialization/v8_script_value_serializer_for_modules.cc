@@ -425,6 +425,18 @@ uint32_t AlgorithmIdForWireFormat(WebCryptoAlgorithmId id) {
       return kEd25519Tag;
     case kWebCryptoAlgorithmIdX25519:
       return kX25519Tag;
+    case kWebCryptoAlgorithmIdChaCha20Poly1305:
+      return kChaCha20Poly1305Tag;
+    case kWebCryptoAlgorithmIdMlDsa44:
+      return kMlDsa44Tag;
+    case kWebCryptoAlgorithmIdMlDsa65:
+      return kMlDsa65Tag;
+    case kWebCryptoAlgorithmIdMlDsa87:
+      return kMlDsa87Tag;
+    case kWebCryptoAlgorithmIdMlKem768:
+      return kMlKem768Tag;
+    case kWebCryptoAlgorithmIdMlKem1024:
+      return kMlKem1024Tag;
   }
   NOTREACHED() << "Unknown algorithm ID " << id;
 }
@@ -706,7 +718,9 @@ bool V8ScriptValueSerializerForModules::WriteMediaStreamTrack(
       MediaStreamVideoSource* const native_source =
           MediaStreamVideoSource::GetVideoSource(source);
       DCHECK(native_source);
-      WriteUint32(native_source->GetSubCaptureTargetVersion());
+      // TODO(crbug.com/40058526): Write the entire CaptureVersion if support
+      // for MST-transfer is ever finished; otherwise, remove all this code.
+      WriteUint32(native_source->GetCaptureVersion().sub_capture);
       break;
   }
   // TODO(crbug.com/1288839): Needs to move to FinalizeTransfer?

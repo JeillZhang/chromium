@@ -23,11 +23,11 @@
 #import "ui/base/l10n/l10n_util.h"
 
 AutofillProgressDialogMediator::AutofillProgressDialogMediator(
-    autofill::AutofillProgressDialogControllerImpl* model_controller,
+    autofill::AutofillProgressDialogController* model_controller,
     id<AutofillProgressDialogMediatorDelegate> delegate)
     : delegate_(delegate) {
   if (model_controller) {
-    model_controller_ = model_controller->GetImplWeakPtr();
+    model_controller_ = model_controller->GetWeakPtr();
   }
 }
 
@@ -50,7 +50,16 @@ void AutofillProgressDialogMediator::Dismiss(
   }
 
   [consumer_ setProgressState:ProgressIndicatorStateSuccess];
-  [consumer_ setActions:@[]];
+
+  NSString* cancelTitle =
+      base::SysUTF16ToNSString(model_controller_->GetCancelButtonLabel());
+  AlertAction* disabledCancelAction =
+      [AlertAction actionWithTitle:cancelTitle
+                             style:UIAlertActionStyleCancel
+                           handler:nil];
+  disabledCancelAction.enabled = NO;
+  [consumer_ setActions:@[ @[ disabledCancelAction ] ]];
+
   consumer_.confirmationAccessibilityLabel = l10n_util::GetNSString(
       IDS_IOS_AUTOFILL_PROGRESS_DIALOG_CONFIRMATION_ACCESSIBILITY_ANNOUNCEMENT);
 

@@ -8,6 +8,7 @@
 #include <deque>
 #include <optional>
 
+#include "base/containers/flat_set.h"
 #include "base/containers/queue.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/weak_ptr.h"
@@ -17,9 +18,9 @@
 #include "chrome/browser/ai/ai_utils.h"
 #include "components/optimization_guide/core/model_execution/model_broker_client.h"
 #include "components/optimization_guide/core/model_execution/multimodal_message.h"
+#include "components/optimization_guide/core/model_execution/on_device_capability.h"
 #include "components/optimization_guide/core/model_execution/safety_checker.h"
 #include "components/optimization_guide/core/optimization_guide_logger.h"
-#include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "components/optimization_guide/proto/features/prompt_api.pb.h"
 #include "components/optimization_guide/public/mojom/model_broker.mojom.h"
 #include "content/public/browser/browser_context.h"
@@ -116,6 +117,9 @@ class AILanguageModel : public AIContextBoundObject,
   static PromptApiMetadata ParseMetadata(
       const optimization_guide::proto::Any& any);
 
+  // Returns a set of BCP 47 base language codes that are supported and enabled.
+  static base::flat_set<std::string_view> GetSupportedLanguageBaseCodes();
+
   // Format the initial prompts, gets the token count, updates the session,
   // and reports to `create_client`.
   void Initialize(
@@ -189,6 +193,7 @@ class AILanguageModel : public AIContextBoundObject,
   void GetSizeInTokens(
       on_device_model::mojom::InputPtr input,
       base::OnceCallback<void(std::optional<uint32_t>)> callback);
+  void EnsureSessionConnected();
 
   // These methods are used for implementing queueing.
   using QueueCallback = base::OnceCallback<void(base::OnceClosure)>;
@@ -201,6 +206,7 @@ class AILanguageModel : public AIContextBoundObject,
   // also be assumed to be valid, as any disconnects should apply to both
   // remotes (e.g. a service crash).
   mojo::Remote<on_device_model::mojom::Session> initial_session_;
+  on_device_model::mojom::InputPtr initial_input_;
 
   // Contains the current committed session state. This will be replaced after a
   // successful prompt with the latest session state.

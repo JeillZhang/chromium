@@ -70,16 +70,16 @@ WebSocketCommon::ConnectResult WebSocketCommon::Connect(
     state_ = kClosed;
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
-        WTF::StrCat({"The URL '", url, "' is invalid."}));
+        StrCat({"The URL '", url, "' is invalid."}));
     return ConnectResult::kException;
   }
   if (!url_.ProtocolIs("ws") && !url_.ProtocolIs("wss")) {
     state_ = kClosed;
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
-        WTF::StrCat({"The URL's scheme must be either 'http', 'https', 'ws', "
-                     "or 'wss'. '",
-                     url_.Protocol(), "' is not allowed."}));
+        StrCat({"The URL's scheme must be either 'http', 'https', 'ws', or "
+                "'wss'. '",
+                url_.Protocol(), "' is not allowed."}));
     return ConnectResult::kException;
   }
 
@@ -87,7 +87,7 @@ WebSocketCommon::ConnectResult WebSocketCommon::Connect(
     state_ = kClosed;
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
-        WTF::StrCat(
+        StrCat(
             {"The URL contains a fragment identifier ('",
              url_.FragmentIdentifier(),
              "'). Fragment identifiers are not allowed in WebSocket URLs."}));
@@ -107,8 +107,8 @@ WebSocketCommon::ConnectResult WebSocketCommon::Connect(
       state_ = kClosed;
       exception_state.ThrowDOMException(
           DOMExceptionCode::kSyntaxError,
-          WTF::StrCat({"The subprotocol '", EncodeSubprotocolString(protocol),
-                       "' is invalid."}));
+          StrCat({"The subprotocol '", EncodeSubprotocolString(protocol),
+                  "' is invalid."}));
       return ConnectResult::kException;
     }
   }
@@ -120,8 +120,8 @@ WebSocketCommon::ConnectResult WebSocketCommon::Connect(
       state_ = kClosed;
       exception_state.ThrowDOMException(
           DOMExceptionCode::kSyntaxError,
-          WTF::StrCat({"The subprotocol '", EncodeSubprotocolString(protocol),
-                       "' is duplicated."}));
+          StrCat({"The subprotocol '", EncodeSubprotocolString(protocol),
+                  "' is duplicated."}));
       return ConnectResult::kException;
     }
   }
@@ -221,12 +221,8 @@ String WebSocketCommon::EncodeSubprotocolString(const String& protocol) {
 String WebSocketCommon::JoinStrings(const Vector<String>& strings,
                                     const char* separator) {
   StringBuilder builder;
-  for (wtf_size_t i = 0; i < strings.size(); ++i) {
-    if (i)
-      builder.Append(separator);
-    builder.Append(strings[i]);
-  }
-  return builder.ToString();
+  builder.AppendRange(strings, separator);
+  return builder.ReleaseString();
 }
 
 std::optional<uint16_t> WebSocketCommon::ValidateCloseCodeAndReason(
@@ -241,7 +237,7 @@ std::optional<uint16_t> WebSocketCommon::ValidateCloseCodeAndReason(
                WebSocketChannel::kCloseEventCodeMaximumUserDefined))) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kInvalidAccessError,
-          WTF::StrCat(
+          StrCat(
               {"The close code must be either 1000, or between 3000 and 4999. ",
                String::Number(close_code), " is neither."}));
       return code;
@@ -252,12 +248,12 @@ std::optional<uint16_t> WebSocketCommon::ValidateCloseCodeAndReason(
 
   // Bindings specify USVString, so unpaired surrogates are already replaced
   // with U+FFFD.
-  StringUTF8Adaptor utf8(reason);
+  StringUtf8Adaptor utf8(reason);
   if (utf8.size() > kMaxReasonSizeInBytes) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kSyntaxError,
-        WTF::StrCat({"The close reason must not be greater than ",
-                     String::Number(kMaxReasonSizeInBytes), " UTF-8 bytes."}));
+        StrCat({"The close reason must not be greater than ",
+                String::Number(kMaxReasonSizeInBytes), " UTF-8 bytes."}));
     return code;
   }
   return code;

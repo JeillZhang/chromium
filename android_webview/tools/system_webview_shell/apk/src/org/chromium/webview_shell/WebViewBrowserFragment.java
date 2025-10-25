@@ -18,6 +18,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.Browser;
+import android.text.TextUtils;
 import android.util.SparseArray;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -49,6 +50,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.OptIn;
 import androidx.annotation.RequiresApi;
 import androidx.fragment.app.Fragment;
+import androidx.webkit.WebSettingsCompat;
 import androidx.webkit.WebViewClientCompat;
 import androidx.webkit.WebViewCompat;
 import androidx.webkit.WebViewFeature;
@@ -656,6 +658,14 @@ public class WebViewBrowserFragment extends Fragment {
         hideKeyboard(mUrlBar);
     }
 
+    @Nullable
+    public String getUrlFromUrlBar() {
+        String url = mUrlBar.getText().toString();
+
+        if (TextUtils.isEmpty(url)) return null;
+        return url;
+    }
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -687,6 +697,10 @@ public class WebViewBrowserFragment extends Fragment {
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
         settings.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.TEXT_AUTOSIZING);
+
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.PAYMENT_REQUEST)) {
+            WebSettingsCompat.setPaymentRequestEnabled(settings, true);
+        }
     }
 
     private void loadUrl(String url) {

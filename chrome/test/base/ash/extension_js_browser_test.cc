@@ -5,13 +5,20 @@
 #include "chrome/test/base/ash/extension_js_browser_test.h"
 
 #include <memory>
+#include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
+#include "base/command_line.h"
+#include "base/containers/contains.h"
+#include "base/files/file_path.h"
 #include "base/functional/callback.h"
 #include "base/json/json_reader.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/run_until.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/profiles/profile.h"
@@ -66,7 +73,7 @@ void ExtensionJSBrowserTest::SetUpOnMainThread() {
         base::BindRepeating([](content::DevToolsAgentHost* host) {
           const auto& ext_ids = GetExtensionIdsToCollectCoverage();
           for (const auto& ext_id : ext_ids) {
-            if (base::Contains(host->GetURL().path(), ext_id) &&
+            if (base::Contains(host->GetURL().GetPath(), ext_id) &&
                 host->GetType() == "background_page") {
               return true;
             }
@@ -92,6 +99,16 @@ void ExtensionJSBrowserTest::WaitForExtension(const char* extension_id,
   if (observer.WaitForManifestVersion() == 3) {
     observer.WaitForServiceWorkerStart();
     extension_host_browser_context_ = GetProfile();
+
+    // Wait until the extension is registered by the ProcessManager (this
+    // happens asynchronously) - otherwise, we won't be able to run a script
+    // in the service worker context.
+    ASSERT_TRUE(base::test::RunUntil([&]() {
+      std::vector<extensions::WorkerId> worker_ids =
+          extensions::ProcessManager::Get(GetProfile())
+              ->GetServiceWorkersForExtension(extension_id);
+      return !worker_ids.empty();
+    }));
     return;
   }
 
@@ -117,7 +134,10 @@ bool ExtensionJSBrowserTest::RunJavascriptTestF(bool is_async,
   }
 
   if (!libs_loaded_) {
-    BuildJavascriptLibraries(&scripts);
+    if (!BuildJavascriptLibraries(&scripts)) {
+      ADD_FAILURE() << "Failed to build JavaScript libraries";
+      return false;
+    }
     libs_loaded_ = true;
   }
 
@@ -144,7 +164,8 @@ bool ExtensionJSBrowserTest::RunJavascriptTestF(bool is_async,
   }
 
   std::string result_str = result.GetString();
-  std::optional<base::Value> value_result = base::JSONReader::Read(result_str);
+  std::optional<base::Value> value_result =
+      base::JSONReader::Read(result_str, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   const base::Value::Dict& dict_value = value_result->GetDict();
 
   bool test_result = dict_value.FindBool("result").value();

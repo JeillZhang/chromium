@@ -69,6 +69,7 @@ void AuxiliarySearchTopSiteProviderBridge::RemoveObserver() {
 }
 
 void AuxiliarySearchTopSiteProviderBridge::OnURLsAvailable(
+    bool is_user_triggered,
     const std::map<ntp_tiles::SectionType, ntp_tiles::NTPTilesVector>&
         sections) {
   CHECK(most_visited_sites_);
@@ -113,7 +114,6 @@ void AuxiliarySearchTopSiteProviderBridge::OnIconMadeAvailable(
 
 static jlong JNI_AuxiliarySearchTopSiteProviderBridge_Init(
     JNIEnv* env,
-    const jni_zero::JavaParamRef<jobject>& obj,
     Profile* profile) {
   DCHECK(profile);
 

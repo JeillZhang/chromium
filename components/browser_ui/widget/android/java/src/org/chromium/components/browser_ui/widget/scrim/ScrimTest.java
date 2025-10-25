@@ -56,6 +56,7 @@ import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.PayloadCallbackHelper;
 import org.chromium.components.browser_ui.widget.scrim.ScrimCoordinator.Observer;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager.ScrimClient;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.test.util.BlankUiTestActivity;
 
@@ -110,7 +111,7 @@ public class ScrimTest {
                     mAnchorView = new View(sActivity);
                     sParent.addView(mAnchorView);
 
-                    mScrimManager = new ScrimManager(sActivity, sParent);
+                    mScrimManager = new ScrimManager(sActivity, sParent, ScrimClient.NONE);
                     mScrimManager
                             .getStatusBarColorSupplier()
                             .addObserver(mStatusBarColorHelper::notifyCalled);
@@ -157,6 +158,22 @@ public class ScrimTest {
                 () -> mScrimManager.hideScrim(model, /* animate= */ false));
         mVisibilityChangeCallbackHelper.waitForCallback(callCount, 1);
         assertScrimVisibility(false, model);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Scrim"})
+    public void testAbsorbsContextClicks() throws TimeoutException {
+        PropertyModel model = buildModel(false, true, Color.RED);
+        showScrim(model, /* animate= */ false);
+
+        assertTrue(
+                "The scrim view should be context clickable.",
+                mScrimManager.getViewForTesting().isContextClickable());
+
+        assertTrue(
+                "The scrim view should have a listener to absorb context clicks.",
+                mScrimManager.getViewForTesting().performContextClick());
     }
 
     @Test

@@ -10,6 +10,7 @@
 #include "components/autofill/core/browser/data_model/payments/payment_instrument.h"
 #include "components/autofill/core/browser/payments/constants.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
+#include "components/grit/components_scaled_resources.h"
 #include "components/strings/grit/components_strings.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -132,6 +133,9 @@ TEST(BnplIssuerTest, GetDisplayName) {
   issuer.set_issuer_id(BnplIssuer::IssuerId::kBnplZip);
   EXPECT_EQ(issuer.GetDisplayName(),
             l10n_util::GetStringUTF16(IDS_AUTOFILL_BNPL_ZIP));
+  issuer.set_issuer_id(BnplIssuer::IssuerId::kBnplKlarna);
+  EXPECT_EQ(issuer.GetDisplayName(),
+            l10n_util::GetStringUTF16(IDS_AUTOFILL_BNPL_KLARNA));
 }
 
 // Test for the equality operator for the BNPL issuer data model.
@@ -176,6 +180,8 @@ TEST(BnplIssuerTest, BnplIssuerIdToDisplayName) {
             l10n_util::GetStringUTF16(IDS_AUTOFILL_BNPL_ZIP));
   EXPECT_EQ(BnplIssuerIdToDisplayName(BnplIssuer::IssuerId::kBnplAfterpay),
             l10n_util::GetStringUTF16(IDS_AUTOFILL_BNPL_AFTER_PAY));
+  EXPECT_EQ(BnplIssuerIdToDisplayName(BnplIssuer::IssuerId::kBnplKlarna),
+            l10n_util::GetStringUTF16(IDS_AUTOFILL_BNPL_KLARNA));
 }
 
 TEST(BnplIssuerTest, ConvertToBnplIssuerIdEnum) {
@@ -185,6 +191,8 @@ TEST(BnplIssuerTest, ConvertToBnplIssuerIdEnum) {
             BnplIssuer::IssuerId::kBnplZip);
   EXPECT_EQ(ConvertToBnplIssuerIdEnum(kBnplAfterpayIssuerId),
             BnplIssuer::IssuerId::kBnplAfterpay);
+  EXPECT_EQ(ConvertToBnplIssuerIdEnum(kBnplKlarnaIssuerId),
+            BnplIssuer::IssuerId::kBnplKlarna);
 }
 
 TEST(BnplIssuerTest, ConvertToBnplIssuerIdString) {
@@ -194,6 +202,55 @@ TEST(BnplIssuerTest, ConvertToBnplIssuerIdString) {
             kBnplZipIssuerId);
   EXPECT_EQ(ConvertToBnplIssuerIdString(BnplIssuer::IssuerId::kBnplAfterpay),
             kBnplAfterpayIssuerId);
+  EXPECT_EQ(ConvertToBnplIssuerIdString(BnplIssuer::IssuerId::kBnplKlarna),
+            kBnplKlarnaIssuerId);
+}
+
+TEST(BnplIssuerTest, GetBnplIssuerIconIds) {
+  EXPECT_EQ(GetBnplIssuerIconIds(BnplIssuer::IssuerId::kBnplAffirm,
+                                 /*issuer_linked=*/true),
+            std::make_pair(
+                BnplIssuer::LightModeImageId(IDR_AUTOFILL_AFFIRM_LINKED),
+                BnplIssuer::DarkModeImageId(IDR_AUTOFILL_AFFIRM_LINKED_DARK)));
+  EXPECT_EQ(
+      GetBnplIssuerIconIds(BnplIssuer::IssuerId::kBnplAffirm,
+                           /*issuer_linked=*/false),
+      std::make_pair(
+          BnplIssuer::LightModeImageId(IDR_AUTOFILL_AFFIRM_UNLINKED),
+          BnplIssuer::DarkModeImageId(IDR_AUTOFILL_AFFIRM_UNLINKED_DARK)));
+  EXPECT_EQ(GetBnplIssuerIconIds(BnplIssuer::IssuerId::kBnplZip,
+                                 /*issuer_linked=*/true),
+            std::make_pair(
+                BnplIssuer::LightModeImageId(IDR_AUTOFILL_ZIP_LINKED),
+                BnplIssuer::DarkModeImageId(IDR_AUTOFILL_ZIP_LINKED_DARK)));
+  EXPECT_EQ(GetBnplIssuerIconIds(BnplIssuer::IssuerId::kBnplZip,
+                                 /*issuer_linked=*/false),
+            std::make_pair(
+                BnplIssuer::LightModeImageId(IDR_AUTOFILL_ZIP_UNLINKED),
+                BnplIssuer::DarkModeImageId(IDR_AUTOFILL_ZIP_UNLINKED_DARK)));
+  EXPECT_EQ(
+      GetBnplIssuerIconIds(BnplIssuer::IssuerId::kBnplAfterpay,
+                           /*issuer_linked=*/true),
+      std::make_pair(
+          BnplIssuer::LightModeImageId(IDR_AUTOFILL_AFTERPAY_LINKED),
+          BnplIssuer::DarkModeImageId(IDR_AUTOFILL_AFTERPAY_LINKED_DARK)));
+  EXPECT_EQ(
+      GetBnplIssuerIconIds(BnplIssuer::IssuerId::kBnplAfterpay,
+                           /*issuer_linked=*/false),
+      std::make_pair(
+          BnplIssuer::LightModeImageId(IDR_AUTOFILL_AFTERPAY_UNLINKED),
+          BnplIssuer::DarkModeImageId(IDR_AUTOFILL_AFTERPAY_UNLINKED_DARK)));
+  EXPECT_EQ(GetBnplIssuerIconIds(BnplIssuer::IssuerId::kBnplKlarna,
+                                 /*issuer_linked=*/true),
+            std::make_pair(
+                BnplIssuer::LightModeImageId(IDR_AUTOFILL_KLARNA_LINKED),
+                BnplIssuer::DarkModeImageId(IDR_AUTOFILL_KLARNA_LINKED_DARK)));
+  EXPECT_EQ(
+      GetBnplIssuerIconIds(BnplIssuer::IssuerId::kBnplKlarna,
+                           /*issuer_linked=*/false),
+      std::make_pair(
+          BnplIssuer::LightModeImageId(IDR_AUTOFILL_KLARNA_UNLINKED),
+          BnplIssuer::DarkModeImageId(IDR_AUTOFILL_KLARNA_UNLINKED_DARK)));
 }
 
 }  // namespace autofill

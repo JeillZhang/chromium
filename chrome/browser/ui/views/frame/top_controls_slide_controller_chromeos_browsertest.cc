@@ -35,6 +35,7 @@
 #include "chromeos/crosapi/mojom/cros_display_config.mojom-test-utils.h"
 #include "chromeos/crosapi/mojom/cros_display_config.mojom.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/permissions/permission_decision.h"
 #include "components/permissions/permission_request.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/permissions/request_type.h"
@@ -385,7 +386,7 @@ class TopControlsSlideControllerTest : public InProcessBrowserTest {
   }
 
   bool GetTabletModeEnabled() const {
-    return display::Screen::GetScreen()->InTabletMode();
+    return display::Screen::Get()->InTabletMode();
   }
 
   void CheckBrowserLayout(BrowserView* browser_view,
@@ -393,7 +394,8 @@ class TopControlsSlideControllerTest : public InProcessBrowserTest {
     const int top_controls_height = browser_view->GetTopControlsHeight();
     EXPECT_NE(top_controls_height, 0);
 
-    ui::Layer* root_view_layer = browser_view->frame()->GetRootView()->layer();
+    ui::Layer* root_view_layer =
+        browser_view->browser_widget()->GetRootView()->layer();
 
     // The fully-shown and fully-hidden states are terminal states. We check
     // when we reach the steady state. The root view should not have a layer
@@ -416,9 +418,9 @@ class TopControlsSlideControllerTest : public InProcessBrowserTest {
     EXPECT_EQ(top_container_bounds.height(), top_controls_height);
 
     const int top_container_bottom = top_container_bounds.bottom();
-    const gfx::Rect& contents_container_bounds =
-        browser_view->contents_container()->bounds();
-    EXPECT_EQ(top_container_bottom, contents_container_bounds.y());
+    const int& contents_container_bounds =
+        browser_view->contents_container()->bounds().y();
+    EXPECT_EQ(top_container_bottom, contents_container_bounds);
 
     if (shown_state == TopChromeShownState::kFullyHidden) {
       // Top container is shifted up.
@@ -429,7 +431,8 @@ class TopControlsSlideControllerTest : public InProcessBrowserTest {
                 browser_view->contents_container()->height());
 
       // Widget should not allow things to show outside its bounds.
-      EXPECT_TRUE(browser_view->frame()->GetLayer()->GetMasksToBounds());
+      EXPECT_TRUE(
+          browser_view->browser_widget()->GetLayer()->GetMasksToBounds());
 
       // The browser controls doesn't shrink the blink viewport size.
       EXPECT_FALSE(browser_view->DoBrowserControlsShrinkRendererSize(
@@ -443,7 +446,8 @@ class TopControlsSlideControllerTest : public InProcessBrowserTest {
       EXPECT_EQ(browser_view->height() - top_controls_height,
                 browser_view->contents_container()->height());
 
-      EXPECT_FALSE(browser_view->frame()->GetLayer()->GetMasksToBounds());
+      EXPECT_FALSE(
+          browser_view->browser_widget()->GetLayer()->GetMasksToBounds());
 
       // The browser controls does shrink the blink viewport size.
       EXPECT_TRUE(browser_view->DoBrowserControlsShrinkRendererSize(
@@ -476,7 +480,7 @@ class TopControlsSlideControllerTest : public InProcessBrowserTest {
     EXPECT_NE(top_controls_height, 0);
 
     ui::Layer* root_view_layer =
-        browser_view()->frame()->GetRootView()->layer();
+        browser_view()->browser_widget()->GetRootView()->layer();
 
     // While sliding is in progress, the root view paints to a layer.
     ASSERT_TRUE(root_view_layer);
@@ -692,50 +696,47 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestCtrlL) {
   EXPECT_TRUE(browser_view()->GetLocationBarView()->omnibox_view()->HasFocus());
 }
 
-// Fails on Linux ChromiumOS MSan Tests (https://crbug.com/1194575).
 IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
-                       DISABLED_TestScrollingPageAndSwitchingToNTP) {
+                       TestScrollingPageAndSwitchingToNTP) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
   EXPECT_FLOAT_EQ(top_controls_slide_controller()->GetShownRatio(), 1.f);
 
-  // Add a tab containing a local NTP page. NTP pages are not permitted to hide
-  // top-chrome with scrolling.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(),
-                                           GURL(chrome::kChromeUINewTabURL)));
   ASSERT_EQ(browser()->tab_strip_model()->count(), 1);
+  ASSERT_EQ(browser()->tab_strip_model()->active_index(), 0);
 
-  // Navigate to our test page that has a long vertical content which we can use
-  // to test page scrolling.
+  // Add a new tab (index 1), navigate it to the scrollable test page,
+  // making it the active tab.
+  chrome::NewTab(browser());
   NavigateActiveTabToUrl(
       embedded_test_server()->GetURL("/top_controls_scroll.html"));
-
   ASSERT_EQ(browser()->tab_strip_model()->count(), 2);
+  ASSERT_EQ(browser()->tab_strip_model()->active_index(), 1);
 
-  // Scroll the `top_controls_scroll.html` page such that top-chrome is now
-  // fully hidden.
+  // Scroll the active `top_controls_scroll.html` page (index 1) such that
+  // top-chrome is now fully hidden.
   ScrollAndExpectTopChromeToBe(ScrollDirection::kDown,
                                TopChromeShownState::kFullyHidden);
 
-  // Simulate (Ctrl + Tab) shortcut to select the next tab. Top-chrome should
-  // show automatically.
+  // Simulate (Ctrl + Tab) shortcut to select the next tab (NTP at index 0).
+  // Top-chrome should show automatically.
   TopControlsShownRatioWaiter waiter(top_controls_slide_controller());
   browser()->tab_strip_model()->SelectNextTab();
-  EXPECT_EQ(browser()->tab_strip_model()->active_index(), 1);
+  EXPECT_EQ(browser()->tab_strip_model()->active_index(), 0);
   waiter.WaitForRatio(1.f);
   EXPECT_FLOAT_EQ(top_controls_slide_controller()->GetShownRatio(), 1.f);
   CheckBrowserLayout(browser_view(), TopChromeShownState::kFullyShown);
 
-  // Since this is the NTP page, gesture scrolling down will not hide
+  // Since this is the NTP page (index 0), gesture scrolling down will not hide
   // top-chrome. It will remain fully shown.
   ScrollAndExpectTopChromeToBe(ScrollDirection::kDown,
                                TopChromeShownState::kFullyShown);
 
-  // Switch back to the scrollable page, it should be possible now to hide top-
-  // chrome.
+  // Switch back to the scrollable page (index 1), it should be possible now to
+  // hide top-chrome.
   browser()->tab_strip_model()->SelectNextTab();
-  EXPECT_EQ(browser()->tab_strip_model()->active_index(), 0);
+  EXPECT_EQ(browser()->tab_strip_model()->active_index(), 1);
   waiter.WaitForRatio(1.f);
   EXPECT_FLOAT_EQ(top_controls_slide_controller()->GetShownRatio(), 1.f);
 
@@ -745,10 +746,11 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
   // The `DoBrowserControlsShrinkRendererSize` bit is separately tracked for
   // each tab.
   auto* tab_strip_model = browser()->tab_strip_model();
-  auto* scrollable_page_contents = tab_strip_model->GetWebContentsAt(0);
-  auto* ntp_contents = tab_strip_model->GetWebContentsAt(1);
+  auto* ntp_contents = tab_strip_model->GetWebContentsAt(0);
   EXPECT_TRUE(
       browser_view()->DoBrowserControlsShrinkRendererSize(ntp_contents));
+  auto* scrollable_page_contents =
+      browser()->tab_strip_model()->GetWebContentsAt(1);
   EXPECT_FALSE(browser_view()->DoBrowserControlsShrinkRendererSize(
       scrollable_page_contents));
 }
@@ -916,7 +918,7 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, DisplayRotation) {
   // Maximizing the browser window makes the browser view layout more
   // predictable with display rotation, as it's just resized to match the
   // display bounds.
-  browser_view()->frame()->Maximize();
+  browser_view()->browser_widget()->Maximize();
 
   // Navigate to our scrollable test page, scroll with touch gestures so that
   // top-chrome is fully hidden.
@@ -1042,7 +1044,7 @@ class PageStateUpdateWaiter : content::WebContentsObserver {
 // the main frame (such as widgets of the drop-down menus in web pages).
 // https://crbug.com/891471.
 IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestDropDowns) {
-  browser_view()->frame()->Maximize();
+  browser_view()->browser_widget()->Maximize();
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
@@ -1093,8 +1095,10 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestDropDowns) {
   EXPECT_EQ("4", content::EvalJs(contents, "getSelectedValue();"));
 }
 
-IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
-                       TestScrollingMaximizedPageBeforeGoingToTabletMode) {
+// TODO(crbug.com/436706865): Re-enable this test.
+IN_PROC_BROWSER_TEST_F(
+    TopControlsSlideControllerTest,
+    DISABLED_TestScrollingMaximizedPageBeforeGoingToTabletMode) {
   // If the page exists in a maximized browser window before going to tablet
   // mode, the layout that results from going to tablet mode does not change
   // the size of the page viewport. Hence, the visual properties of the renderer
@@ -1103,7 +1107,7 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
   // BrowserView::GetTopControlsHeight() now returns a non-zero value). We must
   // make sure that we synchronize the visual properties manually, otherwise
   // the renderer will never get the new top-controls height.
-  browser_view()->frame()->Maximize();
+  browser_view()->browser_widget()->Maximize();
 
   // Navigate to our test scrollable page.
   NavigateActiveTabToUrl(
@@ -1193,8 +1197,9 @@ class IntermediateShownRatioWaiter : public TestControllerObserver {
   bool seen_intermediate_ratios_ = false;
 };
 
+// TODO(crbug.com/436709208): Re-enable this test.
 IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
-                       TestIntermediateSliding) {
+                       DISABLED_TestIntermediateSliding) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
@@ -1365,9 +1370,7 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
   CheckBrowserLayout(browser_view(), TopChromeShownState::kFullyShown);
 }
 
-// Sheriff 2022/04/18; flaky test crbug/1317068
-IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
-                       DISABLED_TestPermissionBubble) {
+IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest, TestPermissionBubble) {
   ToggleTabletMode();
   ASSERT_TRUE(GetTabletModeEnabled());
   EXPECT_TRUE(top_controls_slide_controller()->IsEnabled());
@@ -1389,7 +1392,7 @@ IN_PROC_BROWSER_TEST_F(TopControlsSlideControllerTest,
 
   // Fire a geolocation permission request, which should show a permission
   // request bubble resulting in top chrome unhiding.
-  auto decided = [](ContentSetting, bool, bool,
+  auto decided = [](PermissionDecision, bool,
                     const permissions::PermissionRequestData&) {};
   auto permission_request = std::make_unique<permissions::PermissionRequest>(
       std::make_unique<permissions::PermissionRequestData>(

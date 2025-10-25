@@ -27,6 +27,8 @@ import androidx.core.view.WindowInsetsCompat;
 import org.chromium.base.Log;
 import org.chromium.base.ObserverList;
 import org.chromium.base.ResettersForTesting;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
@@ -35,16 +37,19 @@ import org.chromium.chrome.browser.lifecycle.SaveInstanceStateObserver;
 import org.chromium.chrome.browser.lifecycle.TopResumedActivityChangedObserver;
 import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils.DesktopWindowHeuristicResult;
 import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils.WindowingMode;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
 import org.chromium.components.browser_ui.desktop_windowing.AppHeaderState;
 import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgeStateProvider;
 import org.chromium.ui.display.DisplayUtil;
+import org.chromium.ui.edge_to_edge.EdgeToEdgeStateProvider;
 import org.chromium.ui.insets.CaptionBarInsetsRectProvider;
 import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.insets.InsetObserver.WindowInsetsConsumer;
 import org.chromium.ui.insets.InsetsRectProvider;
 import org.chromium.ui.util.ColorUtils;
 import org.chromium.ui.util.TokenHolder;
+
+import java.util.List;
 
 /**
  * Class coordinating the business logic to draw into app header in desktop windowing mode, ranging
@@ -81,11 +86,15 @@ public class AppHeaderCoordinator
     private int mBrowserControlsToken = TokenHolder.INVALID_TOKEN;
     private @Nullable AppHeaderState mAppHeaderState;
     private boolean mIsInUnfocusedDesktopWindow;
+    private final ObservableSupplierImpl<Boolean> mDesktopWindowTopResumedActivitySupplier;
     private @DesktopWindowHeuristicResult int mHeuristicResult =
             DesktopWindowHeuristicResult.UNKNOWN;
     private @WindowingMode int mWindowingMode = WindowingMode.UNKNOWN;
     private int mKeyboardInset;
     private int mNavBarInset;
+
+    // The minimum height (in px) of the app header required for customization.
+    private final int mMinHeightPx;
 
     /**
      * Instantiate the coordinator to handle drawing the tab strip into the captionBar area.
@@ -103,6 +112,8 @@ public class AppHeaderCoordinator
      *     information for restoration on startup.
      * @param edgeToEdgeStateProvider The {@link EdgeToEdgeStateProvider} to determine the
      *     edge-to-edge state.
+     * @param minHeightPx The minimum height of the app header (in px) required for app header
+     *     customization.
      */
     public AppHeaderCoordinator(
             Activity activity,
@@ -111,10 +122,12 @@ public class AppHeaderCoordinator
             InsetObserver insetObserver,
             ActivityLifecycleDispatcher activityLifecycleDispatcher,
             Bundle savedInstanceState,
-            EdgeToEdgeStateProvider edgeToEdgeStateProvider) {
+            EdgeToEdgeStateProvider edgeToEdgeStateProvider,
+            int minHeightPx) {
         mActivity = activity;
         mEdgeToEdgeStateProvider = edgeToEdgeStateProvider;
         mRootView = rootView;
+        mMinHeightPx = minHeightPx;
         mBrowserControlsVisibilityDelegate = browserControlsVisibilityDelegate;
         mInsetObserver = insetObserver;
         mInsetsController = assertNonNull(mRootView.getWindowInsetsController());
@@ -126,6 +139,14 @@ public class AppHeaderCoordinator
                 savedInstanceState != null
                         && savedInstanceState.getBoolean(
                                 INSTANCE_STATE_KEY_IS_APP_IN_UNFOCUSED_DW, false);
+
+        mDesktopWindowTopResumedActivitySupplier =
+                new ObservableSupplierImpl<Boolean>(!mIsInUnfocusedDesktopWindow);
+        mDesktopWindowTopResumedActivitySupplier.addObserver(
+                (isFocused) -> {
+                    mObservers.forEach(
+                            (observer) -> observer.onActivityFocusStateChanged(isFocused));
+                });
 
         // Initialize mInsetsRectProvider and setup observers.
         mCaptionBarRectProvider =
@@ -144,6 +165,7 @@ public class AppHeaderCoordinator
     }
 
     /** Destroy the instances and remove all the dependencies. */
+    @Override
     public void destroy() {
         mActivity = null;
         mCaptionBarRectProvider.destroy();
@@ -177,10 +199,20 @@ public class AppHeaderCoordinator
         updateIconColorForCaptionBars(backgroundColor);
     }
 
+    @Override
+    public void updateSystemGestureExclusionRects(List<Rect> rects) {
+        for (AppHeaderObserver observer : mObservers) {
+            observer.onSystemGestureExclusionRectsChanged(rects);
+        }
+    }
+
     // TopResumedActivityChangedObserver implementation.
     @Override
     public void onTopResumedActivityChanged(boolean isTopResumedActivity) {
         mIsInUnfocusedDesktopWindow = !isTopResumedActivity && mIsInDesktopWindow;
+        if (mIsInDesktopWindow) {
+            mDesktopWindowTopResumedActivitySupplier.set(isTopResumedActivity);
+        }
     }
 
     // SaveInstanceStateObserver implementation.
@@ -196,7 +228,10 @@ public class AppHeaderCoordinator
                 !DisplayUtil.isContextInDefaultDisplay(assumeNonNull(mActivity));
         mHeuristicResult =
                 checkIsInDesktopWindow(
-                        mCaptionBarRectProvider, mHeuristicResult, isOnExternalDisplay);
+                        mCaptionBarRectProvider,
+                        mHeuristicResult,
+                        isOnExternalDisplay,
+                        mMinHeightPx);
         var isInDesktopWindow = mHeuristicResult == DesktopWindowHeuristicResult.IN_DESKTOP_WINDOW;
 
         // Avoid determining the mode when there are no window insets, which may be the case in the
@@ -205,8 +240,21 @@ public class AppHeaderCoordinator
         assert mInsetObserver.getLastRawWindowInsets() != null
                 : "Attempt to read the insets too early.";
         if (mInsetObserver.getLastRawWindowInsets().hasInsets()) {
-            mWindowingMode =
-                    AppHeaderUtils.getWindowingMode(mActivity, isInDesktopWindow, mWindowingMode);
+            int prevWindowingMode = mWindowingMode;
+            mWindowingMode = AppHeaderUtils.getWindowingMode(mActivity, isInDesktopWindow);
+            if (prevWindowingMode != mWindowingMode) {
+                // Record this histogram every time the windowing mode changes.
+                RecordHistogram.recordEnumeratedHistogram(
+                        "Android.MultiWindowMode.Configuration",
+                        mWindowingMode,
+                        WindowingMode.NUM_ENTRIES);
+                // Record windowing mode changes if not going from/to UNKNOWN.
+                if (prevWindowingMode != AppHeaderUtils.WindowingMode.UNKNOWN
+                        && mWindowingMode != AppHeaderUtils.WindowingMode.UNKNOWN) {
+                    AppHeaderUtils.recordWindowingMode(prevWindowingMode, /* isStarted= */ false);
+                    AppHeaderUtils.recordWindowingMode(mWindowingMode, /* isStarted= */ true);
+                }
+            }
         }
 
         var appHeaderState =
@@ -265,24 +313,28 @@ public class AppHeaderCoordinator
     private static @DesktopWindowHeuristicResult int checkIsInDesktopWindow(
             InsetsRectProvider insetsRectProvider,
             @DesktopWindowHeuristicResult int currentResult,
-            boolean isOnExternalDisplay) {
+            boolean isOnExternalDisplay,
+            int minHeightPx) {
         @DesktopWindowHeuristicResult int newResult;
 
         Insets captionBarInset = insetsRectProvider.getCachedInset();
         boolean allowHeaderCustomization =
                 AppHeaderUtils.shouldAllowHeaderCustomizationOnNonDefaultDisplay()
                         || !isOnExternalDisplay;
+        var widestUnoccludedRect = insetsRectProvider.getWidestUnoccludedRect();
 
-        if (insetsRectProvider.getWidestUnoccludedRect().isEmpty()) {
+        if (widestUnoccludedRect.isEmpty()) {
             newResult = DesktopWindowHeuristicResult.WIDEST_UNOCCLUDED_RECT_EMPTY;
         } else if (captionBarInset.top == 0) {
             newResult = DesktopWindowHeuristicResult.CAPTION_BAR_TOP_INSETS_ABSENT;
-        } else if (insetsRectProvider.getWidestUnoccludedRect().bottom != captionBarInset.top) {
+        } else if (widestUnoccludedRect.bottom != captionBarInset.top) {
             newResult = DesktopWindowHeuristicResult.CAPTION_BAR_BOUNDING_RECT_INVALID_HEIGHT;
         } else if (!allowHeaderCustomization) {
             newResult = DesktopWindowHeuristicResult.DISALLOWED_ON_EXTERNAL_DISPLAY;
         } else if (insetsRectProvider.isUnoccludedRegionComplex()) {
             newResult = DesktopWindowHeuristicResult.COMPLEX_UNOCCLUDED_REGION;
+        } else if (minHeightPx > 0 && widestUnoccludedRect.height() < minHeightPx) {
+            newResult = DesktopWindowHeuristicResult.BELOW_MIN_HEIGHT_THRESHOLD;
         } else {
             newResult = DesktopWindowHeuristicResult.IN_DESKTOP_WINDOW;
         }
@@ -344,14 +396,18 @@ public class AppHeaderCoordinator
     }
 
     /** Set states for testing. */
-    public void setStateForTesting(boolean isInDesktopWindow, AppHeaderState appHeaderState) {
+    public void setStateForTesting(
+            boolean isInDesktopWindow, AppHeaderState appHeaderState, boolean isFocused) {
         mIsInDesktopWindow = isInDesktopWindow;
         setEdgeToEdgeState(mIsInDesktopWindow);
         mAppHeaderState = appHeaderState;
-
+        if (mIsInDesktopWindow) {
+            mDesktopWindowTopResumedActivitySupplier.set(isFocused);
+        }
         for (var observer : mObservers) {
             observer.onAppHeaderStateChanged(mAppHeaderState);
             observer.onDesktopWindowingModeChanged(mIsInDesktopWindow);
+            observer.onActivityFocusStateChanged(isFocused);
         }
     }
 
@@ -375,6 +431,11 @@ public class AppHeaderCoordinator
     @Override
     public WindowInsetsCompat onApplyWindowInsets(
             View view, WindowInsetsCompat windowInsetsCompat) {
+        if (EdgeToEdgeUtils.isEdgeToEdgeTabletEnabled()
+                && mActivity != null
+                && EdgeToEdgeUtils.isSupportedTablet(mActivity)) {
+            return windowInsetsCompat;
+        }
         mKeyboardInset = windowInsetsCompat.getInsets(WindowInsetsCompat.Type.ime()).bottom;
         mNavBarInset =
                 windowInsetsCompat.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
@@ -386,5 +447,9 @@ public class AppHeaderCoordinator
                 .setInsets(WindowInsetsCompat.Type.ime(), Insets.NONE)
                 .setInsets(WindowInsetsCompat.Type.navigationBars(), Insets.NONE)
                 .build();
+    }
+
+    /* package */ ObservableSupplierImpl<Boolean> getTopResumedActivitySupplierForTesting() {
+        return mDesktopWindowTopResumedActivitySupplier;
     }
 }

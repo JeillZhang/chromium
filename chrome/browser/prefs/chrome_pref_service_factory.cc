@@ -61,6 +61,7 @@
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/signin_switches.h"
+#include "components/supervised_user/core/browser/supervised_user_content_filters_service.h"
 #include "components/supervised_user/core/browser/supervised_user_pref_store.h"
 #include "components/sync/base/data_type.h"
 #include "components/sync/base/features.h"
@@ -75,6 +76,7 @@
 #include "rlz/buildflags/buildflags.h"
 #include "services/preferences/public/cpp/tracked/configuration.h"
 #include "services/preferences/public/cpp/tracked/pref_names.h"
+#include "services/preferences/tracked/pref_hash_filter.h"
 #include "sql/error_delegate_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -82,7 +84,7 @@
 #include "base/files/file_util.h"
 #endif
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
 #include "extensions/browser/pref_names.h"
 #endif
 
@@ -125,7 +127,7 @@ const auto kTrackedPrefs = std::to_array<prefs::TrackedPreferenceMetadata>({
      PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
     {4, prefs::kURLsToRestoreOnStartup, EnforcementLevel::ENFORCE_ON_LOAD,
      PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
     {5, extensions::pref_names::kExtensions, EnforcementLevel::NO_ENFORCEMENT,
      PrefTrackingStrategy::SPLIT, ValueType::IMPERSONAL},
 #endif
@@ -171,9 +173,20 @@ const auto kTrackedPrefs = std::to_array<prefs::TrackedPreferenceMetadata>({
     {34, enterprise_signin::prefs::kPolicyRecoveryToken,
      EnforcementLevel::ENFORCE_ON_LOAD, PrefTrackingStrategy::ATOMIC,
      ValueType::IMPERSONAL},
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
     {35, prefs::kExtensionsUIDeveloperMode, EnforcementLevel::ENFORCE_ON_LOAD,
      PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
+#endif
+    // Allows it to trigger a write to the protected pref store.
+    {36, user_prefs::kScheduleToFlushToDisk, EnforcementLevel::ENFORCE_ON_LOAD,
+     PrefTrackingStrategy::ATOMIC, ValueType::IMPERSONAL},
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+    {37, extensions::pref_names::kInitialInstallList,
+     EnforcementLevel::ENFORCE_ON_LOAD, PrefTrackingStrategy::ATOMIC,
+     ValueType::IMPERSONAL},
+    {38, extensions::pref_names::kInitialInstallProviderName,
+     EnforcementLevel::ENFORCE_ON_LOAD, PrefTrackingStrategy::ATOMIC,
+     ValueType::IMPERSONAL},
 #endif
 
     // See note at top, new items added here also need to be added to
@@ -241,7 +254,7 @@ GetTrackingConfiguration() {
       data->enforcement_level = EnforcementLevel::ENFORCE_ON_LOAD;
     }
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
     if (enforcement_group >= GROUP_ENFORCE_ALWAYS_WITH_EXTENSIONS_AND_DSE &&
         data->name == extensions::pref_names::kExtensions) {
       // Specifically enable extension settings enforcement.
@@ -300,6 +313,8 @@ void PrepareFactory(
     const base::FilePath& pref_filename,
     policy::PolicyService* policy_service,
     supervised_user::SupervisedUserSettingsService* supervised_user_settings,
+    supervised_user::SupervisedUserContentFiltersService*
+        content_filters_service,
     scoped_refptr<PersistentPrefStore> user_pref_store,
     scoped_refptr<PrefStore> extension_prefs,
     bool async,
@@ -307,8 +322,11 @@ void PrepareFactory(
   factory->SetManagedPolicies(policy_service, policy_connector);
   factory->SetRecommendedPolicies(policy_service, policy_connector);
   if (supervised_user_settings) {
+    // supervised_user_prefs handles the case when content_filters_service is
+    // nullptr. It's simply not subscribing to empty service's notifications.
     scoped_refptr<PrefStore> supervised_user_prefs =
-        base::MakeRefCounted<SupervisedUserPrefStore>(supervised_user_settings);
+        base::MakeRefCounted<SupervisedUserPrefStore>(supervised_user_settings,
+                                                      content_filters_service);
     DCHECK(async || supervised_user_prefs->IsInitializationComplete());
     factory->set_supervised_user_prefs(supervised_user_prefs);
   }
@@ -362,9 +380,10 @@ std::unique_ptr<PrefService> CreateLocalState(
     policy::BrowserPolicyConnector* policy_connector) {
   sync_preferences::PrefServiceSyncableFactory factory;
   PrepareFactory(&factory, pref_filename, policy_service,
-                 nullptr,  // supervised_user_settings
+                 /*supervised_user_settings=*/nullptr,
+                 /*content_filters_service=*/nullptr,
                  pref_store,
-                 nullptr,  // extension_prefs
+                 /*extension_prefs=*/nullptr,
                  /*async=*/false, policy_connector);
 
   return factory.Create(std::move(pref_registry));
@@ -376,11 +395,14 @@ std::unique_ptr<sync_preferences::PrefServiceSyncable> CreateProfilePrefs(
         validation_delegate,
     policy::PolicyService* policy_service,
     supervised_user::SupervisedUserSettingsService* supervised_user_settings,
+    supervised_user::SupervisedUserContentFiltersService*
+        content_filters_service,
     scoped_refptr<PrefStore> extension_prefs,
     scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry,
     policy::BrowserPolicyConnector* connector,
     bool async,
-    scoped_refptr<base::SequencedTaskRunner> io_task_runner) {
+    scoped_refptr<base::SequencedTaskRunner> io_task_runner,
+    os_crypt_async::OSCryptAsync* os_crypt_async) {
   TRACE_EVENT0("browser", "chrome_prefs::CreateProfilePrefs");
 
   mojo::PendingRemote<prefs::mojom::ResetOnLoadObserver> reset_on_load_observer;
@@ -394,7 +416,7 @@ std::unique_ptr<sync_preferences::PrefServiceSyncable> CreateProfilePrefs(
           ->CreateProfilePrefStore(
               GetTrackingConfiguration(), kTrackedPrefsReportingIDsCount,
               io_task_runner, std::move(reset_on_load_observer),
-              std::move(validation_delegate));
+              std::move(validation_delegate), os_crypt_async);
 
 #if BUILDFLAG(IS_CHROMEOS)
   io_task_runner->PostTask(
@@ -403,8 +425,27 @@ std::unique_ptr<sync_preferences::PrefServiceSyncable> CreateProfilePrefs(
 #endif
 
   PrepareFactory(&factory, profile_path, policy_service,
-                 supervised_user_settings, user_pref_store,
-                 std::move(extension_prefs), async, connector);
+                 supervised_user_settings, content_filters_service,
+                 user_pref_store, std::move(extension_prefs), async, connector);
+
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
+  // Get raw pointers to the filters before moving user_pref_store.
+  PrefFilter* default_filter = nullptr;
+  PrefFilter* selected_filter = nullptr;
+  if (user_pref_store) {
+    // Get the underlying segregated pref store filters if possible, otherwise
+    // the functions will return nullptr.
+    default_filter = user_pref_store->GetDefaultStoreFilter();
+    selected_filter = user_pref_store->GetSelectedStoreFilter();
+
+    // JsonPrefStore will not have the two getters implemented, it will fall
+    // back to this block below. The user_pref_store itself will have the
+    // filter.
+    if (!default_filter && !selected_filter) {
+      default_filter = user_pref_store->GetFilter();
+    }
+  }
+#endif  // !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
 
   if (base::FeatureList::IsEnabled(
           switches::kEnablePreferencesAccountStorage)) {
@@ -487,7 +528,20 @@ std::unique_ptr<sync_preferences::PrefServiceSyncable> CreateProfilePrefs(
     }
   }
 
-  return factory.CreateSyncable(std::move(pref_registry));
+  std::unique_ptr<sync_preferences::PrefServiceSyncable> pref_service =
+      factory.CreateSyncable(std::move(pref_registry));
+
+// The PrefService is created, set the weakptr for the filters.
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
+  if (default_filter) {
+    default_filter->SetPrefService(pref_service.get());
+  }
+  if (selected_filter) {
+    selected_filter->SetPrefService(pref_service.get());
+  }
+#endif  // !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
+
+  return pref_service;
 }
 
 void DisableDomainCheckForTesting() {
@@ -496,12 +550,14 @@ void DisableDomainCheckForTesting() {
 #endif  // BUILDFLAG(IS_WIN)
 }
 
-bool InitializePrefsFromMasterPrefs(const base::FilePath& profile_path,
-                                    base::Value::Dict master_prefs) {
+bool InitializePrefsFromMasterPrefs(
+    const base::FilePath& profile_path,
+    base::Value::Dict master_prefs,
+    os_crypt_async::OSCryptAsync* os_crypt_async) {
   return CreateProfilePrefStoreManager(profile_path)
       ->InitializePrefsFromMasterPrefs(GetTrackingConfiguration(),
                                        kTrackedPrefsReportingIDsCount,
-                                       std::move(master_prefs));
+                                       std::move(master_prefs), os_crypt_async);
 }
 
 base::Time GetResetTime(Profile* profile) {
@@ -510,6 +566,14 @@ base::Time GetResetTime(Profile* profile) {
 
 void ClearResetTime(Profile* profile) {
   ProfilePrefStoreManager::ClearResetTime(profile->GetPrefs());
+}
+
+const base::Value::List& GetTamperedPrefList(Profile* profile) {
+  return profile->GetPrefs()->GetList(user_prefs::kTrackedPreferencesReset);
+}
+
+void ClearTamperedPrefList(Profile* profile) {
+  profile->GetPrefs()->ClearPref(user_prefs::kTrackedPreferencesReset);
 }
 
 void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {

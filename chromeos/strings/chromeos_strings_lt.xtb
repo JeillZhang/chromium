@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Kol kas rezultatai su žmonėmis nebus rodomi. Bandykite kitą užklausą.</translation>
 <translation id="1815850098929213707">Pasirinktas klavišas yra „<ph name="KEYS" />“. Palieskite mygtuką, kad redaguotumėte valdiklį</translation>
 <translation id="1818174214124933000">Kai pasirinksite siųsti, jūsų atsiliepimai ir turinys (pateiktas toliau) bus siunčiami „Google“, peržiūrėti žmonių ir naudojami siekiant mokyti ar tobulinti produktus bei paslaugas, vadovaujantis <ph name="LINK_POLICY_BEGIN" />privatumo politika<ph name="LINK_POLICY_END" /> ir <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />„Google“ paslaugų teikimo sąlygomis<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Mokytojas išsiuntė nepalaikomą šaltinį. Informuokite apie tai.</translation>
 <translation id="1823120442877418684">Personažai</translation>
 <translation id="1827738518074806965">Meno galerija</translation>
 <translation id="183287940576828840">Įžeidžiantis ar nesaugus</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Išdėstymo jungiklis</translation>
 <translation id="224421911978987610">ilga ekspozicija</translation>
 <translation id="2244834438220057800">žalios spalvos</translation>
+<translation id="2248689665683494517">minimalistinis natiurmortas su keliais aguonų žiedais stiklinėje vazoje juodame fone</translation>
 <translation id="225692081236532131">Aktyvinimo būsena</translation>
 <translation id="2267285889943769271">Pridėti ekrano kopiją</translation>
 <translation id="2268044343513325586">Patikslinti</translation>
@@ -335,7 +335,7 @@
 <translation id="2276999893457278469">Geriausias pagalbos centro turinys</translation>
 <translation id="2277631741861284101">Lengvai įrašykite ir bendrinkite garso įrašą</translation>
 <translation id="2279051792571591988">Atkurti numatytuosius nustatymus</translation>
-<translation id="2286454467119466181">Paprasta</translation>
+<translation id="2286454467119466181">Paprastas</translation>
 <translation id="2287186687001756809">Nėra jokių vaizdų. Jei norite pridėti nuotraukų, eikite adresu <ph name="LINK" /></translation>
 <translation id="2294577623958216786">Dabartinis tvarkaraštis nustatytas į <ph name="SUNRISE" />–<ph name="SUNSET" />. Kad būtų automatiškai atnaujintas saulėlydžio ir saulėtekio tvarkaraštis, įjunkite sistemos prieigą prie vietovės.</translation>
 <translation id="2305172810646967500">juoda</translation>
@@ -756,8 +756,10 @@
 <translation id="4300073214558989">Vaizdų: <ph name="IMAGE_COUNT" /></translation>
 <translation id="4300272766492248925">Atidaryti programą</translation>
 <translation id="430786093962686457">šifono</translation>
+<translation id="4309762678330556039">Automatiškai kurkite transkribuotus tekstus ir ieškokite garso įrašų. Įrašus galite kurti net neprisijungę prie interneto.</translation>
 <translation id="4310735698903592804">Naujausi „Google“ DI pagrįsti ekrano fonai</translation>
 <translation id="4320904097188876154">neoninės rausvos spalvos</translation>
+<translation id="432961742358282111">Spustelėkite dešiniuoju klavišu arba paspauskite ir palaikykite, kad gautumėte apibrėžtis, vertimus ar konvertuotumėte vienetus. Šią funkciją galite valdyti rodyklės kairėn ar dešinėn klavišais.</translation>
 <translation id="4333390807948134856">Paspaustas klavišas <ph name="KEY_NAME" /></translation>
 <translation id="4334293042716981313">Taip pat galite <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />parašyti savo užklausą<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">klavišas</translation>
@@ -1437,7 +1439,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Paklauskite ekspertų „Chromebook“ pagalbos forume</translation>
-<translation id="7309823890857024809">minimalistinis natiurmortas su keliomis aguonomis stiklinėje vazoje juodame fone</translation>
 <translation id="7311368985037279727">klaviatūros spalva</translation>
 <translation id="7317831949569936035">Mokyklos registracija</translation>
 <translation id="7319430975418800333">A3</translation>
@@ -1472,6 +1473,7 @@ Atsisiųskite transkribavimo modelį (iki 100 MB), kad gautumėte transkribuotus
 <translation id="7425832472614771259">Atsisiųsta <ph name="PROGRESS_PERCENTAGE" /> % <ph name="LANGUAGE_NAME" /> k. transkribavimo modelio</translation>
 <translation id="7427315641433634153">MSCHAP</translation>
 <translation id="7438298994385592770">Šio APN negalima išjungti arba pašalinti. Įsitikinkite, kad įgalinti <ph name="ATTACH" /> APN yra išjungti arba pašalinti.</translation>
+<translation id="7458359366992324037">Nuotolinio valdymo ekranas</translation>
 <translation id="7458970041932198923">Jei norite peržiūrėti ir nustatyti pseudoportretus, prisijunkite prie tinklo ir iš naujo įkelkite puslapį.</translation>
 <translation id="7469648432129124067">Aptiktas portalas</translation>
 <translation id="7481312909269577407">Persiųsti</translation>

@@ -6,11 +6,11 @@
 
 #include <memory>
 #include <optional>
-#include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/task/single_thread_task_runner.h"
 #include "chrome/browser/browser_process.h"
@@ -30,6 +30,7 @@
 #include "components/supervised_user/core/browser/supervised_user_service.h"
 #include "components/supervised_user/core/browser/supervised_user_url_filter.h"
 #include "components/supervised_user/core/browser/supervised_user_utils.h"
+#include "components/supervised_user/core/common/features.h"
 #include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/navigation_throttle.h"
@@ -39,34 +40,6 @@
 namespace supervised_user {
 
 namespace {
-std::ostream& operator<<(std::ostream& stream,
-                         ClassifyUrlThrottleStatus status) {
-  switch (status) {
-    case ClassifyUrlThrottleStatus::kContinue:
-      stream << "Continue";
-      return stream;
-    case ClassifyUrlThrottleStatus::kProceed:
-      stream << "Proceed";
-      return stream;
-    case ClassifyUrlThrottleStatus::kDefer:
-      stream << "Defer";
-      return stream;
-    case ClassifyUrlThrottleStatus::kDeferAndScheduleInterstitial:
-      stream << "DeferAndScheduleInterstitial";
-      return stream;
-    case ClassifyUrlThrottleStatus::kCancel:
-      stream << "Cancel";
-      return stream;
-    case ClassifyUrlThrottleStatus::kResume:
-      stream << "Resume";
-      return stream;
-    case ClassifyUrlThrottleStatus::kCancelDeferredNavigation:
-      stream << "CancelDeferredNavigation";
-      return stream;
-    default:
-      NOTREACHED();
-  }
-}
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
 bool ShouldShowReAuthInterstitial(
@@ -84,8 +57,9 @@ ClassifyUrlNavigationThrottle::ThrottleCheckResult
 ClassifyUrlNavigationThrottle::WillProcessRequest() {
   // We do not yet support prerendering for supervised users.
   if (navigation_handle()->IsInPrerenderedMainFrame()) {
-    return *NextNavigationState(ClassifyUrlThrottleStatus::kCancel);
+    return CANCEL;
   }
+
   CheckURL();
 
   // It is possible that check was synchronous. If that's the case,
@@ -96,7 +70,7 @@ ClassifyUrlNavigationThrottle::WillProcessRequest() {
     return DeferAndScheduleInterstitial(*result);
   }
 
-  return *NextNavigationState(ClassifyUrlThrottleStatus::kContinue);
+  return PROCEED;
 }
 
 ClassifyUrlNavigationThrottle::ThrottleCheckResult
@@ -116,7 +90,8 @@ ClassifyUrlNavigationThrottle::WillProcessResponse() {
   if (!list_.IsDecided()) {
     // Defer navigation until checks are conclusive
     waiting_for_decision_.emplace();
-    return *NextNavigationState(ClassifyUrlThrottleStatus::kDefer);
+    deferred_ = true;
+    return DEFER;
   }
 
   if (auto result = list_.GetBlockingResult(); result.has_value()) {
@@ -128,7 +103,9 @@ ClassifyUrlNavigationThrottle::WillProcessResponse() {
   base::UmaHistogramTimes(kClassifiedEarlierThanContentResponseHistogramName,
                           list_.ElapsedSinceDecided());
   VLOG(1) << "Decision was ready ahead of time:" << list_.ElapsedSinceDecided();
-  return *NextNavigationState(ClassifyUrlThrottleStatus::kProceed);
+  base::UmaHistogramEnumeration(kClassifyUrlThrottleFinalStatusHistogramName,
+                                ClassifyUrlThrottleFinalStatus::kAllowed);
+  return PROCEED;
 }
 
 void ClassifyUrlNavigationThrottle::CheckURL() {
@@ -190,7 +167,9 @@ void ClassifyUrlNavigationThrottle::OnURLCheckDone(
     base::UmaHistogramTimes(kClassifiedLaterThanContentResponseHistogramName,
                             waiting_for_decision_->Elapsed());
     VLOG(1) << "Had to delay decision:" << waiting_for_decision_->Elapsed();
-    NextNavigationState(ClassifyUrlThrottleStatus::kResume);
+    base::UmaHistogramEnumeration(kClassifyUrlThrottleFinalStatusHistogramName,
+                                  ClassifyUrlThrottleFinalStatus::kAllowed);
+    Resume();
   }
 }
 
@@ -243,18 +222,32 @@ void ClassifyUrlNavigationThrottle::OnInterstitialResult(
         return;
       }
 #endif
-      Profile* profile = Profile::FromBrowserContext(
-          navigation_handle()->GetWebContents()->GetBrowserContext());
-      std::string interstitial_html =
-          SupervisedUserInterstitial::GetHTMLContents(
-              SupervisedUserServiceFactory::GetForProfile(profile),
-              profile->GetPrefs(), result.reason, already_sent_request,
-              is_main_frame, g_browser_process->GetApplicationLocale());
       CancelDeferredNavigation(content::NavigationThrottle::ThrottleCheckResult(
-          CANCEL, net::ERR_BLOCKED_BY_CLIENT, std::move(interstitial_html)));
+          CANCEL, net::ERR_BLOCKED_BY_CLIENT,
+          GetInterstitialHTML(result, already_sent_request, is_main_frame)));
+
       break;
     }
   }
+}
+
+std::string ClassifyUrlNavigationThrottle::GetInterstitialHTML(
+    SupervisedUserURLFilter::Result result,
+    bool already_sent_request,
+    bool is_main_frame) const {
+#if BUILDFLAG(IS_ANDROID)
+  if (supervised_user_service()->IsLocalBrowserFilteringEnabled() &&
+      UseInterstitialForLocalSupervision()) {
+    return SupervisedUserInterstitial::GetHTMLContentsWithoutApprovals(
+        result.url, g_browser_process->GetApplicationLocale());
+  }
+#endif
+  Profile* profile = Profile::FromBrowserContext(
+      navigation_handle()->GetWebContents()->GetBrowserContext());
+  return SupervisedUserInterstitial::GetHTMLContentsWithApprovals(
+      supervised_user_service(), profile->GetPrefs(), result.reason,
+      already_sent_request, is_main_frame,
+      g_browser_process->GetApplicationLocale());
 }
 
 const GURL& ClassifyUrlNavigationThrottle::currently_navigated_url() const {
@@ -262,106 +255,53 @@ const GURL& ClassifyUrlNavigationThrottle::currently_navigated_url() const {
 }
 
 SupervisedUserURLFilter* ClassifyUrlNavigationThrottle::url_filter() const {
-  return SupervisedUserServiceFactory::GetForProfile(
-             Profile::FromBrowserContext(
-                 navigation_handle()->GetWebContents()->GetBrowserContext()))
-      ->GetURLFilter();
+  return supervised_user_service()->GetURLFilter();
 }
 
-void MaybeCreateAndAddClassifyUrlNavigationThrottle(
+SupervisedUserService* ClassifyUrlNavigationThrottle::supervised_user_service()
+    const {
+  return SupervisedUserServiceFactory::GetForProfile(
+      Profile::FromBrowserContext(
+          navigation_handle()->GetWebContents()->GetBrowserContext()));
+}
+
+void ClassifyUrlNavigationThrottle::MaybeCreateAndAdd(
     content::NavigationThrottleRegistry& registry) {
   Profile* profile = Profile::FromBrowserContext(
       registry.GetNavigationHandle().GetWebContents()->GetBrowserContext());
-  CHECK(profile);
 
-  if (!IsSubjectToParentalControls(*profile->GetPrefs())) {
-    base::UmaHistogramEnumeration(kClassifyUrlThrottleUseCaseHistogramName,
-                                  ClassifyUrlThrottleUseCase::kNotAllowed);
+  // Off the record profiles don't have the infrastructure to support the
+  // ClassifyUrlNavigationThrottle, so we should not add it.
+  if (profile->IsOffTheRecord()) {
     return;
   }
 
-  SupervisedUserService* supervised_user_service =
-      SupervisedUserServiceFactory::GetForProfile(profile);
-  if (!supervised_user_service) {
-    base::UmaHistogramEnumeration(kClassifyUrlThrottleUseCaseHistogramName,
-                                  ClassifyUrlThrottleUseCase::kNotAllowed);
+  // This check is not making logical difference as the throttle would allow
+  // this navigation anyway, but in this case no metrics will be recorded.
+  if (SupervisedUserServiceFactory::GetInstance()
+          ->GetForProfile(profile)
+          ->GetURLFilter()
+          ->GetWebFilterType() == WebFilterType::kDisabled) {
     return;
   }
 
-  base::UmaHistogramEnumeration(
-      kClassifyUrlThrottleUseCaseHistogramName,
-      ClassifyUrlThrottleUseCase::kFamilyLinkSupervisedUser);
-  ClassifyUrlNavigationThrottle::CreateAndAdd(registry);
-}
-
-std::optional<ClassifyUrlNavigationThrottle::ThrottleCheckResult>
-ClassifyUrlNavigationThrottle::NextNavigationState(
-    ClassifyUrlThrottleStatus status) {
-  VLOG(1) << status;
-  base::UmaHistogramEnumeration(kClassifyUrlThrottleStatusHistogramName,
-                                status);
-
-  // Final states: Proceed/Resume, CancelDeferredNavigation
-  switch (status) {
-    case ClassifyUrlThrottleStatus::kProceed:
-    case ClassifyUrlThrottleStatus::kResume:
-      base::UmaHistogramEnumeration(
-          kClassifyUrlThrottleFinalStatusHistogramName,
-          ClassifyUrlThrottleFinalStatus::kAllowed);
-      break;
-    case ClassifyUrlThrottleStatus::kCancelDeferredNavigation:
-      base::UmaHistogramEnumeration(
-          kClassifyUrlThrottleFinalStatusHistogramName,
-          ClassifyUrlThrottleFinalStatus::kBlocked);
-      break;
-    case ClassifyUrlThrottleStatus::kContinue:
-    case ClassifyUrlThrottleStatus::kDefer:
-    case ClassifyUrlThrottleStatus::kDeferAndScheduleInterstitial:
-      // Don't handle intermediate states.
-    case ClassifyUrlThrottleStatus::kCancel:
-      // Currently, Cancel is not reachable: the
-      // SupervisedUserGoogleAuthNavigationThrottle class is handling it first.
-      break;
-  }
-
-  switch (status) {
-    case ClassifyUrlThrottleStatus::kContinue:
-    case ClassifyUrlThrottleStatus::kProceed:
-      return NavigationThrottle::PROCEED;
-    case ClassifyUrlThrottleStatus::kDefer:
-    case ClassifyUrlThrottleStatus::kDeferAndScheduleInterstitial:
-      deferred_ = true;
-      return NavigationThrottle::DEFER;
-    case ClassifyUrlThrottleStatus::kCancel:
-      // Currently, Cancel is not reachable: the
-      // SupervisedUserGoogleAuthNavigationThrottle class is handling it first.
-      return NavigationThrottle::CANCEL;
-    case ClassifyUrlThrottleStatus::kResume:
-      Resume();
-      return std::nullopt;
-    case ClassifyUrlThrottleStatus::kCancelDeferredNavigation:
-      return std::nullopt;
-  }
+  registry.AddThrottle(
+      base::WrapUnique(new ClassifyUrlNavigationThrottle(registry)));
 }
 
 ClassifyUrlNavigationThrottle::ThrottleCheckResult
 ClassifyUrlNavigationThrottle::DeferAndScheduleInterstitial(
     SupervisedUserURLFilter::Result result) {
   ScheduleInterstitial(result);
-  return *NextNavigationState(
-      ClassifyUrlThrottleStatus::kDeferAndScheduleInterstitial);
+  deferred_ = true;
+  return DEFER;
 }
 
 void ClassifyUrlNavigationThrottle::CancelDeferredNavigation(
     ThrottleCheckResult result) {
+  base::UmaHistogramEnumeration(kClassifyUrlThrottleFinalStatusHistogramName,
+                                ClassifyUrlThrottleFinalStatus::kBlocked);
   content::NavigationThrottle::CancelDeferredNavigation(result);
-  NextNavigationState(ClassifyUrlThrottleStatus::kCancelDeferredNavigation);
-}
-
-void ClassifyUrlNavigationThrottle::CreateAndAdd(
-    content::NavigationThrottleRegistry& registry) {
-  registry.AddThrottle(
-      base::WrapUnique(new ClassifyUrlNavigationThrottle(registry)));
 }
 
 const char* ClassifyUrlNavigationThrottle::GetNameForLogging() {

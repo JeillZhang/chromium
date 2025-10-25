@@ -18,9 +18,10 @@ import 'chrome://resources/cr_elements/icons.html.js';
 import './category_setting_exceptions.js';
 import './settings_category_default_radio_group.js';
 import './site_settings_shared.css.js';
+import '../controls/collapse_radio_button.js';
 import '../privacy_icons.html.js';
-import '../privacy_page/collapse_radio_button.js';
 import '../safety_hub/safety_hub_module.js';
+import '../settings_page/settings_subpage.js';
 import '../settings_shared.css.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
@@ -32,17 +33,19 @@ import {loadTimeData} from '../i18n_setup.js';
 import type {MetricsBrowserProxy} from '../metrics_browser_proxy.js';
 import {MetricsBrowserProxyImpl, SafetyHubEntryPoint} from '../metrics_browser_proxy.js';
 import {routes} from '../route.js';
+import type {Route} from '../router.js';
 import {RouteObserverMixin, Router} from '../router.js';
 import {SafetyHubBrowserProxyImpl, SafetyHubEvent} from '../safety_hub/safety_hub_browser_proxy.js';
 import type {NotificationPermission, SafetyHubBrowserProxy} from '../safety_hub/safety_hub_browser_proxy.js';
+import {SettingsViewMixin} from '../settings_page/settings_view_mixin.js';
 
 import {ContentSetting, ContentSettingsTypes, SettingsState} from './constants.js';
 import {getTemplate} from './notifications_page.html.js';
-import type {SiteSettingsPrefsBrowserProxy} from './site_settings_prefs_browser_proxy.js';
-import {SiteSettingsPrefsBrowserProxyImpl} from './site_settings_prefs_browser_proxy.js';
+import type {SiteSettingsBrowserProxy} from './site_settings_browser_proxy.js';
+import {SiteSettingsBrowserProxyImpl} from './site_settings_browser_proxy.js';
 
-const NotificationsPageElementBase =
-    RouteObserverMixin(WebUiListenerMixin(PrefsMixin(PolymerElement)));
+const NotificationsPageElementBase = RouteObserverMixin(
+    SettingsViewMixin(WebUiListenerMixin(PrefsMixin(PolymerElement))));
 
 export class NotificationsPageElement extends NotificationsPageElementBase {
   static get is() {
@@ -55,6 +58,12 @@ export class NotificationsPageElement extends NotificationsPageElementBase {
 
   static get properties() {
     return {
+      searchTerm: {
+        type: String,
+        notify: true,
+        value: '',
+      },
+
       isGuest_: {
         type: Boolean,
         value() {
@@ -104,6 +113,7 @@ export class NotificationsPageElement extends NotificationsPageElementBase {
     };
   }
 
+  declare searchTerm: string;
   declare private isGuest_: boolean;
   declare private enablePermissionSiteSettingsRadioButton_: boolean;
   declare private shouldShowSafetyHub_: boolean;
@@ -111,8 +121,8 @@ export class NotificationsPageElement extends NotificationsPageElementBase {
   declare private showNotificationPermissionsReview_: boolean;
   declare private notificationPermissionsReviewHeader_: string;
   declare private notificationPermissionsReviewSubheader_: string;
-  private siteSettingsPrefsBrowserProxy_: SiteSettingsPrefsBrowserProxy =
-      SiteSettingsPrefsBrowserProxyImpl.getInstance();
+  private siteSettingsBrowserProxy_: SiteSettingsBrowserProxy =
+      SiteSettingsBrowserProxyImpl.getInstance();
   private safetyHubBrowserProxy_: SafetyHubBrowserProxy =
       SafetyHubBrowserProxyImpl.getInstance();
   private metricsBrowserProxy_: MetricsBrowserProxy =
@@ -137,7 +147,9 @@ export class NotificationsPageElement extends NotificationsPageElementBase {
   }
 
 
-  override currentRouteChanged() {
+  override currentRouteChanged(newRoute: Route, oldRoute?: Route) {
+    super.currentRouteChanged(newRoute, oldRoute);
+
     // Only record the metrics when the user navigates to the notification
     // settings page that shows the entry point.
     if (this.showNotificationPermissionsReview_) {
@@ -169,7 +181,7 @@ export class NotificationsPageElement extends NotificationsPageElementBase {
 
   private async updateNotificationState_() {
     const [notificationDefaultValue] = await Promise.all([
-      this.siteSettingsPrefsBrowserProxy_.getDefaultValueForContentType(
+      this.siteSettingsBrowserProxy_.getDefaultValueForContentType(
           ContentSettingsTypes.NOTIFICATIONS),
     ]);
     this.isNotificationAllowed_ =
@@ -207,6 +219,11 @@ export class NotificationsPageElement extends NotificationsPageElementBase {
     this.metricsBrowserProxy_.recordSafetyHubEntryPointClicked(
         SafetyHubEntryPoint.NOTIFICATIONS);
     Router.getInstance().navigateTo(routes.SAFETY_HUB);
+  }
+
+  // SettingsViewMixin implementation.
+  override focusBackButton() {
+    this.shadowRoot!.querySelector('settings-subpage')!.focusBackButton();
   }
 }
 

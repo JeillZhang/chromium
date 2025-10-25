@@ -5,6 +5,7 @@
 #ifndef CHROME_UPDATER_EXTERNAL_CONSTANTS_H_
 #define CHROME_UPDATER_EXTERNAL_CONSTANTS_H_
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
@@ -23,6 +24,17 @@ enum class VerifierFormat;
 }
 
 namespace updater {
+
+struct EventLoggingPermissionProvider {
+ public:
+  std::string app_id;
+#if BUILDFLAG(IS_MAC)
+  // On macOS, in addition to an AppId the application's directory name relative
+  // to Application Support/COMPANY_SHORTNAME_STRING is needed to determine
+  // whether event logging is allowed.
+  std::string directory_name;
+#endif
+};
 
 // Several constants controlling the program's behavior can come from stateful
 // external providers, such as dev-mode overrides or enterprise policies.
@@ -57,15 +69,16 @@ class ExternalConstants : public base::RefCountedThreadSafe<ExternalConstants> {
   // CRX format verification requirements.
   virtual crx_file::VerifierFormat CrxVerifierFormat() const = 0;
 
+  // Required CRX key (this is a SHA256 hash of the public key).
+  virtual std::optional<std::vector<uint8_t>> CrxPublicKeyHash() const = 0;
+
   // Minimum amount of time between successive event logging transmissions.
   virtual base::TimeDelta MinimumEventLoggingCooldown() const = 0;
 
   // Indicates which application remote event logging permissions should be
   // inferred from. Nullopt indicates that logging is unconditionally disabled.
-  // The meaning of the provider is platform specific; on macOS it is the
-  // basename of an application directory, on Windows it is an AppId.
-  virtual std::optional<std::string> GetEventLoggingPermissionProvider()
-      const = 0;
+  virtual std::optional<EventLoggingPermissionProvider>
+  GetEventLoggingPermissionProvider() const = 0;
 
   // Policies for the `PolicyManager` surfaced by external constants.
   virtual base::Value::Dict DictPolicies() const = 0;

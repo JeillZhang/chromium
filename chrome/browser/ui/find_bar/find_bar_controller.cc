@@ -8,12 +8,18 @@
 #include <string_view>
 
 #include "base/check_op.h"
+#include "base/feature_list.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
+#include "chrome/browser/ui/actions/chrome_action_id.h"
 #include "chrome/browser/ui/find_bar/find_bar.h"
 #include "chrome/browser/ui/find_bar/find_bar_platform_helper.h"
+#include "chrome/browser/ui/page_action/page_action_icon_type.h"
+#include "chrome/browser/ui/tabs/public/tab_features.h"
+#include "chrome/browser/ui/views/page_action/page_action_controller.h"
 #include "components/find_in_page/find_tab_helper.h"
 #include "components/find_in_page/find_types.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -187,6 +193,19 @@ void FindBarController::OnUserChangedFindText(std::u16string_view text) {
   }
 }
 
+void FindBarController::HandleActiveTabChanged(
+    content::WebContents* new_contents) {
+  ChangeWebContents(new_contents);
+  find_bar()->MoveWindowIfNecessary();
+  find_in_page::FindTabHelper* find_tab_helper =
+      find_in_page::FindTabHelper::FromWebContents(new_contents);
+  if (find_tab_helper && find_tab_helper->find_ui_active()) {
+    if (!find_bar()->HasFocus()) {
+      find_bar()->RestoreSavedFocus();
+    }
+  }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // FindBarController, content::WebContentsObserver implementation:
 
@@ -302,4 +321,27 @@ std::u16string FindBarController::GetSelectedText() {
   // bar.
   base::TrimWhitespace(selected_text, base::TRIM_ALL, &selected_text);
   return selected_text;
+}
+
+void FindBarController::UpdatePageAction() {
+  CHECK(IsPageActionMigrated(PageActionIconType::kFind));
+  tabs::TabInterface* tab = tabs::TabInterface::GetFromContents(web_contents());
+  tabs::TabFeatures* tab_features = tab->GetTabFeatures();
+  if (!tab_features) {
+    return;
+  }
+  // Page actions don't exist for non-normal windows.
+  page_actions::PageActionController* controller =
+      tab_features->page_action_controller();
+  if (!controller) {
+    return;
+  }
+
+  if (!find_bar_->IsFindBarVisible()) {
+    find_bar_page_action_activity_.reset();
+    controller->Hide(kActionFind);
+  } else {
+    controller->Show(kActionFind);
+    find_bar_page_action_activity_ = controller->AddActivity(kActionFind);
+  }
 }

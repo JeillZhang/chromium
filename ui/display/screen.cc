@@ -10,7 +10,7 @@
 #include "base/check.h"
 #include "base/containers/contains.h"
 #include "base/memory/ptr_util.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "ui/display/display.h"
@@ -32,7 +32,7 @@ Screen::Screen() : display_id_for_new_windows_(kInvalidDisplayId) {}
 Screen::~Screen() = default;
 
 // static
-Screen* Screen::GetScreen() {
+Screen* Screen::Get() {
   return g_screen;
 }
 
@@ -252,7 +252,7 @@ ScopedNativeScreen::ScopedNativeScreen(const base::Location& location) {
 
 ScopedNativeScreen::~ScopedNativeScreen() {
   if (screen_) {
-    DCHECK_EQ(screen_.get(), Screen::GetScreen());
+    DCHECK_EQ(screen_.get(), Screen::Get());
     Screen::SetScreenInstance(nullptr);
     screen_.reset();
   }

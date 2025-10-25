@@ -161,15 +161,33 @@ void WebAppTestRegistryObserverAdapter::SetWebAppWillBeUpdatedFromSyncDelegate(
   app_will_be_updated_from_sync_delegate_ = std::move(delegate);
 }
 
+void WebAppTestRegistryObserverAdapter::SetWebAppEffectiveScopeChangedDelegate(
+    WebAppEffectiveScopeChangedDelegate delegate) {
+  app_effective_scope_changed_delegate_ = std::move(delegate);
+}
+
 void WebAppTestRegistryObserverAdapter::SetWebAppLastBadgingTimeChangedDelegate(
     WebAppLastBadgingTimeChangedDelegate delegate) {
   app_last_badging_time_changed_delegate_ = std::move(delegate);
+}
+
+void WebAppTestRegistryObserverAdapter::SetWebAppPendingUpdateChangedDelegate(
+    WebAppPendingUpdateChangedDelegate delegate) {
+  app_pending_update_changed_delegate_ = std::move(delegate);
 }
 
 void WebAppTestRegistryObserverAdapter::
     SetWebAppProtocolSettingsChangedDelegate(
         WebAppProtocolSettingsChangedDelegate delegate) {
   app_protocol_settings_changed_delegate_ = std::move(delegate);
+}
+
+void WebAppTestRegistryObserverAdapter::OnWebAppEffectiveScopeChanged(
+    const webapps::AppId& app_id,
+    const WebAppScope& new_scope) {
+  if (app_effective_scope_changed_delegate_) {
+    app_effective_scope_changed_delegate_.Run(app_id, new_scope);
+  }
 }
 
 void WebAppTestRegistryObserverAdapter::OnWebAppsWillBeUpdatedFromSync(
@@ -185,7 +203,16 @@ void WebAppTestRegistryObserverAdapter::OnWebAppLastBadgingTimeChanged(
     app_last_badging_time_changed_delegate_.Run(app_id, time);
 }
 
-void WebAppTestRegistryObserverAdapter::OnWebAppProtocolSettingsChanged() {
+void WebAppTestRegistryObserverAdapter::OnWebAppPendingUpdateChanged(
+    const webapps::AppId& app_id,
+    bool has_pending_update) {
+  if (app_pending_update_changed_delegate_) {
+    app_pending_update_changed_delegate_.Run(app_id, has_pending_update);
+  }
+}
+
+void WebAppTestRegistryObserverAdapter::OnWebAppProtocolSettingsChanged(
+    const webapps::AppId& app_id) {
   if (app_protocol_settings_changed_delegate_)
     app_protocol_settings_changed_delegate_.Run();
 }

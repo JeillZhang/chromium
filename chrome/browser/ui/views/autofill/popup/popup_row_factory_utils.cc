@@ -46,7 +46,7 @@
 #include "components/compose/core/browser/compose_features.h"
 #include "components/favicon_base/favicon_types.h"
 #include "components/password_manager/core/common/password_manager_constants.h"
-#include "components/plus_addresses/grit/plus_addresses_strings.h"
+#include "components/plus_addresses/core/browser/grit/plus_addresses_strings.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/user_education/common/new_badge/new_badge_controller.h"
 #include "components/user_education/views/new_badge_label.h"
@@ -86,12 +86,13 @@ constexpr int kRefreshInkDropRadius = 12;
 
 // Popup items that use a leading icon instead of a trailing one.
 constexpr auto kPopupItemTypesUsingLeadingIcons = DenseSet<SuggestionType>(
-    {SuggestionType::kAllSavedPasswordsEntry, SuggestionType::kManageAddress,
+    {SuggestionType::kAllLoyaltyCardsEntry,
+     SuggestionType::kAllSavedPasswordsEntry, SuggestionType::kManageAddress,
      SuggestionType::kManageAutofillAi, SuggestionType::kManageCreditCard,
      SuggestionType::kManageIban, SuggestionType::kManageLoyaltyCard,
      SuggestionType::kManagePlusAddress, SuggestionType::kUndoOrClear,
-     SuggestionType::kViewPasswordDetails,
-     SuggestionType::kPendingStateSignin});
+     SuggestionType::kViewPasswordDetails, SuggestionType::kPendingStateSignin,
+     SuggestionType::kWebauthnSignInWithAnotherDevice});
 
 // Max width for the username and masked password.
 constexpr int kAutofillPopupUsernameMaxWidth = 272;
@@ -99,6 +100,8 @@ constexpr int kAutofillPopupPasswordMaxWidth = 108;
 
 // Max width for the Autofill suggestion text.
 constexpr int kAutofillSuggestionMaxWidth = 192;
+// Multiline suggestions look crammed without extra vertical margin.
+constexpr int kAutofillMultilineSuggestionAdditionalVerticalMargin = 8;
 
 constexpr auto kMainTextStyle = views::style::TextStyle::STYLE_BODY_3_MEDIUM;
 constexpr auto kMainTextStyleLight = views::style::TextStyle::STYLE_BODY_3;
@@ -121,9 +124,25 @@ base::RepeatingClosure CreateExecuteSoonWrapper(base::RepeatingClosure task) {
 }
 
 bool IsDeactivatedPasswordOrPasskey(const Suggestion& suggestion) {
-  return suggestion.HasDeactivatedStyle() &&
-         GetFillingProductFromSuggestionType(suggestion.type) ==
-             FillingProduct::kPassword;
+  switch (GetFillingProductFromSuggestionType(suggestion.type)) {
+    case FillingProduct::kPassword:
+    case FillingProduct::kPasskey:
+      return suggestion.HasDeactivatedStyle();
+    case FillingProduct::kAddress:
+    case FillingProduct::kPlusAddresses:
+    case FillingProduct::kCreditCard:
+    case FillingProduct::kIban:
+    case FillingProduct::kAutocomplete:
+    case FillingProduct::kMerchantPromoCode:
+    case FillingProduct::kCompose:
+    case FillingProduct::kAutofillAi:
+    case FillingProduct::kLoyaltyCard:
+    case FillingProduct::kIdentityCredential:
+    case FillingProduct::kDataList:
+    case FillingProduct::kOneTimePassword:
+    case FillingProduct::kNone:
+      return false;
+  }
 }
 
 std::unique_ptr<views::BoxLayoutView> GetBadgeView(std::u16string_view label) {
@@ -162,8 +181,11 @@ void FormatLabel(views::Label& label,
     case FillingProduct::kCompose:
     case FillingProduct::kIban:
     case FillingProduct::kMerchantPromoCode:
+    case FillingProduct::kPasskey:
     case FillingProduct::kPassword:
+    case FillingProduct::kDataList:
     case FillingProduct::kNone:
+    case FillingProduct::kOneTimePassword:
       break;
   }
 }
@@ -296,9 +318,15 @@ std::unique_ptr<PopupRowContentView> CreateFooterPopupRowContentView(
   }
   main_text_label->SetEnabled(!suggestion.is_loading);
 
-  if (suggestion.type == SuggestionType::kPendingStateSignin) {
+  if (suggestion.type == SuggestionType::kPendingStateSignin ||
+      suggestion.type == SuggestionType::kFreeformFooter) {
     main_text_label->SetMultiLine(true);
     main_text_label->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
+    view->SetInsideBorderInsets(
+        gfx::Insets(view->GetInsideBorderInsets())
+            .set_top_bottom(
+                kAutofillMultilineSuggestionAdditionalVerticalMargin,
+                kAutofillMultilineSuggestionAdditionalVerticalMargin));
   }
 
   view->AddChildView(std::move(main_text_label));
@@ -414,7 +442,9 @@ std::unique_ptr<PopupRowContentView> CreatePasswordPopupRowContentView(
   }
 
   std::vector<std::unique_ptr<views::View>> subtext_views;
-  subtext_views.push_back(CreatePasswordSubtextView(suggestion));
+  if (!suggestion.labels.empty()) {
+    subtext_views.push_back(CreatePasswordSubtextView(suggestion));
+  }
   popup_cell_utils::AddSuggestionContentToView(
       suggestion, std::move(main_text_label), CreateMinorTextLabels(suggestion),
       CreatePasswordDescriptionLabel(suggestion), std::move(subtext_views),
@@ -678,6 +708,8 @@ std::unique_ptr<PopupRowView> CreatePopupRowView(
     case SuggestionType::kInsecureContextPaymentDisabledMessage:
       NOTREACHED();
     case SuggestionType::kPasswordEntry:
+    case SuggestionType::kBackupPasswordEntry:
+    case SuggestionType::kTroubleSigningInEntry:
     case SuggestionType::kAccountStoragePasswordEntry:
       return std::make_unique<PopupRowView>(
           a11y_selection_delegate, selection_delegate, controller, line_number,

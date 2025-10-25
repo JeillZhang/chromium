@@ -75,6 +75,9 @@
   // Tracks whether the lock surface was switched during the current foreground
   // session.
   BOOL _switchedToIncognitoGrid;
+  // Track whether the app is terminating. This is used to avoid activating
+  // UI when the app is already closing.
+  BOOL _isAppTerminating;
 }
 
 @synthesize lastBackgroundedTime = _lastBackgroundedTime;
@@ -107,8 +110,17 @@
     _applicationCommandsHandler = applicationCommandsHandler;
     _observers = [IncognitoReauthObserverList
         observersWithProtocol:@protocol(IncognitoReauthObserver)];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+           selector:@selector(appWillTerminate:)
+               name:UIApplicationWillTerminateNotification
+             object:nil];
   }
   return self;
+}
+
+- (void)dealloc {
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
 }
 
 - (BOOL)isAuthenticationRequired {
@@ -116,12 +128,12 @@
 }
 
 - (IncognitoLockState)incognitoLockState {
-  if (self.windowHadIncognitoContentWhenBackgrounded &&
-      !self.authenticatedSinceLastForeground) {
+  if (!self.authenticatedSinceLastForeground) {
     if ([self isReauthFeatureEnabled]) {
       return IncognitoLockState::kReauth;
     } else if ([self isSoftLockFeatureEnabled] &&
-               self.backgroundedForEnoughTime) {
+               self.backgroundedForEnoughTime &&
+               self.windowHadIncognitoContentWhenBackgrounded) {
       return IncognitoLockState::kSoftLock;
     }
   }
@@ -231,6 +243,10 @@
 
 - (void)sceneState:(SceneState*)sceneState
     transitionedToActivationLevel:(SceneActivationLevel)level {
+  if (_isAppTerminating) {
+    return;
+  }
+
   if (level <= SceneActivationLevelBackground) {
     [self updateWindowHasIncognitoContent:sceneState];
     [self updateBackgroundedForEnoughTimeOnBackground];
@@ -279,6 +295,11 @@
 
 #pragma mark - PrefObserverDelegate
 
+// Called when the app is about to terminate.
+- (void)appWillTerminate:(NSNotification*)notification {
+  _isAppTerminating = YES;
+}
+
 - (void)onPreferenceChanged:(const std::string&)preferenceName {
   [self notifyObservers];
 }
@@ -309,7 +330,7 @@
                                sceneState.incognitoContentVisible &&
                                !sceneState.controller.tabGridVisible;
   if (!_switchedToIncognitoGrid && isIncognitoTabVisible &&
-      self.authenticationRequired) {
+      self.isAuthenticationRequired) {
     _switchedToIncognitoGrid = YES;
     // TODO(crbug.com/417621249): Add callback that allows specifying animation
     // type.
@@ -483,7 +504,8 @@
             ->count() > 0;
     // If there is no tabs, act as if the user authenticated since last
     // foreground to avoid issue with multiwindows.
-    if (!hasIncognitoContent) {
+    if (!hasIncognitoContent &&
+        self.incognitoLockState != IncognitoLockState::kReauth) {
       self.authenticatedSinceLastForeground = YES;
     }
   }

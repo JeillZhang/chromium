@@ -12,6 +12,7 @@
 #include "chrome/browser/ui/ash/web_view/ash_web_view_impl.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
+#include "content/public/browser/web_contents.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/window_open_disposition.h"
 
@@ -52,8 +53,8 @@ content::WebContents* SearchResultsView::OpenURLFromTab(
     base::OnceCallback<void(content::NavigationHandle&)>
         navigation_handle_callback) {
   // Open the URL specified by `params` in a new tab.
-  NavigateParams new_tab_params(static_cast<Browser*>(nullptr), params.url,
-                                params.transition);
+  NavigateParams new_tab_params(static_cast<BrowserWindowInterface*>(nullptr),
+                                params.url, params.transition);
   switch (params.disposition) {
     case WindowOpenDisposition::UNKNOWN:
     case WindowOpenDisposition::NEW_BACKGROUND_TAB:

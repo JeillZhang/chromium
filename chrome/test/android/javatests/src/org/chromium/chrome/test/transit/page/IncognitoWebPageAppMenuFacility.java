@@ -5,30 +5,41 @@
 package org.chromium.chrome.test.transit.page;
 
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.incognito.IncognitoUtils;
 
 /** The app menu shown when pressing ("...") in an Incognito Tab showing a web page. */
 public class IncognitoWebPageAppMenuFacility extends PageAppMenuFacility<WebPageStation> {
     @Override
     protected void declareItems(ItemsBuilder items) {
-        mNewTab = declareMenuItemToStation(items, NEW_TAB_ID, this::createNewTabPageStation);
-        mNewIncognitoTab =
-                declareMenuItemToStation(
-                        items, NEW_INCOGNITO_TAB_ID, this::createIncognitoNewTabPageStation);
-        if (ChromeFeatureList.sTabGroupParityBottomSheetAndroid.isEnabled()) {
-            mAddToGroup =
-                    declareMenuItemToFacility(
-                            items, ADD_TO_GROUP_ID, this::createTabGroupListBottomSheetFacility);
+        if (!IncognitoUtils.shouldOpenIncognitoAsWindow()) {
+            mNewTab = declareMenuItem(items, NEW_TAB_ID);
         }
-        mNewWindow = declarePossibleMenuItem(items, NEW_WINDOW_ID, this::handleOpenNewWindow);
+        mNewIncognitoTab = declareMenuItem(items, NEW_INCOGNITO_TAB_ID);
 
-        declareStubMenuItem(items, HISTORY_ID);
+        if (ChromeFeatureList.sTabGroupParityBottomSheetAndroid.isEnabled()) {
+            mAddToGroup = declareMenuItem(items, ADD_TO_GROUP_ID);
+        }
+
+        if (ChromeFeatureList.sAndroidPinnedTabsTabletTabStrip.isEnabled()
+                || ChromeFeatureList.sAndroidPinnedTabs.isEnabled()) {
+            // At most one of these exist.
+            mPinTab = declarePossibleMenuItem(items, PIN_TAB);
+            mUnpinTab = declarePossibleMenuItem(items, UNPIN_TAB);
+        }
+
+        mNewWindow = declarePossibleMenuItem(items, NEW_WINDOW_ID);
+        if (IncognitoUtils.shouldOpenIncognitoAsWindow()) {
+            mNewIncognitoWindow = declareMenuItem(items, NEW_INCOGNITO_WINDOW_ID);
+        }
+
+        declareMenuItem(items, HISTORY_ID);
         declareAbsentMenuItem(items, DELETE_BROWSING_DATA_ID);
-        declareStubMenuItem(items, DOWNLOADS_ID);
-        declareStubMenuItem(items, BOOKMARKS_ID);
+        declareMenuItem(items, DOWNLOADS_ID);
+        declareMenuItem(items, BOOKMARKS_ID);
         declareAbsentMenuItem(items, RECENT_TABS_ID);
 
-        declareStubMenuItem(items, SHARE_ID);
-        declareStubMenuItem(items, FIND_IN_PAGE_ID);
+        declareMenuItem(items, SHARE_ID);
+        declareMenuItem(items, FIND_IN_PAGE_ID);
         declarePossibleStubMenuItem(items, TRANSLATE_ID);
 
         // None of these should exist.
@@ -37,7 +48,7 @@ public class IncognitoWebPageAppMenuFacility extends PageAppMenuFacility<WebPage
 
         declarePossibleStubMenuItem(items, DESKTOP_SITE_ID);
 
-        mSettings = declareMenuItemToStation(items, SETTINGS_ID, this::createSettingsStation);
-        declareStubMenuItem(items, HELP_AND_FEEDBACK_ID);
+        mSettings = declareMenuItem(items, SETTINGS_ID);
+        declareMenuItem(items, HELP_AND_FEEDBACK_ID);
     }
 }

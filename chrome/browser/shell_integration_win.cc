@@ -170,7 +170,7 @@ bool IsValidCustomScheme(const std::wstring& scheme) {
 // be retrieved in the HKCR registry subkey method implemented below. We call
 // AssocQueryString with the new Win8-only flag ASSOCF_IS_PROTOCOL instead.
 std::u16string GetAppForSchemeUsingAssocQuery(const GURL& url) {
-  const std::wstring url_scheme = base::ASCIIToWide(url.scheme());
+  const std::wstring url_scheme = base::ASCIIToWide(url.GetScheme());
   if (!IsValidCustomScheme(url_scheme)) {
     return std::u16string();
   }
@@ -192,7 +192,7 @@ std::u16string GetAppForSchemeUsingAssocQuery(const GURL& url) {
 }
 
 std::u16string GetAppForSchemeUsingRegistry(const GURL& url) {
-  const std::wstring url_scheme = base::ASCIIToWide(url.scheme());
+  const std::wstring url_scheme = base::ASCIIToWide(url.GetScheme());
   if (!IsValidCustomScheme(url_scheme)) {
     return std::u16string();
   }
@@ -963,24 +963,6 @@ int MigrateShortcutsInPathInternal(const base::FilePath& chrome_exe,
           break;
         default:
           NOTREACHED();
-      }
-    }
-
-    // Clear dual_mode property from any shortcuts that previously had it (it
-    // was only ever installed on shortcuts with the
-    // |default_chromium_model_id|).
-    std::wstring default_chromium_model_id(
-        ShellUtil::GetBrowserModelId(is_per_user_install));
-    if (expected_app_id == default_chromium_model_id) {
-      propvariant.Reset();
-      if (property_store->GetValue(PKEY_AppUserModel_IsDualMode,
-                                   propvariant.Receive()) != S_OK) {
-        // When in doubt, prefer to not update the shortcut.
-        NOTREACHED();
-      }
-      if (propvariant.get().vt == VT_BOOL &&
-                 !!propvariant.get().boolVal) {
-        updated_properties.set_dual_mode(false);
       }
     }
 

@@ -9,10 +9,9 @@
 #include "third_party/blink/renderer/core/animation/animation.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/element.h"
+#include "third_party/blink/renderer/core/style/style_trigger_attachment.h"
 
 namespace blink {
-
-class AnimationTrigger;
 
 class CORE_EXPORT CSSAnimation : public Animation {
   DEFINE_WRAPPERTYPEINFO();
@@ -22,8 +21,7 @@ class CORE_EXPORT CSSAnimation : public Animation {
                AnimationTimeline*,
                AnimationEffect*,
                wtf_size_t animation_index,
-               const String& animation_name,
-               AnimationTrigger* trigger);
+               const String& animation_name);
 
   bool IsCSSAnimation() const final { return true; }
 
@@ -93,8 +91,13 @@ class CORE_EXPORT CSSAnimation : public Animation {
   // depends on computed values.
   void FlushPendingUpdates() const override { FlushStyles(); }
 
-  AnimationTrigger* GetTrigger() const { return css_trigger_.Get(); }
-  void SetTrigger(AnimationTrigger* trigger) { css_trigger_ = trigger; }
+  const Member<const StyleTriggerAttachmentVector>& GetTriggerAttachments() {
+    return trigger_attachments_;
+  }
+  void SetTriggerAttachments(
+      const Member<const StyleTriggerAttachmentVector>& attachments) {
+    trigger_attachments_ = attachments;
+  }
 
  protected:
   AnimationEffect::EventDelegate* CreateEventDelegate(
@@ -131,12 +134,13 @@ class CORE_EXPORT CSSAnimation : public Animation {
   bool ignore_css_range_start_ = false;
   bool ignore_css_range_end_ = false;
 
-  // The trigger corresponding to the animation-trigger property.
-  Member<AnimationTrigger> css_trigger_;
   // The owning element of an animation refers to the element or pseudo-element
   // whose animation-name property was applied that generated the animation
   // The spec: https://drafts.csswg.org/css-animations-2/#owning-element-section
   Member<Element> owning_element_;
+
+  // Names of Triggers corresponding to the animation-trigger property.
+  Member<const StyleTriggerAttachmentVector> trigger_attachments_;
 };
 
 template <>

@@ -11,6 +11,8 @@
 #include "base/memory/ref_counted.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "chrome/updater/external_constants.h"
+#include "chrome/updater/registration_data.h"
 #include "chrome/updater/test/integration_tests_impl.h"
 #include "chrome/updater/test/test_scope.h"
 #include "chrome/updater/update_service.h"
@@ -22,10 +24,6 @@ class FilePath;
 class Version;
 }  // namespace base
 
-namespace updater {
-struct RegistrationRequest;
-}  // namespace updater
-
 namespace updater::test {
 
 class ScopedServer;
@@ -36,9 +34,12 @@ class IntegrationTestCommands
   virtual void EnterTestMode(const GURL& update_url,
                              const GURL& crash_upload_url,
                              const GURL& app_logo_url,
+                             const GURL& event_logging_url,
                              base::TimeDelta idle_timeout,
                              base::TimeDelta server_keep_alive_time,
-                             base::TimeDelta ceca_connection_timeout) const = 0;
+                             base::TimeDelta ceca_connection_timeout,
+                             std::optional<EventLoggingPermissionProvider>
+                                 event_logging_permission_provider) const = 0;
   virtual void ExitTestMode() const = 0;
   virtual void SetDictPolicies(const base::Value::Dict& values) const = 0;
   virtual void SetPlatformPolicies(const base::Value::Dict& values) const = 0;
@@ -93,7 +94,8 @@ class IntegrationTestCommands
                                     bool do_fault_injection,
                                     bool skip_download,
                                     const base::Version& updater_version,
-                                    const std::string& event_regex) const = 0;
+                                    const std::string& event_regex,
+                                    bool use_xz) const = 0;
   virtual void ExpectUpdateSequenceBadHash(
       ScopedServer* test_server,
       const std::string& app_id,
@@ -142,6 +144,8 @@ class IntegrationTestCommands
   virtual void RunWakeActive(int exit_code) const = 0;
   virtual void RunCrashMe() const = 0;
   virtual void RunServer(int exit_code, bool internal) const = 0;
+  virtual void RunUpdateApps(int exit_code,
+                             const base::Version& version) const = 0;
 
   virtual void RegisterApp(const RegistrationRequest& registration) const = 0;
   virtual void CheckForUpdate(const std::string& app_id) const = 0;
@@ -178,6 +182,15 @@ class IntegrationTestCommands
                                 const base::Version& version) const = 0;
   virtual void RunUninstallCmdLine() const = 0;
   virtual void RunHandoff(const std::string& app_id) const = 0;
+  virtual void InstallScheduledTask(bool run_elevated,
+                                    const std::string& task_name,
+                                    bool use_task_subfolders) const = 0;
+  virtual void IsScheduledTaskRegistered(bool run_elevated,
+                                         const std::string& task_name,
+                                         bool use_task_subfolders) const = 0;
+  virtual void DeleteScheduledTask(bool run_elevated,
+                                   const std::string& task_name,
+                                   bool use_task_subfolders) const = 0;
 #endif  // BUILDFLAG(IS_WIN)
   virtual void InstallAppViaService(
       const std::string& app_id,
@@ -224,23 +237,26 @@ class IntegrationTestCommands
                                                const std::string& language) = 0;
   virtual void RunMockOfflineMetaInstall(const std::string& app_id,
                                          const base::Version& version,
+                                         const std::string& tag,
                                          const base::FilePath& installer_path,
                                          const std::string& arguments,
                                          bool is_silent_install,
                                          const std::string& platform,
-                                         int string_resource_id_to_find,
-                                         const std::string& language,
+                                         const std::string& installer_text,
+                                         const bool always_launch_cmd,
+                                         const int expected_exit_code,
                                          bool expect_success) = 0;
   virtual void DMPushEnrollmentToken(const std::string& enrollment_token) = 0;
   virtual void DMDeregisterDevice() = 0;
   virtual void DMCleanup() = 0;
   virtual void InstallEnterpriseCompanionApp() = 0;
-  virtual void InstallBrokenEnterpriseCompanionApp() = 0;
-  virtual void UninstallBrokenEnterpriseCompanionApp() = 0;
   virtual void InstallEnterpriseCompanionAppOverrides(
       const base::Value::Dict& external_overrides) = 0;
   virtual void ExpectEnterpriseCompanionAppNotInstalled() = 0;
   virtual void UninstallEnterpriseCompanionApp() = 0;
+  virtual void SetAppAllowsUsageStats(const std::string& identifier,
+                                      bool allowed) = 0;
+  virtual void ClearAppAllowsUsageStats(const std::string& identifier) = 0;
 
  protected:
   friend class base::RefCountedThreadSafe<IntegrationTestCommands>;

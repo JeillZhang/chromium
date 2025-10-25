@@ -8,8 +8,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "base/base64.h"
 #include "base/feature_list.h"
@@ -28,6 +31,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/trace_event/trace_event.h"
+#include "components/history/core/browser/history_types.h"
 #include "components/history/core/browser/in_memory_database.h"
 #include "components/history/core/browser/keyword_search_term.h"
 #include "components/history/core/browser/keyword_search_term_util.h"
@@ -216,6 +220,7 @@ void SearchProvider::Start(const AutocompleteInput& input,
   model->Load();
 
   matches_.clear();
+  smart_compose_inline_hint_.clear();
 
   // At this point, we could exit early if the input is on-focus or empty,
   // because offering suggestions in those scenarios is handled by
@@ -297,11 +302,13 @@ void SearchProvider::Start(const AutocompleteInput& input,
 
   input_ = input;
 
-  // Don't search the history database for on-focus inputs or Lens searchboxes.
-  // On-focus inputs should only be used to warm up the suggest server; and Lens
-  // searchboxes do not show suggestions from the history database.
+  // Don't search the history database for on-focus inputs, Lens, or compose
+  // searchboxes. On-focus inputs should only be used to warm up the suggest
+  // server; and Lens searchboxes do not show suggestions from the history
+  // database.
   if (!input.IsZeroSuggest() &&
-      !omnibox::IsLensSearchbox(input_.current_page_classification())) {
+      !omnibox::IsLensSearchbox(input_.current_page_classification()) &&
+      !omnibox::IsComposebox(input_.current_page_classification())) {
     DoHistoryQuery(minimal_changes);
     // Answers needs scored history results before any suggest query has been
     // started, since the query for answer-bearing results needs additional
@@ -433,6 +440,7 @@ void SearchProvider::OnURLLoadComplete(
           client()->GetOmniboxTriggeredFeatureService()->FeatureTriggered(
               metrics::OmniboxEventProto_Feature_REMOTE_SEARCH_FEATURE);
         }
+        smart_compose_inline_hint_ = results->smart_compose_inline_hint;
         SortResults(is_keyword, results);
         PrefetchImages(results);
       }
@@ -460,6 +468,7 @@ void SearchProvider::StopSuggest() {
 void SearchProvider::ClearAllResults() {
   keyword_results_.Clear();
   default_results_.Clear();
+  smart_compose_inline_hint_.clear();
 }
 
 void SearchProvider::UpdateMatchContentsClass(
@@ -607,7 +616,7 @@ void SearchProvider::Run(bool query_is_private) {
   // Start a new request with the current input.
   time_suggest_request_sent_ = base::TimeTicks::Now();
 
-  if (!query_is_private) {
+  if (!query_is_private && !input_.InKeywordMode()) {
     default_loader_ =
         CreateSuggestLoader(providers_.GetDefaultProviderURL(), input_);
   }
@@ -696,12 +705,12 @@ base::TimeDelta SearchProvider::GetSuggestQueryDelay() const {
 }
 
 void SearchProvider::StartOrStopSuggestQuery(bool minimal_changes) {
-  // Since there is currently no contextual search suggest, lens contextual
-  // searchboxes, shouldn't query suggest and only the verbatim matches should
-  // be shown.
-  if (omnibox::IsLensContextualSearchbox(
-          input_.current_page_classification()) &&
-      !lens::features::ShowContextualSearchboxSearchSuggest()) {
+  // Since there is currently no contextual search suggest or typed AI mode
+  // suggest, lens contextual searchboxes and the composebox, shouldn't query
+  // suggest and only the verbatim matches should be shown.
+  if ((omnibox::IsLensContextualSearchbox(
+           input_.current_page_classification()) &&
+       !lens::features::ShowContextualSearchboxSearchSuggest())) {
     return;
   }
   // Make sure the current query can be sent to at least one suggest service.
@@ -996,7 +1005,8 @@ void SearchProvider::ConvertResultsToAutocompleteMatches() {
     // so it's not possible to open a verbatim search match. Do not provide one.
     if (keyword_url &&
         (keyword_url->type() != TemplateURL::OMNIBOX_API_EXTENSION) &&
-        (keyword_url->starter_pack_id() != TemplateURLStarterPackData::kTabs)) {
+        (keyword_url->starter_pack_id() !=
+         template_url_starter_pack_data::kTabs)) {
       bool keyword_relevance_from_server;
       const int keyword_verbatim_relevance =
           GetKeywordVerbatimRelevance(&keyword_relevance_from_server);
@@ -1035,9 +1045,6 @@ void SearchProvider::ConvertResultsToAutocompleteMatches() {
                                   &matches);
   }
 
-  if (OmniboxFieldTrial::kAnswerActionsShowAboveKeyboard.Get()) {
-    DuplicateCardAnswer(&matches);
-  }
   // Now add the most relevant matches to |matches_|.  We take up to
   // provider_max_matches_ suggest/navsuggest matches, regardless of origin.  We
   // always include in that set a legal default match if possible. If we have
@@ -1176,11 +1183,12 @@ void SearchProvider::AddTransformedHistoryResultsToMap(
 }
 
 SearchSuggestionParser::SuggestResults
-SearchProvider::ScoreHistoryResultsHelper(const HistoryResults& results,
-                                          bool base_prevent_inline_autocomplete,
-                                          bool input_multiple_words,
-                                          const std::u16string& input_text,
-                                          bool is_keyword) {
+SearchProvider::ScoreHistoryResultsHelper(
+    const history::KeywordSearchTermVisitList& results,
+    bool base_prevent_inline_autocomplete,
+    bool input_multiple_words,
+    const std::u16string& input_text,
+    bool is_keyword) {
   SearchSuggestionParser::SuggestResults scored_results;
   // True if the user has asked this exact query previously.
   bool found_what_you_typed_match = false;
@@ -1279,7 +1287,7 @@ SearchProvider::ScoreHistoryResultsHelper(const HistoryResults& results,
 }
 
 void SearchProvider::ScoreHistoryResults(
-    const HistoryResults& results,
+    const history::KeywordSearchTermVisitList& results,
     bool is_keyword,
     SearchSuggestionParser::SuggestResults* scored_results) {
   DCHECK(scored_results);

@@ -43,6 +43,15 @@ void AutofillFormFeaturesJavaScriptFeature::SetAutofillAcrossIframes(
       base::Value::List().Append(enabled));
 }
 
+void AutofillFormFeaturesJavaScriptFeature::
+    SetAutofillDisallowMoreHyphenLikeLabels(web::WebFrame* frame,
+                                            bool enabled) {
+  CHECK(frame);
+  frame->CallJavaScriptFunction(
+      "autofill_form_features.setAutofillDisallowMoreHyphenLikeLabels",
+      base::Value::List().Append(enabled));
+}
+
 void AutofillFormFeaturesJavaScriptFeature::SetAutofillDisallowSlashDotLabels(
     web::WebFrame* frame,
     bool enabled) {
@@ -58,6 +67,15 @@ void AutofillFormFeaturesJavaScriptFeature::SetAutofillAcrossIframesThrottling(
   CHECK(frame);
   frame->CallJavaScriptFunction(
       "autofill_form_features.setAutofillAcrossIframesThrottling",
+      base::Value::List().Append(enabled));
+}
+
+void AutofillFormFeaturesJavaScriptFeature::SetAutofillIgnoreCheckableElements(
+    web::WebFrame* frame,
+    bool enabled) {
+  CHECK(frame);
+  frame->CallJavaScriptFunction(
+      "autofill_form_features.setAutofillIgnoreCheckableElements",
       base::Value::List().Append(enabled));
 }
 
@@ -94,6 +112,22 @@ void AutofillFormFeaturesJavaScriptFeature::SetAutofillDedupeFormSubmission(
   CHECK(frame);
   frame->CallJavaScriptFunction(
       "autofill_form_features.setAutofillDedupeFormSubmission",
+      base::Value::List().Append(enabled));
+}
+
+// Enables/disables reporting form submission errors.
+void AutofillFormFeaturesJavaScriptFeature::
+    SetAutofillReportFormSubmissionErrors(web::WebFrame* frame, bool enabled) {
+  frame->CallJavaScriptFunction(
+      "autofill_form_features.setAutofillReportFormSubmissionErrors",
+      base::Value::List().Append(enabled));
+}
+
+void AutofillFormFeaturesJavaScriptFeature::
+    SetAutofillCountFormSubmissionInRenderer(web::WebFrame* frame,
+                                             bool enabled) {
+  frame->CallJavaScriptFunction(
+      "autofill_form_features.setAutofillCountFormSubmissionInRenderer",
       base::Value::List().Append(enabled));
 }
 

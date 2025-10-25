@@ -113,6 +113,7 @@ class GPU_GLES2_EXPORT SharedContextState
       viz::MetalContextProvider* metal_context_provider = nullptr,
       DawnContextProvider* dawn_context_provider = nullptr,
       scoped_refptr<gpu::MemoryTracker::Observer> peak_memory_monitor = nullptr,
+      bool direct_rendering_display_compositor_enabled = false,
       bool created_on_compositor_gpu_thread = false,
       const gpu::SharedContextState::GrContextOptionsProvider*
           gr_context_options_provider = nullptr);
@@ -157,8 +158,7 @@ class GPU_GLES2_EXPORT SharedContextState
   void MarkContextLost(error::ContextLostReason reason = error::kUnknown);
   bool IsCurrent(gl::GLSurface* surface, bool needs_gl = false);
 
-  void PurgeMemory(
-      base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
+  void PurgeMemory(base::MemoryPressureLevel memory_pressure_level);
 
   void UpdateSkiaOwnedMemorySize();
   uint64_t GetMemoryUsage();
@@ -228,6 +228,7 @@ class GPU_GLES2_EXPORT SharedContextState
   bool support_gl_external_object_flags() const {
     return support_gl_external_object_flags_;
   }
+  bool is_drdc_enabled() const { return is_drdc_enabled_; }
 
   gpu::MemoryTracker* memory_tracker() { return memory_tracker_.get(); }
   gpu::MemoryTypeTracker* memory_type_tracker() {
@@ -312,7 +313,8 @@ class GPU_GLES2_EXPORT SharedContextState
       gl::ProgressReporter* progress_reporter = nullptr);
 
   bool InitializeGraphite(const GpuPreferences& gpu_preferences,
-                          const GpuDriverBugWorkarounds& workarounds);
+                          const GpuDriverBugWorkarounds& workarounds,
+                          GpuProcessShmCount* use_shader_cache_shm_count);
 
   void FlushGraphiteRecorder();
 

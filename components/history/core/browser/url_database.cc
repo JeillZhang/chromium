@@ -70,6 +70,55 @@ bool URLDatabase::FillURLRow(sql::Statement& s, URLRow* i) {
   return true;
 }
 
+bool URLDatabase::MigrateKeywordsSearchTermsLowerTermColumn() {
+  // Create a temporary keyword search terms table.
+  if (!GetDB().Execute(
+          "CREATE TABLE temp_keyword_search_terms ("
+          "keyword_id INTEGER NOT NULL,"  // ID of the TemplateURL.
+          "url_id INTEGER NOT NULL,"      // ID of the url.
+          "term LONGVARCHAR NOT NULL,"    // The actual search term.
+          // The search term, in lower case, and with whitespaces collapsed.
+          "normalized_term LONGVARCHAR NOT NULL)")) {
+    return false;
+  }
+
+  // Extract rows from the keyword search terms table, convert lower_term to
+  // normalized_term, and insert them into the temporary table.
+  sql::Statement select_statement(
+      GetDB().GetCachedStatement(SQL_FROM_HERE,
+                                 "SELECT keyword_id, url_id, lower_term, term "
+                                 "FROM keyword_search_terms"));
+  while (select_statement.Step()) {
+    sql::Statement insert_statement(GetDB().GetCachedStatement(
+        SQL_FROM_HERE,
+        "INSERT INTO temp_keyword_search_terms "
+        "(keyword_id, url_id, term, normalized_term) VALUES (?,?,?,?)"));
+    insert_statement.BindInt64(0, select_statement.ColumnInt64(0));
+    insert_statement.BindInt64(1, select_statement.ColumnInt64(1));
+    insert_statement.BindString16(2, select_statement.ColumnString16(3));
+    insert_statement.BindString16(
+        3, base::CollapseWhitespace(select_statement.ColumnString16(2), false));
+    if (!insert_statement.Run())
+      return false;
+  }
+  if (!select_statement.Succeeded())
+    return false;
+
+  // Replace the keyword search terms table with the temporary one.
+  if (!GetDB().Execute("DROP TABLE keyword_search_terms"))
+    return false;
+  if (!GetDB().Execute("ALTER TABLE temp_keyword_search_terms RENAME TO "
+                       "keyword_search_terms")) {
+    return false;
+  }
+
+  // Index the table, this is faster than creating the index first and then
+  // inserting into it.
+  CreateKeywordSearchTermsIndices();
+
+  return true;
+}
+
 bool URLDatabase::GetURLRow(URLID url_id, URLRow* info) {
   // TODO(brettw) We need check for empty URLs to handle the case where
   // there are old URLs in the database that are empty that got in before
@@ -385,8 +434,8 @@ URLRows URLDatabase::GetTextMatchesWithAlgorithm(
     GURL gurl(url);
     if (gurl.is_valid()) {
       // Decode punycode to match IDN.
-      std::u16string ascii = base::ASCIIToUTF16(gurl.host());
-      std::u16string utf = url_formatter::IDNToUnicode(gurl.host());
+      std::u16string ascii = base::ASCIIToUTF16(gurl.GetHost());
+      std::u16string utf = url_formatter::IDNToUnicode(gurl.GetHost());
       if (ascii != utf)
         query_parser::QueryParser::ExtractQueryWords(utf, &query_words);
     }

@@ -14,7 +14,6 @@
 #include "extensions/common/extension_id.h"
 
 class ToolbarActionViewController;
-class ToolbarActionsBarBubbleDelegate;
 class ToolbarActionView;
 
 // An interface for containers in the toolbar that host extensions.
@@ -66,10 +65,6 @@ class ExtensionsContainer {
   virtual bool ShowToolbarActionPopupForAPICall(const std::string& action_id,
                                                 ShowPopupCallback callback) = 0;
 
-  // Displays the given |bubble| once the toolbar is no longer animating.
-  virtual void ShowToolbarActionBubble(
-      std::unique_ptr<ToolbarActionsBarBubbleDelegate> bubble) = 0;
-
   // Toggle the Extensions menu (as if the user clicked the puzzle piece icon).
   virtual void ToggleExtensionsMenu() = 0;
 
@@ -85,6 +80,19 @@ class ExtensionsContainer {
   // hiding the button. Does nothing if the confirmation is not showing
   // anymore.
   virtual void CollapseConfirmation() = 0;
+
+  // Shows the context menu for the action as a fallback for performing another
+  // action.
+  virtual void ShowContextMenuAsFallback(
+      const extensions::ExtensionId& action_id) = 0;
+
+  // Called when a popup is shown. If `by_user` is true, then this was through
+  // a direct user action (as opposed to, e.g., an API call).
+  virtual void OnPopupShown(const extensions::ExtensionId& action_id,
+                            bool by_user) = 0;
+
+  // Called when a popup is closed.
+  virtual void OnPopupClosed(const extensions::ExtensionId& action_id) = 0;
 };
 
 #endif  // CHROME_BROWSER_UI_EXTENSIONS_EXTENSIONS_CONTAINER_H_

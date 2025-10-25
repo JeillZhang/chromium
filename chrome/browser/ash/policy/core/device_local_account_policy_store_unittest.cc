@@ -14,6 +14,7 @@
 #include "chrome/browser/ash/ownership/owner_settings_service_ash_factory.h"
 #include "chrome/browser/ash/settings/device_settings_service.h"
 #include "chrome/browser/ash/settings/scoped_test_device_settings_service.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome_device_policy.pb.h"
 #include "chromeos/ash/components/dbus/session_manager/fake_session_manager_client.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
@@ -103,10 +104,11 @@ class DeviceLocalAccountPolicyStoreTest : public testing::Test {
     owner_key_util_->SetPublicKeyFromPrivateKey(
         *device_policy_.GetSigningKey());
     owner_key_util_->ImportPrivateKeyAndSetPublicKey(
-        device_policy_.GetSigningKey());
+        *device_policy_.GetSigningKey());
     ash::OwnerSettingsServiceAshFactory::GetInstance()
         ->SetOwnerKeyUtilForTesting(owner_key_util_);
-    ash::DeviceSettingsService::Get()->SetSessionManager(
+    ash::DeviceSettingsService::Get()->StartProcessing(
+        TestingBrowserProcess::GetGlobal()->local_state(),
         &fake_session_manager_client_, owner_key_util_);
   }
   DeviceLocalAccountPolicyStoreTest(const DeviceLocalAccountPolicyStoreTest&) =

@@ -22,6 +22,7 @@
 #include "components/policy/core/common/features.h"
 #include "components/version_info/version_info.h"
 #include "google_apis/google_api_keys.h"
+#include "net/base/net_errors.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "url/gurl.h"
 
@@ -232,8 +233,7 @@ std::string ReportingJobConfigurationBase::GetPayload() {
   // Allow children to mutate the payload if need be.
   UpdatePayloadBeforeGetInternal();
 
-  std::string payload_string;
-  base::JSONWriter::Write(payload_, &payload_string);
+  std::string payload_string = base::WriteJson(payload_).value_or("");
 
   // Record UMA request payload size
   base::UmaHistogramCounts1M("Browser.ERP.SingleRequestPayloadSize",
@@ -276,7 +276,8 @@ void ReportingJobConfigurationBase::OnURLLoadComplete(
     int net_error,
     int response_code,
     const std::string& response_body) {
-  std::optional<base::Value> response = base::JSONReader::Read(response_body);
+  std::optional<base::Value> response = base::JSONReader::Read(
+      response_body, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
 
   // Parse the response even if |response_code| is not a success since the
   // response data may contain an error message.

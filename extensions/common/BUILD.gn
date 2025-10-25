@@ -3,9 +3,7 @@
 # found in the LICENSE file.
 
 import("//build/config/chromeos/ui_mode.gni")
-import("//build/config/features.gni")
 import("//components/guest_view/buildflags/buildflags.gni")
-import("//components/nacl/features.gni")
 import("//extensions/buildflags/buildflags.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 import("//testing/libfuzzer/fuzzer_test.gni")
@@ -296,6 +294,8 @@ static_library("common") {
     "api/sockets/sockets_manifest_handler.h",
     "api/sockets/sockets_manifest_permission.cc",
     "api/sockets/sockets_manifest_permission.h",
+    "api/speech/tts_engine_manifest_handler.cc",
+    "api/speech/tts_engine_manifest_handler.h",
     "api/web_request/web_request_activity_log_constants.cc",
     "api/web_request/web_request_activity_log_constants.h",
     "command.cc",
@@ -398,6 +398,8 @@ static_library("common") {
     "manifest_handlers/automation.h",
     "manifest_handlers/background_info.cc",
     "manifest_handlers/background_info.h",
+    "manifest_handlers/chrome_url_overrides_handler.cc",
+    "manifest_handlers/chrome_url_overrides_handler.h",
     "manifest_handlers/content_capabilities_handler.cc",
     "manifest_handlers/content_capabilities_handler.h",
     "manifest_handlers/content_scripts_handler.cc",
@@ -408,6 +410,8 @@ static_library("common") {
     "manifest_handlers/csp_info.h",
     "manifest_handlers/default_locale_handler.cc",
     "manifest_handlers/default_locale_handler.h",
+    "manifest_handlers/devtools_page_handler.cc",
+    "manifest_handlers/devtools_page_handler.h",
     "manifest_handlers/extension_action_handler.cc",
     "manifest_handlers/extension_action_handler.h",
     "manifest_handlers/externally_connectable.cc",
@@ -432,6 +436,8 @@ static_library("common") {
     "manifest_handlers/options_page_info.h",
     "manifest_handlers/permissions_parser.cc",
     "manifest_handlers/permissions_parser.h",
+    "manifest_handlers/protocol_handler_info.cc",
+    "manifest_handlers/protocol_handler_info.h",
     "manifest_handlers/replacement_apps.cc",
     "manifest_handlers/replacement_apps.h",
     "manifest_handlers/requirements_info.cc",
@@ -548,7 +554,7 @@ static_library("common") {
     "//build:chromeos_buildflags",
     "//components/crash/core/common",
     "//components/crx_file",
-    "//components/nacl/common:buildflags",
+    "//components/custom_handlers",
     "//components/pdf/common:util",
     "//components/safe_browsing/core/common",
     "//components/safe_browsing/core/common/hashprefix_realtime:hash_realtime_utils",
@@ -565,6 +571,7 @@ static_library("common") {
     "//services/device/public/cpp/usb",
     "//services/device/public/mojom:usb",
     "//services/network/public/mojom",
+    "//third_party/blink/public/common",
     "//third_party/boringssl",
     "//third_party/icu",
     "//third_party/re2",
@@ -577,13 +584,6 @@ static_library("common") {
     "//ui/gfx/ipc/skia",
     "//url",
   ]
-
-  if (enable_nacl) {
-    sources += [
-      "manifest_handlers/nacl_modules_handler.cc",
-      "manifest_handlers/nacl_modules_handler.h",
-    ]
-  }
 
   if (is_chromeos) {
     sources += [
@@ -644,6 +644,7 @@ source_set("unit_tests") {
     "api/printer_provider/usb_printer_manifest_unittest.cc",
     "api/scripts_internal/script_serialization_unittest.cc",
     "api/sockets/sockets_manifest_permission_unittest.cc",
+    "api/speech/tts_engine_manifest_unittest.cc",
     "command_unittest.cc",
     "component_extension_url_pattern_unittest.cc",
     "crash_keys_unittest.cc",
@@ -667,9 +668,11 @@ source_set("unit_tests") {
     "image_util_unittest.cc",
     "manifest_handler_perf_test.cc",
     "manifest_handler_unittest.cc",
+    "manifest_handlers/chrome_url_overrides_unittest.cc",
     "manifest_handlers/content_capabilities_manifest_unittest.cc",
     "manifest_handlers/csp_info_unittest.cc",
     "manifest_handlers/default_locale_manifest_unittest.cc",
+    "manifest_handlers/devtools_page_unittest.cc",
     "manifest_handlers/extension_action_handler_unittest.cc",
     "manifest_handlers/extension_action_page_action_unittest.cc",
     "manifest_handlers/extension_manifests_icon_variants_unittest.cc",
@@ -682,6 +685,7 @@ source_set("unit_tests") {
     "manifest_handlers/manifest_v3_permissions_unittest.cc",
     "manifest_handlers/mime_types_handler_unittest.cc",
     "manifest_handlers/oauth2_manifest_unittest.cc",
+    "manifest_handlers/protocol_handler_manifest_unittest.cc",
     "manifest_handlers/replacement_apps_unittest.cc",
     "manifest_handlers/requirements_unittest.cc",
     "manifest_handlers/shared_module_manifest_unittest.cc",
@@ -691,6 +695,7 @@ source_set("unit_tests") {
     "message_bundle_unittest.cc",
     "mojom/event_router_mojom_unittest.cc",
     "mojom/extension_id_mojom_traits_unittest.cc",
+    "mojom/frame_mojom_unittest.cc",
     "mojom/message_port_mojom_traits_unittest.cc",
     "mojom/permission_set_mojom_traits_unittest.cc",
     "mojom/renderer_host_mojom_unittest.cc",
@@ -719,7 +724,7 @@ source_set("unit_tests") {
     "//base/test:test_support",
     "//build:android_buildflags",
     "//components/crx_file",
-    "//components/version_info:version_info",
+    "//components/version_info",
     "//content/test:test_support",
     "//extensions:extensions_resources",
     "//extensions/common:mojom",

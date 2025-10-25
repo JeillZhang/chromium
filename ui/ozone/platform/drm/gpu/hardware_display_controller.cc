@@ -18,11 +18,11 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/typed_macros.h"
+#include "components/viz/common/resources/shared_image_format_utils.h"
 #include "third_party/libdrm/src/include/drm/drm_fourcc.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
-#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_fence_handle.h"
@@ -366,9 +366,9 @@ std::vector<uint64_t> HardwareDisplayController::GetFormatModifiers(
       crtc_controllers_[0]->GetFormatModifiers(fourcc_format);
 
   if (drm_modifiers_filter_) {
-    gfx::BufferFormat buffer_format =
-        GetBufferFormatFromFourCCFormat(fourcc_format);
-    modifiers = drm_modifiers_filter_->Filter(buffer_format, modifiers);
+    viz::SharedImageFormat si_format =
+        GetSharedImageFormatFromFourCCFormat(fourcc_format);
+    modifiers = drm_modifiers_filter_->Filter(si_format, modifiers);
   }
 
   for (size_t i = 1; i < crtc_controllers_.size(); ++i) {
@@ -459,7 +459,8 @@ void HardwareDisplayController::AddCrtc(
 
 std::unique_ptr<CrtcController> HardwareDisplayController::RemoveCrtc(
     const scoped_refptr<DrmDevice>& drm,
-    uint32_t crtc) {
+    uint32_t crtc,
+    CommitRequest* commit_request) {
   auto controller_it = std::ranges::find_if(
       crtc_controllers_,
       [drm, crtc](const std::unique_ptr<CrtcController>& crtc_controller) {
@@ -492,7 +493,25 @@ std::unique_ptr<CrtcController> HardwareDisplayController::RemoveCrtc(
   owned_hardware_planes_.old_plane_list.erase(
       first_plane_to_disable_it, owned_hardware_planes_.old_plane_list.end());
 
+  if (commit_request && controller->is_enabled()) {
+    commit_request->push_back(CrtcCommitRequest::DisableCrtcRequest(
+        controller->crtc(), controller->connector()));
+  }
+
   return controller;
+}
+
+void HardwareDisplayController::RemoveAllCrtcs(CommitRequest* commit_request) {
+  std::vector<std::pair<scoped_refptr<DrmDevice>, uint32_t /*crtc*/>>
+      controllers_to_remove;
+  for (const auto& controller : crtc_controllers_) {
+    controllers_to_remove.push_back({controller->drm(), controller->crtc()});
+  }
+
+  for (const auto& [drm, crtc] : controllers_to_remove) {
+    std::unique_ptr<CrtcController> removed_crtc =
+        RemoveCrtc(drm, crtc, commit_request);
+  }
 }
 
 bool HardwareDisplayController::HasCrtc(const scoped_refptr<DrmDevice>& drm,

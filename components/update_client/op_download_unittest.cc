@@ -71,6 +71,7 @@ class FakeFactory : public CrxDownloaderFactory {
       : dest_(dest), result_(result), metrics_(metrics) {}
 
   scoped_refptr<CrxDownloader> MakeCrxDownloader(
+      const std::string& prod_id,
       bool background_download_enabled) const override {
     return base::MakeRefCounted<FakeDownloader>(dest_, result_, metrics_);
   }
@@ -125,7 +126,7 @@ class OpDownloadTest : public testing::Test {
   void Download(scoped_refptr<Configurator> config,
                 int64_t length,
                 const std::string& hash) {
-    DownloadOperation(config,
+    DownloadOperation(config, "appid",
                       base::BindRepeating([](const base::FilePath&) -> int64_t {
                         return 100'000'000;  // 100 MiB
                       }),

@@ -252,8 +252,11 @@ SplitTabChange::AddedChange::AddedChange(const SplitTabChange::AddedChange&) =
 
 SplitTabChange::VisualsChange::VisualsChange(
     const split_tabs::SplitTabVisualData& old_visual_data,
-    const split_tabs::SplitTabVisualData& new_visual_data)
-    : old_visual_data_(old_visual_data), new_visual_data_(new_visual_data) {}
+    const split_tabs::SplitTabVisualData& new_visual_data,
+    SplitVisualChangeReason reason)
+    : old_visual_data_(old_visual_data),
+      new_visual_data_(new_visual_data),
+      reason_(reason) {}
 SplitTabChange::VisualsChange::~VisualsChange() = default;
 
 SplitTabChange::ContentsChange::ContentsChange(
@@ -389,6 +392,9 @@ void TabStripModelObserver::WillCloseAllTabs(TabStripModel* tab_strip_model) {}
 void TabStripModelObserver::CloseAllTabsStopped(TabStripModel* tab_strip_model,
                                                 CloseAllStoppedReason reason) {}
 void TabStripModelObserver::SetTabNeedsAttentionAt(int index, bool attention) {}
+void TabStripModelObserver::SetTabGroupNeedsAttention(
+    const tab_groups::TabGroupId& group,
+    bool attention) {}
 void TabStripModelObserver::OnTabStripModelDestroyed(TabStripModel* model) {}
 
 // static

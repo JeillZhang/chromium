@@ -39,10 +39,6 @@
 #include "ui/views/widget/any_widget_observer.h"
 #include "url/gurl.h"
 
-#if BUILDFLAG(IS_CHROMEOS)
-#include "chrome/browser/ui/ash/test_util.h"
-#endif
-
 #if BUILDFLAG(IS_MAC)
 #include "chrome/browser/ui/browser_commands.h"
 #endif
@@ -149,10 +145,10 @@ class TestDownloadManagerDelegate : public ChromeDownloadManagerDelegate {
 };
 
 class DownloadBubbleInteractiveUiTest
-    : public InteractiveFeaturePromoTestT<DownloadTestBase> {
+    : public InteractiveFeaturePromoTestMixin<DownloadTestBase> {
  public:
   DownloadBubbleInteractiveUiTest()
-      : InteractiveFeaturePromoTestT(UseDefaultTrackerAllowingPromos(
+      : InteractiveFeaturePromoTestMixin(UseDefaultTrackerAllowingPromos(
             {feature_engagement::kIPHDownloadEsbPromoFeature})) {
 #if BUILDFLAG(IS_MAC)
     // TODO(chlily): Add test coverage for immersive fullscreen disabled on Mac.
@@ -161,7 +157,7 @@ class DownloadBubbleInteractiveUiTest
   }
 
   void SetUpInProcessBrowserTestFixture() override {
-    InteractiveFeaturePromoTestT::SetUpInProcessBrowserTestFixture();
+    InteractiveFeaturePromoTestMixin::SetUpInProcessBrowserTestFixture();
     policy_provider_.SetDefaultReturns(
         /*is_initialization_complete_return=*/true,
         /*is_first_policy_load_complete_return=*/true);
@@ -170,7 +166,7 @@ class DownloadBubbleInteractiveUiTest
   }
 
   void SetUpOnMainThread() override {
-    InteractiveFeaturePromoTestT::SetUpOnMainThread();
+    InteractiveFeaturePromoTestMixin::SetUpOnMainThread();
     embedded_test_server()->ServeFilesFromDirectory(GetTestDataDirectory());
     ASSERT_TRUE(embedded_test_server()->Start());
   }
@@ -207,9 +203,8 @@ class DownloadBubbleInteractiveUiTest
   auto DownloadBubblePromoIsActive(bool active, const base::Feature& feature) {
     return base::BindOnce(
         [](Browser* browser, bool active, const base::Feature& feature) {
-          return active == BrowserView::GetBrowserViewForBrowser(browser)
-                               ->GetFeaturePromoControllerForTesting()
-                               ->IsPromoActive(feature);
+          return active == BrowserUserEducationInterface::From(browser)
+                               ->IsFeaturePromoActive(feature);
         },
         browser(), active, std::cref(feature));
   }
@@ -271,7 +266,7 @@ class DownloadBubbleInteractiveUiTest
     return base::BindLambdaForTesting([&, displayed = displayed]() {
       ExclusiveAccessBubbleViews* bubble =
           BrowserView::GetBrowserViewForBrowser(browser())
-              ->exclusive_access_bubble();
+              ->GetExclusiveAccessBubble();
       return displayed ==
              (bubble ? IsExclusiveAccessBubbleVisible(bubble) : false);
     });
@@ -282,7 +277,7 @@ class DownloadBubbleInteractiveUiTest
     return base::BindLambdaForTesting([&, for_download = for_download]() {
       ExclusiveAccessBubbleViews* bubble =
           BrowserView::GetBrowserViewForBrowser(browser())
-              ->exclusive_access_bubble();
+              ->GetExclusiveAccessBubble();
       return for_download ==
              (bubble ? ExclusiveAccessTest::IsBubbleDownloadNotification(bubble)
                      : false);
@@ -298,7 +293,7 @@ class DownloadBubbleInteractiveUiTest
     return [&]() {
       auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
       return browser_view->GetWidget()->IsFullscreen() &&
-             browser_view->immersive_mode_controller()->IsEnabled();
+             ImmersiveModeController::From(browser())->IsEnabled();
     };
   }
 #endif  // BUILDFLAG(IS_MAC)
@@ -461,9 +456,9 @@ IN_PROC_BROWSER_TEST_F(DownloadBubbleInteractiveUiTest,
       WaitForState(kDownloadsButtonVisible, false),
       // Download a file to make the partial bubble show up, if enabled.
       Do(DownloadTestFile()),
-      // This step is fine and won't be flaky on ChromeOS, because waiting for
-      // the element to show includes waiting for the server to notify us that
-      // we are in immersive mode.
+      // This step shouldn't be flaky because waiting for the element to show
+      // includes waiting for the server to notify us that we are in immersive
+      // mode.
       WaitForState(kDownloadsButtonVisible, true),
       Check(DownloadBubbleIsShowingDetails(IsPartialViewEnabled())),
       // Hide the bubble, if enabled, so it's not showing while tearing down the
@@ -506,8 +501,7 @@ IN_PROC_BROWSER_TEST_F(
   auto tab_fullscreen_waiter = std::make_unique<FullscreenWaiter>(
       browser(), FullscreenWaiter::Expectation{.tab_fullscreen = true});
 
-  RunTestSequenceInContext(
-      browser()->window()->GetElementContext(),
+  RunTestSequence(
       InstrumentTab(kWebContentsElementId),
       NavigateWebContents(kWebContentsElementId,
                           embedded_test_server()->GetURL("/empty.html")),

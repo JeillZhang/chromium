@@ -6,6 +6,7 @@
 #define COMPONENTS_SAFE_BROWSING_CONTENT_BROWSER_URL_CHECKER_HOLDER_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
@@ -147,7 +148,6 @@ class UrlCheckerHolder final {
   base::WeakPtr<HashRealTimeService> hash_realtime_service_;
   hash_realtime_utils::HashRealTimeSelection hash_realtime_selection_ =
       hash_realtime_utils::HashRealTimeSelection::kNone;
-  base::TimeTicks creation_time_;
   bool is_async_check_ = false;
   bool check_allowlist_before_hash_database_ = false;
   SessionID tab_id_;

@@ -27,8 +27,10 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_client.h"
+#include "third_party/blink/renderer/core/frame/web_frame_widget_impl.h"
 #include "third_party/blink/renderer/core/geometry/dom_rect.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
+#include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/text/text_boundaries.h"
 #include "third_party/blink/renderer/platform/wtf/decimal.h"
@@ -159,40 +161,49 @@ void EditContext::DispatchTextFormatEvent(
 
     String underline_thickness;
     String underline_style;
+    // Use values defined in spec [1] for `TextFormat::underlineStyle` &
+    // `TextFormat::underlineThickness`
+    // TODO(crbug.com/354497121): Remove this change and update the TextFormat
+    // attribute type as per the spec [1] when the feature is enabled by
+    // default.
+    // [1]: https://w3c.github.io/edit-context/#textformatupdateevent
+    bool use_spec_values = RuntimeEnabledFeatures::
+        UseSpecValuesInTextFormatUpdateEventStylesEnabled();
     switch (ime_text_span.thickness) {
       case ui::ImeTextSpan::Thickness::kNone:
-        underline_thickness = "None";
+        underline_thickness = use_spec_values ? "none" : "None";
         break;
       case ui::ImeTextSpan::Thickness::kThin:
-        underline_thickness = "Thin";
+        underline_thickness = use_spec_values ? "thin" : "Thin";
         break;
       case ui::ImeTextSpan::Thickness::kThick:
-        underline_thickness = "Thick";
+        underline_thickness = use_spec_values ? "thick" : "Thick";
         break;
     }
     switch (ime_text_span.underline_style) {
       case ui::ImeTextSpan::UnderlineStyle::kNone:
-        underline_style = "None";
+        underline_style = use_spec_values ? "none" : "None";
         break;
       case ui::ImeTextSpan::UnderlineStyle::kSolid:
-        underline_style = "Solid";
+        underline_style = use_spec_values ? "solid" : "Solid";
         break;
       case ui::ImeTextSpan::UnderlineStyle::kDot:
-        underline_style = "Dotted";
+        underline_style = use_spec_values ? "dotted" : "Dotted";
         break;
       case ui::ImeTextSpan::UnderlineStyle::kDash:
-        underline_style = "Dashed";
+        underline_style = use_spec_values ? "dashed" : "Dashed";
         break;
       case ui::ImeTextSpan::UnderlineStyle::kSquiggle:
-        underline_style = "Squiggle";
+        underline_style = use_spec_values ? "wavy" : "Squiggle";
         break;
     }
 
-    text_formats.push_back(TextFormat::Create(
-        range_start, range_end,
-        underline_style, underline_thickness));
+    text_formats.push_back(
+        TextFormat::Create(range_start, range_end, underline_style,
+                           underline_thickness, ASSERT_NO_EXCEPTION));
 
-    if (underline_style != "None" || underline_thickness != "None") {
+    String none_value = use_spec_values ? "none" : "None";
+    if (underline_style != none_value || underline_thickness != none_value) {
       is_text_format_underline_style_or_thickness_not_none = true;
     }
   }
@@ -250,6 +261,15 @@ void EditContext::updateSelection(uint32_t start,
     UseCounter::Count(
         GetExecutionContext(),
         WebFeature::kEditContextUpdateSelectionDuringActiveComposition);
+
+    if (RuntimeEnabledFeatures::
+            EditContextHandleTextOrSelectionUpdateDuringCompositionEnabled()) {
+      // Abort the composition.
+      CancelComposition();
+      // Re-adjust bounds after removing current composition text.
+      bound_start = std::min(start, text_.length());
+      bound_end = std::min(end, text_.length());
+    }
   }
 
   SetSelection(bound_start, bound_end);
@@ -325,6 +345,26 @@ void EditContext::updateText(uint32_t start,
         WebFeature::kEditContextUpdateTextRangePrecedesOrOverlapsSelection);
   }
 
+  uint32_t new_selection_start = selection_start_;
+  uint32_t new_selection_end = selection_end_;
+  uint32_t delta = new_text.length() - (end - start);
+
+  if (!has_composition_ &&
+      RuntimeEnabledFeatures::
+          EditContextHandleTextOrSelectionUpdateDuringCompositionEnabled()) {
+    if (selection_start_ >= end) {
+      new_selection_start += delta;
+    } else if (selection_start_ > start) {
+      new_selection_start = start + new_text.length();
+    }
+
+    if (selection_end_ >= end) {
+      new_selection_end += delta;
+    } else if (selection_end_ > start) {
+      new_selection_end = start + new_text.length();
+    }
+  }
+
   if (has_composition_ && composition_range_end_ > start) {
     if (composition_range_start_ >= end) {
       // Example:
@@ -332,16 +372,39 @@ void EditContext::updateText(uint32_t start,
       UseCounter::Count(
           GetExecutionContext(),
           WebFeature::kEditContextUpdateTextRangePrecedesCompositionRange);
+      if (RuntimeEnabledFeatures::
+              EditContextHandleTextOrSelectionUpdateDuringCompositionEnabled()) {
+        new_selection_start += delta;
+        new_selection_end += delta;
+        composition_range_start_ += delta;
+        composition_range_end_ += delta;
+      }
     } else {
       // Example:
       // Composition range: [3, 6], Update range: [4, 7]
       UseCounter::Count(
           GetExecutionContext(),
           WebFeature::kEditContextUpdateTextRangeOverlapsCompositionRange);
+      if (RuntimeEnabledFeatures::
+              EditContextHandleTextOrSelectionUpdateDuringCompositionEnabled()) {
+        // Abort the composition.
+        CancelComposition();
+        // Re-adjust offsets after removing current composition text.
+        end = std::min(end, text_.length());
+        start = std::min(start, end);
+
+        new_selection_start = start + new_text.length();
+        new_selection_end = new_selection_start;
+      }
     }
   }
 
   text_ = text_.Substring(0, start) + new_text + text_.Substring(end);
+
+  if (RuntimeEnabledFeatures::
+          EditContextHandleTextOrSelectionUpdateDuringCompositionEnabled()) {
+    SetSelection(new_selection_start, new_selection_end);
+  }
 }
 
 String EditContext::text() const {
@@ -408,7 +471,7 @@ bool EditContext::SetComposition(
     if (has_composition_) {
       // Receiving an empty text string is a signal to delete any text in the
       // composition range and terminate the composition
-      CancelComposition();
+      OnCancelComposition();
     }
     return true;
   }
@@ -506,6 +569,20 @@ bool EditContext::SetCompositionFromExistingText(
 }
 
 void EditContext::CancelComposition() {
+  if (!has_composition_) {
+    return;
+  }
+
+  if (auto* web_frame = WebLocalFrameImpl::FromFrame(DomWindow()->GetFrame())) {
+    if (auto* widget = web_frame->LocalRootFrameWidget()) {
+      widget->CancelComposition();
+    }
+  }
+
+  OnCancelComposition();
+}
+
+void EditContext::OnCancelComposition() {
   DCHECK(has_composition_);
 
   // Delete the text in the composition range
@@ -563,7 +640,7 @@ void EditContext::DeleteBackward() {
   if (selection_start_ == selection_end_) {
     SetSelection(FindNextBoundaryOffset<BackwardGraphemeBoundaryStateMachine>(
                      text_, selection_start_),
-                 selection_end_);
+                 selection_end_, /*sync_selection=*/false);
   }
 
   DeleteCurrentSelection();
@@ -573,7 +650,8 @@ void EditContext::DeleteForward() {
   if (selection_start_ == selection_end_) {
     SetSelection(selection_start_,
                  FindNextBoundaryOffset<ForwardGraphemeBoundaryStateMachine>(
-                     text_, selection_start_));
+                     text_, selection_start_),
+                 /*sync_selection=*/false);
   }
 
   DeleteCurrentSelection();
@@ -585,7 +663,7 @@ void EditContext::DeleteWordBackward() {
     text16bit.Ensure16Bit();
     // TODO(shihken): implement platform behaviors when the spec is finalized.
     SetSelection(FindNextWordBackward(text16bit.Span16(), selection_end_),
-                 selection_end_);
+                 selection_end_, /*sync_selection=*/false);
   }
 
   DeleteCurrentSelection();
@@ -597,7 +675,8 @@ void EditContext::DeleteWordForward() {
     text16bit.Ensure16Bit();
     // TODO(shihken): implement platform behaviors when the spec is finalized.
     SetSelection(selection_start_,
-                 FindNextWordForward(text16bit.Span16(), selection_start_));
+                 FindNextWordForward(text16bit.Span16(), selection_start_),
+                 /*sync_selection=*/false);
   }
 
   DeleteCurrentSelection();
@@ -715,14 +794,20 @@ void EditContext::DeleteSurroundingText(int before, int after) {
 
 void EditContext::SetSelection(int start,
                                int end,
+                               bool sync_selection,
                                bool dispatch_text_update_event) {
   TRACE_EVENT1("ime", "EditContext::SetSelection", "start, end",
                std::to_string(start) + ", " + std::to_string(end));
 
+  if (start == base::saturated_cast<int>(selection_start_) &&
+      end == base::saturated_cast<int>(selection_end_)) {
+    return;
+  }
+
   selection_start_ = start;
   selection_end_ = end;
 
-  if (DomWindow() && DomWindow()->GetFrame()) {
+  if (sync_selection && DomWindow() && DomWindow()->GetFrame()) {
     DomWindow()->GetFrame()->Client()->DidChangeSelection(
         /*is_selection_empty=*/selection_start_ == selection_end_,
         blink::SyncCondition::kNotForced);

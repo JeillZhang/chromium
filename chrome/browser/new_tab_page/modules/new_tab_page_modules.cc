@@ -17,7 +17,6 @@
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/history_clusters/core/features.h"
-#include "components/page_image_service/features.h"
 #include "components/search/ntp_features.h"
 #include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
@@ -29,7 +28,7 @@ const std::vector<ModuleIdDetail> MakeModuleIdDetails(bool is_managed_profile,
                                                       Profile* profile) {
   std::vector<ModuleIdDetail> details;
 
-  if (IsGoogleCalendarModuleEnabled(is_managed_profile)) {
+  if (IsGoogleCalendarModuleEnabled(is_managed_profile, profile)) {
     details.emplace_back(ntp_modules::kGoogleCalendarModuleId,
                          IDS_NTP_MODULES_GOOGLE_CALENDAR_TITLE);
   }
@@ -56,7 +55,7 @@ const std::vector<ModuleIdDetail> MakeModuleIdDetails(bool is_managed_profile,
         IDS_NTP_MICROSOFT_AUTHENTICATION_SIDE_PANEL_DESCRIPTION);
   }
 
-  if (IsMostRelevantTabResumeModuleEnabled()) {
+  if (IsMostRelevantTabResumeModuleEnabled(profile)) {
     details.emplace_back(ntp_modules::kMostRelevantTabResumptionModuleId,
                          IDS_NTP_MODULES_MOST_RELEVANT_TAB_RESUMPTION_TITLE);
   }
@@ -73,6 +72,11 @@ const std::vector<ModuleIdDetail> MakeModuleIdDetails(bool is_managed_profile,
   }
 #endif
 
+  if (base::FeatureList::IsEnabled(ntp_features::kNtpTabGroupsModule)) {
+    details.emplace_back(ntp_modules::kTabGroupsModuleId,
+                         IDS_NTP_MODULES_TAB_GROUPS_TITLE);
+  }
+
   return details;
 }
 
@@ -82,6 +86,8 @@ bool HasModulesEnabled(const std::vector<ModuleIdDetail> module_id_details,
          !base::FeatureList::IsEnabled(ntp_features::kNtpModulesLoad) &&
          (base::CommandLine::ForCurrentProcess()->HasSwitch(
               switches::kSignedOutNtpModulesSwitch) ||
+          base::FeatureList::IsEnabled(
+              ntp_features::kNtpModuleSignInRequirement) ||
           (/* Can be null if Chrome signin is disabled. */ identity_manager &&
            identity_manager->GetAccountsInCookieJar()
                    .GetPotentiallyInvalidSignedInAccounts()

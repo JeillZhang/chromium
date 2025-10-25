@@ -40,11 +40,13 @@ namespace {
 // be wrapped.
 static constexpr int kTooltipMaxWidth = 800;
 
-// TODO(varkha): Update if native widget can be transparent on Linux.
 bool CanUseTranslucentTooltipWidget() {
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_WIN)
   return false;
 #else
+  // On Linux, when using the toolkit theme (eg. Adwaita, the default GTK
+  // theme), tooltips may be translucent. This must be indicated to the Wayland
+  // compositor to prevent visual artifacts such as flickering.
   return true;
 #endif
 }
@@ -66,6 +68,21 @@ bool ShouldIgnoreScreenBounds() {
 }  // namespace
 
 namespace views::corewm {
+
+class TooltipAura::TooltipWidget : public Widget {
+ public:
+  TooltipWidget() = default;
+  ~TooltipWidget() override = default;
+
+  TooltipViewAura* GetTooltipView() { return tooltip_view_; }
+
+  void SetTooltipView(std::unique_ptr<TooltipViewAura> tooltip_view) {
+    tooltip_view_ = SetContentsView(std::move(tooltip_view));
+  }
+
+ private:
+  raw_ptr<TooltipViewAura> tooltip_view_ = nullptr;
+};
 
 // static
 const char TooltipAura::kWidgetName[] = "TooltipAura";
@@ -101,21 +118,6 @@ void TooltipAura::AdjustToCursor(gfx::Rect* anchor_point) {
   // TODO(crbug.com/40254494): Should adjust with actual cursor size.
   anchor_point->Offset(kCursorOffsetX, kCursorOffsetY);
 }
-
-class TooltipAura::TooltipWidget : public Widget {
- public:
-  TooltipWidget() = default;
-  ~TooltipWidget() override = default;
-
-  TooltipViewAura* GetTooltipView() { return tooltip_view_; }
-
-  void SetTooltipView(std::unique_ptr<TooltipViewAura> tooltip_view) {
-    tooltip_view_ = SetContentsView(std::move(tooltip_view));
-  }
-
- private:
-  raw_ptr<TooltipViewAura> tooltip_view_ = nullptr;
-};
 
 const gfx::RenderText* TooltipAura::GetRenderTextForTest() const {
   DCHECK(widget_);
@@ -166,7 +168,7 @@ gfx::Rect TooltipAura::GetTooltipBounds(const gfx::Size& tooltip_size,
     return tooltip_rect;
   }
 
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   gfx::Rect display_bounds(
       screen->GetDisplayNearestPoint(anchor_point).bounds());
 
@@ -229,7 +231,7 @@ void TooltipAura::DestroyWidget() {
 }
 
 int TooltipAura::GetMaxWidth(const gfx::Point& location) const {
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   gfx::Rect display_bounds(screen->GetDisplayNearestPoint(location).bounds());
   return std::min(max_width_, (display_bounds.width() + 1) / 2);
 }

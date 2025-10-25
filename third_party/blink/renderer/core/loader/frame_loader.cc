@@ -401,14 +401,13 @@ void FrameLoader::DispatchUnloadEventAndFillOldDocumentInfoIfNeeded(
     return;
   }
   old_document_info->history_item = GetDocumentLoader()->GetHistoryItem();
-  old_document_info->had_sticky_activation_before_navigation =
-      frame_->HadStickyUserActivationBeforeNavigation();
   if (auto* scheduler = frame_->GetFrameScheduler()) {
     old_document_info->frame_scheduler_unreported_task_time =
         scheduler->UnreportedTaskTime();
   }
   old_document_info->was_focused_frame =
       (frame_->GetPage()->GetFocusController().FocusedFrame() == frame_);
+  old_document_info->overlay_color = frame_->GetFrameOverlayColor();
 
   frame_->GetDocument()->DispatchUnloadEvents(
       &old_document_info->unload_timing_info);
@@ -543,13 +542,10 @@ bool FrameLoader::AllowRequestForThisFrame(const FrameLoadRequest& request) {
 
   const KURL& url = request.GetResourceRequest().Url();
   if (url.ProtocolIsJavaScript()) {
-    if (request.GetOriginWindow()
-            ->CheckAndGetJavascriptUrl(request.JavascriptWorld(), url,
-                                       frame_->DeprecatedLocalOwner())
-            .empty()) {
+    if (!request.GetOriginWindow()->AllowInlineJavascriptUrl(
+            request.JavascriptWorld(), url, frame_->DeprecatedLocalOwner())) {
       return false;
     }
-
     if (frame_->Owner() && ((frame_->Owner()->GetFramePolicy().sandbox_flags &
                              network::mojom::blink::WebSandboxFlags::kOrigin) !=
                             network::mojom::blink::WebSandboxFlags::kNone)) {
@@ -562,7 +558,8 @@ bool FrameLoader::AllowRequestForThisFrame(const FrameLoadRequest& request) {
         MakeGarbageCollected<ConsoleMessage>(
             mojom::ConsoleMessageSource::kSecurity,
             mojom::ConsoleMessageLevel::kError,
-            "Not allowed to load local resource: " + url.ElidedString()));
+            StrCat(
+                {"Not allowed to load local resource: ", url.ElidedString()})));
     return false;
   }
   return true;
@@ -667,8 +664,8 @@ void FrameLoader::StartNavigation(FrameLoadRequest& request,
         MakeGarbageCollected<ConsoleMessage>(
             mojom::blink::ConsoleMessageSource::kSecurity,
             mojom::blink::ConsoleMessageLevel::kError,
-            "Not allowed to navigate to " + url.Protocol() +
-                " URL: " + url.ElidedString()));
+            StrCat({"Not allowed to navigate to ", url.Protocol(),
+                    " URL: ", url.ElidedString()})));
     return;
   }
 
@@ -691,8 +688,8 @@ void FrameLoader::StartNavigation(FrameLoadRequest& request,
         MakeGarbageCollected<ConsoleMessage>(
             mojom::blink::ConsoleMessageSource::kSecurity,
             mojom::blink::ConsoleMessageLevel::kError,
-            "Not allowed to navigate top frame to " + url.Protocol() +
-                " URL: " + url.ElidedString()));
+            StrCat({"Not allowed to navigate top frame to ", url.Protocol(),
+                    " URL: ", url.ElidedString()})));
     return;
   }
 
@@ -720,6 +717,28 @@ void FrameLoader::StartNavigation(FrameLoadRequest& request,
       request.GetNavigationPolicy() == kNavigationPolicyCurrentTab &&
       ShouldPerformFragmentNavigation(
           request.Form(), resource_request.HttpMethod(), frame_load_type, url);
+
+  if (RuntimeEnabledFeatures::
+          TreatMhtmlInitialDocumentLoadsAsCrossDocumentEnabled()) {
+    if (auto* parent = DynamicTo<LocalFrame>(frame_->Tree().Parent())) {
+      // Within MHTML archives, treat the initial about:blank#fragment
+      // navigation as cross-document. Although it appears to be a same-document
+      // fragment navigation, it actually commits a new document with a new
+      // opaque origin.
+      //
+      // TODO(crbug.com/423663315): Consider refining this logic to only treat
+      // the initial about:blank#fragment navigation in MHTML as cross-document
+      // if the MHTML archive actually overrides the about:blank resource. If it
+      // doesn't, the navigation may be better treated as same-document,
+      // matching non-MHTML behavior.
+      if (parent->Loader().GetDocumentLoader()->HasBeenLoadedAsWebArchive()) {
+        if (url.HasFragmentIdentifier() &&
+            frame_->GetDocument()->IsInitialEmptyDocument()) {
+          same_document_navigation = false;
+        }
+      }
+    }
+  }
 
   // Perform same document navigation.
   if (same_document_navigation) {
@@ -864,7 +883,17 @@ void FrameLoader::StartNavigation(FrameLoadRequest& request,
       origin_window->GetFrame() == frame_->Parent()) {
     if (auto* owner = DynamicTo<HTMLFrameOwnerElement>(frame_->Owner());
         owner) {
-      owner->UpdateDeferredFetchPolicy(url);
+      // Determine the origin of the navigation target `url`.
+      // This is not available from `frame` security context yet as navigation
+      // is just starting. It has to take frame's sandbox flags into account.
+      scoped_refptr<const SecurityOrigin> to_origin =
+          SecurityOrigin::Create(url);
+      if ((owner->GetFramePolicy().sandbox_flags &
+           network::mojom::blink::WebSandboxFlags::kOrigin) !=
+          network::mojom::blink::WebSandboxFlags::kNone) {
+        to_origin = to_origin->DeriveNewOpaqueOrigin();
+      }
+      owner->UpdateDeferredFetchPolicy(std::move(to_origin));
     }
   }
 

@@ -14,9 +14,9 @@
 #import "components/optimization_guide/core/filters/test_hints_component_creator.h"
 #import "components/optimization_guide/core/hints/hints_manager.h"
 #import "components/optimization_guide/core/hints/optimization_guide_navigation_data.h"
+#import "components/optimization_guide/core/hints/test_hints_config.h"
 #import "components/optimization_guide/core/optimization_guide_features.h"
 #import "components/optimization_guide/core/optimization_guide_switches.h"
-#import "components/optimization_guide/core/optimization_guide_test_util.h"
 #import "components/saved_tab_groups/test_support/fake_tab_group_sync_service.h"
 #import "components/sync_preferences/pref_service_syncable.h"
 #import "components/sync_preferences/testing_pref_service_syncable.h"
@@ -92,12 +92,7 @@ class OptimizationGuideServiceTest : public PlatformTest {
     std::vector<base::test::FeatureRef> enabled_features;
     enabled_features.push_back(
         optimization_guide::features::kOptimizationHints);
-    enabled_features.push_back(
-        optimization_guide::features::kRemoteOptimizationGuideFetching);
     if (url_keyed_anonymized_data_collection_enabled_) {
-      enabled_features.push_back(
-          optimization_guide::features::
-              kRemoteOptimizationGuideFetchingAnonymousDataConsent);
       testing_prefs->SetBoolean(
           unified_consent::prefs::kUrlKeyedAnonymizedDataCollectionEnabled,
           true);
@@ -111,7 +106,7 @@ class OptimizationGuideServiceTest : public PlatformTest {
     builder.AddTestingFactory(
         tab_groups::TabGroupSyncServiceFactory::GetInstance(),
         base::BindOnce(
-            [](web::BrowserState* context) -> std::unique_ptr<KeyedService> {
+            [](ProfileIOS* profile) -> std::unique_ptr<KeyedService> {
               // Creates a FakeTabGroupSyncService, as the real implementation
               // registers some optimization types.
               return std::make_unique<tab_groups::FakeTabGroupSyncService>();
@@ -142,8 +137,8 @@ class OptimizationGuideServiceTest : public PlatformTest {
 
     const optimization_guide::HintsComponentInfo& component_info =
         test_hints_component_creator_.CreateHintsComponentInfoWithPageHints(
-            optimization_guide::proto::NOSCRIPT, {hints_url.host()},
-            hints_url.path().substr(1));
+            optimization_guide::proto::NOSCRIPT, {hints_url.GetHost()},
+            hints_url.GetPath().substr(1));
 
     optimization_guide::OptimizationHintsComponentUpdateListener::GetInstance()
         ->MaybeUpdateHintsComponent(component_info);

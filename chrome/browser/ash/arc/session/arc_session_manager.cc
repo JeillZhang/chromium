@@ -56,6 +56,7 @@
 #include "chrome/browser/ui/webui/ash/diagnostics_dialog/diagnostics_dialog.h"
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "chromeos/ash/components/memory/swap_configuration.h"
 #include "chromeos/ash/experiences/arc/app/arc_app_constants.h"
@@ -175,7 +176,7 @@ bool ShouldUseErrorDialog() {
     return false;
   }
 
-  if (ash::DemoSession::IsDeviceInDemoMode()) {
+  if (ash::demo_mode::IsDeviceInDemoMode()) {
     return false;
   }
 
@@ -884,6 +885,8 @@ void ArcSessionManager::Initialize() {
     LOG(WARNING) << "Skipping auto-resume of ARCVM /data migration, because it "
                     "has reached the maximum number of retries";
   }
+
+  observer_list_.Notify(&ArcSessionManagerObserver::OnInitialized);
 
   // Chrome may be shut down before completing ARC data removal.
   // For such a case, start removing the data now, if necessary.

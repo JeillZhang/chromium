@@ -39,6 +39,7 @@
 #include "base/dcheck_is_on.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/memory/stack_allocated.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/uuid.h"
@@ -50,6 +51,7 @@
 #include "third_party/blink/public/common/metrics/document_update_reason.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/mojom/css/preferred_color_scheme.mojom-blink-forward.h"
+#include "third_party/blink/public/mojom/css/preferred_contrast.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/frame/color_scheme.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/page/page.mojom-blink-forward.h"
@@ -95,7 +97,6 @@
 #include "third_party/blink/renderer/platform/timer.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
-#include "third_party/blink/renderer/platform/wtf/gc_plugin.h"
 #include "third_party/blink/renderer/platform/wtf/hash_set.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 
@@ -236,6 +237,7 @@ class ResizeObserver;
 class Resource;
 class ResourceFetcher;
 class RootScrollerController;
+class RouteMap;
 class SVGDocumentExtensions;
 class SVGUseElement;
 class ScriptElementBase;
@@ -263,6 +265,7 @@ class TreeWalker;
 class TrustedHTML;
 class V8DocumentReadyState;
 class V8NodeFilter;
+class V8UnionElementCreationOptionsOrString;
 class V8UnionStringOrTrustedHTML;
 class ViewportData;
 class VisitedLinkState;
@@ -406,14 +409,6 @@ class CORE_EXPORT Document : public ContainerNode,
 
   bool HasDocumentPictureInPictureWindow() const;
 
-  void SetIsTrackingSoftNavigationHeuristics(bool value) {
-    is_tracking_soft_navigation_heuristics_ = value;
-  }
-
-  bool IsTrackingSoftNavigationHeuristics() const {
-    return is_tracking_soft_navigation_heuristics_;
-  }
-
   network::mojom::ReferrerPolicy GetReferrerPolicy() const;
 
   bool DocumentPolicyFeatureObserved(
@@ -489,7 +484,28 @@ class CORE_EXPORT Document : public ContainerNode,
                    CustomElementRegistry*,
                    ExceptionState&);
 
-  CustomElementRegistry* customElementRegistry() const override;
+  Element* CreateElementForBinding(const AtomicString& local_name,
+                                   ExceptionState& = ASSERT_NO_EXCEPTION);
+  Element* CreateElementForBinding(
+      const AtomicString& local_name,
+      const V8UnionElementCreationOptionsOrString* string_or_options,
+      ExceptionState& exception_state);
+
+  // "create an element" defined in DOM standard. This supports both of
+  // autonomous custom elements and customized built-in elements.
+  Element* CreateElement(const QualifiedName&,
+                         const CreateElementFlags,
+                         const AtomicString& is,
+                         CustomElementRegistry*);
+
+  Element* createElementNS(const AtomicString& namespace_uri,
+                           const AtomicString& qualified_name,
+                           ExceptionState&);
+  Element* createElementNS(
+      const AtomicString& namespace_uri,
+      const AtomicString& qualified_name,
+      const V8UnionElementCreationOptionsOrString* string_or_options,
+      ExceptionState& exception_state);
 
   // Creates an element without custom element processing.
   Element* CreateRawElement(const QualifiedName&,
@@ -519,7 +535,6 @@ class CORE_EXPORT Document : public ContainerNode,
   // [1] https://drafts.csswg.org/scroll-animations-1/#avoiding-cycles
   Element* ScrollingElementNoLayout();
 
-  bool KeyboardFocusableScrollersEnabled();
   bool StandardizedBrowserZoomEnabled() const;
 
   V8DocumentReadyState readyState() const;
@@ -566,8 +581,6 @@ class CORE_EXPORT Document : public ContainerNode,
   void DidChangeVisibilityState();
 
   bool prerendering() const;
-
-  uint32_t softNavigations() const;
 
   bool wasDiscarded() const;
   void SetWasDiscarded(bool);
@@ -666,6 +679,15 @@ class CORE_EXPORT Document : public ContainerNode,
     return HaveScriptBlockingStylesheetsLoaded();
   }
 
+  // Returns true if the document is prerendering and its trigger asks it to
+  // block script execution until prerender activation, and turns false upon
+  // activation where we anyway no longer want to block script execution; see
+  // `UnblockScriptExecutionForPrerenderActivation`. Note that it never starts
+  // to block or unblock script execution in the middle of execution, since
+  // the field is set to true when initializing `this` instance and set to false
+  // only once (upon activation).
+  bool IsScriptBlockedUntilPrerenderActivation() const;
+
   bool IsForExternalHandler() const { return is_for_external_handler_; }
 
   StyleEngine& GetStyleEngine() const {
@@ -673,7 +695,12 @@ class CORE_EXPORT Document : public ContainerNode,
     return *style_engine_.Get();
   }
 
+  void UpdateForcedColors();
+  bool InForcedColorsMode() const;
+  bool InDarkMode();
+
   mojom::blink::PreferredColorScheme GetPreferredColorScheme() const;
+  mojom::blink::PreferredContrast GetPreferredContrast() const;
 
   void ScheduleUseShadowTreeUpdate(SVGUseElement&);
   void UnscheduleUseShadowTreeUpdate(SVGUseElement&);
@@ -1092,6 +1119,7 @@ class CORE_EXPORT Document : public ContainerNode,
   void ClearFocusedElement(bool omit_blur_events = false);
   Element* FocusedElement() const { return focused_element_.Get(); }
   void ClearFocusedElementIfNeeded();
+  void UpdateFocusgroupLastFocused(Element& focused_element);
   UserActionElementSet& UserActionElements() { return user_action_elements_; }
   const UserActionElementSet& UserActionElements() const {
     return user_action_elements_;
@@ -1422,6 +1450,9 @@ class CORE_EXPORT Document : public ContainerNode,
   V8HTMLOrSVGScriptElement* currentScriptForBinding() const;
   void PushCurrentScript(ScriptElementBase*);
   void PopCurrentScript(ScriptElementBase*);
+  bool IsCurrentScriptStackEmpty() const {
+    return current_script_stack_.empty();
+  }
 
   void SetTransformSource(std::unique_ptr<TransformSource>);
   TransformSource* GetTransformSource() const {
@@ -1473,9 +1504,7 @@ class CORE_EXPORT Document : public ContainerNode,
   void FinishedParsing();
 
   void SetEncodingData(const DocumentEncodingData& new_data);
-  const WTF::TextEncoding& Encoding() const {
-    return encoding_data_.Encoding();
-  }
+  const TextEncoding& Encoding() const { return encoding_data_.Encoding(); }
 
   bool EncodingWasDetectedHeuristically() const {
     return encoding_data_.WasDetectedHeuristically();
@@ -1500,7 +1529,7 @@ class CORE_EXPORT Document : public ContainerNode,
   bool AllowInlineEventHandler(Node*,
                                EventListener*,
                                const String& context_url,
-                               const WTF::OrdinalNumber& context_line);
+                               const OrdinalNumber& context_line);
 
   void StatePopped(scoped_refptr<SerializedScriptValue>);
 
@@ -1700,12 +1729,18 @@ class CORE_EXPORT Document : public ContainerNode,
     return all_open_dialogs_;
   }
 
+  HeapLinkedHashSet<Member<Element>>& ElementsWithInterest() {
+    return elements_with_interest_;
+  }
+
   // https://crbug.com/1453291
   // The DOM Parts API:
   // https://github.com/WICG/webcomponents/blob/gh-pages/proposals/DOM-Parts.md.
   DocumentPartRoot& getPartRoot();
   DocumentPartRoot& EnsureDocumentPartRoot();
   bool DOMPartsInUse() const { return document_part_root_ != nullptr; }
+
+  RouteMap* routeMap();
 
   // A non-null template_document_host_ implies that |this| was created by
   // EnsureTemplateDocument().
@@ -1719,6 +1754,12 @@ class CORE_EXPORT Document : public ContainerNode,
   void DidChangeFormRelatedElementDynamically(HTMLElement*,
                                               WebFormRelatedChangeType);
 
+  // Please familiarize yourself with http://goo.gle/devtools-console-policy
+  // prior to adding new console messages, and make sure that you understand the
+  // implications on the developer experience. A good console message should be
+  // actionable and relevant to what the developer is currently doing. Using the
+  // DevTools Console panel as a means to advertise best practices or Chromium
+  // agendas has shown to be counterproductive.
   void AddConsoleMessage(ConsoleMessage* message,
                          bool discard_duplicates = false) const;
 
@@ -1936,6 +1977,8 @@ class CORE_EXPORT Document : public ContainerNode,
   // modified. Re-collect the META values.
   void SupportsReducedMotionMetaChanged();
 
+  void RequestResizeResponsiveIframe(ExceptionState* = nullptr);
+
   // A META element with name=responsive-embedded-sizing was added, removed, or
   // modified. Re-collect the META values.
   void ResponsiveEmbeddedSizingChanged();
@@ -1963,10 +2006,6 @@ class CORE_EXPORT Document : public ContainerNode,
   bool IsAnimatedPropertyCounted(CSSPropertyID property) const;
   void ClearUseCounterForTesting(mojom::WebFeature);
   void ClearWebDXFeatureCounterForTesting(mojom::blink::WebDXFeature);
-
-  void UpdateForcedColors();
-  bool InForcedColorsMode() const;
-  bool InDarkMode();
 
   const ui::ColorProvider* GetColorProviderForPainting(
       mojom::blink::ColorScheme color_scheme) const;
@@ -2141,7 +2180,7 @@ class CORE_EXPORT Document : public ContainerNode,
 
   // https://github.com/whatwg/html/pull/9538
   static Document* parseHTMLUnsafe(ExecutionContext* context,
-                                   const String& html,
+                                   const V8UnionStringOrTrustedHTML* html,
                                    ExceptionState& exception_state);
 
   // https://wicg.github.io/sanitizer-api/#framework
@@ -2150,7 +2189,7 @@ class CORE_EXPORT Document : public ContainerNode,
   // the |options| parameter. Long-term, the two parseHTMLUnsage methods
   // should be merged.
   static Document* parseHTMLUnsafe(ExecutionContext* context,
-                                   const String& html,
+                                   const V8UnionStringOrTrustedHTML* html,
                                    SetHTMLUnsafeOptions* options,
                                    ExceptionState& exception_state);
   static Document* parseHTML(ExecutionContext* context,
@@ -2229,6 +2268,12 @@ class CORE_EXPORT Document : public ContainerNode,
 
   // WidgetCreationObserver implementation
   void OnLocalRootWidgetCreated() override;
+
+  // https://dom.spec.whatwg.org/#effective-global-custom-element-registry
+  // A document's effective global custom element registry is its own registry
+  // if the registry is global, otherwise the effective global registry is
+  // nullptr.
+  CustomElementRegistry* EffectiveGlobalCustomElementRegistry() const;
 
  protected:
   void ClearXMLVersion() { xml_version_ = String(); }
@@ -2311,6 +2356,8 @@ class CORE_EXPORT Document : public ContainerNode,
     void Trace(Visitor*) const;
 
    private:
+    void LogSyntheticSelectMetrics(Document& owner) const;
+
     HeapVector<Member<HTMLFormElement>> list_;
     bool dirty_ = false;
   };
@@ -2425,6 +2472,7 @@ class CORE_EXPORT Document : public ContainerNode,
   Node* Clone(Document& factory,
               NodeCloningData& data,
               ContainerNode* append_to,
+              CustomElementRegistry* fallback_registry,
               ExceptionState& append_exception_state) const override;
   void CloneDataFromDocument(const Document&);
 
@@ -2531,6 +2579,11 @@ class CORE_EXPORT Document : public ContainerNode,
 
   bool CanThrottleFrameRate();
 
+  // Called upon prerender activation.
+  // Note that not all prerendering pages block script execution; prerendering
+  // pages' triggers can determine whether or not to block scripts.
+  void UnblockScriptExecutionForPrerenderActivation();
+
   // Mutable because the token is lazily-generated on demand if no token is
   // explicitly set.
   mutable std::optional<DocumentToken> token_;
@@ -2590,8 +2643,6 @@ class CORE_EXPORT Document : public ContainerNode,
   Member<HttpRefreshScheduler> http_refresh_scheduler_;
 
   bool well_formed_ = false;
-
-  bool is_tracking_soft_navigation_heuristics_ = false;
 
   // Document URLs.
   KURL url_;  // Document.URL: The URL from which this document was retrieved.
@@ -2759,8 +2810,19 @@ class CORE_EXPORT Document : public ContainerNode,
 
   base::ElapsedTimer start_time_;
 
+  // The script runner is used to run scripts of the following scheduling types:
+  // - ScriptSchedulingType::kAsync
+  // - ScriptSchedulingType::kInOrder
+  // For other scheduling types, see ScriptLoader and HTMLParserScriptRunner.
   Member<ScriptRunner> script_runner_;
   Member<ScriptRunnerDelayer> script_runner_delayer_;
+
+  // Defers the script runner until prerender activation, triggered by
+  // prerender-until-script. See https://crbug.com/428500219 for details.
+  // There is another plan to allow other triggers to specify whether to delay
+  // async scripts during prerendering, so it is named as
+  // `prerender_script_runner_delayer_`.
+  Member<ScriptRunnerDelayer> prerender_script_runner_delayer_;
 
   HeapVector<Member<ScriptElementBase>> current_script_stack_;
 
@@ -2797,21 +2859,21 @@ class CORE_EXPORT Document : public ContainerNode,
   // the stack and cleared upon leaving its allocated scope. Hence it
   // is acceptable not to trace it -- should a conservative GC occur,
   // the cache object's references will be traced by a stack walk.
-  GC_PLUGIN_IGNORE("https://crbug.com/461878")
+  STACK_ALLOCATED_IGNORE("https://crbug.com/461878")
   NthIndexCache* nth_index_cache_ = nullptr;
 
   // This is an untraced pointer to the cache-scoped object that is first
   // allocated on the stack. It is set upon the first object being allocated
   // on the stack, and cleared upon leaving its allocated scope. The object's
   // references will be traced by a stack walk.
-  GC_PLUGIN_IGNORE("https://crbug.com/669058")
+  STACK_ALLOCATED_IGNORE("https://crbug.com/669058")
   CheckPseudoHasCacheScope* check_pseudo_has_cache_scope_ = nullptr;
 
   // This is an untraced pointer to the first stack-allocated scoping object
   // that defers invalidation of the node list caches. It is set upon the first
   // object being allocated on the stack, and cleared upon leaving its
   // allocated scope. The object's references will be traced by a stack walk.
-  GC_PLUGIN_IGNORE("https://crbug.com/40874584")
+  STACK_ALLOCATED_IGNORE("https://crbug.com/40874584")
   InvalidateNodeListCachesScope* invalidate_node_list_caches_scope_ = nullptr;
 
   bool in_pseudo_has_checking_ = false;
@@ -2868,7 +2930,7 @@ class CORE_EXPORT Document : public ContainerNode,
   // is distinct from popover_pointerdown_target_ because the same pointer
   // action could trigger light dismiss on a containing popover and not a
   // containing dialog, or vice versa. This will be nullptr for a click on
-  // the ::backdrop pseudo element for a dialog.
+  // the ::backdrop pseudo-element for a dialog.
   Member<const HTMLDialogElement> dialog_pointerdown_target_;
   // A set of popovers for which hidePopover() has been called, but animations
   // are still running.
@@ -2878,6 +2940,10 @@ class CORE_EXPORT Document : public ContainerNode,
 
   // The ordered list of currently-open dialogs, in order they were opened.
   HeapLinkedHashSet<Member<HTMLDialogElement>> all_open_dialogs_;
+
+  // The ordered list of elements that currently have interest (via
+  // `interestfor`), in the order they were opened.
+  HeapLinkedHashSet<Member<Element>> elements_with_interest_;
 
   Member<DocumentPartRoot> document_part_root_;
 

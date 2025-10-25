@@ -4,11 +4,13 @@
 
 #include "chrome/browser/ai/ai_language_model.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <sstream>
 
 #include "base/check_op.h"
+#include "base/containers/fixed_flat_set.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
 #include "base/metrics/histogram_functions.h"
@@ -22,11 +24,11 @@
 #include "chrome/browser/ai/ai_utils.h"
 #include "chrome/browser/ai/features.h"
 #include "components/optimization_guide/core/model_execution/multimodal_message.h"
+#include "components/optimization_guide/core/model_execution/on_device_capability.h"
 #include "components/optimization_guide/core/model_execution/optimization_guide_model_execution_error.h"
 #include "components/optimization_guide/core/model_execution/substitution.h"
 #include "components/optimization_guide/core/optimization_guide_enums.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
 #include "components/optimization_guide/proto/common_types.pb.h"
 #include "components/optimization_guide/proto/features/prompt_api.pb.h"
@@ -91,7 +93,9 @@ on_device_model::mojom::InputPtr ConvertToInput(
           break;
       }
     }
-    input->pieces.push_back(ml::Token::kEnd);
+    if (!prompt->is_prefix) {
+      input->pieces.push_back(ml::Token::kEnd);
+    }
   }
   return input;
 }
@@ -103,7 +107,9 @@ on_device_model::mojom::InputPtr ConvertToInputForExecute(
   if (!input) {
     return nullptr;
   }
-  input->pieces.push_back(ml::Token::kModel);
+  if (prompts.empty() || !prompts.back()->is_prefix) {
+    input->pieces.push_back(ml::Token::kModel);
+  }
   return input;
 }
 
@@ -209,10 +215,14 @@ class AILanguageModel::PromptState
   bool IsValid() const { return !!responder_; }
 
   mojo::Remote<on_device_model::mojom::Session> TakeSession() {
+    // Clear disconnect handler to avoid referencing `this`.
+    session_.set_disconnect_handler(base::DoNothing());
     return std::move(session_);
   }
 
   mojo::Remote<blink::mojom::ModelStreamingResponder> TakeResponder() {
+    // Clear disconnect handler to avoid referencing `this`.
+    responder_.set_disconnect_handler(base::DoNothing());
     return std::move(responder_);
   }
 
@@ -489,6 +499,20 @@ uint32_t GetMaxTokens(optimization_guide::ModelClient* model_client) {
   return result;
 }
 
+// static
+base::flat_set<std::string_view>
+AILanguageModel::GetSupportedLanguageBaseCodes() {
+  // Comma-separated language codes to enable; or "*" enables all supported.
+  const base::FeatureParam<std::string> kAIPromptAPILanguagesEnabled{
+      &blink::features::kAIPromptAPI, "langs", /*default=*/"en,es,ja"};
+  // TODO(crbug.com/394841624): Get supported languages from the model config.
+  auto kSupportedBaseLanguages =
+      base::MakeFixedFlatSet<std::string_view>({"en", "ja", "es"});
+  return AIUtils::RestrictSupportedLanguagesForFeature(
+      base::MakeFlatSet<std::string_view>(kSupportedBaseLanguages),
+      kAIPromptAPILanguagesEnabled);
+}
+
 AILanguageModel::AILanguageModel(
     AIContextBoundObjectSet& context_bound_object_set,
     on_device_model::mojom::SessionParamsPtr session_params,
@@ -597,6 +621,7 @@ void AILanguageModel::Destroy() {
 void AILanguageModel::MeasureInputUsage(
     std::vector<blink::mojom::AILanguageModelPromptPtr> prompts,
     MeasureInputUsageCallback callback) {
+  EnsureSessionConnected();
   auto input = ConvertToInputForExecute(std::move(prompts),
                                         session_params_->capabilities);
   if (!input) {
@@ -725,6 +750,7 @@ void AILanguageModel::InitializeSafetyChecksComplete(
     return;
   }
   if (input) {
+    initial_input_ = input.Clone();
     // No ContextClient is passed here since this operation should never be
     // cancelled unless the session is destroyed.
     initial_session_->Append(MakeAppendOptions(std::move(input)), {});
@@ -961,6 +987,20 @@ void AILanguageModel::GetSizeInTokens(
                                                       std::nullopt)));
 }
 
+void AILanguageModel::EnsureSessionConnected() {
+  if (!model_client_ || initial_session_) {
+    return;
+  }
+  model_client_->solution().CreateSession(
+      initial_session_.BindNewPipeAndPassReceiver(), session_params_.Clone());
+  initial_session_.reset_on_disconnect();
+  initial_session_->SetPriority(context_bound_object_set_->priority());
+  if (initial_input_) {
+    initial_session_->Append(MakeAppendOptions(initial_input_.Clone()), {});
+  }
+  HandleOverflow();
+}
+
 void AILanguageModel::AddToQueue(QueueCallback task) {
   queue_.push(std::move(task));
   RunNext();
@@ -982,6 +1022,8 @@ void AILanguageModel::RunNext() {
   task_running_ = true;
   auto task = std::move(queue_.front());
   queue_.pop();
+  // Make sure the session is active before running the next task.
+  EnsureSessionConnected();
   // Wrap the completion callback in a default invoke to allow tasks to avoid
   // having to explicitly call in every error code path.
   std::move(task).Run(

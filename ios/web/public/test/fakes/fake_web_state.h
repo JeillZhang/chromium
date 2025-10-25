@@ -43,7 +43,7 @@ class FakeWebState : public WebState {
   void SetDelegate(WebStateDelegate* delegate) override;
   std::unique_ptr<WebState> Clone() const override;
   bool IsRealized() const final;
-  WebState* ForceRealized() final;
+  WebState* ForceRealizedWithPolicy(RealizationPolicy policy) final;
   bool IsWebUsageEnabled() const override;
   void SetWebUsageEnabled(bool enabled) override;
   UIView* GetView() override;
@@ -73,7 +73,6 @@ class FakeWebState : public WebState {
   CRWSessionStorage* BuildSessionStorage() const override;
   void LoadData(NSData* data, NSString* mime_type, const GURL& url) override;
   void ExecuteUserJavaScript(NSString* javaScript) override;
-  NSString* GetStableIdentifier() const override;
   WebStateID GetUniqueIdentifier() const override;
   const std::string& GetContentsMimeType() const override;
   bool ContentIsHTML() const override;
@@ -184,7 +183,7 @@ class FakeWebState : public WebState {
   void OnDownloadFinished(NSError* error);
 
  private:
-  raw_ptr<BrowserState> browser_state_ = nullptr;
+  raw_ptr<BrowserState, DanglingUntriaged> browser_state_ = nullptr;
   NSString* stable_identifier_ = nil;
   const WebStateID unique_identifier_;
   bool web_usage_enabled_ = true;
@@ -218,7 +217,8 @@ class FakeWebState : public WebState {
   id<CRWWebViewDownloadDelegate> download_delegate_;
 
   // A list of observers notified when page state changes. Weak references.
-  base::ObserverList<WebStateObserver, true> observers_;
+  WebStateObserverList observers_;
+
   // All the WebStatePolicyDeciders asked for navigation decision. Weak
   // references.
   base::ObserverList<WebStatePolicyDecider, true> policy_deciders_;

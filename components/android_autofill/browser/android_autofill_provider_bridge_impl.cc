@@ -199,14 +199,14 @@ void AndroidAutofillProviderBridgeImpl::OnFormSubmitted(
                                         static_cast<int>(submission_source));
 }
 
-void AndroidAutofillProviderBridgeImpl::OnDidFillAutofillFormData() {
+void AndroidAutofillProviderBridgeImpl::OnDidAutofillForm() {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null()) {
     return;
   }
 
-  Java_AutofillProvider_onDidFillAutofillFormData(env, obj);
+  Java_AutofillProvider_onDidAutofillForm(env, obj);
 }
 
 void AndroidAutofillProviderBridgeImpl::CancelSession() {
@@ -248,12 +248,13 @@ void AndroidAutofillProviderBridgeImpl::OnAcceptDataListSuggestion(
   delegate_->OnAcceptDatalistSuggestion(value);
 }
 
-void AndroidAutofillProviderBridgeImpl::SetAnchorViewRect(JNIEnv* env,
-                                                          jobject anchor_view,
-                                                          jfloat x,
-                                                          jfloat y,
-                                                          jfloat width,
-                                                          jfloat height) {
+void AndroidAutofillProviderBridgeImpl::SetAnchorViewRect(
+    JNIEnv* env,
+    const base::android::JavaRef<jobject>& anchor_view,
+    jfloat x,
+    jfloat y,
+    jfloat width,
+    jfloat height) {
   delegate_->SetAnchorViewRect(ScopedJavaLocalRef<jobject>(env, anchor_view),
                                gfx::RectF(x, y, width, height));
 }

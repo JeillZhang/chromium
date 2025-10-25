@@ -14,7 +14,6 @@
 #include "ui/base/mojom/ui_base_types.mojom-shared.h"
 #include "ui/base/mojom/window_show_state.mojom-forward.h"
 #include "ui/display/display.h"
-#include "ui/gfx/win/wuc_backdrop.h"
 #include "ui/views/views_export.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host.h"
 #include "ui/views/win/hwnd_message_handler_delegate.h"
@@ -40,7 +39,7 @@ class ScopedTooltipDisabler;
 namespace views {
 class DesktopDragDropClientWin;
 class HWNDMessageHandler;
-class NonClientFrameView;
+class FrameView;
 
 namespace test {
 class DesktopWindowTreeHostWinTestApi;
@@ -100,13 +99,12 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void OnNativeWidgetCreated(const Widget::InitParams& params) override;
   void OnActiveWindowChanged(bool active) override;
   void OnWidgetInitDone() override;
-  void OnWidgetThemeChanged(ui::ColorProviderKey::ColorMode color_mode,
-                            std::optional<SkColor> background_color) override;
   std::unique_ptr<corewm::Tooltip> CreateTooltip() override;
   std::unique_ptr<aura::client::DragDropClient> CreateDragDropClient() override;
   void Close() override;
   void CloseNow() override;
   aura::WindowTreeHost* AsWindowTreeHost() override;
+  DesktopWindowTreeHost::WindowTreeHosts GetOwnedWindowTreeHosts() override;
   void Show(ui::mojom::WindowShowState show_state,
             const gfx::Rect& restore_bounds) override;
   bool IsVisible() const override;
@@ -147,13 +145,14 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
       Widget::MoveLoopEscapeBehavior escape_behavior) override;
   void EndMoveLoop() override;
   void SetVisibilityChangedAnimationsEnabled(bool value) override;
-  std::unique_ptr<NonClientFrameView> CreateNonClientFrameView() override;
+  std::unique_ptr<FrameView> CreateFrameView() override;
   bool ShouldUseNativeFrame() const override;
   bool ShouldWindowContentsBeTransparent() const override;
   void FrameTypeChanged() override;
   void SetFullscreen(bool fullscreen, int64_t target_display_id) override;
   bool IsFullscreen() const override;
   void SetOpacity(float opacity) override;
+  void SetBackgroundColor(SkColor background_color) override;
   void SetAspectRatio(const gfx::SizeF& aspect_ratio,
                       const gfx::Size& excluded_margin) override;
   void SetWindowIcons(const gfx::ImageSkia& window_icon,
@@ -194,6 +193,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   RequestUnadjustedMovement() override;
   void LockMouse(aura::Window* window) override;
   void UnlockMouse(aura::Window* window) override;
+  void ClientDestroyedWidget() override;
 
   // Overridden from aura::client::AnimationHost
   void SetHostTransitionOffsets(
@@ -225,6 +225,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   gfx::Size DIPToScreenSize(const gfx::Size& dip_size) const override;
   void ResetWindowControls() override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
+  gfx::NativeViewAccessible GetParentNativeViewAccessible() override;
   void HandleActivationChanged(bool active) override;
   bool HandleAppCommand(int command) override;
   void HandleCancelMode() override;
@@ -296,11 +297,12 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   // Call Windows API to update the window display affinity.
   void UpdateAllowScreenshots();
 
-  // Creates a Windows.Ui.Composition backdrop and attaches it to the hwnd if
-  // the window does not have a redirection bitmap and Chromium is responsible
-  // for drawing the frame. Also resets the backdrop if the frame mode is
-  // changed to be system drawn.
-  void UpdateWUCBackdrop(std::optional<SkColor> color);
+  // Designates a Mica DWM_SYSTEMBACKDROP to the window if it does not have
+  // a redirection bitmap.
+  void UpdateBackdropColorMode();
+
+  // Returns true if a DWM Backdrop should be applied to the window.
+  bool ShouldAddDWMBackdrop();
 
   void ClearBackgroundPaintBrush();
 
@@ -346,9 +348,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
 
   // True if the window is allow to take screenshots, by default is true.
   bool allow_screenshots_ = true;
-
-  // A Windows.Ui.Composition visual tree that represents the window backdrop.
-  std::unique_ptr<gfx::WUCBackdrop> wuc_backdrop_;
 
   // Visibility of the cursor. On Windows we can have multiple root windows and
   // the implementation of ::ShowCursor() is based on a counter, so making this

@@ -21,8 +21,44 @@ const AtomicString& XRLayer::InterfaceName() const {
   return event_target_names::kXRLayer;
 }
 
-const XRLayerSharedImages& XRLayer::GetSharedImages() const {
-  return session_->LayerSharedImageManager().GetLayerSharedImages(this);
+const XRSharedImageData& XRLayer::SharedImage() const {
+  return session_->LayerSharedImageManager().LayerSharedImage(layer_id_);
+}
+
+bool XRLayer::HasSharedImage() const {
+  return session_->LayerSharedImageManager().HasLayerSharedImage(layer_id_);
+}
+
+void XRLayer::SetModified(bool is_modified) {
+  is_modified_ = is_modified;
+}
+
+bool XRLayer::IsModified() const {
+  return is_modified_;
+}
+
+void XRLayer::CreateLayerBackend() {
+  if (auto* layer_manager = session()->LayerManager(); layer_manager) {
+    layer_manager->CreateCompositionLayer(
+        CreateLayerData(),
+        BindOnce(&XRLayer::OnBackendLayerCreated, WrapWeakPersistent(this)));
+  }
+}
+
+void XRLayer::OnBackendLayerCreated(
+    device::mojom::blink::CreateCompositionLayerResult result) {
+  is_backend_active_ =
+      result == device::mojom::blink::CreateCompositionLayerResult::SUCCESS;
+}
+
+bool XRLayer::IsBackendActive() const {
+  return is_backend_active_;
+}
+
+void XRLayer::DestroyBackend() {
+  if (auto* layer_manager = session()->LayerManager(); layer_manager) {
+    layer_manager->DestroyCompositionLayer(layer_id_);
+  }
 }
 
 void XRLayer::Trace(Visitor* visitor) const {

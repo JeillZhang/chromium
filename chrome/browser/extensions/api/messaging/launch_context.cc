@@ -16,7 +16,6 @@
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
-#include "base/functional/overloaded.h"
 #include "base/json/json_writer.h"
 #include "base/location.h"
 #include "base/logging.h"
@@ -228,7 +227,7 @@ LaunchContext::BackgroundLaunchResult LaunchContext::LaunchInBackground(
     reconnect_command_line.AppendSwitchASCII(
         ::switches::kNativeMessagingConnectHost, native_host_name);
     reconnect_command_line.AppendSwitchASCII(
-        ::switches::kNativeMessagingConnectExtension, origin.host());
+        ::switches::kNativeMessagingConnectExtension, origin.GetHost());
     reconnect_command_line.AppendSwitchASCII(::switches::kEnableFeatures,
                                              features::kOnConnectNative.name);
     reconnect_command_line.AppendSwitchPath(::switches::kProfileDirectory,

@@ -46,7 +46,7 @@
           {
             "builder_id": {
               "bucket": "ci",
-              "builder": "Android FYI Release (Nexus 5X)",
+              "builder": "Android FYI Release (Pixel 10)",
               "project": "chromium"
             },
             "builder_spec": {
@@ -76,7 +76,8 @@
                 "bucket": "ci",
                 "builder": "GPU FYI Android arm64 Builder",
                 "project": "chromium"
-              }
+              },
+              "run_tests_serially": true
             }
           },
           {
@@ -200,7 +201,7 @@
         },
         {
           "bucket": "ci",
-          "builder": "Android FYI Release (Nexus 5X)",
+          "builder": "Android FYI Release (Pixel 10)",
           "project": "chromium"
         },
         {
@@ -220,7 +221,7 @@
           "group": "tryserver.chromium.android"
         },
         {
-          "builder": "gpu-fyi-try-android-m-nexus-5x-64",
+          "builder": "gpu-fyi-try-android-pixel-10-64",
           "group": "tryserver.chromium.android"
         },
         {

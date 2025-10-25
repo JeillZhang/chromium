@@ -59,7 +59,6 @@
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
-#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/dip_util.h"
@@ -83,9 +82,7 @@ DEFINE_UI_CLASS_PROPERTY_TYPE(exo::Surface*)
 
 namespace exo {
 
-BASE_FEATURE(kDisableNonYUVOverlaysFromExo,
-             "DisableNonYUVOverlaysFromExo",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kDisableNonYUVOverlaysFromExo, base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
 
@@ -110,13 +107,9 @@ bool ListContainsEntry(T& list, U key) {
   return FindListEntry(list, key) != list.end();
 }
 
-bool FormatHasAlpha(gfx::BufferFormat format) {
-  return gfx::AlphaBitsForBufferFormat(format) != 0;
-}
-
 // TODO(crbug.com/369003507): Remove this check once we found the root
 // cause of crash on specific hatch platform.
-bool ShouldDisableOverlay(gfx::BufferFormat format) {
+bool ShouldDisableOverlay(viz::SharedImageFormat format) {
   static bool is_blocked_device = false;
   static bool is_initialized = false;
   static const base::flat_set<std::string> blocked_devices = {
@@ -130,18 +123,12 @@ bool ShouldDisableOverlay(gfx::BufferFormat format) {
   if (!is_blocked_device) {
     return false;
   }
-  switch (format) {
-    case gfx::BufferFormat::YVU_420:
-      return false;
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      return false;
-    case gfx::BufferFormat::YUVA_420_TRIPLANAR:
-      return false;
-    case gfx::BufferFormat::P010:
-      return false;
-    default:
-      return true;
+
+  if (format.is_multi_plane()) {
+    return false;
   }
+
+  return true;
 }
 
 Transform InvertY(Transform transform) {
@@ -324,12 +311,6 @@ const std::string& GetApplicationId(aura::Window* window) {
 
 int surface_id = 0;
 
-void ImmediateExplicitRelease(
-    Buffer::PerCommitExplicitReleaseCallback callback) {
-  if (callback)
-    std::move(callback).Run(/*release_fence=*/gfx::GpuFenceHandle());
-}
-
 }  // namespace
 
 DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::string, kClientSurfaceIdKey)
@@ -382,13 +363,6 @@ Surface::~Surface() {
                                        pending_state_.presentation_callbacks);
   for (const auto& presentation_callback : state_.presentation_callbacks)
     presentation_callback.Run(gfx::PresentationFeedback());
-
-  // Call explicit release on all explicit release callbacks that have been
-  // committed.
-  ImmediateExplicitRelease(
-      std::move(state_.per_commit_explicit_release_callback_));
-  ImmediateExplicitRelease(
-      std::move(cached_state_.per_commit_explicit_release_callback_));
 
   // Do not reset the DragDropDelegate in order to handle exit upon deletion.
 }
@@ -533,7 +507,7 @@ void Surface::AddSubSurface(Surface* sub_surface) {
   // The shell might have not be added to the root yet.
   if (window_->GetRootWindow()) {
     auto display =
-        display::Screen::GetScreen()->GetDisplayNearestWindow(window_.get());
+        display::Screen::Get()->GetDisplayNearestWindow(window_.get());
     sub_surface->UpdateDisplay(display::kInvalidDisplayId, display.id());
   }
 }
@@ -972,17 +946,6 @@ bool Surface::HasAcquireFence() const {
   return !!state_.acquire_fence;
 }
 
-void Surface::SetPerCommitBufferReleaseCallback(
-    Buffer::PerCommitExplicitReleaseCallback callback) {
-  TRACE_EVENT0("exo", "Surface::SetPerCommitBufferReleaseCallback");
-
-  pending_state_.per_commit_explicit_release_callback_ = std::move(callback);
-}
-
-bool Surface::HasPendingPerCommitBufferReleaseCallback() const {
-  return !!pending_state_.per_commit_explicit_release_callback_;
-}
-
 void Surface::Commit() {
   TRACE_EVENT1(
       "exo", "Surface::Commit", "buffer_id",
@@ -1022,8 +985,6 @@ void Surface::Commit() {
   cached_state_.clip_rect = pending_state_.clip_rect;
   cached_state_.surface_transform = pending_state_.surface_transform;
   cached_state_.acquire_fence = std::move(pending_state_.acquire_fence);
-  cached_state_.per_commit_explicit_release_callback_ =
-      std::move(pending_state_.per_commit_explicit_release_callback_);
   cached_state_.frame_callbacks.splice(cached_state_.frame_callbacks.end(),
                                        pending_state_.frame_callbacks);
   cached_state_.damage.Union(pending_state_.damage);
@@ -1068,7 +1029,7 @@ bool Surface::UpdateDisplay(int64_t old_display, int64_t new_display) {
 }
 
 display::Display Surface::GetDisplay() const {
-  return display::Screen::GetScreen()->GetDisplayNearestWindow(window());
+  return display::Screen::Get()->GetDisplayNearestWindow(window());
 }
 
 void Surface::CommitSurfaceHierarchy(bool synchronized) {
@@ -1192,8 +1153,6 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
       state_.clip_rect = cached_state_.clip_rect;
       state_.surface_transform = cached_state_.surface_transform;
       state_.acquire_fence = std::move(cached_state_.acquire_fence);
-      state_.per_commit_explicit_release_callback_ =
-          std::move(cached_state_.per_commit_explicit_release_callback_);
       if (state_.basic_state.alpha)
         needs_update_resource_ = true;
     }
@@ -1207,8 +1166,6 @@ void Surface::CommitSurfaceHierarchy(bool synchronized) {
     // a new buffer, and it was already moved to state_.acquire_fence. Note that
     // it is a commit-time client error to commit a fence without a buffer.
     DCHECK(!cached_state_.acquire_fence);
-    // Similarly for the per commit buffer release callback.
-    DCHECK(!cached_state_.per_commit_explicit_release_callback_);
 
     if (needs_update_buffer_transform)
       UpdateBufferTransform(cached_invert_y);
@@ -1365,9 +1322,6 @@ void Surface::AppendSurfaceHierarchyContentsToFrame(
   // callback, since the buffer will not be used for this commit.
   if (needs_update_resource_) {
     UpdateResource(resource_manager);
-  } else {
-    ImmediateExplicitRelease(
-        std::move(state_.per_commit_explicit_release_callback_));
   }
 
   AppendContentsToFrame(parent_to_root_px, to_parent_dp, needs_full_damage,
@@ -1540,34 +1494,30 @@ void Surface::UpdateResource(FrameSinkResourceManager* resource_manager) {
     if (!buffer_color_space.IsValid()) {
       buffer_color_space = gfx::ColorSpace::CreateSRGB();
     }
-    if (legacy_buffer_release_skippable_ &&
-        state_.per_commit_explicit_release_callback_) {
-      state_.buffer->buffer()->SkipLegacyRelease();
-    }
-    if (state_.buffer->buffer()->ProduceTransferableResource(
-            resource_manager, std::move(state_.acquire_fence),
-            state_.basic_state.only_visible_on_secure_output,
-            &current_resource_, buffer_color_space,
-            window_->GetToplevelWindow()->GetProperty(
-                kProtectedNativePixmapQueryDelegate),
-            std::move(state_.per_commit_explicit_release_callback_))) {
+    // TODO(crbug.com/421207623): These only one field that might be preserved
+    // across calls and it's likely a bug.
+    auto prev_synchronization_type =
+        current_resource_.value_or(viz::TransferableResource())
+            .synchronization_type;
+
+    current_resource_ = state_.buffer->buffer()->ProduceTransferableResource(
+        resource_manager, std::move(state_.acquire_fence),
+        state_.basic_state.only_visible_on_secure_output, buffer_color_space,
+        window_->GetToplevelWindow()->GetProperty(
+            kProtectedNativePixmapQueryDelegate),
+        Buffer::PerCommitExplicitReleaseCallback(), prev_synchronization_type);
+
+    if (current_resource_) {
       current_resource_has_alpha_ =
-          FormatHasAlpha(state_.buffer->buffer()->GetFormat());
-      current_resource_.color_space = state_.basic_state.color_space;
+          state_.buffer->buffer()->GetFormat().HasAlpha();
+      current_resource_->color_space = state_.basic_state.color_space;
     } else {
-      current_resource_.id = viz::kInvalidResourceId;
-      // Use the buffer's size, so the AppendContentsToFrame() will append
-      // a SolidColorDrawQuad with the buffer's size.
-      current_resource_.size = state_.buffer->size();
       SkColor4f color = state_.buffer->buffer()->GetColor();
       current_resource_has_alpha_ = !color.isOpaque();
     }
   } else {
-    current_resource_.id = viz::kInvalidResourceId;
-    current_resource_.size = gfx::Size();
+    current_resource_.reset();
     current_resource_has_alpha_ = false;
-    ImmediateExplicitRelease(
-        std::move(state_.per_commit_explicit_release_callback_));
   }
 }
 
@@ -1765,14 +1715,16 @@ void Surface::AppendContentsToFrame(const gfx::PointF& parent_to_root_px,
   if (IsOccludedByPreviousSqs(render_pass, quad_to_target_transform, quad_rect,
                               msk)) {
     render_pass->damage_rect.Union(gfx::ToEnclosedRect(damage_rect_px));
-    if (current_resource_.id) {
-      frame->resource_list.push_back(current_resource_);
+    if (current_resource_) {
+      CHECK(current_resource_->id);
+      frame->resource_list.push_back(*current_resource_);
     }
     UMA_HISTOGRAM_BOOLEAN("Graphics.Exo.Surface.Occluded", true);
     return;
   }
 
-  if (current_resource_.id) {
+  if (current_resource_) {
+    CHECK(current_resource_->id);
     gfx::RectF uv_crop(gfx::SizeF(1, 1));
     if (!state_.basic_state.crop.IsEmpty()) {
       // The crop rectangle is a post-transformation rectangle. To get the UV
@@ -1780,7 +1732,7 @@ void Surface::AppendContentsToFrame(const gfx::PointF& parent_to_root_px,
       // pass them through the inverse of the buffer transformation.
       uv_crop = gfx::RectF(state_.basic_state.crop);
       gfx::Size transformed_buffer_size(ToTransformedSize(
-          current_resource_.size, state_.basic_state.buffer_transform));
+          current_resource_->size, state_.basic_state.buffer_transform));
       if (!transformed_buffer_size.IsEmpty()) {
         uv_crop.InvScale(transformed_buffer_size.width(),
                          transformed_buffer_size.height());
@@ -1812,7 +1764,7 @@ void Surface::AppendContentsToFrame(const gfx::PointF& parent_to_root_px,
           render_pass->CreateAndAppendDrawQuad<viz::TextureDrawQuad>();
       texture_quad->SetNew(
           quad_state, quad_rect, quad_rect,
-          /* needs_blending=*/!are_contents_opaque, current_resource_.id,
+          /* needs_blending=*/!are_contents_opaque, current_resource_->id,
           uv_crop.origin(), uv_crop.bottom_right(), background_color,
           /* nearest*/ false, state_.basic_state.only_visible_on_secure_output,
           gfx::ProtectedVideoType::kClear);
@@ -1844,7 +1796,7 @@ void Surface::AppendContentsToFrame(const gfx::PointF& parent_to_root_px,
       // Clear handled damage so it will not be added to the |render_pass|.
       damage_rect_px = gfx::RectF();
     }
-    frame->resource_list.push_back(current_resource_);
+    frame->resource_list.push_back(*current_resource_);
   } else if (state_.basic_state.alpha != 0.0f) {
     UMA_HISTOGRAM_BOOLEAN("Graphics.Exo.Surface.SolidColorDrawQuad", true);
     viz::SharedQuadState* quad_state =
@@ -2075,10 +2027,9 @@ std::string Surface::DumpDebugInfo() const {
          " " +
          (has_buffer
               ? (std::string("format=") +
-                 gfx::BufferFormatToString(
-                     state_.buffer->buffer()->GetFormat()) +
-                 (FormatHasAlpha(state_.buffer->buffer()->GetFormat()) ? "(a)"
-                                                                       : ""))
+
+                 state_.buffer->buffer()->GetFormat().ToString() +
+                 (state_.buffer->buffer()->GetFormat().HasAlpha() ? "(a)" : ""))
               : "");
 }
 

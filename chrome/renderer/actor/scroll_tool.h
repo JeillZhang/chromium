@@ -10,6 +10,7 @@
 #include "base/memory/raw_ref.h"
 #include "base/types/expected.h"
 #include "chrome/common/actor.mojom.h"
+#include "chrome/common/actor/task_id.h"
 #include "chrome/renderer/actor/tool_base.h"
 #include "third_party/blink/public/web/web_element.h"
 #include "ui/gfx/geometry/vector2d_f.h"
@@ -24,14 +25,16 @@ namespace actor {
 class ScrollTool : public ToolBase {
  public:
   ScrollTool(content::RenderFrame& frame,
-             Journal::TaskId task_id,
+             TaskId task_id,
              Journal& journal,
-             mojom::ScrollActionPtr action);
+             mojom::ScrollActionPtr action,
+             mojom::ToolTargetPtr target,
+             mojom::ObservedToolTargetPtr observed_target);
 
   ~ScrollTool() override;
 
   // actor::ToolBase
-  mojom::ActionResultPtr Execute() override;
+  void Execute(ToolFinishedCallback callback) override;
   std::string DebugString() const override;
 
  private:

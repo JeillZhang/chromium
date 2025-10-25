@@ -13,9 +13,9 @@
 #include "base/task/thread_pool.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/timer/elapsed_timer.h"
+#include "base/trace_event/trace_event.h"
 #include "net/base/net_errors.h"
 #include "net/base/trace_constants.h"
-#include "net/base/tracing.h"
 #include "net/base/url_util.h"
 #include "net/cert/cert_verify_proc.h"
 #include "net/cert/cert_verify_result.h"
@@ -91,6 +91,17 @@ std::unique_ptr<ResultHelper> DoVerifyOnWorkerThread(
         base::Milliseconds(1), base::Minutes(10), 100);
   }
   return verify_result;
+}
+
+scoped_refptr<X509Certificate> DoVerify2QwacBindingOnWorkerThread(
+    const scoped_refptr<CertVerifyProc>& verify_proc,
+    const std::string& binding,
+    const std::string& hostname,
+    const scoped_refptr<X509Certificate>& tls_cert,
+    const NetLogWithSource& net_log) {
+  TRACE_EVENT0(NetTracingCategory(), "DoVerify2QwacBindingOnWorkerThread");
+  return verify_proc->Verify2QwacBinding(binding, hostname,
+                                         tls_cert->cert_span(), net_log);
 }
 
 }  // namespace
@@ -260,6 +271,24 @@ int MultiThreadedCertVerifier::Verify(const RequestParams& params,
   request_list_.Append(request.get());
   *out_req = std::move(request);
   return ERR_IO_PENDING;
+}
+
+void MultiThreadedCertVerifier::Verify2QwacBinding(
+    const std::string& binding,
+    const std::string& hostname,
+    const scoped_refptr<X509Certificate>& tls_cert,
+    base::OnceCallback<void(const scoped_refptr<X509Certificate>&)> callback,
+    const NetLogWithSource& net_log) {
+  CHECK(!callback.is_null());
+
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+
+  base::ThreadPool::PostTaskAndReplyWithResult(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+      base::BindOnce(&DoVerify2QwacBindingOnWorkerThread, verify_proc_, binding,
+                     hostname, tls_cert, net_log),
+      std::move(callback));
 }
 
 void MultiThreadedCertVerifier::UpdateVerifyProcData(

@@ -25,9 +25,11 @@ class LogoViewBinder
         } else if (LogoProperties.LOGO_TOP_MARGIN == propertyKey) {
             MarginLayoutParams marginLayoutParams = (MarginLayoutParams) logoView.getLayoutParams();
             marginLayoutParams.topMargin = model.get(LogoProperties.LOGO_TOP_MARGIN);
+            logoView.setLayoutParams(marginLayoutParams);
         } else if (LogoProperties.LOGO_BOTTOM_MARGIN == propertyKey) {
             MarginLayoutParams marginLayoutParams = (MarginLayoutParams) logoView.getLayoutParams();
             marginLayoutParams.bottomMargin = model.get(LogoProperties.LOGO_BOTTOM_MARGIN);
+            logoView.setLayoutParams(marginLayoutParams);
         } else if (LogoProperties.SET_END_FADE_ANIMATION == propertyKey) {
             logoView.endFadeAnimation();
         } else if (LogoProperties.VISIBILITY == propertyKey) {
@@ -42,6 +44,9 @@ class LogoViewBinder
             logoView.updateLogo(model.get(LogoProperties.LOGO));
         } else if (LogoProperties.DEFAULT_GOOGLE_LOGO == propertyKey) {
             logoView.setDefaultGoogleLogo(model.get(LogoProperties.DEFAULT_GOOGLE_LOGO));
+        } else if (LogoProperties.DEFAULT_GOOGLE_LOGO_DRAWABLE == propertyKey) {
+            logoView.setDefaultGoogleLogoDrawable(
+                    model.get(LogoProperties.DEFAULT_GOOGLE_LOGO_DRAWABLE));
         } else if (LogoProperties.SHOW_LOADING_VIEW == propertyKey) {
             logoView.showLoadingView();
         } else if (LogoProperties.ANIMATED_LOGO == propertyKey) {

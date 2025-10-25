@@ -98,8 +98,9 @@ void ScrollbarTheme::PaintScrollCorner(
     const ScrollableArea& scrollable_area,
     const DisplayItemClient& display_item_client,
     const gfx::Rect& corner_rect) {
-  if (corner_rect.IsEmpty())
+  if (corner_rect.IsEmpty()) {
     return;
+  }
 
   if (DrawingRecorder::UseCachedDrawingIfPossible(context, display_item_client,
                                                   DisplayItem::kScrollCorner))
@@ -126,8 +127,9 @@ void ScrollbarTheme::PaintScrollCorner(
   mojom::blink::ColorScheme color_scheme = scrollbar->UsedColorScheme();
   WebThemeEngineHelper::GetNativeThemeEngine()->Paint(
       context.Canvas(), WebThemeEngine::kPartScrollbarCorner,
-      WebThemeEngine::kStateNormal, corner_rect, &extra_params, color_scheme,
-      scrollbar->InForcedColorsMode(),
+      WebThemeEngine::kStateNormal, corner_rect, &extra_params,
+      scrollbar->InForcedColorsMode(), color_scheme,
+      scrollbar->GetPreferredContrast(),
       scrollbar->GetColorProvider(color_scheme));
 #endif
 }
@@ -303,7 +305,6 @@ void ScrollbarTheme::PaintTrackBackgroundAndButtons(GraphicsContext& context,
                                                     const gfx::Rect& rect) {
   // CustomScrollbarTheme must override this method.
   DCHECK(!scrollbar.IsCustomScrollbar());
-  CHECK_EQ(rect.size(), scrollbar.FrameRect().size());
   gfx::Vector2d offset = rect.origin() - scrollbar.Location();
 
   if (DrawingRecorder::UseCachedDrawingIfPossible(

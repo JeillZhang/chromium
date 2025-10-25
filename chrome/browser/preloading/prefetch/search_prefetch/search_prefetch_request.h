@@ -18,6 +18,7 @@ class StreamingSearchPrefetchURLLoader;
 
 namespace content {
 class PreloadingAttempt;
+class WebContents;
 enum class PreloadingTriggeringOutcome;
 enum class PreloadingFailureReason;
 }  // namespace content
@@ -82,8 +83,6 @@ enum class SearchPrefetchStatus {
 //   more easily.
 class SearchPrefetchRequest {
  public:
-  static void SetIsTest();
-
   SearchPrefetchRequest(const GURL& canonical_search_url,
                         const GURL& prefetch_url,
                         bool navigation_prefetch,
@@ -100,7 +99,8 @@ class SearchPrefetchRequest {
   // Starts the network request to prefetch `prefetch_url_`. Sets various fields
   // on a resource request. Returns `false` if the request is not started (i.e.,
   // it would be deferred by throttles).
-  bool StartPrefetchRequest(Profile* profile);
+  bool StartPrefetchRequest(Profile* profile,
+                            content::WebContents& web_contents);
 
   // Called when SearchPrefetchService receives the hint that this prefetch
   // request can be upgraded to a prerender attempt.

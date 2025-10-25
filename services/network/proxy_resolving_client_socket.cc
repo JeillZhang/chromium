@@ -15,6 +15,7 @@
 #include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_address.h"
@@ -22,6 +23,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/network_anonymization_key.h"
 #include "net/base/privacy_mode.h"
+#include "net/base/proxy_delegate.h"
 #include "net/dns/public/secure_dns_policy.h"
 #include "net/http/http_auth_controller.h"
 #include "net/http/http_network_session.h"
@@ -350,8 +352,9 @@ int ProxyResolvingClientSocket::ReconsiderProxyAfterError(int error) {
   DCHECK_NE(error, net::ERR_IO_PENDING);
 
   // Check if the error was a proxy failure.
-  if (!net::CanFalloverToNextProxy(proxy_info_.proxy_chain(), error, &error,
-                                   proxy_info_.is_for_ip_protection())) {
+  if (!net::CanFalloverToNextProxy(
+          proxy_info_.proxy_chain(), error, &error,
+          common_connect_job_params_->proxy_delegate)) {
     return error;
   }
 

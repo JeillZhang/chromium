@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "base/byte_count.h"
 #include "base/check.h"
 #include "base/functional/callback.h"
 #include "base/memory/ref_counted.h"
@@ -349,9 +350,9 @@ class NET_EXPORT HttpResponseHeaders
   // a parameter to support unit testing.  The request_time parameter indicates
   // the time at which the request was made that resulted in this response,
   // which was received at response_time.
-  ValidationType RequiresValidation(const base::Time& request_time,
-                                    const base::Time& response_time,
-                                    const base::Time& current_time) const;
+  ValidationType RequiresValidation(base::Time request_time,
+                                    base::Time response_time,
+                                    base::Time current_time) const;
 
   // Calculates the amount of time the server claims the response is fresh from
   // the time the response was generated.  See section 13.2.4 of RFC 2616.  See
@@ -359,14 +360,13 @@ class NET_EXPORT HttpResponseHeaders
   // the definition of FreshnessLifetimes above for the meaning of the return
   // value.  See RFC 5861 section 3 for the definition of
   // stale-while-revalidate.
-  FreshnessLifetimes GetFreshnessLifetimes(
-      const base::Time& response_time) const;
+  FreshnessLifetimes GetFreshnessLifetimes(base::Time response_time) const;
 
   // Returns the age of the response.  See section 13.2.3 of RFC 2616.
   // See RequiresValidation for a description of this method's parameters.
-  base::TimeDelta GetCurrentAge(const base::Time& request_time,
-                                const base::Time& response_time,
-                                const base::Time& current_time) const;
+  base::TimeDelta GetCurrentAge(base::Time request_time,
+                                base::Time response_time,
+                                base::Time current_time) const;
 
   // The following methods extract values from the response headers.  If a value
   // is not present, or is invalid, then std::nullopt is returned.  Otherwise,
@@ -399,13 +399,13 @@ class NET_EXPORT HttpResponseHeaders
   // RFC 2616.
   bool HasValidators() const;
 
-  // Extracts the value of the Content-Length header or returns -1 if there is
-  // no such header in the response.
-  int64_t GetContentLength() const;
-
-  // Extracts the value of the specified header or returns -1 if there is no
+  // Returns the value of the Content-Length header or nullopt if there is no
   // such header in the response.
-  int64_t GetInt64HeaderValue(const std::string& header) const;
+  std::optional<base::ByteCount> GetContentLength() const;
+
+  // Returns the value of the specified header or nullopt if there is no such
+  // header in the response.
+  std::optional<int64_t> GetInt64HeaderValue(std::string_view header) const;
 
   // Extracts the values in a Content-Range header and returns true if all three
   // values are present and valid for a 206 response; otherwise returns false.

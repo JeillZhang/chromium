@@ -27,6 +27,7 @@
 #include "components/sync/base/features.h"
 #include "components/sync/model/sync_change.h"
 #include "components/sync/model/sync_change_processor.h"
+#include "components/sync/protocol/entity_data.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/protocol/preference_specifics.pb.h"
 #include "components/sync_preferences/dual_layer_user_pref_store.h"
@@ -57,7 +58,8 @@ const sync_pb::PreferenceSpecifics& GetSpecifics(const syncer::SyncData& pref) {
 std::optional<base::Value> ReadPreferenceSpecifics(
     const sync_pb::PreferenceSpecifics& preference) {
   base::JSONReader::Result parsed_json =
-      base::JSONReader::ReadAndReturnValueWithError(preference.value());
+      base::JSONReader::ReadAndReturnValueWithError(
+          preference.value(), base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   if (!parsed_json.has_value()) {
     LOG(ERROR) << "Failed to deserialize preference value: "
                << parsed_json.error().message;
@@ -145,7 +147,8 @@ void PrefModelAssociator::InitPrefAndAssociate(
     CHECK_EQ(pref_name, preference.name());
     ASSIGN_OR_RETURN(
         base::Value sync_value,
-        base::JSONReader::ReadAndReturnValueWithError(preference.value()),
+        base::JSONReader::ReadAndReturnValueWithError(
+            preference.value(), base::JSON_PARSE_CHROMIUM_EXTENSIONS),
         [&](base::JSONReader::Error error) {
           LOG(ERROR) << "Failed to deserialize value of preference '"
                      << pref_name << "': " << std::move(error).message;
@@ -273,6 +276,14 @@ void PrefModelAssociator::OnBrowserShutdown(syncer::DataType type) {
   Stop(/*is_browser_shutdown=*/true);
 }
 
+void PrefModelAssociator::StayStoppedAndMaybeClearData(syncer::DataType type) {
+  CHECK_EQ(type_, type);
+  CHECK(!sync_processor_);
+  if (dual_layer_user_prefs_) {
+    dual_layer_user_prefs_->DisableTypeAndClearAccountStore(type_);
+  }
+}
+
 void PrefModelAssociator::Stop(bool is_browser_shutdown) {
   models_associated_ = false;
   sync_processor_.reset();
@@ -316,7 +327,8 @@ std::optional<syncer::ModelError> PrefModelAssociator::ProcessSyncChanges(
     const base::Location& from_here,
     const syncer::SyncChangeList& change_list) {
   if (!models_associated_) {
-    return syncer::ModelError(FROM_HERE, "Models not yet associated.");
+    return syncer::ModelError(
+        FROM_HERE, syncer::ModelError::Type::kPrefModelsNotAssociated);
   }
   base::AutoReset<bool> processing_changes(&processing_syncer_changes_, true);
   for (const syncer::SyncChange& sync_change : change_list) {
@@ -374,6 +386,26 @@ std::optional<syncer::ModelError> PrefModelAssociator::ProcessSyncChanges(
 
 base::WeakPtr<syncer::SyncableService> PrefModelAssociator::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
+}
+
+std::string PrefModelAssociator::GetClientTag(
+    const syncer::EntityData& entity_data) const {
+#if BUILDFLAG(IS_CHROMEOS)
+  if (type_ == syncer::OS_PREFERENCES) {
+    DCHECK(entity_data.specifics.has_os_preference());
+    return entity_data.specifics.os_preference().preference().name();
+  } else if (type_ == syncer::OS_PRIORITY_PREFERENCES) {
+    DCHECK(entity_data.specifics.has_os_priority_preference());
+    return entity_data.specifics.os_priority_preference().preference().name();
+  }
+#endif
+  if (type_ == syncer::PREFERENCES) {
+    DCHECK(entity_data.specifics.has_preference());
+    return entity_data.specifics.preference().name();
+  } else {
+    DCHECK(entity_data.specifics.has_priority_preference());
+    return entity_data.specifics.priority_preference().preference().name();
+  }
 }
 
 void PrefModelAssociator::AddSyncedPrefObserver(const std::string& name,

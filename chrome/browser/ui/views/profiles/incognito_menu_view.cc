@@ -27,9 +27,9 @@
 #include "ui/color/color_id.h"
 #include "ui/views/accessibility/view_accessibility.h"
 
-IncognitoMenuView::IncognitoMenuView(views::Button* anchor_button,
+IncognitoMenuView::IncognitoMenuView(ui::TrackedElement* anchor_element,
                                      Browser* browser)
-    : ProfileMenuViewBase(anchor_button, browser) {
+    : ProfileMenuViewBase(anchor_element, browser) {
   CHECK(profile().IsIncognitoProfile());
   GetViewAccessibility().SetName(GetAccessibleWindowTitle(),
                                  ax::mojom::NameFrom::kAttribute);
@@ -69,7 +69,7 @@ std::u16string IncognitoMenuView::GetAccessibleWindowTitle() const {
 }
 
 void IncognitoMenuView::OnExitButtonClicked() {
-  RecordClick(ActionableItem::kExitProfileButton);
+  OnActionableItemClicked(ActionableItem::kExitProfileButton);
   base::RecordAction(base::UserMetricsAction("IncognitoMenu_ExitClicked"));
   // Skipping before-unload trigger to give incognito mode users a chance to
   // quickly close all incognito windows without needing to confirm closing the

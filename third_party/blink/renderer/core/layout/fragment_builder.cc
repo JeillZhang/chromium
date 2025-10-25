@@ -6,13 +6,17 @@
 
 #include "base/containers/contains.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-shared.h"
+#include "third_party/blink/renderer/core/animation/animation_trigger.h"
 #include "third_party/blink/renderer/core/display_lock/display_lock_utilities.h"
 #include "third_party/blink/renderer/core/dom/column_pseudo_element.h"
+#include "third_party/blink/renderer/core/dom/named_animation_trigger_map.h"
 #include "third_party/blink/renderer/core/layout/block_layout_algorithm_utils.h"
 #include "third_party/blink/renderer/core/layout/fragmentation_utils.h"
 #include "third_party/blink/renderer/core/layout/physical_box_fragment.h"
 #include "third_party/blink/renderer/core/layout/physical_fragment.h"
+#include "third_party/blink/renderer/core/layout/transform_utils.h"
 #include "third_party/blink/renderer/core/style/computed_style_base_constants.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 
 namespace blink {
 
@@ -25,10 +29,10 @@ bool IsInlineContainerForNode(const BlockNode& node,
              node.Style().GetPosition());
 }
 
-PhysicalAnchorQuery::SetOptions AnchorQuerySetOptions(
-    const PhysicalFragment& fragment,
-    const LayoutInputNode& container,
-    bool maybe_out_of_order_if_oof) {
+}  // namespace
+
+PhysicalAnchorQuery::SetOptions FragmentBuilder::AnchorQuerySetOptionsForChild(
+    const PhysicalFragment& fragment) const {
   // If the |fragment| is not absolutely positioned, it's an in-flow anchor.
   // https://drafts.csswg.org/css-anchor-1/#determining
   if (!fragment.IsOutOfFlowPositioned()) {
@@ -37,12 +41,14 @@ PhysicalAnchorQuery::SetOptions AnchorQuerySetOptions(
 
   // If the OOF |fragment| is not in a block fragmentation context, it's a child
   // of its containing block. Make it out-of-flow.
-  DCHECK(fragment.GetLayoutObject());
+  bool maybe_out_of_order_if_oof =
+      IsBlockFragmentationContextRoot() || HasItems();
   if (!maybe_out_of_order_if_oof) {
     return PhysicalAnchorQuery::SetOptions::kOutOfFlow;
   }
 
   // |container| is null if it's an inline box.
+  const LayoutInputNode& container = node_;
   if (!container.GetLayoutBox()) {
     return PhysicalAnchorQuery::SetOptions::kOutOfFlow;
   }
@@ -51,6 +57,7 @@ PhysicalAnchorQuery::SetOptions AnchorQuerySetOptions(
   // the fragmentation context root. If its containing block is the |container|,
   // make it out-of-flow.
   const LayoutObject* layout_object = fragment.GetLayoutObject();
+  DCHECK(layout_object);
   const LayoutObject* containing_block = layout_object->Container();
   DCHECK(containing_block);
   if (containing_block == container.GetLayoutBox()) {
@@ -60,8 +67,6 @@ PhysicalAnchorQuery::SetOptions AnchorQuerySetOptions(
   // context, so it's in-flow.
   return PhysicalAnchorQuery::SetOptions::kInFlow;
 }
-
-}  // namespace
 
 bool FragmentBuilder::IsRoot() const {
   return node_ && node_.IsView() && !space_.IsAnonymous();
@@ -146,7 +151,7 @@ GCedHeapVector<Member<Element>>& FragmentBuilder::EnsureSnapAreas() {
 void FragmentBuilder::PropagateSnapAreas(const PhysicalFragment& child) {
   auto get_insertion_pos = [&](Element* snap_area) {
     auto& snap_areas = EnsureSnapAreas();
-    // TODO(crbug.com/365680822): ::column pseudo elements don't have layout
+    // TODO(crbug.com/365680822): ::column pseudo-elements don't have layout
     // objects, and how snap areas established by them should be sorted,
     // relatively to real elements, is undefined.
     const LayoutBox* new_box = snap_area->GetLayoutBox();
@@ -185,15 +190,44 @@ void FragmentBuilder::AddSnapAreaForColumn(ColumnPseudoElement* column_pseudo) {
   EnsureSnapAreas().push_back(column_pseudo);
 }
 
-PhysicalAnchorQuery& FragmentBuilder::EnsureAnchorQuery() {
-  if (!anchor_query_)
-    anchor_query_ = MakeGarbageCollected<PhysicalAnchorQuery>();
-  return *anchor_query_;
-}
-
 void FragmentBuilder::PropagateChildAnchors(const PhysicalFragment& child,
                                             const LogicalOffset& child_offset) {
-  std::optional<PhysicalAnchorQuery::SetOptions> options;
+  if (!child.HasAnchorQueryToPropagate()) {
+    return;
+  }
+
+  if (!has_final_size_) {
+    // The container size isn't known yet. It needs to finish layout before
+    // anchors can be propagated, since they are stored in physical coordinates.
+    children_with_size_dependent_propagation_.push_back(
+        LogicalFragmentLink(child, child_offset));
+    return;
+  }
+
+  const LayoutObject* container_object = GetLayoutObject();
+  CHECK(container_object);
+
+  PhysicalAnchorQuery::SetOptions options =
+      AnchorQuerySetOptionsForChild(child);
+  PropagateChildAnchors(child, child_offset, *container_object,
+                        GetWritingDirection(), Size(), options, &anchor_query_);
+}
+
+void FragmentBuilder::PropagateChildAnchors(
+    const PhysicalFragment& child,
+    const LogicalOffset& child_offset,
+    const LayoutObject& container_object,
+    WritingDirectionMode writing_direction,
+    LogicalSize container_logical_size,
+    PhysicalAnchorQuery::SetOptions options,
+    PhysicalAnchorQuery** out_anchor_query) {
+  auto EnsureAnchorQuery = [&out_anchor_query]() -> PhysicalAnchorQuery& {
+    if (!*out_anchor_query) {
+      *out_anchor_query = MakeGarbageCollected<PhysicalAnchorQuery>();
+    }
+    return **out_anchor_query;
+  };
+
   Element* context = nullptr;
   if (auto* node = child.GetNode()) {
     if (auto* element = DynamicTo<Element>(node)) {
@@ -207,42 +241,48 @@ void FragmentBuilder::PropagateChildAnchors(const PhysicalFragment& child,
       }
     }
   }
+  PhysicalSize physical_container_size = ToPhysicalSize(
+      container_logical_size, writing_direction.GetWritingMode());
   if (child.IsAnchor()) {
     DCHECK(child.GetLayoutObject());
     // Set the child's `anchor-name` before propagating its descendants', so
     // that ancestors have precedence over their descendants.
-    LogicalRect logical_rect(child_offset,
-                             ToLogicalSize(child.Size(), GetWritingMode()));
-    const WritingModeConverter converter(GetWritingDirection(), Size());
+    LogicalRect logical_rect(
+        child_offset,
+        ToLogicalSize(child.Size(), writing_direction.GetWritingMode()));
+    const WritingModeConverter converter(writing_direction,
+                                         container_logical_size);
     PhysicalRect rect = converter.ToPhysical(logical_rect);
-    options = AnchorQuerySetOptions(
-        child, node_, IsBlockFragmentationContextRoot() || HasItems());
+    TransformState transform_state(
+        TransformState::kApplyTransformDirection,
+        gfx::QuadF(gfx::RectF(gfx::SizeF(rect.size))));
+    UpdateTransformState(child, rect.offset, container_object,
+                         physical_container_size, &transform_state);
+
     if (child.IsExplicitAnchor()) {
       for (const ScopedCSSName* name : child.Style().AnchorName()->GetNames()) {
         AnchorScopedName* anchor_scoped_name =
             ToAnchorScopedName(*name, *child.GetLayoutObject());
         EnsureAnchorQuery().Set(anchor_scoped_name, *child.GetLayoutObject(),
-                                rect, *options, context);
+                                transform_state, rect, options, context);
       }
     }
     if (child.IsImplicitAnchor()) {
       EnsureAnchorQuery().Set(To<Element>(child.GetNode()),
-                              *child.GetLayoutObject(), rect, *options,
-                              context);
+                              *child.GetLayoutObject(), transform_state, rect,
+                              options, context);
     }
   }
 
   // Propagate any descendants' anchor references.
   if (const PhysicalAnchorQuery* anchor_query = child.AnchorQuery()) {
-    if (!options) {
-      options = AnchorQuerySetOptions(
-          child, node_, IsBlockFragmentationContextRoot() || HasItems());
-    }
-    const WritingModeConverter converter(GetWritingDirection(), Size());
+    const WritingModeConverter converter(writing_direction,
+                                         container_logical_size);
     PhysicalOffset additional_offset =
         converter.ToPhysical(child_offset, child.Size());
-    EnsureAnchorQuery().SetFromChild(*anchor_query, additional_offset, *options,
-                                     context);
+    EnsureAnchorQuery().SetFromChild(*anchor_query, child, additional_offset,
+                                     container_object, physical_container_size,
+                                     options, context);
   }
 }
 
@@ -303,21 +343,13 @@ void FragmentBuilder::PropagateFromFragment(
   if (child.HasAnchorQueryToPropagate()) {
     // This child either is an anchor, or has anchors inside (or both). They are
     // to be propagated as soon as the container size is known.
-    LogicalOffset total_offset = child_offset + relative_offset;
-    if (HasFinalSize()) {
-      // When handling OOFs (after in-flow layout is finished) and an OOF wants
-      // to propagate anchors, it needs to be done right away, since there may
-      // be subsequent OOFs that have queries against those anchors.
-      PropagateChildAnchors(child, total_offset);
-    } else {
-      children_with_size_dependent_propagation_.push_back(
-          LogicalFragmentLink(child, total_offset));
-    }
+    PropagateChildAnchors(child, child_offset + relative_offset);
   }
 
   PropagateStickyDescendants(child);
   PropagateSnapAreas(child);
   PropagateScrollInitialTarget(child);
+  PropagateNamedTriggers(child);
 
   // Propagate info about OOF descendants if necessary. This part must be
   // skipped when adding OOF children to fragmentainers, as propagation is
@@ -1053,6 +1085,8 @@ void FragmentBuilder::Finalize() {
   is_finalized_ = true;
 #endif
 
+  CreateNamedTriggersForSelf();
+
   has_final_size_ = true;
   PropagateSizeDependentData();
 }
@@ -1085,6 +1119,46 @@ void FragmentBuilder::PropagateSizeDependentData() {
     PropagateChildAnchors(*link.fragment, link.offset);
   }
   children_with_size_dependent_propagation_.clear();
+}
+
+void FragmentBuilder::PropagateNamedTriggers(const PhysicalFragment& child) {
+  const GCedNamedAnimationTriggerMap* names_map = child.NamedTriggers();
+  if (!names_map) {
+    return;
+  }
+
+  for (const auto& entry : *names_map) {
+    EnsureNamedTriggers().Set(entry.key, entry.value);
+  }
+}
+
+void FragmentBuilder::CreateNamedTriggersForSelf() {
+  if (!node_) {
+    return;
+  }
+
+  const Element* element = DynamicTo<Element>(node_.GetDOMNode());
+  if (!element || !element->NamedTriggers()) {
+    return;
+  }
+
+  if (const CSSAnimationData* data = Style().Animations()) {
+    GCedNamedAnimationTriggerMap& named_triggers = EnsureNamedTriggers();
+    for (const auto& name : data->TimelineTriggerNameList()) {
+      if (name) {
+        AnimationTrigger* trigger = element->NamedTrigger(name);
+        DCHECK(trigger);
+        named_triggers.Set(name, trigger);
+      }
+    }
+  }
+}
+
+GCedNamedAnimationTriggerMap& FragmentBuilder::EnsureNamedTriggers() {
+  if (!named_triggers_) {
+    named_triggers_ = MakeGarbageCollected<GCedNamedAnimationTriggerMap>();
+  }
+  return *named_triggers_;
 }
 
 }  // namespace blink

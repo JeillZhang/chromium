@@ -14,7 +14,6 @@
 #import "ios/chrome/browser/main/model/browser_impl.h"
 #import "ios/chrome/browser/omnibox/eg_tests/inttest/omnibox_inttest_coordinator.h"
 #import "ios/chrome/browser/popup_menu/ui_bundled/popup_menu_coordinator.h"
-#import "ios/chrome/browser/sessions/model/ios_chrome_session_tab_helper.h"
 #import "ios/chrome/browser/shared/coordinator/chrome_coordinator/chrome_coordinator.h"
 #import "ios/chrome/browser/shared/model/browser/test/test_browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
@@ -22,6 +21,8 @@
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_opener.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
+#import "ios/chrome/browser/snackbar/ui_bundled/snackbar_coordinator.h"
+#import "ios/chrome/browser/snackbar/ui_bundled/stub_snackbar_coordinator_delegate.h"
 #import "ios/chrome/browser/tips_notifications/coordinator/enhanced_safe_browsing_promo_coordinator.h"
 #import "ios/chrome/browser/tips_notifications/coordinator/lens_promo_coordinator.h"
 #import "ios/chrome/browser/tips_notifications/coordinator/search_what_you_see_promo_coordinator.h"
@@ -158,12 +159,8 @@
 // Inserts a webstate into the browser since many coordinators do not expect
 // an empty WebStateList.
 - (void)insertInitialWebstate {
-  web::WebState::CreateParams params(
-      (web::BrowserState*)(_browser->GetProfile()));
+  web::WebState::CreateParams params(_browser->GetProfile());
   std::unique_ptr<web::WebState> webState = web::WebState::Create(params);
-  IOSChromeSessionTabHelper::CreateForWebState(webState.get());
-  IOSChromeSessionTabHelper::FromWebState(webState.get())
-      ->SetWindowID(SessionID::NewUnique());
   _browser->GetWebStateList()->InsertWebState(
       std::move(webState),
       WebStateList::InsertionParams::Automatic().Activate());
@@ -283,6 +280,15 @@
   self.helper.coordinator = [[SearchWhatYouSeePromoCoordinator alloc]
       initWithBaseViewController:[self rootViewController]
                          browser:self.helper.browser];
+  [self.helper.coordinator start];
+}
+
++ (void)startSnackbarCoordinator {
+  self.helper.mockObject = [[StubSnackbarCoordinatorDelegate alloc] init];
+  self.helper.coordinator = [[SnackbarCoordinator alloc]
+      initWithBaseViewController:[self rootViewController]
+                         browser:self.helper.browser
+                        delegate:self.helper.mockObject];
   [self.helper.coordinator start];
 }
 

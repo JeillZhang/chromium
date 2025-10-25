@@ -43,6 +43,7 @@ import org.chromium.chrome.browser.profiles.OtrProfileId;
 import org.chromium.chrome.browser.thumbnail.generator.ThumbnailProvider;
 import org.chromium.chrome.browser.thumbnail.generator.ThumbnailProvider.ThumbnailRequest;
 import org.chromium.chrome.browser.thumbnail.generator.ThumbnailProviderImpl;
+import org.chromium.components.browser_ui.util.DownloadUtils;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.browser_ui.widget.selectable_list.SelectionDelegate;
 import org.chromium.components.offline_items_collection.LaunchLocation;
@@ -360,12 +361,12 @@ class DateOrderedListMediator implements BackPressHandler {
         return mTypeFilter;
     }
 
-    private void onSelection(@Nullable ListItem item) {
+    private void onSelection(ListItem item) {
         mSelectionDelegate.toggleSelectionForItem(item);
     }
 
     private void onOpenItem(OfflineItem item) {
-        if (UiUtils.shouldDisplayAsDangerous(item)) {
+        if (DownloadUtils.shouldDisplayDownloadAsDangerous(item.dangerType, item.state)) {
             onShowWarningBypassDialog(item);
             return;
         }
@@ -403,7 +404,9 @@ class DateOrderedListMediator implements BackPressHandler {
     }
 
     private void onShowWarningBypassDialog(OfflineItem item) {
-        if (!UiUtils.shouldDisplayAsDangerous(item)) return;
+        if (!DownloadUtils.shouldDisplayDownloadAsDangerous(item.dangerType, item.state)) {
+            return;
+        }
         mWarningBypassDialogController.showWarningBypassDialog(
                 item.title,
                 (didValidate) -> {

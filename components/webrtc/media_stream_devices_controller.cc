@@ -103,17 +103,17 @@ void MediaStreamDevicesController::RequestPermissions(
     auto audo_descriptor = content::PermissionDescriptorUtil::
         CreatePermissionDescriptorForPermissionType(
             blink::PermissionType::AUDIO_CAPTURE);
-    content::PermissionResult permission_status =
+    content::PermissionResult permission_result =
         permission_controller->GetPermissionResultForCurrentDocument(
             audo_descriptor, rfh);
-    if (permission_status.status == blink::mojom::PermissionStatus::DENIED) {
+    if (permission_result.status == blink::mojom::PermissionStatus::DENIED) {
       controller->denial_reason_ =
           blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED;
       // If `rfh` is a fenced frame, it will have no permission policy as well.
       controller->RunCallback(
-          permission_status.source ==
+          permission_result.source ==
               content::PermissionStatusSource::FEATURE_POLICY ||
-          permission_status.source ==
+          permission_result.source ==
               content::PermissionStatusSource::FENCED_FRAME);
       return;
     }
@@ -125,17 +125,17 @@ void MediaStreamDevicesController::RequestPermissions(
     auto video_descriptor = content::PermissionDescriptorUtil::
         CreatePermissionDescriptorForPermissionType(
             blink::PermissionType::VIDEO_CAPTURE);
-    content::PermissionResult permission_status =
+    content::PermissionResult permission_result =
         permission_controller->GetPermissionResultForCurrentDocument(
             video_descriptor, rfh);
-    if (permission_status.status == blink::mojom::PermissionStatus::DENIED) {
+    if (permission_result.status == blink::mojom::PermissionStatus::DENIED) {
       controller->denial_reason_ =
           blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED;
       // If `rfh` is a fenced frame, it will have no permission policy as well.
       controller->RunCallback(
-          permission_status.source ==
+          permission_result.source ==
               content::PermissionStatusSource::FEATURE_POLICY ||
-          permission_status.source ==
+          permission_result.source ==
               content::PermissionStatusSource::FENCED_FRAME);
       return;
     }
@@ -154,10 +154,10 @@ void MediaStreamDevicesController::RequestPermissions(
       auto ptz_descriptor = content::PermissionDescriptorUtil::
           CreatePermissionDescriptorForPermissionType(
               blink::PermissionType::CAMERA_PAN_TILT_ZOOM);
-      permission_status =
+      permission_result =
           permission_controller->GetPermissionResultForCurrentDocument(
               ptz_descriptor, rfh);
-      if (permission_status.status == blink::mojom::PermissionStatus::DENIED) {
+      if (permission_result.status == blink::mojom::PermissionStatus::DENIED) {
         controller->denial_reason_ =
             blink::mojom::MediaStreamRequestResult::PERMISSION_DENIED;
         controller->RunCallback(/*blocked_by_permissions_policy=*/false);
@@ -453,7 +453,7 @@ bool MediaStreamDevicesController::PermissionIsBlockedForReason(
 }
 
 void MediaStreamDevicesController::PromptAnsweredGroupedRequest(
-    const std::vector<blink::mojom::PermissionStatus>& permissions_status) {
+    const std::vector<content::PermissionResult>& permission_result) {
   if (content::RenderFrameHost::FromID(request_.render_process_id,
                                        request_.render_frame_id) == nullptr) {
     // The frame requesting media devices was removed while we were waiting for
@@ -463,8 +463,12 @@ void MediaStreamDevicesController::PromptAnsweredGroupedRequest(
 
   std::vector<ContentSetting> responses;
   std::ranges::transform(
-      permissions_status, back_inserter(responses),
-      permissions::PermissionUtil::PermissionStatusToContentSetting);
+      permission_result, back_inserter(responses),
+
+      [](content::PermissionResult result) {
+        return permissions::PermissionUtil::PermissionStatusToContentSetting(
+            result.status);
+      });
 
   bool need_audio = ShouldRequestAudio();
   bool need_video = ShouldRequestVideo();

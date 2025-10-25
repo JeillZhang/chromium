@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_READ_ANYTHING_READ_ANYTHING_UNTRUSTED_PAGE_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_SIDE_PANEL_READ_ANYTHING_READ_ANYTHING_UNTRUSTED_PAGE_HANDLER_H_
 
+#include <deque>
 #include <memory>
 #include <string>
 
@@ -25,10 +26,14 @@
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "ui/accessibility/ax_action_data.h"
+#include "ui/accessibility/ax_action_handler_registry.h"
 #include "ui/accessibility/ax_updates_and_events.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "ash/public/cpp/session/session_observer.h"
+#include "chrome/browser/ui/webui/side_panel/read_anything/chrome_os_extension_wrapper.h"
+#include "chromeos/ash/components/language_packs/language_pack_manager.h"
+using ash::language_packs::PackResult;
 #else
 #include "extensions/browser/extension_registry_observer.h"
 #endif
@@ -38,6 +43,22 @@ class ScopedAccessibilityMode;
 }
 
 class ReadAnythingUntrustedPageHandler;
+
+// LINT.IfChange(EngineInstallationState)
+// Installation state of the TTS engine extension
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class EngineInstallationState {
+  kEnabled = 0,
+  kDisabled = 1,
+  kTerminated = 2,
+  kBlocked = 3,
+  kReady = 4,
+  kInstalling = 5,
+  kUnknown = 6,
+  kMaxValue = kUnknown,
+};
+// LINT.ThenChange(/tools/metrics/histograms/metadata/accessibility/enums.xml:ReadAnythingExtensionInstallationState)
 
 ///////////////////////////////////////////////////////////////////////////////
 // ReadAnythingWebContentsObserver
@@ -104,7 +125,13 @@ class ReadAnythingUntrustedPageHandler :
       mojo::PendingReceiver<read_anything::mojom::UntrustedPageHandler>
           receiver,
       content::WebUI* web_ui,
-      bool use_screen_ai_service);
+      bool use_screen_ai_service
+#if BUILDFLAG(IS_CHROMEOS)
+      ,
+      std::unique_ptr<ChromeOsExtensionWrapper> extension_wrapper =
+          std::make_unique<ChromeOsExtensionWrapper>()
+#endif
+  );
   ReadAnythingUntrustedPageHandler(const ReadAnythingUntrustedPageHandler&) =
       delete;
   ReadAnythingUntrustedPageHandler& operator=(
@@ -120,6 +147,7 @@ class ReadAnythingUntrustedPageHandler :
   void DidUpdateAudioMutingState(bool muted);
   void WebContentsDestroyed();
   void OnActiveAXTreeIDChanged();
+  bool CheckForPdfContentAfterLoad();
 
   // read_anything::mojom::UntrustedPageHandler:
   void OnVoiceChange(const std::string& voice,
@@ -152,8 +180,12 @@ class ReadAnythingUntrustedPageHandler :
   // ReadAnythingSidePanelController::Observer:
   void OnTabWillDetach() override;
 
-  // ash::SessionObserver
+  // Logs the extension installation state. Intended to get more information
+  // on system voice usage.
+  void LogExtensionState() override;
+
 #if BUILDFLAG(IS_CHROMEOS)
+  // ash::SessionObserver
   void OnLockStateChanged(bool locked) override;
 #endif
 
@@ -169,7 +201,8 @@ class ReadAnythingUntrustedPageHandler :
  private:
 #if !BUILDFLAG(IS_CHROMEOS)
   // content::UpdateLanguageStatusDelegate:
-  void OnUpdateLanguageStatus(const std::string& lang,
+  void OnUpdateLanguageStatus(content::BrowserContext* browser_context,
+                              const std::string& lang,
                               content::LanguageInstallStatus install_status,
                               const std::string& error) override;
   // extensions::ExtensionRegistryObserver implementation.
@@ -178,6 +211,20 @@ class ReadAnythingUntrustedPageHandler :
   // which read anything needs to know about to access the new voices.
   void OnExtensionReady(content::BrowserContext* browser_context,
                         const extensions::Extension* extension) override;
+#else
+  enum LanguageRequestType {
+    kInstall,
+    kInfo,
+  };
+
+  struct LanguageRequest {
+    std::string language;
+    LanguageRequestType type;
+  };
+
+  void SendOrQueueLanguageRequest(LanguageRequest request);
+  void SendNextLanguageRequest();
+  void OnInstallPackResponse(const PackResult& pack_result);
 #endif
 
   // ui::AXActionHandlerObserver:
@@ -264,15 +311,22 @@ class ReadAnythingUntrustedPageHandler :
 
   // The current language being used in the app.
   std::string current_language_code_ = "en-US";
+  const bool use_screen_ai_service_;
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // The ChromeOS language pack manager can't handle more than one language
+  // request at a time. When we receive requests from the page, queue them up
+  // here and only request the next one when we receive the callback for the
+  // previous one.
+  std::deque<LanguageRequest> queued_language_requests_;
+  bool has_pending_language_request_ = false;
+  std::unique_ptr<ChromeOsExtensionWrapper> extension_wrapper_;
+#endif
 
   // Observes the AXActionHandlerRegistry for AXTree removals.
   base::ScopedObservation<ui::AXActionHandlerRegistry,
                           ui::AXActionHandlerObserver>
       ax_action_handler_observer_{this};
-
-  const bool use_screen_ai_service_;
-
-  bool extension_installed_ = false;
 
   // Whether the currently distilled page is recognized as a pdf. This allows
   // the page handler to trigger distillation if the page would now be
@@ -286,6 +340,11 @@ class ReadAnythingUntrustedPageHandler :
   base::ScopedObservation<translate::TranslateDriver,
                           translate::TranslateDriver::LanguageDetectionObserver>
       translate_observation_{this};
+
+  // Timer used for checking for pdf contents after the page has loaded.
+  // Otherwise, it may incorrectly return that the page is not a pdf if
+  // reading mode checks if a page is a pdf immediately after loading.
+  base::OneShotTimer timer_;
 
   base::WeakPtrFactory<ReadAnythingUntrustedPageHandler> weak_factory_{this};
 };

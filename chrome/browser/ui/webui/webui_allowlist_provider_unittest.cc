@@ -21,6 +21,7 @@
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/site_for_cookies.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -434,11 +435,11 @@ TEST_F(WebUIAllowlistProviderTest, CookieSettings) {
       /*cookie_partition_key=*/std::nullopt));
   EXPECT_TRUE(cookie_settings->IsCookieSessionOnly(url));
   EXPECT_TRUE(cookie_settings->ShouldDeleteCookieOnExit(
-      cookie_settings->GetCookieSettings(), url.host(),
+      cookie_settings->GetCookieSettings(), url.GetHost(),
       net::CookieSourceScheme::kSecure));
   EXPECT_TRUE(cookie_settings->IsCookieSessionOnly(top_level_url));
   EXPECT_TRUE(cookie_settings->ShouldDeleteCookieOnExit(
-      cookie_settings->GetCookieSettings(), top_level_url.host(),
+      cookie_settings->GetCookieSettings(), top_level_url.GetHost(),
       net::CookieSourceScheme::kSecure));
 
   // Registering a third-party cookie exception should only affect 3p cookies
@@ -456,10 +457,10 @@ TEST_F(WebUIAllowlistProviderTest, CookieSettings) {
       /*cookie_partition_key=*/std::nullopt));
   EXPECT_TRUE(cookie_settings->IsCookieSessionOnly(url));
   EXPECT_TRUE(cookie_settings->ShouldDeleteCookieOnExit(
-      cookie_settings->GetCookieSettings(), url.host(),
+      cookie_settings->GetCookieSettings(), url.GetHost(),
       net::CookieSourceScheme::kSecure));
   EXPECT_FALSE(cookie_settings->IsCookieSessionOnly(top_level_url));
   EXPECT_FALSE(cookie_settings->ShouldDeleteCookieOnExit(
-      cookie_settings->GetCookieSettings(), top_level_url.host(),
+      cookie_settings->GetCookieSettings(), top_level_url.GetHost(),
       net::CookieSourceScheme::kSecure));
 }

@@ -41,12 +41,12 @@
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/image_button_factory.h"
+#include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/layout/flex_layout_view.h"
 #include "ui/views/layout/layout_provider.h"
-#include "ui/views/metadata/view_factory_internal.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/style/typography_provider.h"
 #include "ui/views/view_class_properties.h"
@@ -134,9 +134,7 @@ SaveAddressProfileView::SaveAddressProfileView(
   SetTitle(controller_->GetWindowTitle());
   SetButtonLabel(ui::mojom::DialogButton::kOk, controller_->GetOkButtonLabel());
   SetButtonLabel(ui::mojom::DialogButton::kCancel,
-                 l10n_util::GetStringUTF16(
-                     IDS_AUTOFILL_SAVE_ADDRESS_PROMPT_CANCEL_BUTTON_LABEL));
-
+                 controller_->GetNegativeButtonLabel());
   SetLayoutManager(std::make_unique<views::BoxLayout>(
       views::BoxLayout::Orientation::kVertical, gfx::Insets(),
       views::LayoutProvider::Get()->GetDistanceMetric(
@@ -278,11 +276,18 @@ void SaveAddressProfileView::AddedToWidget() {
   std::optional<SaveAddressBubbleController::HeaderImages> images =
       controller_->GetHeaderImages();
   if (images) {
-    GetBubbleFrameView()->SetHeaderView(
-        std::make_unique<ThemeTrackingNonAccessibleImageView>(
-            images->light, images->dark,
-            base::BindRepeating(&views::BubbleDialogDelegate::background_color,
-                                base::Unretained(this))));
+    if (!images->lottie.IsEmpty()) {
+      auto image_view = std::make_unique<views::ImageView>(images->lottie);
+      image_view->GetViewAccessibility().SetIsInvisible(true);
+      GetBubbleFrameView()->SetHeaderView(std::move(image_view));
+    } else {
+      GetBubbleFrameView()->SetHeaderView(
+          std::make_unique<ThemeTrackingNonAccessibleImageView>(
+              images->light, images->dark,
+              base::BindRepeating(
+                  &views::BubbleDialogDelegate::background_color,
+                  base::Unretained(this))));
+    }
   }
 }
 

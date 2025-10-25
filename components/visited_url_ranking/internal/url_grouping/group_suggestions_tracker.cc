@@ -27,6 +27,9 @@ namespace {
 
 using segmentation_platform::processing::ProcessedValue;
 
+const base::FeatureParam<int> kGroupSuggestionCacheTTLSecs{
+    &features::kGroupSuggestionService, "group_suggestion_cache_ttl_secs", 900};
+
 constexpr auto kReasonToMaxOverlappingTabs =
     base::MakeFixedFlatMap<GroupSuggestion::SuggestionReason, float>({
         {GroupSuggestion::SuggestionReason::kRecentlyOpened, 0.55},
@@ -60,8 +63,8 @@ std::optional<std::string> GetHostForTab(
       continue;
     }
     if (tab_id_value->float_val == tab_id) {
-      if (!url_value->url->host().empty()) {
-        return url_value->url->host();
+      if (!url_value->url->GetHost().empty()) {
+        return url_value->url->GetHost();
       }
       return std::nullopt;
     }
@@ -105,6 +108,21 @@ GroupSuggestionsTracker::GroupSuggestionsTracker(PrefService* pref_service)
 }
 
 GroupSuggestionsTracker::~GroupSuggestionsTracker() = default;
+
+GroupSuggestionsTracker::CachedSuggestionsData::CachedSuggestionsData(
+    GroupSuggestions suggestions,
+    std::vector<scoped_refptr<segmentation_platform::InputContext>> inputs)
+    : suggestions(std::move(suggestions)),
+      inputs(std::move(inputs)),
+      cache_time(base::Time::Now()) {}
+
+GroupSuggestionsTracker::CachedSuggestionsData::~CachedSuggestionsData() =
+    default;
+GroupSuggestionsTracker::CachedSuggestionsData::CachedSuggestionsData(
+    CachedSuggestionsData&&) = default;
+GroupSuggestionsTracker::CachedSuggestionsData&
+GroupSuggestionsTracker::CachedSuggestionsData::operator=(
+    CachedSuggestionsData&&) = default;
 
 GroupSuggestionsTracker::ShownSuggestion::ShownSuggestion() = default;
 GroupSuggestionsTracker::ShownSuggestion::~ShownSuggestion() = default;
@@ -180,8 +198,7 @@ GroupSuggestionsTracker::ShownSuggestion::FromDict(
     return std::nullopt;
   }
   suggestion.user_response =
-      static_cast<GroupSuggestionsDelegate::UserResponse>(
-          user_response_optional.value());
+      static_cast<UserResponse>(user_response_optional.value());
   return suggestion;
 }
 
@@ -190,11 +207,22 @@ void GroupSuggestionsTracker::RegisterProfilePrefs(
   registry->RegisterListPref(kGroupSuggestionsTrackerStatePref);
 }
 
-void GroupSuggestionsTracker::AddSuggestion(
+void GroupSuggestionsTracker::AddShownSuggestion(
     const GroupSuggestion& suggestion,
     const std::vector<scoped_refptr<segmentation_platform::InputContext>>&
         inputs,
-    GroupSuggestionsDelegate::UserResponse user_response) {
+    UserResponse user_response) {
+  if (last_cached_suggestions_.has_value()) {
+    // Try to remove the shown suggestion from the cached list.
+    std::erase_if(last_cached_suggestions_->suggestions.suggestions,
+                  [&](const auto& cached_suggestion) {
+                    return cached_suggestion.suggestion_id ==
+                           suggestion.suggestion_id;
+                  });
+    if (last_cached_suggestions_->suggestions.suggestions.empty()) {
+      InvalidateCache();
+    }
+  }
   ShownSuggestion item;
   item.time_shown = base::Time::Now();
   item.tab_ids = suggestion.tab_ids;
@@ -284,6 +312,30 @@ bool GroupSuggestionsTracker::HasOverlappingHosts(
       GetOverlappingTabCount(all_shown_hosts, suggestion_hosts);
   return hosts_overlap >
          kReasonToMaxOverlappingTabs.at(suggestion.suggestion_reason);
+}
+
+void GroupSuggestionsTracker::CacheSuggestions(
+    GroupSuggestions suggestions,
+    std::vector<scoped_refptr<segmentation_platform::InputContext>> inputs) {
+  last_cached_suggestions_.emplace(std::move(suggestions), std::move(inputs));
+}
+
+std::optional<CachedSuggestionsAndInputs>
+GroupSuggestionsTracker::GetCachedSuggestions() {
+  if (last_cached_suggestions_) {
+    if (base::Time::Now() - last_cached_suggestions_->cache_time >
+        base::Seconds(kGroupSuggestionCacheTTLSecs.Get())) {
+      InvalidateCache();
+      return std::nullopt;
+    }
+    return std::make_pair(last_cached_suggestions_->suggestions.DeepCopy(),
+                          last_cached_suggestions_->inputs);
+  }
+  return std::nullopt;
+}
+
+void GroupSuggestionsTracker::InvalidateCache() {
+  last_cached_suggestions_.reset();
 }
 
 }  // namespace visited_url_ranking

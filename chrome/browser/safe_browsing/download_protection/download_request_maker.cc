@@ -28,6 +28,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_item_utils.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
 
@@ -213,8 +214,7 @@ void DownloadRequestMaker::Start(
       profile && AdvancedProtectionStatusManagerFactory::GetForProfile(profile)
                      ->IsUnderAdvancedProtection();
 
-  *request_->mutable_population() =
-      GetUserPopulationForProfileWithCookieTheftExperiments(profile);
+  *request_->mutable_population() = GetUserPopulationForProfile(profile);
 
 #if BUILDFLAG(IS_ANDROID)
   if (base::FeatureList::IsEnabled(kMaliciousApkDownloadCheck)) {

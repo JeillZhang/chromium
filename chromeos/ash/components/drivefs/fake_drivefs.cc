@@ -17,6 +17,7 @@
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/no_destructor.h"
+#include "base/notimplemented.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
@@ -59,7 +60,7 @@ base::FilePath MaybeMountDriveFs(
     const std::vector<std::string>& mount_options) {
   GURL source_url(source_path);
   DCHECK(source_url.is_valid());
-  if (source_url.scheme() != "drivefs") {
+  if (source_url.GetScheme() != "drivefs") {
     return {};
   }
   std::string datadir_suffix;

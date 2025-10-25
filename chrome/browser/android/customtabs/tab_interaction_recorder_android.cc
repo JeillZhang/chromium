@@ -59,8 +59,8 @@ AutofillObserverImpl::~AutofillObserverImpl() {
   Invalidate();
 }
 
-void AutofillObserverImpl::OnFormSubmitted(autofill::AutofillManager&,
-                                           const autofill::FormData&) {
+void AutofillObserverImpl::OnBeforeFormSubmitted(autofill::AutofillManager&,
+                                                 const autofill::FormData&) {
   OnFormInteraction();
 }
 
@@ -287,7 +287,7 @@ ScopedJavaLocalRef<jobject> JNI_TabInteractionRecorder_GetFromTab(
     const JavaParamRef<jobject>& jtab) {
   TabAndroid* tab = TabAndroid::GetNativeTab(env, jtab);
   if (!tab || !tab->web_contents() || tab->web_contents()->IsBeingDestroyed()) {
-    return ScopedJavaLocalRef<jobject>(env, nullptr);
+    return ScopedJavaLocalRef<jobject>::Adopt(env, nullptr);
   }
 
   auto* recorder =
@@ -301,7 +301,7 @@ ScopedJavaLocalRef<jobject> JNI_TabInteractionRecorder_CreateForTab(
     const JavaParamRef<jobject>& jtab) {
   TabAndroid* tab = TabAndroid::GetNativeTab(env, jtab);
   if (!tab || !tab->web_contents() || tab->web_contents()->IsBeingDestroyed()) {
-    return ScopedJavaLocalRef<jobject>(env, nullptr);
+    return ScopedJavaLocalRef<jobject>::Adopt(env, nullptr);
   }
 
   TabInteractionRecorderAndroid::CreateForWebContents(tab->web_contents());

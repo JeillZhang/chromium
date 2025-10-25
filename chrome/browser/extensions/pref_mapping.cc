@@ -24,10 +24,13 @@
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/spellcheck/browser/pref_names.h"
 #include "components/translate/core/browser/translate_pref_names.h"
+#include "extensions/buildflags/buildflags.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "ash/constants/ash_pref_names.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extensions::mojom::APIPermissionID;
 
@@ -86,6 +89,8 @@ const PrefMappingEntry kMappings[] = {
     {"webRTCIPHandlingPolicy", prefs::kWebRTCIPHandlingPolicy,
      APIPermissionID::kPrivacy, APIPermissionID::kPrivacy},
     {"webRTCIPHandlingUrl", prefs::kWebRTCIPHandlingUrl,
+     APIPermissionID::kPrivacy, APIPermissionID::kPrivacy},
+    {"webRTCPostQuantumKeyAgreement", prefs::kWebRTCPostQuantumKeyAgreement,
      APIPermissionID::kPrivacy, APIPermissionID::kPrivacy},
     {"webRTCUDPPortRange", prefs::kWebRTCUDPPortRange,
      APIPermissionID::kPrivacy, APIPermissionID::kPrivacy},

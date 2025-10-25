@@ -12,6 +12,7 @@
 #include "build/build_config.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
+#include "gpu/ipc/client/gpu_ipc_client_export.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
 
@@ -21,7 +22,8 @@ class GpuChannelHost;
 
 // Tracks shared images created by a single context and ensures they are deleted
 // if the context is lost.
-class GPU_EXPORT ClientSharedImageInterface : public SharedImageInterface {
+class GPU_IPC_CLIENT_EXPORT ClientSharedImageInterface
+    : public SharedImageInterface {
  public:
   ClientSharedImageInterface(SharedImageInterfaceProxy* proxy,
                              scoped_refptr<gpu::GpuChannelHost> channel);
@@ -44,11 +46,13 @@ class GPU_EXPORT ClientSharedImageInterface : public SharedImageInterface {
   SyncToken GenUnverifiedSyncToken() override;
   SyncToken GenVerifiedSyncToken() override;
   void VerifySyncToken(SyncToken& sync_token) override;
+  bool CanVerifySyncToken(const gpu::SyncToken& sync_token) override;
+  void VerifyFlush() override;
   void WaitSyncToken(const gpu::SyncToken& sync_token) override;
   scoped_refptr<ClientSharedImage> CreateSharedImage(
       const SharedImageInfo& si_info,
       gpu::SurfaceHandle surface_handle,
-      std::optional<SharedImagePoolId> pool_id = std::nullopt) override;
+      std::optional<SharedImagePoolId> pool_id) override;
   scoped_refptr<ClientSharedImage> CreateSharedImage(
       const SharedImageInfo& si_info,
       base::span<const uint8_t> pixel_data) override;
@@ -56,7 +60,7 @@ class GPU_EXPORT ClientSharedImageInterface : public SharedImageInterface {
       const SharedImageInfo& si_info,
       gpu::SurfaceHandle surface_handle,
       gfx::BufferUsage buffer_usage,
-      std::optional<SharedImagePoolId> pool_id = std::nullopt) override;
+      std::optional<SharedImagePoolId> pool_id) override;
   scoped_refptr<ClientSharedImage> CreateSharedImage(
       const SharedImageInfo& si_info,
       gpu::SurfaceHandle surface_handle,
@@ -87,11 +91,14 @@ class GPU_EXPORT ClientSharedImageInterface : public SharedImageInterface {
   void UpdateSharedImage(const SyncToken& sync_token,
                          scoped_refptr<gfx::D3DSharedFence> d3d_shared_fence,
                          const Mailbox& mailbox) override;
+#endif  // BUILDFLAG(IS_WIN)
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
   void CopyNativeGmbToSharedMemoryAsync(
       gfx::GpuMemoryBufferHandle buffer_handle,
       base::UnsafeSharedMemoryRegion memory_region,
       base::OnceCallback<void(bool)> callback) override;
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
 
   SwapChainSharedImages CreateSwapChain(viz::SharedImageFormat format,
                                         const gfx::Size& size,

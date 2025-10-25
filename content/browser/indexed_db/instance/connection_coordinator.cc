@@ -31,7 +31,6 @@
 #include "components/services/storage/privileged/mojom/indexed_db_client_state_checker.mojom.h"
 #include "content/browser/indexed_db/indexed_db_data_loss_info.h"
 #include "content/browser/indexed_db/indexed_db_database_error.h"
-#include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 #include "content/browser/indexed_db/indexed_db_reporting.h"
 #include "content/browser/indexed_db/instance/backing_store.h"
 #include "content/browser/indexed_db/instance/bucket_context.h"
@@ -128,8 +127,9 @@ class ConnectionCoordinator::ConnectionRequest {
     }
 
     std::vector<PartitionedLockManager::PartitionedLockRequest> lock_requests =
-        {{GetDatabaseLockId(db_->name()),
-          PartitionedLockManager::LockType::kExclusive}};
+        db_->BuildLockRequestsForTransaction(
+            blink::mojom::IDBTransactionMode::VersionChange,
+            /*scope=*/{});
     state_ = RequestState::kPendingLocks;
 
     db_->lock_manager().AcquireLocks(
@@ -163,7 +163,8 @@ class ConnectionCoordinator::OpenRequest
               ConnectionCoordinator* connection_coordinator)
       : ConnectionRequest(bucket_context, db, connection_coordinator),
         pending_(std::move(pending_connection)),
-        was_cold_open_(pending_->was_cold_open) {
+        was_cold_open_(pending_->was_cold_open),
+        uses_sqlite_(bucket_context.ShouldUseSqlite()) {
     // Note that the `scheduling_priority` on this lock receiver isn't very
     // important because locks are only acquired when upgrading the version, and
     // that requires that all other connections be closed. So there shouldn't be
@@ -208,7 +209,11 @@ class ConnectionCoordinator::OpenRequest
 
   void InitDatabase(bool has_connections) {
     saved_status_ = db_->OpenInternal();
-    if (!saved_status_.ok()) {
+    if (saved_status_.ok()) {
+      if (bucket_context_handle_->ShouldUseSqlite()) {
+        pending_->data_loss_info = db_->GetDataLossInfo();
+      }
+    } else {
       // TODO(jsbell): Consider including sanitized leveldb status message.
       std::u16string message;
       if (pending_->version == IndexedDBDatabaseMetadata::NO_VERSION) {
@@ -430,11 +435,13 @@ class ConnectionCoordinator::OpenRequest
   blink::IndexedDBDatabaseMetadata GenerateDbMetadata() {
     blink::IndexedDBDatabaseMetadata metadata = db_->metadata();
     metadata.was_cold_open = was_cold_open_;
+    metadata.is_sqlite = uses_sqlite_;
     return metadata;
   }
 
   std::unique_ptr<PendingConnection> pending_;
   bool was_cold_open_;
+  bool uses_sqlite_;
 
   // If an upgrade is needed, holds the pending connection until ownership is
   // transferred to the IndexedDBDispatcherHost via OnUpgradeNeeded.
@@ -524,24 +531,16 @@ class ConnectionCoordinator::DeleteRequest
     UMA_HISTOGRAM_ENUMERATION(
         indexed_db::kBackingStoreActionUmaName,
         indexed_db::IndexedDBAction::kDatabaseDeleteAttempt);
-    // This is used to check if this class is still alive after the destruction
-    // of the backing store, which can synchronously cause the system to be shut
-    // down if the disk is really bad.
-    const int64_t old_version = db_->version();
-    base::WeakPtr<DeleteRequest> weak_ptr = weak_factory_.GetWeakPtr();
-    if (db_->backing_store_db()) {
-      saved_status_ = db_->backing_store_db()->DeleteDatabase(
-          std::move(lock_receiver_.locks), std::move(on_database_deleted_));
-      saved_status_.Log("WebCore.IndexedDB.BackingStore.DeleteDatabaseStatus");
-    }
-
-    if (!weak_ptr) {
-      return;
-    }
+    StatusOr<int64_t> old_version = db_->DeleteDatabase(
+        std::move(lock_receiver_.locks), std::move(on_database_deleted_));
 
     base::ScopedClosureRunner scoped_tasks_available(tasks_available_callback_);
-    if (!saved_status_.ok()) {
-      // TODO(jsbell): Consider including sanitized leveldb status message.
+    if (old_version.has_value()) {
+      saved_status_ = Status::OK();
+    } else {
+      // TODO(jsbell): Consider including sanitized leveldb status
+      // message.
+      saved_status_ = old_version.error();
       DatabaseError error(blink::mojom::IDBException::kUnknownError,
                           "Internal error deleting database.");
       factory_client_->OnError(error);
@@ -549,13 +548,7 @@ class ConnectionCoordinator::DeleteRequest
       return;
     }
 
-    // Unittests (specifically the Database unittests) can have the
-    // backing store be a nullptr, so report deleted here.
-    if (on_database_deleted_) {
-      std::move(on_database_deleted_).Run();
-    }
-    factory_client_->OnDeleteSuccess(old_version);
-
+    factory_client_->OnDeleteSuccess(old_version.value());
     state_ = RequestState::kDone;
   }
 

@@ -975,7 +975,7 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
      * @param results The results of the requested intent.
      */
     @Override
-    public void onIntentCompleted(int resultCode, Intent results) {
+    public void onIntentCompleted(int resultCode, @Nullable Intent results) {
         if (sPhotoPicker != null) {
             sPhotoPicker.onExternalIntentCompleted();
         }
@@ -1095,16 +1095,26 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
         // Capture the MIME types:
         int acceptsImages = countAcceptTypesFor(IMAGE_TYPE);
         int acceptsVideos = countAcceptTypesFor(VIDEO_TYPE);
+        int genericTypes = countAcceptTypesFor(GENERIC_TYPE);
+        int acceptsOthers = mMimeTypes.size() - genericTypes - acceptsImages - acceptsVideos;
 
         // Capture the most common image and video extensions:
         // TODO(b/365299139): This code below is probably wrong because mFileTypes may
         // contain MIME types instead of file extensions. Need to figure out the
         // right logic to count different types.
         if (mMimeTypes.size() > acceptsImages + acceptsVideos) {
-            for (String left : mFileTypes) {
+            for (String fileType : mFileTypes) {
+                if (isMimeType(fileType)
+                        || MimeTypeMap.getSingleton()
+                                .hasExtension(MimeTypeMap.getFileExtensionFromUrl(fileType))) {
+                    // If this extension maps to a MIME type, we've already counted it
+                    // Do not want to double count extensions that we already have converted to MIME
+                    // types, as countAcceptTypesFor already has checked the MIME types.
+                    continue;
+                }
                 boolean found = false;
-                for (String right : POPULAR_IMAGE_EXTENSIONS) {
-                    if (left.equalsIgnoreCase(right)) {
+                for (String imageType : POPULAR_IMAGE_EXTENSIONS) {
+                    if (fileType.equalsIgnoreCase(imageType)) {
                         found = true;
                         acceptsImages++;
                         break;
@@ -1113,16 +1123,19 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
 
                 if (found) continue;
 
-                for (String right : POPULAR_VIDEO_EXTENSIONS) {
-                    if (left.equalsIgnoreCase(right)) {
+                for (String videoType : POPULAR_VIDEO_EXTENSIONS) {
+                    if (fileType.equalsIgnoreCase(videoType)) {
+                        found = true;
                         acceptsVideos++;
                         break;
                     }
                 }
+
+                if (found) continue;
+
+                acceptsOthers++;
             }
         }
-
-        int acceptsOthers = mFileTypes.size() - acceptsImages - acceptsVideos;
 
         if (acceptsOthers > 0) return SELECT_FILE_DIALOG_SCOPE_GENERIC;
         if (acceptsVideos > 0) {
@@ -1232,7 +1245,6 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
     }
 
     private int countAcceptTypesFor(String superType) {
-        assert superType.indexOf('/') == -1;
         int count = 0;
         for (String type : mMimeTypes) {
             if (type.startsWith(superType)) {
@@ -1410,11 +1422,7 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
         recordImageCountHistograms(new String[] {filePath});
         if (nativeSelectFileDialogImpl != 0) {
             SelectFileDialogJni.get()
-                    .onFileSelected(
-                            nativeSelectFileDialogImpl,
-                            SelectFileDialog.this,
-                            filePath,
-                            displayName);
+                    .onFileSelected(nativeSelectFileDialogImpl, filePath, displayName);
         }
     }
 
@@ -1424,24 +1432,20 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
         if (nativeSelectFileDialogImpl != 0) {
             SelectFileDialogJni.get()
                     .onMultipleFilesSelected(
-                            nativeSelectFileDialogImpl,
-                            SelectFileDialog.this,
-                            filePathArray,
-                            displayNameArray);
+                            nativeSelectFileDialogImpl, filePathArray, displayNameArray);
         }
     }
 
     protected void onFileNotSelected(long nativeSelectFileDialogImpl) {
         recordImageCountHistograms(new String[] {});
         if (nativeSelectFileDialogImpl != 0) {
-            SelectFileDialogJni.get()
-                    .onFileNotSelected(nativeSelectFileDialogImpl, SelectFileDialog.this);
+            SelectFileDialogJni.get().onFileNotSelected(nativeSelectFileDialogImpl);
         }
     }
 
     private void recordImageCountHistograms(String[] filesSelected) {
         if (isSupportedPhotoPickerTypes(mMimeTypes)) {
-            // Record the total number of images selected via the Chrome Media Picker.
+            // Record the total number of images selected via the Media Picker.
             RecordHistogram.recordCount100Histogram(
                     "Android.SelectFileDialogImgCount", filesSelected.length);
         }
@@ -1834,16 +1838,12 @@ public class SelectFileDialog implements WindowAndroid.IntentCallback, PhotoPick
     interface Natives {
         void onFileSelected(
                 long nativeSelectFileDialogImpl,
-                SelectFileDialog caller,
                 @Nullable String filePath,
                 @Nullable String displayName);
 
         void onMultipleFilesSelected(
-                long nativeSelectFileDialogImpl,
-                SelectFileDialog caller,
-                String[] filePathArray,
-                String[] displayNameArray);
+                long nativeSelectFileDialogImpl, String[] filePathArray, String[] displayNameArray);
 
-        void onFileNotSelected(long nativeSelectFileDialogImpl, SelectFileDialog caller);
+        void onFileNotSelected(long nativeSelectFileDialogImpl);
     }
 }

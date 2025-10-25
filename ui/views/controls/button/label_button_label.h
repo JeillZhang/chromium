@@ -52,14 +52,14 @@ class VIEWS_EXPORT LabelButtonLabel : public Label {
   std::optional<ui::ColorVariant> requested_disabled_color_;
 
   base::CallbackListSubscription enabled_changed_subscription_ =
-      AddEnabledChangedCallback(
+      AddEnabledInViewsSubtreeChangedCallback(
           base::BindRepeating(&LabelButtonLabel::OnEnabledChanged,
                               base::Unretained(this)));
 };
 
 BEGIN_VIEW_BUILDER(VIEWS_EXPORT, LabelButtonLabel, Label)
-VIEW_BUILDER_PROPERTY(std::optional<ui::ColorVariant>, EnabledColor)
-VIEW_BUILDER_PROPERTY(std::optional<ui::ColorVariant>, DisabledColor)
+VIEW_BUILDER_PROPERTY(ui::ColorVariant, EnabledColor)
+VIEW_BUILDER_PROPERTY(ui::ColorVariant, DisabledColor)
 END_VIEW_BUILDER
 
 }  // namespace views::internal

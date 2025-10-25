@@ -62,14 +62,14 @@ void UpdateAnimationTiming(
     Document& document,
     HeapHashSet<WeakMember<AnimationTimeline>>& timelines,
     TimingUpdateReason reason) {
-  if (RuntimeEnabledFeatures::AnimationTriggerEnabled()) {
+  if (RuntimeEnabledFeatures::TimelineTriggerEnabled()) {
     // First service all triggers because servicing a trigger might result in an
     // animation's timeline being "dirtied", i.e. marked with an outdated
     // animation whose currentTime was updated. This can happen if an
     // animation's timeline is serviced first and then the trigger's timeline is
     // serviced afterwards.
     for (auto& timeline : timelines) {
-      timeline->ServiceAnimationTriggers();
+      timeline->ServiceTriggers();
     }
   }
 
@@ -292,8 +292,14 @@ void DocumentAnimations::RemoveReplacedAnimations(
   for (auto it = animations_to_remove.rbegin();
        it != animations_to_remove.rend(); it++) {
     Animation* animation = *it;
-    event_loop->EnqueueMicrotask(WTF::BindOnce(
-        &Animation::RemoveReplacedAnimation, WrapWeakPersistent(animation)));
+    event_loop->EnqueueMicrotask(BindOnce(&Animation::RemoveReplacedAnimation,
+                                          WrapWeakPersistent(animation)));
+  }
+}
+
+void DocumentAnimations::UpdateAnimationTriggerAttachments() {
+  for (const auto& timeline : timelines_) {
+    timeline->UpdateAnimationTriggerAttachments();
   }
 }
 

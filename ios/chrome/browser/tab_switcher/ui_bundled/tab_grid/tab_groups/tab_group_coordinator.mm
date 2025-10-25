@@ -20,10 +20,11 @@
 #import "ios/chrome/browser/collaboration/model/messaging/messaging_backend_service_factory.h"
 #import "ios/chrome/browser/data_sharing/model/data_sharing_service_factory.h"
 #import "ios/chrome/browser/first_run/public/best_features_item.h"
-#import "ios/chrome/browser/first_run/public/features.h"
+#import "ios/chrome/browser/saved_tab_groups/coordinator/face_pile_configuration.h"
+#import "ios/chrome/browser/saved_tab_groups/coordinator/face_pile_coordinator.h"
 #import "ios/chrome/browser/saved_tab_groups/model/ios_tab_group_sync_util.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
-#import "ios/chrome/browser/share_kit/model/share_kit_face_pile_configuration.h"
+#import "ios/chrome/browser/saved_tab_groups/ui/face_pile_providing.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_manage_configuration.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_service.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_service_factory.h"
@@ -37,6 +38,7 @@
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/shared_tab_group_last_tab_closed_alert_commands.h"
 #import "ios/chrome/browser/shared/public/commands/tab_groups_commands.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/tab_group_grid_view_controller.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_context_menu/tab_context_menu_helper.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_grid_idle_status_handler.h"
@@ -48,6 +50,7 @@
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_groups_constants.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_group_action_type.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_group_confirmation_coordinator.h"
+#import "ios/chrome/browser/welcome_back/model/features.h"
 #import "ios/web/public/web_state_id.h"
 #import "ui/base/device_form_factor.h"
 
@@ -59,6 +62,8 @@ namespace {
 constexpr CGFloat kTabGroupPresentationDuration = 0.3;
 constexpr CGFloat kTabGroupDismissalDuration = 0.25;
 constexpr CGFloat kTabGroupBackgroundElementDurationFactor = 0.75;
+// The preferred size in points for the avatar icons.
+constexpr CGFloat kFacePileAvatarSize = 26;
 }  // namespace
 
 @interface TabGroupCoordinator () <
@@ -75,7 +80,7 @@ constexpr CGFloat kTabGroupBackgroundElementDurationFactor = 0.75;
   // Context Menu helper for the tabs.
   TabContextMenuHelper* _tabContextMenuHelper;
   // Tab group to display.
-  raw_ptr<const TabGroup> _tabGroup;
+  raw_ptr<const TabGroup, DanglingUntriaged> _tabGroup;
   // The coordinator for the user education half screen.
   SharedTabGroupUserEducationCoordinator* _userEducationCoordinator;
   // Coordinator that handles confirmation dialog when the last tab of a group
@@ -141,7 +146,8 @@ constexpr CGFloat kTabGroupBackgroundElementDurationFactor = 0.75;
                   consumer:_viewController
               gridConsumer:_viewController.gridViewController
                 modeHolder:self.modeHolder
-          messagingService:messagingService];
+          messagingService:messagingService
+          tabGroupDelegate:self];
   _mediator.browser = browser;
   _mediator.tabGroupsHandler = HandlerForProtocol(
       self.browser->GetCommandDispatcher(), TabGroupsCommands);
@@ -458,8 +464,6 @@ constexpr CGFloat kTabGroupBackgroundElementDurationFactor = 0.75;
                                              tabGroup:_tabGroup];
   _viewController.gridViewController.delegate = self;
   _viewController.presentationHandler = self;
-  _viewController.applicationHandler = HandlerForProtocol(
-      self.browser->GetCommandDispatcher(), ApplicationCommands);
 }
 
 // Called when the tab group is presented, to show the user education
@@ -517,6 +521,24 @@ constexpr CGFloat kTabGroupBackgroundElementDurationFactor = 0.75;
       HandlerForProtocol(self.browser->GetCommandDispatcher(),
                          SharedTabGroupLastTabAlertCommands);
   [lastTabAlertHandler showLastTabInSharedGroupAlert:command];
+}
+
+#pragma mark - TabGroupMediatorDelegate
+
+- (id<FacePileProviding>)facePileProviderForGroupID:
+    (const std::string&)groupID {
+  // Configure the face pile.
+  FacePileConfiguration* config = [[FacePileConfiguration alloc] init];
+  config.showsEmptyState = YES;
+  config.groupID = data_sharing::GroupId(groupID);
+  config.avatarSize = kFacePileAvatarSize;
+
+  FacePileCoordinator* facePileCoordinator =
+      [[FacePileCoordinator alloc] initWithFacePileConfiguration:config
+                                                         browser:self.browser];
+  [facePileCoordinator start];
+
+  return facePileCoordinator;
 }
 
 @end

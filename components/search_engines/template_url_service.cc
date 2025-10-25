@@ -39,6 +39,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "components/country_codes/country_codes.h"
+#include "components/google/core/common/google_util.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
@@ -65,12 +67,14 @@
 #include "components/sync/base/features.h"
 #include "components/sync/model/sync_change.h"
 #include "components/sync/model/sync_change_processor.h"
+#include "components/sync/protocol/entity_data.h"
 #include "components/sync/protocol/entity_specifics.pb.h"
 #include "components/sync/protocol/search_engine_specifics.pb.h"
 #include "components/url_formatter/url_fixer.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+#include "url/third_party/mozilla/url_parse.h"
 #include "url/url_util.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -168,9 +172,9 @@ bool Contains(TemplateURLService::OwnedTemplateURLVector* template_urls,
   return FindTemplateURL(template_urls, turl) != template_urls->end();
 }
 
-bool IsCreatedByExtension(const TemplateURL* template_url) {
-  return template_url->type() == TemplateURL::NORMAL_CONTROLLED_BY_EXTENSION ||
-         template_url->type() == TemplateURL::OMNIBOX_API_EXTENSION;
+bool IsCreatedByExtension(const TemplateURL& template_url) {
+  return template_url.type() == TemplateURL::NORMAL_CONTROLLED_BY_EXTENSION ||
+         template_url.type() == TemplateURL::OMNIBOX_API_EXTENSION;
 }
 
 // Check if `is_active` status should be merged.  This is true if the
@@ -370,6 +374,34 @@ bool ShouldCommitUpdateToAccount(
   return account_data_changed;
 }
 
+// Checks if `url` is a Google AI mode URL. Uses the `udm` query param. Only
+// works for Google URLs because it's unknown what other search providers will
+// use to distinguish their AI mode and traditional search URLs.
+bool IsGoogleAiModeUrl(GURL url) {
+  // Check that:
+  // 1. `url` contains a `udm=50` query param which distinguish Google AI mode
+  //    and traditional search URLs. This check alone isn't sufficient because
+  //    any website could coincidentally use the same query param for its own
+  //    purposes.
+  // 2. `url` is a Google URL. This check is done 2nd because it's slower (0.5us
+  //    v 5us).
+
+  std::string_view query = url.query();
+  url::Component query_iterator(0, query.length());
+  url::Component key, value;
+  bool udm_50 = false;
+  while (url::ExtractQueryKeyValue(query, &query_iterator, &key, &value) &&
+         !udm_50) {
+    std::string_view key_string = query.substr(key.begin, key.len);
+    std::string_view value_string = query.substr(value.begin, value.len);
+    udm_50 = key_string == "udm" && value_string == "50";
+  }
+
+  return udm_50 && google_util::IsGoogleDomainUrl(
+                       url, google_util::DISALLOW_SUBDOMAIN,
+                       google_util::DISALLOW_NON_STANDARD_PORTS);
+}
+
 }  // namespace
 
 // TemplateURLService::LessWithPrefix -----------------------------------------
@@ -444,7 +476,7 @@ class TemplateURLService::Scoper {
 
  private:
   std::unique_ptr<KeywordWebDataService::BatchModeScoper> batch_mode_scoper_;
-  raw_ptr<TemplateURLService> service_;
+  raw_ptr<TemplateURLService, DanglingUntriaged> service_;
 };
 
 // TemplateURLService::PreLoadingProviders -------------------------------------
@@ -507,8 +539,7 @@ class TemplateURLService::PreLoadingProviders {
     return GetTemplateURLForSelector(base::BindRepeating(
         [](const std::string& host, const SearchTermsData* search_terms_data,
            const TemplateURL& turl) {
-          return turl.GenerateSearchURL(*search_terms_data).host_piece() ==
-                 host;
+          return turl.GenerateSearchURL(*search_terms_data).host() == host;
         },
         host, &search_terms_data));
   }
@@ -594,33 +625,11 @@ TemplateURLService::~TemplateURLService() {
 // static
 void TemplateURLService::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* registry) {
-#if BUILDFLAG(IS_IOS) || BUILDFLAG(IS_ANDROID)
-  uint32_t flags = PrefRegistry::NO_REGISTRATION_FLAGS;
-#else
-  uint32_t flags = user_prefs::PrefRegistrySyncable::SYNCABLE_PREF;
-#endif
-  registry->RegisterStringPref(prefs::kSyncedDefaultSearchProviderGUID,
-                               std::string(), flags);
   registry->RegisterStringPref(prefs::kDefaultSearchProviderGUID,
                                std::string());
   registry->RegisterBooleanPref(prefs::kDefaultSearchProviderEnabled, true);
   registry->RegisterBooleanPref(
       prefs::kDefaultSearchProviderContextMenuAccessAllowed, true);
-
-  registry->RegisterInt64Pref(
-      prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp, 0);
-  registry->RegisterStringPref(
-      prefs::kDefaultSearchProviderChoiceScreenCompletionVersion,
-      std::string());
-  registry->RegisterDictionaryPref(
-      prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState);
-  registry->RegisterInt64Pref(
-      prefs::kDefaultSearchProviderChoiceInvalidationTimestamp, 0);
-
-#if BUILDFLAG(IS_IOS)
-  registry->RegisterIntegerPref(
-      prefs::kDefaultSearchProviderChoiceScreenSkippedCount, 0);
-#endif
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -655,8 +664,8 @@ bool TemplateURLService::CanAddAutogeneratedKeyword(
   // that may interfere with search queries).  An easy heuristic for this is
   // whether the user has a TemplateURL that has been manually modified (e.g.,
   // renamed) connected to the same host.
-  return !url.is_valid() || url.host().empty() ||
-         CanAddAutogeneratedKeywordForHost(url.host());
+  return !url.is_valid() || url.GetHost().empty() ||
+         CanAddAutogeneratedKeywordForHost(url.GetHost());
 }
 
 bool TemplateURLService::IsPrepopulatedOrDefaultProviderByPolicy(
@@ -781,7 +790,7 @@ const TemplateURL* TemplateURLService::GetTemplateURLForHost(
 TemplateURL* TemplateURLService::Add(
     std::unique_ptr<TemplateURL> template_url) {
   DCHECK(template_url);
-  DCHECK(!IsCreatedByExtension(template_url.get()) ||
+  DCHECK(!IsCreatedByExtension(*template_url.get()) ||
          (!FindTemplateURLForExtension(
               template_url->GetExtensionInfo()->extension_id,
               template_url->type()) &&
@@ -870,8 +879,8 @@ void TemplateURLService::Remove(const TemplateURL* template_url) {
     // be hidden by an extension or policy and then deleted. Clean up the user
     // prefs then.
     if (template_url->sync_guid() ==
-        GetDefaultSearchProviderGuidFromPrefs(prefs_.get())) {
-      SetDefaultSearchProviderGuidToPrefs(prefs_.get(), std::string());
+        prefs_->GetString(prefs::kDefaultSearchProviderGUID)) {
+      prefs_->SetString(prefs::kDefaultSearchProviderGUID, std::string());
     }
 
     UMA_HISTOGRAM_ENUMERATION(kDeleteSyncedEngineHistogramName,
@@ -963,19 +972,7 @@ TemplateURLService::TemplateURLVector TemplateURLService::GetTemplateURLs() {
 std::unique_ptr<search_engines::ChoiceScreenData>
 TemplateURLService::GetChoiceScreenData() {
   return search_engine_choice_service_->GetChoiceScreenData(
-      search_terms_data());
-}
-
-TemplateURLService::TemplateURLVector
-TemplateURLService::GetFeaturedEnterpriseSearchEngines() const {
-  TemplateURLVector result;
-  for (const auto& turl : template_urls_) {
-    if (turl->CreatedByNonDefaultSearchProviderPolicy() &&
-        turl->featured_by_policy()) {
-      result.push_back(turl.get());
-    }
-  }
-  return result;
+      search_terms_data(), GetDefaultSearchProvider());
 }
 
 TemplateURL* TemplateURLService::GetEnterpriseSearchAggregatorEngine() const {
@@ -988,9 +985,21 @@ TemplateURL* TemplateURLService::GetEnterpriseSearchAggregatorEngine() const {
 }
 
 bool TemplateURLService::IsShortcutRequiredForSearchAggregatorEngine() const {
-  return enterprise_search_manager_
-             ? enterprise_search_manager_->GetRequireShortcutValue()
-             : false;
+  return enterprise_search_manager_ &&
+         enterprise_search_manager_->GetRequireShortcutValue();
+}
+
+TemplateURLService::TemplateURLVector
+TemplateURLService::GetFeaturedEnterpriseSiteSearchEngines() const {
+  TemplateURLVector result;
+  for (const auto& turl : template_urls_) {
+    if (turl->CreatedByNonDefaultSearchProviderPolicy() &&
+        !turl->CreatedByEnterpriseSearchAggregatorPolicy() &&
+        turl->featured_by_policy()) {
+      result.push_back(turl.get());
+    }
+  }
+  return result;
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -1021,7 +1030,7 @@ void TemplateURLService::ResetTemplateURL(TemplateURL* url,
                                           const std::u16string& title,
                                           const std::u16string& keyword,
                                           const std::string& search_url) {
-  DCHECK(!IsCreatedByExtension(url));
+  DCHECK(!IsCreatedByExtension(*url));
   DCHECK(!keyword.empty());
   DCHECK(!search_url.empty());
 
@@ -1217,7 +1226,7 @@ void TemplateURLService::UpdateProviderFavicons(
   DCHECK(potential_search_url.is_valid());
 
   const TemplateURLSet* urls_for_host =
-      provider_map_->GetURLsForHost(potential_search_url.host());
+      provider_map_->GetURLsForHost(potential_search_url.GetHost());
   if (!urls_for_host) {
     return;
   }
@@ -1228,7 +1237,7 @@ void TemplateURLService::UpdateProviderFavicons(
 
   Scoper scoper(this);
   for (TemplateURL* turl : urls_for_host_copy) {
-    if (!IsCreatedByExtension(turl) &&
+    if (!IsCreatedByExtension(*turl) &&
         turl->policy_origin() !=
             TemplateURLData::PolicyOrigin::kSearchAggregator &&
         turl->IsSearchURL(potential_search_url, search_terms_data()) &&
@@ -1259,7 +1268,7 @@ void TemplateURLService::SetUserSelectedDefaultSearchProvider(
   // Omnibox keywords cannot be made default. Extension-controlled search
   // engines can be made default only by the extension itself because they
   // aren't persisted.
-  DCHECK(!url || !IsCreatedByExtension(url));
+  DCHECK(!url || !IsCreatedByExtension(*url));
   if (url) {
     url->set_is_active(TemplateURLData::ActiveStatus::kTrue);
   }
@@ -1307,6 +1316,10 @@ void TemplateURLService::SetUserSelectedDefaultSearchProvider(
   // TODO(b/316887441): Investigate removing this.
   prefs_->CommitPendingWrite();
 #endif
+}
+
+DefaultSearchManager* TemplateURLService::GetDefaultSearchManager() {
+  return &default_search_manager_;
 }
 
 const TemplateURL* TemplateURLService::GetDefaultSearchProvider() const {
@@ -1357,7 +1370,7 @@ GURL TemplateURLService::GenerateSearchURLForDefaultSearchProvider(
 
 std::optional<TemplateURLService::SearchMetadata>
 TemplateURLService::ExtractSearchMetadata(const GURL& url) const {
-  const TemplateURL* template_url = GetTemplateURLForHost(url.host());
+  const TemplateURL* template_url = GetTemplateURLForHost(url.GetHost());
   if (!template_url) {
     return std::nullopt;
   }
@@ -1442,8 +1455,8 @@ void TemplateURLService::RepairPrepopulatedSearchEngines() {
       // Write the fallback engine's GUID to prefs, which will cause
       // OnDefaultSearchProviderGUIDChanged() to set it as the new
       // user-selected engine.
-      SetDefaultSearchProviderGuidToPrefs(prefs_.get(),
-                                          fallback_engine->sync_guid());
+      prefs_->SetString(prefs::kDefaultSearchProviderGUID,
+                        fallback_engine->sync_guid());
     }
   } else {
     // If the default search provider came from a user pref we would have been
@@ -1464,7 +1477,7 @@ void TemplateURLService::RepairStarterPackEngines() {
   Scoper scoper(this);
 
   std::vector<std::unique_ptr<TemplateURLData>> starter_pack_engines =
-      TemplateURLStarterPackData::GetStarterPackEngines();
+      template_url_starter_pack_data::GetStarterPackEngines();
   DCHECK(!starter_pack_engines.empty());
   ActionsFromCurrentData actions(CreateActionsFromCurrentStarterPackData(
       &starter_pack_engines, template_urls_));
@@ -1735,10 +1748,6 @@ void TemplateURLService::OnWebDataServiceRequestDone(
                   regional_capabilities::CountryAccessReason::
                       kTemplateURLServiceDatabaseMetadataCaching)));
 
-      // Added 20/08/2024.
-      // This is used for database cleanup.
-      // TODO(b/361013517): Remove the call and cleanup the code in a year.
-      web_data_service_->ClearBuiltinKeywordMilestone();
     }
 
     if (updated_keywords_metadata.HasStarterPackData()) {
@@ -1756,7 +1765,7 @@ void TemplateURLService::OnWebDataServiceRequestDone(
     if (engine_type == SEARCH_ENGINE_OTHER) {
       GURL search_url = GURL(default_search_provider_->url());
       if (search_url.is_valid() &&
-          url::DomainIs(search_url.host_piece(), "siteadvisor.com")) {
+          url::DomainIs(search_url.host(), "siteadvisor.com")) {
         engine_type = SEARCH_ENGINE_MCAFEE;
       }
     }
@@ -1783,25 +1792,6 @@ void TemplateURLService::OnWebDataServiceRequestDone(
           SEARCH_ENGINE_MAX);
     }
   }
-}
-
-std::u16string TemplateURLService::GetKeywordShortName(
-    const std::u16string& keyword,
-    bool* is_omnibox_api_extension_keyword,
-    bool* is_gemini_keyword) const {
-  const TemplateURL* template_url = GetTemplateURLForKeyword(keyword);
-
-  // TODO(sky): Once LocationBarView adds a listener to the TemplateURLService
-  // to track changes to the model, this should become a DCHECK.
-  if (template_url) {
-    *is_gemini_keyword =
-        template_url->starter_pack_id() == TemplateURLStarterPackData::kGemini;
-    *is_omnibox_api_extension_keyword =
-        template_url->type() == TemplateURL::OMNIBOX_API_EXTENSION;
-    return template_url->AdjustedShortNameForLocaleDirection();
-  }
-  *is_omnibox_api_extension_keyword = false;
-  return std::u16string();
 }
 
 void TemplateURLService::OnHistoryURLVisited(const URLVisitedDetails& details) {
@@ -1896,7 +1886,8 @@ std::optional<syncer::ModelError> TemplateURLService::ProcessSyncChanges(
     const base::Location& from_here,
     const syncer::SyncChangeList& change_list) {
   if (!models_associated_) {
-    return syncer::ModelError(FROM_HERE, "Models not yet associated.");
+    return syncer::ModelError(
+        FROM_HERE, syncer::ModelError::Type::kSearchEngineModelsNotAssociated);
   }
   DCHECK(loaded_);
 
@@ -1934,8 +1925,10 @@ std::optional<syncer::ModelError> TemplateURLService::ProcessSyncChanges(
           (base::FeatureList::IsEnabled(
                syncer::kSeparateLocalAndAccountSearchEngines) &&
            !existing_turl->GetAccountData())) {
-        // Can't DELETE a non-existent engine.
-        error = syncer::ModelError(FROM_HERE, error_msg);
+        // Can't DELETE a non-existent engine at the account level.
+        error = syncer::ModelError(
+            FROM_HERE, syncer::ModelError::Type::
+                           kSearchEngineDeleteNonExistentAtAccountLevel);
         continue;
       }
 
@@ -1955,7 +1948,6 @@ std::optional<syncer::ModelError> TemplateURLService::ProcessSyncChanges(
               syncer::kSeparateLocalAndAccountSearchEngines) &&
           existing_turl->GetLocalData()) {
         Update(existing_turl, TemplateURL(*existing_turl->GetLocalData()));
-        MaybeUpdateDSEViaPrefs(existing_turl);
       } else if (existing_turl != GetDefaultSearchProvider()) {
         Remove(existing_turl);
       } else {
@@ -1979,22 +1971,16 @@ std::optional<syncer::ModelError> TemplateURLService::ProcessSyncChanges(
       data.id = kInvalidTemplateURLID;
 
       // If flag is enabled, add `data` as account data member instead.
-      TemplateURL* added =
-          base::FeatureList::IsEnabled(
-              syncer::kSeparateLocalAndAccountSearchEngines)
-              ? Add(std::make_unique<TemplateURL>(std::nullopt, data))
-              : Add(std::make_unique<TemplateURL>(data));
-      if (added) {
-        MaybeUpdateDSEViaPrefs(added);
-      }
+      base::FeatureList::IsEnabled(
+          syncer::kSeparateLocalAndAccountSearchEngines)
+          ? Add(std::make_unique<TemplateURL>(std::nullopt, data))
+          : Add(std::make_unique<TemplateURL>(data));
     } else {
       // Since we've already found |existing_turl| by GUID, this Update() should
       // always return true, but we still don't want to crash if it fails.
       DCHECK(existing_turl);
       bool update_success = Update(existing_turl, *turl);
       DCHECK(update_success);
-
-      MaybeUpdateDSEViaPrefs(existing_turl);
     }
   }
 
@@ -2013,6 +1999,12 @@ base::WeakPtr<syncer::SyncableService> TemplateURLService::AsWeakPtr() {
   return weak_ptr_factory_.GetWeakPtr();
 }
 
+std::string TemplateURLService::GetClientTag(
+    const syncer::EntityData& entity_data) const {
+  DCHECK(entity_data.specifics.has_search_engine());
+  return entity_data.specifics.search_engine().sync_guid();
+}
+
 std::optional<syncer::ModelError> TemplateURLService::MergeDataAndStartSyncing(
     syncer::DataType type,
     const syncer::SyncDataList& initial_sync_data,
@@ -2024,7 +2016,8 @@ std::optional<syncer::ModelError> TemplateURLService::MergeDataAndStartSyncing(
 
   // Disable sync if we failed to load.
   if (load_failed_) {
-    return syncer::ModelError(FROM_HERE, "Local database load failed.");
+    return syncer::ModelError(
+        FROM_HERE, syncer::ModelError::Type::kSearchEngineLocalDbLoadFailed);
   }
 
   sync_processor_ = std::move(sync_processor);
@@ -2379,7 +2372,7 @@ TemplateURLService::CreateTemplateURLFromTemplateURLAndSyncData(
   // might happen occasionally when the starter pack gets new entries that are
   // not yet supported in this version of Chrome.
   if (specifics.starter_pack_id() >=
-      TemplateURLStarterPackData::kMaxStarterPackID) {
+      template_url_starter_pack_data::kMaxStarterPackId) {
     return nullptr;
   }
 
@@ -2504,28 +2497,11 @@ void TemplateURLService::Init() {
   }
 
   pref_change_registrar_.Init(&prefs_.get());
-  if (base::FeatureList::IsEnabled(switches::kSearchEngineChoiceTrigger)) {
-    // We migrate `kSyncedDefaultSearchProviderGUID` to
-    // `kDefaultSearchProviderGUID` if the latter was never set.
-    if (!prefs_->HasPrefPath(prefs::kDefaultSearchProviderGUID)) {
-      prefs_->SetString(
-          prefs::kDefaultSearchProviderGUID,
-          prefs_->GetString(prefs::kSyncedDefaultSearchProviderGUID));
-    }
-
-    pref_change_registrar_.Add(
-        prefs::kDefaultSearchProviderGUID,
-        base::BindRepeating(
-            &TemplateURLService::OnDefaultSearchProviderGUIDChanged,
-            base::Unretained(this)));
-  } else {
-    // TODO(b/364828491): Deprecate `kSyncedDefaultSearchProviderGUID`.
-    pref_change_registrar_.Add(
-        prefs::kSyncedDefaultSearchProviderGUID,
-        base::BindRepeating(
-            &TemplateURLService::OnDefaultSearchProviderGUIDChanged,
-            base::Unretained(this)));
-  }
+  pref_change_registrar_.Add(
+      prefs::kDefaultSearchProviderGUID,
+      base::BindRepeating(
+          &TemplateURLService::OnDefaultSearchProviderGUIDChanged,
+          base::Unretained(this)));
 
   DefaultSearchManager::Source source = DefaultSearchManager::FROM_USER;
   const TemplateURLData* dse =
@@ -2755,12 +2731,6 @@ bool TemplateURLService::Update(TemplateURL* existing_turl,
     }
   }
 
-  // Even if the DSE is controlled by an extension or policy, update the user
-  // preferences as they may take over later.
-  if (default_search_provider_source_ != DefaultSearchManager::FROM_FALLBACK) {
-    MaybeUpdateDSEViaPrefs(existing_turl);
-  }
-
   return true;
 }
 
@@ -2773,55 +2743,59 @@ bool TemplateURLService::UpdateData(TemplateURL* existing_turl,
                       TemplateURL(new_data, existing_turl->GetAccountData()));
 }
 
-void TemplateURLService::MaybeUpdateDSEViaPrefs(TemplateURL* synced_turl) {
-  // The DSE is not synced anymore when the `kSearchEngineChoiceTrigger` feature
-  // is enabled.
-  // TODO(b/341011768): Remove DSE sync code.
-  if (base::FeatureList::IsEnabled(switches::kSearchEngineChoiceTrigger)) {
-    return;
-  }
-
-  if (synced_turl->sync_guid() ==
-      GetDefaultSearchProviderGuidFromPrefs(prefs_.get())) {
-    default_search_manager_.SetUserSelectedDefaultSearchEngine(
-        synced_turl->data());
-  }
-}
-
 void TemplateURLService::UpdateKeywordSearchTermsForURL(
     const URLVisitedDetails& details) {
   if (!details.url.is_valid()) {
     return;
   }
 
+  // AI mode URLs should not be stored. Otherwise, since they fit the
+  // traditional search `TemplateURL`'s URL, those would be incorrectly
+  // attributed.
+  if (omnibox_feature_configs::AiMode::Get()
+          .do_not_show_historic_aim_suggestions &&
+      IsGoogleAiModeUrl(details.url)) {
+    return;
+  }
+
   const TemplateURLSet* urls_for_host =
-      provider_map_->GetURLsForHost(details.url.host());
+      provider_map_->GetURLsForHost(details.url.GetHost());
   if (!urls_for_host) {
     return;
   }
 
   TemplateURL* visited_url = nullptr;
   for (auto i = urls_for_host->begin(); i != urls_for_host->end(); ++i) {
+    TemplateURL& template_url = **i;
+
+    // AI mode keyword should not be attributed. Otherwise, they would be
+    // incorrectly attributed by traditional search URLs, which fit the AI mode
+    // `TemplateURL`'s URL.
+    if (template_url.starter_pack_id() ==
+        template_url_starter_pack_data::StarterPackId::kAiMode) {
+      continue;
+    }
+
     std::u16string search_terms;
-    if ((*i)->ExtractSearchTermsFromURL(details.url, search_terms_data(),
-                                        &search_terms) &&
+    if (template_url.ExtractSearchTermsFromURL(details.url, search_terms_data(),
+                                               &search_terms) &&
         !search_terms.empty()) {
       if (details.is_keyword_transition) {
         // The visit is the result of the user entering a keyword, generate a
         // KEYWORD_GENERATED visit for the KEYWORD so that the keyword typed
         // count is boosted.
-        AddTabToSearchVisit(**i);
+        AddTabToSearchVisit(template_url);
       }
       if (client_) {
-        client_->SetKeywordSearchTermsForURL(details.url, (*i)->id(),
+        client_->SetKeywordSearchTermsForURL(details.url, template_url.id(),
                                              search_terms);
       }
       // Caches the matched TemplateURL so its last_visited could be updated
       // later after iteration.
       // Note: Update() will replace the entry from the container of this
       // iterator, so update here directly will cause an error about it.
-      if (!IsCreatedByExtension(*i)) {
-        visited_url = *i;
+      if (!IsCreatedByExtension(template_url)) {
+        visited_url = &template_url;
       }
     }
   }
@@ -3003,8 +2977,8 @@ bool TemplateURLService::ApplyDefaultSearchChangeNoMetrics(
           << "Add() to repair the DSE must never fail.";
     }
     if (default_search_provider_) {
-      SetDefaultSearchProviderGuidToPrefs(
-          prefs_.get(), default_search_provider_->sync_guid());
+      prefs_->SetString(prefs::kDefaultSearchProviderGUID,
+                        default_search_provider_->sync_guid());
     }
   }
 
@@ -3370,10 +3344,10 @@ void TemplateURLService::MergeInSyncTemplateURL(
         // Update default search provider guid if the conflicting turl is the
         // default search provider.
         if (conflicting_built_in_turl == default_search_provider_ &&
-            GetDefaultSearchProviderGuidFromPrefs(prefs_.get()) ==
+            prefs_->GetString(prefs::kDefaultSearchProviderGUID) ==
                 default_search_provider_->sync_guid()) {
-          SetDefaultSearchProviderGuidToPrefs(prefs_.get(),
-                                              sync_turl->sync_guid());
+          prefs_->SetString(prefs::kDefaultSearchProviderGUID,
+                            sync_turl->sync_guid());
         }
         Update(conflicting_built_in_turl,
                *UpdateExistingURLWithAccountData(conflicting_built_in_turl,
@@ -3383,7 +3357,7 @@ void TemplateURLService::MergeInSyncTemplateURL(
         std::string guid = conflicting_built_in_turl->sync_guid();
         if (conflicting_built_in_turl == default_search_provider_) {
           bool pref_matched =
-              GetDefaultSearchProviderGuidFromPrefs(prefs_.get()) ==
+              prefs_->GetString(prefs::kDefaultSearchProviderGUID) ==
               default_search_provider_->sync_guid();
           // Update the existing engine in-place.
           Update(default_search_provider_, TemplateURL(sync_turl->data()));
@@ -3393,8 +3367,8 @@ void TemplateURLService::MergeInSyncTemplateURL(
           // refers to a new search engine from Sync which just hasn't been
           // added locally yet, so leave it alone in that case.
           if (pref_matched) {
-            SetDefaultSearchProviderGuidToPrefs(
-                prefs_.get(), default_search_provider_->sync_guid());
+            prefs_->SetString(prefs::kDefaultSearchProviderGUID,
+                              default_search_provider_->sync_guid());
           }
 
           should_add_sync_turl = false;
@@ -3418,12 +3392,9 @@ void TemplateURLService::MergeInSyncTemplateURL(
             syncer::kSeparateLocalAndAccountSearchEngines)
             ? std::make_unique<TemplateURL>(std::nullopt, data)
             : std::make_unique<TemplateURL>(data);
-    TemplateURL* added = added_ptr.get();
     base::AutoReset<DefaultSearchChangeOrigin> change_origin(
         &dsp_change_origin_, DSP_CHANGE_SYNC_ADD);
-    if (Add(std::move(added_ptr))) {
-      MaybeUpdateDSEViaPrefs(added);
-    }
+    Add(std::move(added_ptr));
   }
 }
 
@@ -3446,7 +3417,7 @@ void TemplateURLService::OnDefaultSearchProviderGUIDChanged() {
   base::AutoReset<DefaultSearchChangeOrigin> change_origin(
       &dsp_change_origin_, DSP_CHANGE_SYNC_PREF);
 
-  std::string new_guid = GetDefaultSearchProviderGuidFromPrefs(prefs_.get());
+  std::string new_guid = prefs_->GetString(prefs::kDefaultSearchProviderGUID);
   if (new_guid.empty()) {
     default_search_manager_.ClearUserSelectedDefaultSearchEngine();
     return;

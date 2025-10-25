@@ -26,6 +26,8 @@
 #include "chrome/browser/ui/browser_list_enumerator.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 
 using base::UserMetricsAction;
 using content::WebContents;
@@ -65,35 +67,6 @@ BrowserList* BrowserList::instance_ = nullptr;
 
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserList, public:
-
-Browser* BrowserList::GetLastActive() const {
-  if (!browsers_ordered_by_activation_.empty()) {
-    return *(browsers_ordered_by_activation_.rbegin());
-  }
-  return nullptr;
-}
-
-void BrowserList::ForEachCurrentBrowser(
-    base::FunctionRef<void(Browser*)> on_browser) {
-  // Make a copy of the BrowserList to simplify the case where we need to
-  // add or remove a Browser during the loop.
-  constexpr bool kEnumerateNewBrowser = false;
-  BrowserListEnumerator browser_list_copy(kEnumerateNewBrowser);
-  while (!browser_list_copy.empty()) {
-    on_browser(browser_list_copy.Next());
-  }
-}
-
-void BrowserList::ForEachCurrentAndNewBrowser(
-    base::FunctionRef<void(Browser*)> on_browser) {
-  // Make a copy of the BrowserList to simplify the case where we need to
-  // add or remove a Browser during the loop.
-  constexpr bool kEnumerateNewBrowser = true;
-  BrowserListEnumerator browser_list_copy(kEnumerateNewBrowser);
-  while (!browser_list_copy.empty()) {
-    on_browser(browser_list_copy.Next());
-  }
-}
 
 // static
 BrowserList* BrowserList::GetInstance() {
@@ -301,7 +274,8 @@ void BrowserList::MoveBrowsersInWorkspaceToFront(
 
   BrowserList* instance = GetInstance();
 
-  Browser* old_last_active = instance->GetLastActive();
+  BrowserWindowInterface* const old_last_active =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
   BrowserVector& last_active_browsers =
       instance->browsers_ordered_by_activation_;
 
@@ -319,10 +293,13 @@ void BrowserList::MoveBrowsersInWorkspaceToFront(
                browser->window()->GetWorkspace() != new_workspace;
       });
 
-  Browser* new_last_active = instance->GetLastActive();
+  BrowserWindowInterface* const new_last_active =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
   if (old_last_active != new_last_active) {
     for (BrowserListObserver& observer : observers_.Get()) {
-      observer.OnBrowserSetLastActive(new_last_active);
+      observer.OnBrowserSetLastActive(
+          new_last_active ? new_last_active->GetBrowserForMigrationOnly()
+                          : nullptr);
     }
   }
 }
@@ -361,20 +338,8 @@ void BrowserList::NotifyBrowserNoLongerActive(Browser* browser) {
 }
 
 // static
-void BrowserList::NotifyBrowserCloseCancelled(Browser* browser,
-                                              BrowserClosingStatus reason) {
-  for (BrowserListObserver& observer : observers_.Get()) {
-    observer.OnBrowserCloseCancelled(browser, reason);
-  }
-}
-
-// static
 void BrowserList::NotifyBrowserCloseStarted(Browser* browser) {
   GetInstance()->currently_closing_browsers_.insert(browser);
-
-  for (BrowserListObserver& observer : observers_.Get()) {
-    observer.OnBrowserClosing(browser);
-  }
 }
 
 // static

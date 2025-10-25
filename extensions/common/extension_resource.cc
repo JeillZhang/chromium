@@ -60,10 +60,20 @@ base::FilePath ExtensionResource::GetFilePath(
   base::FilePath normalized_extension_root;
   if (!base::NormalizeFilePath(extension_root, &normalized_extension_root)) {
 #if BUILDFLAG(IS_WIN)
-    // On Windows, `NormalizeFilePath` fails if the path doesn't start with a
-    // drive letter (e.g. a network path) or if it exceeds `MAX_PATH` characters
-    // in length. Fall back to `MakeAbsoluteFilePath` and proceed if the path
-    // exists.
+    // On Windows, `NormalizeFilePath` is implemented via
+    // `GetFinalPathNameByHandle`, which can fail in some cases. One such case
+    // which was reported by users is with paths on a ramdisk. For example, from
+    // the author of ImDisk:
+    //
+    // > ImDisk is a rather old product. It is designed to be as small and
+    // > simple as possible and compatible with Windows versions as old as NT
+    // > 3.51. By design it lacks support for certain "modern" OS features like
+    // > plug-and-play and Volume Mount Manager. The mentioned API function,
+    // > GetFinalPathNameByHandle, uses Volume Mount Manager and is therefore
+    // > not supported for ImDisk virtual disks.
+    //
+    // Since we can't normalize the path, fall back to `MakeAbsoluteFilePath`
+    // and proceed if the file exists.
     normalized_extension_root = base::MakeAbsoluteFilePath(extension_root);
     if (normalized_extension_root.empty() ||
         !base::PathExists(normalized_extension_root)) {

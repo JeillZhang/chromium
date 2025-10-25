@@ -6,7 +6,6 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
-#include "chrome/browser/password_manager/android/password_manager_android_util.h"
 #include "components/password_manager/core/browser/password_store/android_backend_error.h"
 #include "components/password_manager/core/common/password_manager_features.h"
 
@@ -18,8 +17,6 @@ using password_manager::AndroidBackendErrorType;
 
 PasswordSyncControllerDelegateBridgeImpl::
     PasswordSyncControllerDelegateBridgeImpl() {
-  // The bridge is not supposed to be created when UPM is completely unusable.
-  CHECK(password_manager_android_util::AreMinUpmRequirementsMet());
   java_object_ = Java_PasswordSyncControllerDelegateBridgeImpl_create(
       base::android::AttachCurrentThread(), reinterpret_cast<intptr_t>(this));
 }

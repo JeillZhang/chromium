@@ -45,7 +45,6 @@
 #include "third_party/blink/renderer/platform/text/date_components.h"
 #include "third_party/blink/renderer/platform/text/date_time_format.h"
 #include "third_party/blink/renderer/platform/web_test_support.h"
-#include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
@@ -71,8 +70,9 @@ String GetLocaleInfoString(LCID lcid, LCTYPE type, bool defaults_for_locale) {
     return String();
   }
   StringBuffer<UChar> buffer(buffer_size_with_nul);
-  ::GetLocaleInfo(lcid, type, base::as_writable_wcstr(buffer.Characters()),
-                  buffer_size_with_nul);
+  auto span = buffer.Span();
+  ::GetLocaleInfo(lcid, type, base::as_writable_wcstr(span.data()),
+                  span.size());
   buffer.Shrink(buffer_size_with_nul - 1);
   return String::Adopt(buffer);
 }
@@ -419,10 +419,8 @@ unsigned LocaleWin::FirstDayOfWeek() {
 }
 
 bool LocaleWin::IsRTL() {
-  WTF::unicode::CharDirection dir =
-      WTF::unicode::Direction(MonthLabels()[0][0]);
-  return dir == WTF::unicode::kRightToLeft ||
-         dir == WTF::unicode::kRightToLeftArabic;
+  unicode::CharDirection dir = unicode::Direction(MonthLabels()[0][0]);
+  return dir == unicode::kRightToLeft || dir == unicode::kRightToLeftArabic;
 }
 
 String LocaleWin::DateFormat() {

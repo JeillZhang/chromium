@@ -13,12 +13,14 @@
 #include "ui/views/controls/image_view.h"
 #include "ui/views/view.h"
 
+class RichHoverButton;
 class RichControlsContainerView;
 namespace views {
 class Label;
 class LabelButton;
 class ToggleButton;
 class ImageView;
+class MdTextButtonWithSpinner;
 }  // namespace views
 
 // Content view used to display the cookie Controls.
@@ -28,6 +30,7 @@ class CookieControlsContentView : public views::View {
  public:
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kTitle);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kDescription);
+  DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kThirdPartyCookiesSummary);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kTrackingProtectionsButton);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kToggleButton);
   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kToggleLabel);
@@ -57,6 +60,15 @@ class CookieControlsContentView : public views::View {
 
   virtual void SetFeedbackSectionVisibility(bool visible);
 
+  virtual void UpdateFeedbackButtonSubtitle(const std::u16string& subtitle);
+
+  virtual void SetTrackingProtectionsButtonReloadingState();
+
+  virtual void SetIncognitoTrackingProtections3pcSummary(
+      const std::u16string& tpc_summary);
+
+  virtual views::MdTextButtonWithSpinner* GetTrackingProtectionsButton();
+
   base::CallbackListSubscription RegisterToggleButtonPressedCallback(
       base::RepeatingCallback<void(bool)> callback);
   base::CallbackListSubscription RegisterFeedbackButtonPressedCallback(
@@ -85,6 +97,7 @@ class CookieControlsContentView : public views::View {
   void AddFeedbackSection();
   raw_ptr<RichControlsContainerView> cookies_row_ = nullptr;
   raw_ptr<views::View> feedback_section_ = nullptr;
+  raw_ptr<RichHoverButton> feedback_button_ = nullptr;
   raw_ptr<views::View> label_wrapper_ = nullptr;
   raw_ptr<views::Label> title_ = nullptr;
   raw_ptr<views::Label> description_ = nullptr;
@@ -97,8 +110,11 @@ class CookieControlsContentView : public views::View {
       tracking_protections_button_callback_list_;
 
   // Used for Tracking protections UI.
+  void AddThirdPartyCookiesSummaryForTrackingProtectionsUi();
+  raw_ptr<views::Label> tp_bubble_3pc_summary_ = nullptr;
   void AddTrackingProtectionsButton();
-  raw_ptr<views::LabelButton> tracking_protections_button_ = nullptr;
+  raw_ptr<views::MdTextButtonWithSpinner> tracking_protections_button_ =
+      nullptr;
 
   base::RepeatingClosureList feedback_button_callback_list_;
 };

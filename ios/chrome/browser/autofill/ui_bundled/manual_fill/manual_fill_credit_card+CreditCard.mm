@@ -4,6 +4,7 @@
 
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/autofill/core/browser/data_model/payments/credit_card.h"
 #import "components/autofill/core/browser/data_quality/autofill_data_util.h"
 #import "components/autofill/core/browser/data_quality/validation.h"
@@ -23,7 +24,8 @@
   NSString* bankName =
       base::SysUTF16ToNSString(base::ASCIIToUTF16(creditCard.bank_name()));
   NSString* cardHolder = autofill::GetCreditCardName(
-      creditCard, GetApplicationContext()->GetApplicationLocale());
+      creditCard,
+      GetApplicationContext()->GetApplicationLocaleStorage()->Get());
   NSString* number = nil;
   if (creditCard.record_type() !=
       autofill::CreditCard::RecordType::kMaskedServerCard) {
@@ -77,6 +79,19 @@
       // been done and the `creditCard` object contains the full card
       // information.
       CVC = base::SysUTF16ToNSString(creditCard.cvc());
+    }
+  } else if (creditCard.record_type() ==
+             autofill::CreditCard::RecordType::kLocalCard) {
+    // For local card, the CVC should be shown.
+    if (!creditCard.cvc().empty()) {
+      CVC = base::SysUTF16ToNSString(creditCard.cvc());
+    }
+  } else {
+    // For server card, the CVC should be masked.
+    if (!creditCard.cvc().empty()) {
+      CVC =
+          base::SysUTF16ToNSString(autofill::CreditCard::GetMidlineEllipsisDots(
+              autofill::GetCvcLengthForCardNetwork(creditCard.network())));
     }
   }
 

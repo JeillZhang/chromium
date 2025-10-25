@@ -17,7 +17,7 @@ import org.chromium.build.annotations.NullMarked;
 import org.chromium.components.browser_ui.settings.ChromeImageViewPreference;
 import org.chromium.components.browser_ui.settings.FaviconViewUtils;
 import org.chromium.components.browser_ui.site_settings.Website;
-import org.chromium.components.content_settings.ContentSettingValues;
+import org.chromium.components.content_settings.ContentSetting;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.url.GURL;
@@ -55,7 +55,7 @@ public class WebsiteExceptionRowPreference extends ChromeImageViewPreference {
         mContext = context;
         mCallback = callback;
 
-        setTitle(site.getTitle());
+        setTitle(mSite.getTitleForContentSetting(ContentSettingsType.COOKIES));
         var exception = mSite.getContentSettingException(ContentSettingsType.COOKIES);
         if (exception != null && exception.hasExpiration()) {
             int expirationInDays = assumeNonNull(exception.getExpirationInDays());
@@ -117,9 +117,7 @@ public class WebsiteExceptionRowPreference extends ChromeImageViewPreference {
 
     private void deleteException() {
         mSite.setContentSetting(
-                mDelegate.getBrowserContext(),
-                ContentSettingsType.COOKIES,
-                ContentSettingValues.DEFAULT);
+                mDelegate.getBrowserContext(), ContentSettingsType.COOKIES, ContentSetting.DEFAULT);
         mCallback.refreshBlockingExceptions();
     }
 }

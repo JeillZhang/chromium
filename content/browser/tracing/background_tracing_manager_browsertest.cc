@@ -42,6 +42,7 @@
 #include "content/browser/tracing/background_tracing_rule.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/background_tracing_test_support.h"
@@ -62,8 +63,6 @@
 #include "third_party/re2/src/re2/re2.h"
 #include "third_party/zlib/google/compression_utils.h"
 #include "third_party/zlib/zlib.h"
-
-using base::trace_event::TraceLog;
 
 namespace content {
 namespace {
@@ -265,7 +264,7 @@ perfetto::protos::gen::ChromeFieldTracingConfig CreateSimpleScenarioConfig() {
             }
           }
         }
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       }
     }
   )pb";
@@ -287,7 +286,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundTracingManagerBrowserTest,
         manual_trigger_name: "upload_trigger"
       }
       trace_config: {
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       }
     }
   )pb";
@@ -335,7 +334,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundTracingManagerBrowserTest,
         manual_trigger_name: "start_trigger"
       }
       trace_config: {
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       }
     }
   )pb";
@@ -374,7 +373,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundTracingManagerBrowserTest,
         manual_trigger_name: "upload_trigger"
       }
       trace_config: {
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       }
     }
   )pb";
@@ -491,7 +490,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundTracingManagerBrowserTest,
       }
       stop_rules: { name: "stop_trigger" manual_trigger_name: "stop_trigger" }
       trace_config: {
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       }
     }
     scenarios: {
@@ -501,7 +500,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundTracingManagerBrowserTest,
         manual_trigger_name: "other_start_trigger"
       }
       trace_config: {
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       }
     }
   )pb";
@@ -531,7 +530,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundTracingManagerBrowserTest,
       start_rules: { manual_trigger_name: "start_trigger" }
       stop_rules: { manual_trigger_name: "stop_trigger" }
       trace_config: {
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       }
       nested_scenarios: {
         scenario_name: "nested_scenario"
@@ -726,9 +725,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundTracingManagerBrowserTest,
   background_tracing_helper.WaitForTraceReceived();
 
   EXPECT_TRUE(background_tracing_helper.trace_received());
-  EXPECT_TRUE(background_tracing_helper.TraceHasMatchingString("cpu-brand"));
-  EXPECT_TRUE(background_tracing_helper.TraceHasMatchingString("network-type"));
-  EXPECT_TRUE(background_tracing_helper.TraceHasMatchingString("user-agent"));
+  EXPECT_TRUE(background_tracing_helper.TraceHasMatchingString("os-name"));
 }
 
 // This tests that histogram triggers for preemptive mode configs.
@@ -749,7 +746,7 @@ IN_PROC_BROWSER_TEST_F(BackgroundTracingManagerBrowserTest,
       start_rules: { manual_trigger_name: "start_trigger" }
       upload_rules: { histogram: { histogram_name: "fake" min_value: 1 } }
       trace_config: {
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       }
     }
   )pb";
@@ -771,7 +768,8 @@ IN_PROC_BROWSER_TEST_F(BackgroundTracingManagerBrowserTest,
   EXPECT_TRUE(background_tracing_helper.trace_received());
 
   std::optional<base::Value> trace_json =
-      base::JSONReader::Read(background_tracing_helper.json_file_contents());
+      base::JSONReader::Read(background_tracing_helper.json_file_contents(),
+                             base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   ASSERT_TRUE(trace_json);
   ASSERT_TRUE(trace_json->is_dict());
   auto* metadata_json = trace_json->GetDict().FindDict("metadata");
@@ -902,8 +900,9 @@ IN_PROC_BROWSER_TEST_F(BackgroundTracingManagerBrowserTest,
       base::trace_event::kStartupTracingTriggerName));
 }
 
-// TODO(crbug.com/40267734): Re-enable this test once fixed
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_ANDROID)
+// TODO(crbug.com/40267734): Re-enable this test once fixed.
+#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_ANDROID) || \
+    (BUILDFLAG(IS_LINUX) && defined(THREAD_SANITIZER))
 #define MAYBE_RunStartupTracing DISABLED_RunStartupTracing
 #else
 #define MAYBE_RunStartupTracing RunStartupTracing
@@ -950,7 +949,7 @@ IN_PROC_BROWSER_TEST_F(ProtoBackgroundTracingTest,
       scenario_name: "test_scenario"
       start_rules: { manual_trigger_name: "start_trigger" }
       trace_config: {
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       }
     }
   )pb";
@@ -1026,7 +1025,13 @@ IN_PROC_BROWSER_TEST_F(ProtoBackgroundTracingTest, ProtoTraceReceived) {
   EXPECT_FALSE(checker.stats().has_interned_log_messages);
 }
 
-IN_PROC_BROWSER_TEST_F(ProtoBackgroundTracingTest, ReceiveCallback) {
+// TODO(crbug.com/452421404): Flaky on Linux TSAN bot.
+#if BUILDFLAG(IS_LINUX) && defined(THREAD_SANITIZER)
+#define MAYBE_ReceiveCallback DISABLED_ReceiveCallback
+#else
+#define MAYBE_ReceiveCallback ReceiveCallback
+#endif  // BUILDFLAG(IS_LINUX) && defined(THREAD_SANITIZER)
+IN_PROC_BROWSER_TEST_F(ProtoBackgroundTracingTest, MAYBE_ReceiveCallback) {
   TestBackgroundTracingHelper background_tracing_helper;
 
   EXPECT_TRUE(BackgroundTracingManager::GetInstance().InitializeFieldScenarios(

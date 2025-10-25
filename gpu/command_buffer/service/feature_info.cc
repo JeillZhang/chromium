@@ -237,14 +237,12 @@ void FeatureInfo::InitializeBasicState(const base::CommandLine* command_line) {
 
 void FeatureInfo::Initialize(ContextType context_type,
                              bool is_passthrough_cmd_decoder,
-                             const DisallowedFeatures& disallowed_features,
-                             bool force_reinitialize) {
+                             const DisallowedFeatures& disallowed_features) {
   if (initialized_) {
     DCHECK_EQ(context_type, context_type_);
     DCHECK_EQ(is_passthrough_cmd_decoder, is_passthrough_cmd_decoder_);
     DCHECK(disallowed_features == disallowed_features_);
-    if (!force_reinitialize)
-      return;
+    return;
   }
 
   disallowed_features_ = disallowed_features;
@@ -252,6 +250,12 @@ void FeatureInfo::Initialize(ContextType context_type,
   is_passthrough_cmd_decoder_ = is_passthrough_cmd_decoder;
   InitializeFeatures();
   initialized_ = true;
+}
+
+void FeatureInfo::ForceReinitialize() {
+  CHECK(initialized_);
+  CHECK(is_passthrough_cmd_decoder_);
+  InitializeFeatures();
 }
 
 void FeatureInfo::InitializeForTesting(
@@ -709,7 +713,7 @@ void FeatureInfo::InitializeFeatures() {
   //
   // Therefore we made up GL_GOOGLE_depth_texture / GL_CHROMIUM_depth_texture.
   //
-  // GL_GOOGLE_depth_texture is legacy. As we exposed it into NaCl we can't
+  // TODO:GL_GOOGLE_depth_texture was exposed into NaCl, we can now
   // get rid of it.
   //
   bool enable_depth_texture = false;
@@ -924,7 +928,6 @@ void FeatureInfo::InitializeFeatures() {
         break;
       case CONTEXT_TYPE_WEBGL1:
       case CONTEXT_TYPE_WEBGL2:
-      case CONTEXT_TYPE_WEBGPU:
         break;
     }
   }

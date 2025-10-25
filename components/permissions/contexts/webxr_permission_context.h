@@ -8,11 +8,12 @@
 #include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/permissions/content_setting_permission_context_base.h"
 #include "components/permissions/permission_context_base.h"
 #include "components/permissions/permission_request_data.h"
 
 namespace permissions {
-class WebXrPermissionContext : public PermissionContextBase {
+class WebXrPermissionContext : public ContentSettingPermissionContextBase {
  public:
   WebXrPermissionContext(content::BrowserContext* browser_context,
                          ContentSettingsType content_settings_type);
@@ -34,12 +35,10 @@ class WebXrPermissionContext : public PermissionContextBase {
   void NotifyPermissionSet(const PermissionRequestData& request_data,
                            BrowserPermissionCallback callback,
                            bool persist,
-                           ContentSetting content_setting,
-                           bool is_one_time,
+                           PermissionDecision decision,
                            bool is_final_decision) override;
 
-  void UpdateTabContext(const permissions::PermissionRequestID& id,
-                        const GURL& requesting_origin,
+  void UpdateTabContext(const PermissionRequestData& request_data,
                         bool allowed) override;
 
   void OnAndroidPermissionDecided(const PermissionRequestData& request_data,

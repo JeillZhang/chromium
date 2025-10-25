@@ -647,7 +647,8 @@ WebString WebAXObject::GetName(
   ScopedFreezeAXCache freeze(private_->AXObjectCache());
 
   HeapVector<Member<AXObject>> name_objects;
-  WebString result = private_->GetName(out_name_from, &name_objects);
+  WebString result =
+      private_->GetName(out_name_from, &name_objects, /*name_sources=*/nullptr);
 
   out_name_objects.reserve(name_objects.size());
   out_name_objects.resize(name_objects.size());
@@ -664,7 +665,7 @@ WebString WebAXObject::GetName() const {
 
   ax::mojom::NameFrom name_from;
   HeapVector<Member<AXObject>> name_objects;
-  return private_->GetName(name_from, &name_objects);
+  return private_->GetName(name_from, &name_objects, /*name_sources=*/nullptr);
 }
 
 WebString WebAXObject::Description(
@@ -946,8 +947,10 @@ gfx::Point WebAXObject::MaximumScrollOffset() const {
 void WebAXObject::SetScrollOffset(const gfx::Point& offset) const {
   if (IsDetached())
     return;
-
-  private_->SetScrollOffset(offset);
+  // We can only reach here from `BlinkAXActionTarget::SetScrollOffset`, which
+  // is only used in browser tests, so we will use
+  // `ScrollSourceType::kAbsoluteScroll`.
+  private_->SetScrollOffset(offset, cc::ScrollSourceType::kAbsoluteScroll);
 }
 
 void WebAXObject::GetRelativeBounds(WebAXObject& offset_container,

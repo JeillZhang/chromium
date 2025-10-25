@@ -5,10 +5,12 @@
 #include "ui/ozone/platform/wayland/host/wayland_pointer.h"
 
 #include <linux/input.h>
+#include <wayland-util.h>
 
 #include <optional>
 
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/version.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/event.h"
@@ -48,11 +50,15 @@ WaylandPointer::WaylandPointer(wl_pointer* pointer,
       .axis_stop = &OnAxisStop,
       .axis_discrete = &OnAxisDiscrete,
       .axis_value120 = &OnAxisValue120,
+      .axis_relative_direction = &OnAxisRelativeDirection,
   };
   wl_pointer_add_listener(obj_.get(), &kPointerListener, this);
 }
 
 WaylandPointer::~WaylandPointer() {
+  // If a cursor already exists, we need to reset it first before
+  // destroying the pointer to prevent dangling references.
+  connection_->ResetCursor();
   // Even though, WaylandPointer::Leave is always called when Wayland destroys
   // wl_pointer, it's better to be explicit as some Wayland compositors may have
   // bugs.
@@ -164,8 +170,7 @@ void WaylandPointer::OnAxis(void* data,
                             uint32_t time,
                             uint32_t axis,
                             wl_fixed_t value) {
-  const double delta =
-      -wl_fixed_to_double(value) * MouseWheelEvent::kWheelDelta;
+  const double delta = -wl_fixed_to_double(value);
   const auto timestamp = wl::EventMillisecondsToTimeTicks(time);
   auto* self = static_cast<WaylandPointer*>(data);
   self->OnAxisImpl(delta, axis, timestamp, /*is_high_resolution=*/false);
@@ -206,8 +211,7 @@ void WaylandPointer::OnAxisDiscrete(void* data,
                                     wl_pointer* pointer,
                                     uint32_t axis,
                                     int32_t discrete) {
-  // TODO(crbug.com/40720099): Use this event for better handling of mouse wheel
-  // events.
+  // Deprecated since version 8
   NOTIMPLEMENTED_LOG_ONCE();
 }
 
@@ -218,8 +222,7 @@ void WaylandPointer::OnAxisValue120(void* data,
                                     wl_pointer* pointer,
                                     uint32_t axis,
                                     int32_t value120) {
-  static const double kDetentAngleDegrees = 15.0;
-  const double delta = -value120 * kDetentAngleDegrees;
+  const double delta = -value120;
   auto* self = static_cast<WaylandPointer*>(data);
   self->OnAxisImpl(delta, axis, /*timestamp=*/std::nullopt,
                    /*is_high_resolution=*/true);
@@ -245,6 +248,16 @@ void WaylandPointer::OnAxisImpl(double delta,
   if (!axis_source_received_) {
     delegate_->OnPointerAxisSourceEvent(WL_POINTER_AXIS_SOURCE_WHEEL);
   }
+}
+
+// --- Version 9 ---
+
+// static
+void WaylandPointer::OnAxisRelativeDirection(void* data,
+                                             wl_pointer* obj,
+                                             uint32_t axis,
+                                             uint32_t direction) {
+  NOTIMPLEMENTED_LOG_ONCE();
 }
 
 }  // namespace ui

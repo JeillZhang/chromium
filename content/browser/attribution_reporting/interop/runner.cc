@@ -58,6 +58,7 @@
 #include "content/browser/aggregation_service/public_key.h"
 #include "content/browser/attribution_reporting/attribution_background_registrations_id.h"
 #include "content/browser/attribution_reporting/attribution_data_host_manager.h"
+#include "content/browser/attribution_reporting/attribution_features.h"
 #include "content/browser/attribution_reporting/attribution_manager_impl.h"
 #include "content/browser/attribution_reporting/attribution_os_level_manager.h"
 #include "content/browser/attribution_reporting/attribution_report.h"
@@ -81,6 +82,7 @@
 #include "services/network/public/mojom/attribution.mojom.h"
 #include "services/network/test/test_url_loader_factory.h"
 #include "services/network/test/test_utils.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "url/gurl.h"
@@ -141,8 +143,8 @@ class Adjuster : public ReportBodyAdjuster {
     AdjustTime(*shared_info_dict, "source_registration_time",
                /*skip_adjust_value=*/"0");
 
-    std::string adjusted_shared_info;
-    base::JSONWriter::Write(*shared_info_dict, &adjusted_shared_info);
+    std::string adjusted_shared_info =
+        base::WriteJson(*shared_info_dict).value_or("");
 
     // The payloads were encrypted with the original shared info, therefore
     // need to be re-encrypted with the adjusted shared info.
@@ -334,6 +336,14 @@ class ControllableStorageDelegate : public AttributionResolverDelegateImpl {
     return response_data;
   }
 
+  std::optional<AttributionResolverDelegate::OfflineReportDelayConfig>
+  GetOfflineReportDelayConfig() const override {
+    return OfflineReportDelayConfig{
+        .min = base::Minutes(5),
+        .max = base::Minutes(5),
+    };
+  }
+
   bool GenerateNullAggregatableReportForLookbackDay(
       int lookback_day,
       attribution_reporting::mojom::SourceRegistrationTimeConfig
@@ -358,7 +368,7 @@ class ControllableStorageDelegate : public AttributionResolverDelegateImpl {
 };
 
 void Handle(const AttributionSimulationEvent::StartRequest& event,
-            AttributionDataHostManager& data_host_manager) {
+            AttributionManager& manager) {
   std::optional<RegistrationEligibility> eligibility =
       attribution_reporting::GetRegistrationEligibility(event.eligibility);
   if (!eligibility.has_value()) {
@@ -369,6 +379,7 @@ void Handle(const AttributionSimulationEvent::StartRequest& event,
       event.context_origin, event.fenced, kFrameId,
       /*last_navigation_id=*/kNavigationId);
 
+  auto& data_host_manager = *manager.GetDataHostManager();
   std::optional<blink::AttributionSrcToken> attribution_src_token;
   if (event.eligibility == AttributionReportingEligibility::kNavigationSource) {
     attribution_src_token.emplace();
@@ -377,28 +388,34 @@ void Handle(const AttributionSimulationEvent::StartRequest& event,
         /*background_registrations_count=*/1);
     data_host_manager.NotifyNavigationRegistrationStarted(
         suitable_context, *attribution_src_token, kNavigationId,
-        /*devtools_request_id=*/"");
+        /*devtools_request_id=*/"",
+        /*from_context_menu=*/false);
     data_host_manager.NotifyNavigationRegistrationCompleted(
         *attribution_src_token);
   }
 
-  data_host_manager.NotifyBackgroundRegistrationStarted(
+  manager.GetDataHostManager()->NotifyBackgroundRegistrationStarted(
       BackgroundRegistrationsId(event.request_id), std::move(suitable_context),
       *eligibility, attribution_src_token,
       /*devtools_request_id=*/"");
 }
 
 void Handle(const AttributionSimulationEvent::Response& event,
-            AttributionDataHostManager& data_host_manager) {
-  data_host_manager.NotifyBackgroundRegistrationData(
+            AttributionManager& manager) {
+  manager.GetDataHostManager()->NotifyBackgroundRegistrationData(
       BackgroundRegistrationsId(event.request_id), event.response_headers.get(),
       event.url);
 }
 
 void Handle(const AttributionSimulationEvent::EndRequest& event,
-            AttributionDataHostManager& data_host_manager) {
-  data_host_manager.NotifyBackgroundRegistrationCompleted(
+            AttributionManager& manager) {
+  manager.GetDataHostManager()->NotifyBackgroundRegistrationCompleted(
       BackgroundRegistrationsId(event.request_id));
+}
+
+void Handle(const AttributionSimulationEvent::Navigation& event,
+            AttributionManager& manager) {
+  manager.UpdateLastNavigationTime(base::Time::Now());
 }
 
 void FastForwardUntilReportsConsumed(AttributionManager& manager,
@@ -421,6 +438,7 @@ void FastForwardUntilReportsConsumed(AttributionManager& manager,
     run_loop.Run();
 
     if (delta.is_negative()) {
+      task_environment.FastForwardBy(base::TimeDelta());
       break;
     }
     task_environment.FastForwardBy(delta);
@@ -440,9 +458,8 @@ RunAttributionInteropSimulation(
   DCHECK(std::ranges::is_sorted(run.events, /*comp=*/{},
                                 &AttributionSimulationEvent::time));
 
-  std::vector<base::test::FeatureRef> enabled_features(
-      {blink::features::kKeepAliveInBrowserMigration,
-       blink::features::kAttributionReportingInBrowserMigration});
+  std::vector<base::test::FeatureRefAndParams> enabled_features(
+      {{blink::features::kKeepAliveInBrowserMigration, {}}});
 
   std::optional<AttributionOsLevelManager::ScopedApiStateForTesting>
       scoped_api_state;
@@ -450,9 +467,16 @@ RunAttributionInteropSimulation(
     scoped_api_state.emplace(AttributionOsLevelManager::ApiState::kEnabled);
   }
 
+  if (run.config.needs_retry_after_new_navigation) {
+    enabled_features.push_back(base::test::FeatureRefAndParams(  // IN-TEST
+        kAttributionReportNavigationBasedRetry,
+        {{"navigation_retry_attempt",
+          *run.config.needs_retry_after_new_navigation}}));
+  }
+
   base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitWithFeatures(enabled_features,
-                                       /*disabled_features=*/{});
+  scoped_feature_list.InitWithFeaturesAndParameters(enabled_features,
+                                                    /*disabled_features=*/{});
 
   attribution_reporting::ScopedMaxEventLevelEpsilonForTesting
       scoped_max_event_level_epsilon(run.config.max_event_level_epsilon);
@@ -558,9 +582,34 @@ RunAttributionInteropSimulation(
 
   for (const auto& event : run.events) {
     task_environment.FastForwardBy(event.time - base::Time::Now());
-
     std::visit(
-        [&](const auto& data) { Handle(data, *manager->GetDataHostManager()); },
+        absl::Overload{
+            [&](const AttributionSimulationEvent::Connection& event) {
+              if (!event.connected) {
+                test_url_loader_factory.SetInterceptor(
+                    base::BindLambdaForTesting([&](const network::
+                                                       ResourceRequest& req) {
+                      test_url_loader_factory.AddResponse(
+                          req.url, network::mojom::URLResponseHead::New(),
+                          /*content=*/"",
+                          network::URLLoaderCompletionStatus(
+                              net::ERR_INTERNET_DISCONNECTED),
+                          network::TestURLLoaderFactory::Redirects(),
+                          network::TestURLLoaderFactory::ResponseProduceFlags::
+                              kSendHeadersOnNetworkError);
+                    }));
+              } else {
+                test_url_loader_factory.SetInterceptor(
+                    base::BindLambdaForTesting(
+                        [&](const network::ResourceRequest& req) {
+                          output.reports.emplace_back(
+                              MakeReport(req, time_origin, hpke_key));
+                          test_url_loader_factory.AddResponse(req.url.spec(),
+                                                              /*content=*/"");
+                        }));
+              }
+            },
+            [&](const auto& data) { Handle(data, *manager); }},
         event.data);
   }
 
@@ -572,16 +621,15 @@ RunAttributionInteropSimulation(
 void MaybeAdjustReportBody(const GURL& url,
                            base::Value& payload,
                            ReportBodyAdjuster& adjuster) {
-  if (base::EndsWith(url.path_piece(), "/report-aggregate-attribution")) {
+  if (base::EndsWith(url.path(), "/report-aggregate-attribution")) {
     if (base::Value::Dict* dict = payload.GetIfDict()) {
       adjuster.AdjustAggregatable(*dict);
     }
-  } else if (base::EndsWith(url.path_piece(), "/report-event-attribution")) {
+  } else if (base::EndsWith(url.path(), "/report-event-attribution")) {
     if (base::Value::Dict* dict = payload.GetIfDict()) {
       adjuster.AdjustEventLevel(*dict);
     }
-  } else if (url.path_piece() ==
-             "/.well-known/attribution-reporting/debug/verbose") {
+  } else if (url.path() == "/.well-known/attribution-reporting/debug/verbose") {
     if (base::Value::List* list = payload.GetIfList()) {
       for (auto& item : *list) {
         base::Value::Dict* dict = item.GetIfDict();
@@ -596,7 +644,7 @@ void MaybeAdjustReportBody(const GURL& url,
         }
       }
     }
-  } else if (url.path_piece() ==
+  } else if (url.path() ==
              "/.well-known/attribution-reporting/debug/"
              "report-aggregate-debug") {
     if (base::Value::Dict* dict = payload.GetIfDict()) {

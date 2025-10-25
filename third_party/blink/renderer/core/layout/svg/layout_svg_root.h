@@ -25,6 +25,7 @@
 
 #include "base/check_op.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_replaced.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_content_container.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
@@ -151,7 +152,9 @@ class CORE_EXPORT LayoutSVGRoot final : public LayoutReplaced {
                      const PhysicalOffset& paint_offset) const override;
 
   void WillBeDestroyed() override;
-  void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
+  void StyleDidChange(StyleDifference,
+                      const ComputedStyle* old_style,
+                      const StyleChangeContext&) override;
   bool IsChildAllowed(LayoutObject*, const ComputedStyle&) const override;
   void AddChild(LayoutObject* child,
                 LayoutObject* before_child = nullptr) override;

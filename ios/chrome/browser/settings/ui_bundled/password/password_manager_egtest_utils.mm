@@ -11,7 +11,7 @@
 #import "ios/chrome/browser/settings/ui_bundled/password/password_settings/password_settings_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_settings_app_interface.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/passwords_table_view_constants.h"
-#import "ios/chrome/browser/settings/ui_bundled/password/reauthentication/reauthentication_constants.h"
+#import "ios/chrome/browser/settings/ui_bundled/password/reauthentication/local_reauthentication_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/settings_root_table_constants.h"
 #import "ios/chrome/grit/ios_branded_strings.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -74,9 +74,8 @@ NSString* GetDetailTextForPasswordCheckUIState(PasswordCheckUIState state,
 }
 
 id<GREYMatcher> DeletePasswordConfirmationButton() {
-  return grey_allOf(ButtonWithAccessibilityLabel(
-                        l10n_util::GetNSString(IDS_IOS_DELETE_ACTION_TITLE)),
-                    grey_interactable(), nullptr);
+  return chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+      IDS_IOS_DELETE_ACTION_TITLE);
 }
 
 }  // anonymous namespace
@@ -119,9 +118,8 @@ id<GREYMatcher> EditDoneButton() {
 }
 
 id<GREYMatcher> EditPasswordConfirmationButton() {
-  return grey_allOf(ButtonWithAccessibilityLabel(
-                        l10n_util::GetNSString(IDS_IOS_CONFIRM_PASSWORD_EDIT)),
-                    grey_interactable(), nullptr);
+  return chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+      IDS_IOS_CONFIRM_PASSWORD_EDIT);
 }
 
 id<GREYMatcher> UsernameTextfieldForUsernameAndSites(NSString* username,
@@ -246,6 +244,16 @@ void SaveExamplePasskeyToStore(NSString* rpId,
                                                    userId:userId
                                                  username:username
                                           userDisplayName:userDisplayName];
+}
+
+void SaveHiddenPasskeyToStore(NSString* rpId,
+                              NSString* userId,
+                              NSString* username,
+                              NSString* userDisplayName) {
+  [PasswordSettingsAppInterface saveHiddenPasskeyToStore:rpId
+                                                  userId:userId
+                                                username:username
+                                         userDisplayName:userDisplayName];
 }
 
 #pragma mark - Helpers

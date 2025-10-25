@@ -21,10 +21,9 @@
 #include "chrome/browser/ui/webui/web_app_internals/web_app_internals_handler.h"
 #include "chrome/browser/ui/webui/web_app_internals/web_app_internals_ui.h"
 #include "chrome/browser/web_applications/isolated_web_apps/commands/isolated_web_app_install_command_helper.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_server_mixin.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_builder.h"
-#include "chrome/browser/web_applications/isolated_web_apps/test/test_signed_web_bundle_builder.h"
+#include "chrome/browser/web_applications/isolated_web_apps/test/isolated_web_app_test_update_server.h"
 #include "chrome/browser/web_applications/os_integration/os_integration_manager.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
 #include "chrome/browser/web_applications/test/web_app_test_utils.h"
@@ -39,8 +38,10 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/webapps/browser/install_result_code.h"
-#include "components/webapps/isolated_web_apps/update_channel.h"
+#include "components/webapps/isolated_web_apps/test_support/signing_keys.h"
+#include "components/webapps/isolated_web_apps/types/update_channel.h"
 #include "content/public/test/browser_test.h"
+#include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
@@ -166,6 +167,9 @@ class WebAppInternalsBrowserTest : public WebAppBrowserTestBase {
       features::kRecordWebAppDebugInfo};
 };
 
+// There are 2 error logs being persisted here, one generated from the commands
+// and one generated while parsing the manifest into a `WebAppInstallInfo`,
+// which logs the invalid icon errors.
 IN_PROC_BROWSER_TEST_F(WebAppInternalsBrowserTest,
                        PRE_InstallManagerErrorsPersist) {
   OverrideHttpRequest(embedded_test_server()->GetURL("/banners/bad_icon.png"),
@@ -183,10 +187,10 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsBrowserTest,
       nullptr);
 
   ASSERT_TRUE(GetProvider().install_manager().error_log());
-  ASSERT_EQ(1u, GetProvider().install_manager().error_log()->size());
+  ASSERT_EQ(2u, GetProvider().install_manager().error_log()->size());
 
   const base::Value& error_log =
-      (*GetProvider().install_manager().error_log())[0];
+      (*GetProvider().install_manager().error_log())[1];
   EXPECT_TRUE(error_log.is_dict());
   EXPECT_EQ(4u, error_log.GetDict().size());
 
@@ -199,10 +203,10 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsBrowserTest,
   test::WaitUntilReady(WebAppProvider::GetForTest(browser()->profile()));
 
   ASSERT_TRUE(GetProvider().install_manager().error_log());
-  ASSERT_EQ(1u, GetProvider().install_manager().error_log()->size());
+  ASSERT_EQ(2u, GetProvider().install_manager().error_log()->size());
 
   const base::Value& error_log =
-      (*GetProvider().install_manager().error_log())[0];
+      (*GetProvider().install_manager().error_log())[1];
   EXPECT_TRUE(error_log.is_dict());
   EXPECT_EQ(4u, error_log.GetDict().size());
 
@@ -234,18 +238,18 @@ class WebAppInternalsIwaInstallationBrowserTest
         ->GetHandlerForTesting();
   }
 
-  IsolatedWebAppUpdateServerMixin update_server_mixin_{&mixin_host_};
+  IsolatedWebAppTestUpdateServer iwa_test_update_server_;
 };
 
 IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
                        FetchUpdateManifestAndInstallIwaAndUpdate) {
-  update_server_mixin_.AddBundle(
+  iwa_test_update_server_.AddBundle(
       IsolatedWebAppBuilder(ManifestBuilder().SetVersion("1.0.0"))
           .BuildBundle(test::GetDefaultEd25519KeyPair()));
 
   auto* handler = OpenWebAppInternals();
 
-  GURL update_manifest_url = update_server_mixin_.GetUpdateManifestUrl(
+  GURL update_manifest_url = iwa_test_update_server_.GetUpdateManifestUrl(
       test::GetDefaultEd25519WebBundleId());
   base::test::TestFuture<::mojom::ParseUpdateManifestFromUrlResultPtr>
       um_future;
@@ -283,7 +287,7 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
         const WebApp& iwa,
         GetIsolatedWebAppById(provider().registrar_unsafe(), app_id));
 
-    EXPECT_EQ(iwa.isolation_data()->version(), base::Version("1.0.0"));
+    EXPECT_EQ(iwa.isolation_data()->version(), *IwaVersion::Create("1.0.0"));
     EXPECT_EQ(iwa.isolation_data()->update_manifest_url(), update_manifest_url);
     EXPECT_EQ(iwa.isolation_data()->update_channel(),
               UpdateChannel::default_channel());
@@ -299,7 +303,7 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
   }
 
   // Now add a new entry to the manifest and re-run the update check.
-  update_server_mixin_.AddBundle(
+  iwa_test_update_server_.AddBundle(
       IsolatedWebAppBuilder(ManifestBuilder().SetVersion("2.0.0"))
           .BuildBundle(test::GetDefaultEd25519KeyPair()));
   {
@@ -312,7 +316,7 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
         const WebApp& iwa,
         GetIsolatedWebAppById(provider().registrar_unsafe(), app_id));
 
-    EXPECT_EQ(iwa.isolation_data()->version(), base::Version("2.0.0"));
+    EXPECT_EQ(iwa.isolation_data()->version(), *IwaVersion::Create("2.0.0"));
     EXPECT_EQ(iwa.isolation_data()->update_manifest_url(), update_manifest_url);
     EXPECT_EQ(iwa.isolation_data()->update_channel(),
               UpdateChannel::default_channel());
@@ -330,18 +334,18 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
     ASSERT_OK_AND_ASSIGN(
         const WebApp& iwa,
         GetIsolatedWebAppById(provider().registrar_unsafe(), app_id));
-    EXPECT_EQ(iwa.isolation_data()->version(), base::Version("2.0.0"));
+    EXPECT_EQ(iwa.isolation_data()->version(), *IwaVersion::Create("2.0.0"));
     EXPECT_EQ(iwa.isolation_data()->update_manifest_url(), update_manifest_url);
     EXPECT_EQ(iwa.isolation_data()->update_channel(), beta_channel);
   }
 
   // Now add new entries with v2.1.0 for the `beta` channel and v2.2.0 for the
   // `default` channel and force an update check.
-  update_server_mixin_.AddBundle(
+  iwa_test_update_server_.AddBundle(
       IsolatedWebAppBuilder(ManifestBuilder().SetVersion("2.1.0"))
           .BuildBundle(test::GetDefaultEd25519KeyPair()),
       /*update_channels=*/{{beta_channel}});
-  update_server_mixin_.AddBundle(
+  iwa_test_update_server_.AddBundle(
       IsolatedWebAppBuilder(ManifestBuilder().SetVersion("2.2.0"))
           .BuildBundle(test::GetDefaultEd25519KeyPair()));
 
@@ -357,14 +361,14 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
         const WebApp& iwa,
         GetIsolatedWebAppById(provider().registrar_unsafe(), app_id));
 
-    EXPECT_EQ(iwa.isolation_data()->version(), base::Version("2.1.0"));
+    EXPECT_EQ(iwa.isolation_data()->version(), *IwaVersion::Create("2.1.0"));
     EXPECT_EQ(iwa.isolation_data()->update_manifest_url(), update_manifest_url);
     EXPECT_EQ(iwa.isolation_data()->update_channel(), beta_channel);
   }
 
   // Add v2.3.0 to `beta` channel, pin the app to v2.1.0. Expect no update.
   {
-    update_server_mixin_.AddBundle(
+    iwa_test_update_server_.AddBundle(
         IsolatedWebAppBuilder(ManifestBuilder().SetVersion("2.3.0"))
             .BuildBundle(test::GetDefaultEd25519KeyPair()),
         /*update_channels=*/{{beta_channel}});
@@ -377,13 +381,16 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
     base::test::TestFuture<std::string> update_future;
     handler->UpdateManifestInstalledIsolatedWebApp(
         app_id, update_future.GetCallback<const std::string&>());
-    EXPECT_THAT(update_future.Get(), HasSubstr("Update skipped"));
+    EXPECT_THAT(
+        update_future.Get(),
+        HasSubstr("Update skipped: app is already on the latest version or the "
+                  "updates are disabled due to set `pinned_version` field."));
   }
 
   // Add v2.4.0 to `beta` channel, pin the app to v2.3.0. Expect an update to
   // v2.3.0.
   {
-    update_server_mixin_.AddBundle(
+    iwa_test_update_server_.AddBundle(
         IsolatedWebAppBuilder(ManifestBuilder().SetVersion("2.4.0"))
             .BuildBundle(test::GetDefaultEd25519KeyPair()),
         /*update_channels=*/{{beta_channel}});
@@ -402,7 +409,7 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
         const WebApp& iwa,
         GetIsolatedWebAppById(provider().registrar_unsafe(), app_id));
 
-    EXPECT_EQ(iwa.isolation_data()->version(), base::Version("2.3.0"));
+    EXPECT_EQ(iwa.isolation_data()->version(), *IwaVersion::Create("2.3.0"));
     EXPECT_EQ(iwa.isolation_data()->update_manifest_url(), update_manifest_url);
     EXPECT_EQ(iwa.isolation_data()->update_channel(), beta_channel);
   }
@@ -419,7 +426,7 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
         const WebApp& iwa,
         GetIsolatedWebAppById(provider().registrar_unsafe(), app_id));
 
-    EXPECT_EQ(iwa.isolation_data()->version(), base::Version("2.4.0"));
+    EXPECT_EQ(iwa.isolation_data()->version(), *IwaVersion::Create("2.4.0"));
   }
 
   // Pin to v2.3.0, allow downgrades. Expect update to v2.3.0.
@@ -439,20 +446,20 @@ IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
         const WebApp& iwa,
         GetIsolatedWebAppById(provider().registrar_unsafe(), app_id));
 
-    EXPECT_EQ(iwa.isolation_data()->version(), base::Version("2.3.0"));
+    EXPECT_EQ(iwa.isolation_data()->version(), *IwaVersion::Create("2.3.0"));
   }
 }
 
 IN_PROC_BROWSER_TEST_F(
     WebAppInternalsIwaInstallationBrowserTest,
     FetchUpdateManifestAndInstallIwaAndUpdateInvalidPinnedVersion) {
-  update_server_mixin_.AddBundle(
+  iwa_test_update_server_.AddBundle(
       IsolatedWebAppBuilder(ManifestBuilder().SetVersion("1.0.0"))
           .BuildBundle(test::GetDefaultEd25519KeyPair()));
 
   auto* handler = OpenWebAppInternals();
 
-  GURL update_manifest_url = update_server_mixin_.GetUpdateManifestUrl(
+  GURL update_manifest_url = iwa_test_update_server_.GetUpdateManifestUrl(
       test::GetDefaultEd25519WebBundleId());
   base::test::TestFuture<::mojom::ParseUpdateManifestFromUrlResultPtr>
       um_future;
@@ -487,7 +494,7 @@ IN_PROC_BROWSER_TEST_F(
                               .app_id();
 
   // Add v2.0.0 to the update manifest.
-  update_server_mixin_.AddBundle(
+  iwa_test_update_server_.AddBundle(
       IsolatedWebAppBuilder(ManifestBuilder().SetVersion("2.0.0"))
           .BuildBundle(test::GetDefaultEd25519KeyPair()));
 
@@ -503,14 +510,15 @@ IN_PROC_BROWSER_TEST_F(
         app_id, update_future.GetCallback<const std::string&>());
     EXPECT_THAT(
         update_future.Get(),
-        HasSubstr("Update failed: Error::kUpdateManifestNoApplicableVersion"));
+        HasSubstr(
+            "Update failed: Error::kPinnedVersionNotFoundInUpdateManifest"));
 
     ASSERT_OK_AND_ASSIGN(
         const WebApp& iwa,
         GetIsolatedWebAppById(provider().registrar_unsafe(), app_id));
 
     // Expect the app to stay at v1.0.0.
-    EXPECT_EQ(iwa.isolation_data()->version(), base::Version("1.0.0"));
+    EXPECT_EQ(iwa.isolation_data()->version(), *IwaVersion::Create("1.0.0"));
   }
 
   // Fails to pin the app to invalid version.
@@ -525,7 +533,8 @@ IN_PROC_BROWSER_TEST_F(
         app_id, update_future.GetCallback<const std::string&>());
     EXPECT_THAT(
         update_future.Get(),
-        HasSubstr("Update failed: Error::kUpdateManifestNoApplicableVersion"));
+        HasSubstr(
+            "Update failed: Error::kPinnedVersionNotFoundInUpdateManifest"));
   }
 }
 
@@ -556,6 +565,60 @@ IN_PROC_BROWSER_TEST_F(
   handler->InstallIsolatedWebAppFromBundleUrl(std::move(params),
                                               install_future.GetCallback());
   ASSERT_TRUE(install_future.Take()->is_error());
+}
+
+// Tests the Isolated Web App deletion flow through the internals page handler.
+IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
+                       DeleteIsolatedWebApp) {
+  // Install a test IWA.
+  auto bundle = IsolatedWebAppBuilder(ManifestBuilder()).BuildBundle();
+  ASSERT_OK_AND_ASSIGN(auto url_info, bundle->Install(profile()));
+  webapps::AppId app_id = url_info.app_id();
+
+  EXPECT_NE(provider().registrar_unsafe().GetAppById(app_id), nullptr);
+
+  auto* handler = OpenWebAppInternals();
+
+  // Auto-accept the uninstall dialog.
+  extensions::ScopedTestDialogAutoConfirm auto_accept(
+      extensions::ScopedTestDialogAutoConfirm::ACCEPT);
+
+  // Call the delete method on the handler.
+  base::test::TestFuture<bool> delete_future;
+  handler->DeleteIsolatedWebApp(app_id, delete_future.GetCallback());
+
+  // Verify the deletion was successful and the app is no longer registered.
+  EXPECT_TRUE(delete_future.Get());
+
+  EXPECT_EQ(provider().registrar_unsafe().GetAppById(app_id), nullptr);
+}
+
+// Tests the Isolated Web App deletion flow through the internals page handler
+// when the dialog box is cancelled.
+IN_PROC_BROWSER_TEST_F(WebAppInternalsIwaInstallationBrowserTest,
+                       DeleteIsolatedWebAppCancelled) {
+  // Install a test IWA.
+  auto bundle = IsolatedWebAppBuilder(ManifestBuilder()).BuildBundle();
+  ASSERT_OK_AND_ASSIGN(auto url_info, bundle->Install(profile()));
+  webapps::AppId app_id = url_info.app_id();
+
+  EXPECT_NE(provider().registrar_unsafe().GetAppById(app_id), nullptr);
+
+  auto* handler = OpenWebAppInternals();
+
+  // Auto-cancel the uninstall dialog.
+  extensions::ScopedTestDialogAutoConfirm auto_cancel(
+      extensions::ScopedTestDialogAutoConfirm::CANCEL);
+
+  // Call the delete method on the handler.
+  base::test::TestFuture<bool> delete_future;
+  handler->DeleteIsolatedWebApp(app_id, delete_future.GetCallback());
+
+  // Verify the deletion was not successful because it was cancelled.
+  EXPECT_FALSE(delete_future.Get());
+
+  // Verify the app is still registered.
+  EXPECT_NE(provider().registrar_unsafe().GetAppById(app_id), nullptr);
 }
 
 }  // namespace web_app

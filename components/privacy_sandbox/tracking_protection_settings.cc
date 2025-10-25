@@ -6,7 +6,9 @@
 
 #include "base/check.h"
 #include "base/feature_list.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
@@ -19,6 +21,9 @@
 #include "components/privacy_sandbox/privacy_sandbox_prefs.h"
 #include "components/privacy_sandbox/tracking_protection_prefs.h"
 #include "components/privacy_sandbox/tracking_protection_settings_observer.h"
+#include "components/sync/base/user_selectable_type.h"
+#include "components/sync/service/sync_service.h"
+#include "components/sync/service/sync_user_settings.h"
 #include "net/base/features.h"
 #include "url/gurl.h"
 
@@ -35,6 +40,7 @@ TrackingProtectionSettings::TrackingProtectionSettings(
       is_incognito_(is_incognito) {
   CHECK(pref_service_);
   CHECK(host_content_settings_map_);
+  content_settings_observation_.Observe(host_content_settings_map_.get());
 
   pref_change_registrar_.Init(pref_service_);
   pref_change_registrar_.Add(
@@ -74,8 +80,15 @@ TrackingProtectionSettings::TrackingProtectionSettings(
           &TrackingProtectionSettings::OnEnterpriseControlForPrefsChanged,
           base::Unretained(this)));
 
+// This logic accesses prefs that aren't registered on iOS.
+#if !BUILDFLAG(IS_IOS)
   // It's possible enterprise status changed while profile was shut down.
   OnEnterpriseControlForPrefsChanged();
+  // Set Mode B pref to force rollback flow.
+  if (privacy_sandbox::kRollBackModeBForced.Get()) {
+    pref_service_->SetBoolean(prefs::kTrackingProtection3pcdEnabled, true);
+  }
+#endif
 }
 
 TrackingProtectionSettings::~TrackingProtectionSettings() = default;
@@ -86,6 +99,16 @@ void TrackingProtectionSettings::Shutdown() {
   management_service_ = nullptr;
   pref_change_registrar_.Reset();
   pref_service_ = nullptr;
+}
+
+void TrackingProtectionSettings::OnContentSettingChanged(
+    const ContentSettingsPattern& primary_pattern,
+    const ContentSettingsPattern& secondary_pattern,
+    ContentSettingsTypeSet content_type_set) {
+  if (content_type_set.Contains(ContentSettingsType::TRACKING_PROTECTION)) {
+    OnTrackingProtectionExceptionsChanged(
+        secondary_pattern.ToRepresentativeUrl());
+  }
 }
 
 bool TrackingProtectionSettings::IsTrackingProtection3pcdEnabled() const {
@@ -149,6 +172,20 @@ bool TrackingProtectionSettings::HasTrackingProtectionException(
              info) == CONTENT_SETTING_ALLOW;
 }
 
+ContentSettingsForOneType
+TrackingProtectionSettings::GetTrackingProtectionExceptions() const {
+  ContentSettingsForOneType all_settings =
+      host_content_settings_map_->GetSettingsForOneType(
+          ContentSettingsType::TRACKING_PROTECTION);
+  ContentSettingsForOneType exceptions;
+  for (const auto& setting : all_settings) {
+    if (setting.GetContentSetting() == CONTENT_SETTING_ALLOW) {
+      exceptions.push_back(setting);
+    }
+  }
+  return exceptions;
+}
+
 bool TrackingProtectionSettings::IsIpProtectionDisabledForEnterprise() {
   if (pref_service_->IsManagedPreference(prefs::kIpProtectionEnabled)) {
     return !pref_service_->GetBoolean(prefs::kIpProtectionEnabled);
@@ -207,6 +244,13 @@ void TrackingProtectionSettings::OnTrackingProtection3pcdPrefChanged() {
   }
 }
 
+void TrackingProtectionSettings::OnTrackingProtectionExceptionsChanged(
+    const GURL& first_party_url) {
+  for (auto& observer : observers_) {
+    observer.OnTrackingProtectionExceptionsChanged(first_party_url);
+  }
+}
+
 void TrackingProtectionSettings::AddObserver(
     TrackingProtectionSettingsObserver* observer) {
   observers_.AddObserver(observer);
@@ -215,6 +259,38 @@ void TrackingProtectionSettings::AddObserver(
 void TrackingProtectionSettings::RemoveObserver(
     TrackingProtectionSettingsObserver* observer) {
   observers_.RemoveObserver(observer);
+}
+
+void MaybeSetRollbackPrefsModeB(syncer::SyncService* sync_service,
+                                PrefService* prefs) {
+  // Only set prefs if:
+  // 1. User is in Mode B and rollback feature is enabled.
+  if (!prefs->GetBoolean(prefs::kTrackingProtection3pcdEnabled) ||
+      !base::FeatureList::IsEnabled(kRollBackModeB)) {
+    return;
+  }
+  // 2. We are not waiting for pref sync updates.
+  if (sync_service && sync_service->IsSyncFeatureEnabled() &&
+      sync_service->GetUserSettings()->GetSelectedTypes().Has(
+          syncer::UserSelectableType::kPreferences) &&
+      sync_service->GetDownloadStatusFor(syncer::DataType::PREFERENCES) ==
+          syncer::SyncService::DataTypeDownloadStatus::kWaitingForUpdates) {
+    return;
+  }
+
+  // Hardcoded as using CookieControlsMode creates a circular dependency.
+  const int kBlockThirdParty = 1;
+  bool allowed_3pcs =
+      !prefs->GetBoolean(prefs::kBlockAll3pcToggleEnabled) &&
+      prefs->GetInteger(prefs::kCookieControlsMode) != kBlockThirdParty;
+  if (!allowed_3pcs) {
+    prefs->SetInteger(prefs::kCookieControlsMode, kBlockThirdParty);
+  }
+  // If 3PCs are allowed then we should show the notice.
+  prefs->SetBoolean(prefs::kShowRollbackUiModeB, allowed_3pcs);
+  base::UmaHistogramBoolean("Privacy.3PCD.RollbackNotice.ShouldShow",
+                            allowed_3pcs);
+  prefs->SetBoolean(prefs::kTrackingProtection3pcdEnabled, false);
 }
 
 }  // namespace privacy_sandbox

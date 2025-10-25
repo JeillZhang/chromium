@@ -11,8 +11,10 @@
 
 #import "components/segmentation_platform/public/trigger.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/magic_stack/magic_stack_module.h"
+#import "ios/web/public/web_state.h"
 
 @protocol TabResumptionCommands;
+@protocol TabResumptionConsumerSource;
 @class ShopCardData;
 
 namespace base {
@@ -37,6 +39,9 @@ enum TabResumptionItemType {
 
 // The name of the session to which the tab belongs.
 @property(nonatomic, copy) NSString* sessionName;
+
+// A weak pointer to the web state if the tab is local.
+@property(nonatomic, assign) base::WeakPtr<web::WebState> localWebState;
 
 // The title of the tab.
 @property(nonatomic, copy) NSString* tabTitle;
@@ -69,6 +74,9 @@ enum TabResumptionItemType {
 // ShopCard related information to render the ShopCard variants of
 // tab-resumption.
 @property(nonatomic, strong) ShopCardData* shopCardData;
+
+// Consumer source that receives ShopCardData update.
+@property(nonatomic, strong) id<TabResumptionConsumerSource> consumerSource;
 
 // The Item's designated initializer.
 - (instancetype)initWithItemType:(TabResumptionItemType)itemType

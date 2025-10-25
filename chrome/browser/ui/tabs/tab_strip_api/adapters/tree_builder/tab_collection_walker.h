@@ -5,8 +5,9 @@
 #ifndef CHROME_BROWSER_UI_TABS_TAB_STRIP_API_ADAPTERS_TREE_BUILDER_TAB_COLLECTION_WALKER_H_
 #define CHROME_BROWSER_UI_TABS_TAB_STRIP_API_ADAPTERS_TREE_BUILDER_TAB_COLLECTION_WALKER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/types/pass_key.h"
-#include "chrome/browser/ui/tabs/tab_strip_api/tab_strip_api.mojom.h"
+#include "components/browser_apis/tab_strip/tab_strip_api.mojom.h"
 #include "components/tabs/public/tab_collection.h"
 
 namespace tabs_api {
@@ -20,7 +21,7 @@ class TabCollectionWalker {
                                base::PassKey<MojoTreeBuilder> pass_key,
                                const tabs::TabCollection* collection);
 
-  mojom::TabCollectionContainerPtr Walk() const;
+  mojom::ContainerPtr Walk() const;
 
  private:
   raw_ptr<const WalkerFactory> factory_;

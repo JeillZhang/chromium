@@ -13,12 +13,14 @@
 #import "ios/chrome/browser/shared/model/browser/browser_observer.h"
 
 @class AlertCoordinator;
+enum class AuthenticationOperation;
 class Browser;
 class FaviconLoader;
 class ProfileIOS;
 enum class ShareKitFlowOutcome;
 @class ShareKitPreviewItem;
 class ShareKitService;
+enum class SigninContextStyle;
 @class SigninCoordinator;
 typedef NS_ENUM(NSUInteger, SigninCoordinatorResult);
 @protocol SystemIdentity;
@@ -26,18 +28,31 @@ class TabGroup;
 class TabGroupFaviconsGridConfigurator;
 class TabGroupService;
 
-namespace tab_groups {
-class TabGroupSyncService;
-}  // namespace tab_groups
+namespace signin_metrics {
+enum class AccessPoint;
+}  // namespace signin_metrics
 
 namespace syncer {
 class SyncService;
 }  // namespace syncer
 
+namespace tab_groups {
+class TabGroupSyncService;
+}  // namespace tab_groups
+
 namespace collaboration {
+
+// Bundles the necessary UI configuration parameters for the sign-in flow based
+// on the specific collaboration action.
+struct FlowConfig {
+  signin_metrics::AccessPoint access_point;
+  SigninContextStyle context_style;
+  BOOL full_screen_promo;
+};
 
 class CollaborationService;
 enum class FlowType;
+enum class SigninStatus;
 
 // Structure to hold parameters for IOSCollaborationControllerDelegate.
 struct IOSCollaborationControllerDelegateParams {
@@ -152,8 +167,11 @@ class IOSCollaborationControllerDelegate
   void DidUnshareGroup(std::optional<tab_groups::LocalTabGroupID> local_id,
                        NSError* error);
 
-  // Callback called when the user acknowledge the error.
+  // Callback called when the user acknowledges the error.
   void ErrorAccepted(ResultCallback result);
+
+  // Callback called when the user accepts to update the app.
+  void Update(ResultCallback result);
 
   // Returns the local tab group that matches `either_id`.
   const TabGroup* GetLocalGroup(const tab_groups::EitherGroupID& either_id);
@@ -183,20 +201,33 @@ class IOSCollaborationControllerDelegate
   // Returns the join group image displayed in the join flow.
   UIImage* JoinGroupImage(NSArray<ShareKitPreviewItem*>* preview_items);
 
+  // Shows an alert when sign in has been disabled by the user.
+  void ShowSignInDisabledByUserAlert(ResultCallback result);
+
+  // Called when the alert has been dismissed. Opens the Google services
+  // settings screen if `open_settings` is true.
+  void SignInDisabledByUserAlertDismissed(ResultCallback result,
+                                          bool open_settings);
+
   // Presents the scrim view.
   void AddScrimView();
 
   // Removes the scrim view if it exists.
   void RemoveScrimView(bool delayed);
 
+  // Returns a FlowConfig based on FlowType.
+  FlowConfig GetFlowConfig(FlowType flow_type);
+
   raw_ptr<Browser> browser_ = nullptr;
 
-  raw_ptr<TabGroupService> tab_group_service_ = nullptr;
-  raw_ptr<ShareKitService> share_kit_service_ = nullptr;
-  raw_ptr<FaviconLoader> favicon_loader_ = nullptr;
-  raw_ptr<tab_groups::TabGroupSyncService> tab_group_sync_service_ = nullptr;
-  raw_ptr<syncer::SyncService> sync_service_ = nullptr;
-  raw_ptr<collaboration::CollaborationService> collaboration_service_ = nullptr;
+  raw_ptr<TabGroupService, DanglingUntriaged> tab_group_service_ = nullptr;
+  raw_ptr<ShareKitService, DanglingUntriaged> share_kit_service_ = nullptr;
+  raw_ptr<FaviconLoader, DanglingUntriaged> favicon_loader_ = nullptr;
+  raw_ptr<tab_groups::TabGroupSyncService, DanglingUntriaged>
+      tab_group_sync_service_ = nullptr;
+  raw_ptr<syncer::SyncService, DanglingUntriaged> sync_service_ = nullptr;
+  raw_ptr<collaboration::CollaborationService, DanglingUntriaged>
+      collaboration_service_ = nullptr;
 
   std::unique_ptr<TabGroupFaviconsGridConfigurator> favicons_grid_configurator_;
   __weak UIViewController* base_view_controller_ = nil;

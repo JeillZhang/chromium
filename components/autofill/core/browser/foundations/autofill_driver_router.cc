@@ -14,7 +14,6 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
-#include "base/types/optional_ref.h"
 #include "base/types/zip.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/mojom/autofill_types.mojom-shared.h"
@@ -327,14 +326,13 @@ void AutofillDriverRouter::AskForValuesToFill(
                    const FieldGlobalId&,
                    const gfx::Rect&,
                    AutofillSuggestionTriggerSource,
-                   base::optional_ref<const PasswordSuggestionRequest>>
-        callback,
+                   std::optional<PasswordSuggestionRequest>> callback,
     AutofillDriver& source,
     FormData form,
     const FieldGlobalId& field_id,
     const gfx::Rect& caret_bounds,
     AutofillSuggestionTriggerSource trigger_source,
-    base::optional_ref<const PasswordSuggestionRequest> password_request) {
+    std::optional<PasswordSuggestionRequest> password_request) {
   FormGlobalId form_id = form.global_id();
   form_forest_.UpdateTreeOfRendererForm(std::move(form), source);
 
@@ -351,7 +349,7 @@ void AutofillDriverRouter::AskForValuesToFill(
   }
   auto* target = DriverOfFrame(browser_form.host_frame());
   callback(CHECK_DEREF(target), browser_form, field_id, caret_bounds,
-           trigger_source, password_request);
+           trigger_source, std::move(password_request));
 }
 
 void AutofillDriverRouter::HidePopup(RoutedCallback<> callback,
@@ -421,7 +419,7 @@ void AutofillDriverRouter::FocusOnFormField(
   callback(CHECK_DEREF(target), browser_form, field_id);
 }
 
-void AutofillDriverRouter::DidFillAutofillFormData(
+void AutofillDriverRouter::DidAutofillForm(
     RoutedCallback<const FormData&, base::TimeTicks> callback,
     AutofillDriver& source,
     FormData form,
@@ -504,7 +502,7 @@ base::flat_set<FieldGlobalId> AutofillDriverRouter::ApplyFormAction(
     const url::Origin& triggered_origin,
     const base::flat_map<FieldGlobalId, FieldType>& field_type_map) {
   // Since Undo only affects fields that were already filled, and only sets
-  // values to fields to something that already existed in it prior to the
+  // values of fields to something that already existed in it prior to the
   // filling, it is okay to bypass the filling security checks and hence passing
   // `TrustAllOrigins()`.
   internal::FormForest::RendererForms renderer_forms =
@@ -650,6 +648,20 @@ void AutofillDriverRouter::RendererShouldTriggerSuggestions(
   if (AutofillDriver* target = DriverOfFrame(field_id.frame_token)) {
     callback(*target, field_id.renderer_id, trigger_source);
   }
+}
+
+void AutofillDriverRouter::DispatchEmailVerifiedEvent(
+    RoutedCallback<FieldRendererId, const std::string&> callback,
+    const FieldGlobalId& field_id,
+    const std::string& presentation_token) {
+  if (auto* target = DriverOfFrame(field_id.frame_token)) {
+    callback(*target, field_id.renderer_id, presentation_token);
+  }
+}
+
+void AutofillDriverRouter::ExposeDomNodeIdsInAllFrames(
+    RoutedCallback<> callback) {
+  ForEachFrame(form_forest_, callback);
 }
 
 void AutofillDriverRouter::RendererShouldSetSuggestionAvailability(

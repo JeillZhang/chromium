@@ -35,7 +35,7 @@ class TabStripInteractiveTestMixin : public T {
   auto FinishTabstripAnimations() {
     return T::Steps(T::WaitForShow(kTabStripElementId),
                     T::WithView(kTabStripElementId, [](TabStrip* tab_strip) {
-                      tab_strip->StopAnimating(true);
+                      tab_strip->StopAnimating();
                     }));
   }
 
@@ -64,6 +64,18 @@ class TabStripInteractiveTestMixin : public T {
                 },
                 group_id)),
         T::MoveMouseTo(kTabGroupHeaderToHover));
+  }
+
+  auto WaitForActiveTabChange(int index) {
+    DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(ui::test::PollingStateObserver<int>,
+                                        kTabActiveChangeObserver);
+    return T::Steps(
+        T::PollState(kTabActiveChangeObserver,
+                     base::BindRepeating(
+                         &TabStripModel::active_index,
+                         base::Unretained(T::browser()->tab_strip_model()))),
+        T::WaitForState(kTabActiveChangeObserver, index),
+        T::StopObservingState(kTabActiveChangeObserver));
   }
 };
 

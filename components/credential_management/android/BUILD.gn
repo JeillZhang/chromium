@@ -35,8 +35,11 @@ android_library("java") {
 
   srcjar_deps = [ ":jni_headers" ]
   sources = [
+    "java/src/org/chromium/components/credential_management/CredentialManagerAndroidGetResult.java",
+    "java/src/org/chromium/components/credential_management/CredentialManagerStoreResult.java",
     "java/src/org/chromium/components/credential_management/PasswordCredentialResponse.java",
     "java/src/org/chromium/components/credential_management/ThirdPartyCredentialManagerBridge.java",
+    "java/src/org/chromium/components/credential_management/ThirdPartyCredentialManagerMetricsRecorder.java",
   ]
 
   resources_package = "org.chromium.components.credential_management"
@@ -54,6 +57,7 @@ static_library("browser_sources") {
     ":jni_headers",
     "//content/public/browser",
     "//content/public/common",
+    "//net",
   ]
 
   if (is_android) {
@@ -79,10 +83,17 @@ source_set("unit_tests") {
     "//content/test:test_support",
     "//testing/gmock",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 robolectric_library("junit_tests") {
-  sources = [ "java/src/org/chromium/components/credential_management/ThirdPartyCredentialManagerBridgeTest.java" ]
+  sources = [
+    "java/src/org/chromium/components/credential_management/ThirdPartyCredentialManagerBridgeTest.java",
+    "java/src/org/chromium/components/credential_management/ThirdPartyCredentialManagerMetricsRecorderTest.java",
+  ]
 
   deps = [
     ":java",
@@ -91,7 +102,7 @@ robolectric_library("junit_tests") {
     "//base:base_java_test_support",
     "//base:base_junit_test_support",
     "//third_party/androidx:androidx_credentials_credentials_java",
-    "//third_party/junit:junit",
+    "//third_party/junit",
     "//third_party/mockito:mockito_java",
     "//url:gurl_java",
   ]

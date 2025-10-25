@@ -5,15 +5,18 @@
 #include "chrome/browser/ui/views/infobars/confirm_infobar.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/functional/bind.h"
 #include "build/build_config.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/label_button_border.h"
 #include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
@@ -27,15 +30,23 @@ ConfirmInfoBar::ConfirmInfoBar(std::unique_ptr<ConfirmInfoBarDelegate> delegate)
     : InfoBarView(std::move(delegate)) {
   SetProperty(views::kElementIdentifierKey, kInfoBarElementId);
   auto* delegate_ptr = GetDelegate();
-  label_ = AddChildView(CreateLabel(delegate_ptr->GetMessageText()));
+  label_ = AddContentChildView(CreateLabel(delegate_ptr->GetMessageText()));
   label_->SetElideBehavior(delegate_ptr->GetMessageElideBehavior());
 
   const int buttons = delegate_ptr->GetButtons();
   const auto create_button = [&](ConfirmInfoBarDelegate::InfoBarButton type,
                                  void (ConfirmInfoBar::*click_function)()) {
-    auto* button = AddChildView(std::make_unique<views::MdTextButton>(
+    auto* button = AddContentChildView(std::make_unique<views::MdTextButton>(
         base::BindRepeating(click_function, base::Unretained(this)),
         GetDelegate()->GetButtonLabel(type)));
+
+    if (base::FeatureList::IsEnabled(features::kInfobarRefresh)) {
+      button->SetCustomPadding(
+          gfx::Insets::VH(ChromeLayoutProvider::Get()->GetDistanceMetric(
+                              DISTANCE_INFOBAR_BUTTON_VERTICAL_PADDING),
+                          ChromeLayoutProvider::Get()->GetDistanceMetric(
+                              DISTANCE_INFOBAR_BUTTON_HORIZONTAL_PADDING)));
+    }
     button->SetProperty(
         views::kMarginsKey,
         gfx::Insets::VH(ChromeLayoutProvider::Get()->GetDistanceMetric(
@@ -66,7 +77,8 @@ ConfirmInfoBar::ConfirmInfoBar(std::unique_ptr<ConfirmInfoBarDelegate> delegate)
                                 kCancelButtonElementId);
   }
 
-  link_ = AddChildView(CreateLink(delegate_ptr->GetLinkText()));
+  link_ = AddContentChildView(CreateLink(
+      delegate_ptr->GetLinkText(), delegate_ptr->GetLinkAccessibleText()));
 }
 
 ConfirmInfoBar::~ConfirmInfoBar() = default;
@@ -97,6 +109,22 @@ void ConfirmInfoBar::Layout(PassKey) {
             DISTANCE_INFOBAR_HORIZONTAL_ICON_LABEL_PADDING);
   }
 
+  if (GetDelegate()->ShouldShowLinkBeforeButton() ||
+      base::FeatureList::IsEnabled(features::kInfobarRefresh)) {
+    const int link_spacing = layout_provider->GetDistanceMetric(
+        DISTANCE_SIDE_PANEL_HEADER_INTERIOR_MARGIN_HORIZONTAL);
+    link_->SetPosition(
+        gfx::Point(label_->bounds().right() + link_spacing, OffsetY(link_)));
+
+    if (!link_->GetText().empty()) {
+      x = link_->bounds().right() +
+          layout_provider->GetDistanceMetric(
+              views::DISTANCE_RELATED_LABEL_HORIZONTAL);
+    }
+  } else {
+    link_->SetPosition(gfx::Point(GetEndX() - link_->width(), OffsetY(link_)));
+  }
+
   // Add buttons into a vector to be displayed in an ordered row.
   // Depending on the PlatformStyle, reverse the vector so the ok button will be
   // on the correct leading style.
@@ -118,8 +146,6 @@ void ConfirmInfoBar::Layout(PassKey) {
         layout_provider->GetDistanceMetric(
             views::DISTANCE_RELATED_BUTTON_HORIZONTAL);
   }
-
-  link_->SetPosition(gfx::Point(GetEndX() - link_->width(), OffsetY(link_)));
 }
 
 void ConfirmInfoBar::OkButtonPressed() {
@@ -144,16 +170,33 @@ ConfirmInfoBarDelegate* ConfirmInfoBar::GetDelegate() {
   return delegate()->AsConfirmInfoBarDelegate();
 }
 
+const ConfirmInfoBarDelegate* ConfirmInfoBar::GetDelegate() const {
+  return delegate()->AsConfirmInfoBarDelegate();
+}
+
 int ConfirmInfoBar::GetContentMinimumWidth() const {
   return label_->GetMinimumSize().width() + link_->GetMinimumSize().width() +
          NonLabelWidth();
 }
 
+int ConfirmInfoBar::GetContentPreferredWidth() const {
+  return label_->GetPreferredSize().width() +
+         link_->GetPreferredSize().width() + NonLabelWidth();
+}
+
 int ConfirmInfoBar::NonLabelWidth() const {
   ChromeLayoutProvider* layout_provider = ChromeLayoutProvider::Get();
-
-  const int label_spacing = layout_provider->GetDistanceMetric(
-      views::DISTANCE_RELATED_LABEL_HORIZONTAL);
+  const bool should_show_link_before_button =
+      GetDelegate()->ShouldShowLinkBeforeButton();
+  // The link should be shown before the button if the custom layout is
+  // enabled. The spacing between the label and the link is different than the
+  // spacing between the link and the button.
+  const int label_spacing =
+      should_show_link_before_button
+          ? layout_provider->GetDistanceMetric(
+                DISTANCE_INFOBAR_HORIZONTAL_ICON_LABEL_PADDING)
+          : layout_provider->GetDistanceMetric(
+                views::DISTANCE_RELATED_LABEL_HORIZONTAL);
   const int button_spacing = layout_provider->GetDistanceMetric(
       views::DISTANCE_RELATED_BUTTON_HORIZONTAL);
 

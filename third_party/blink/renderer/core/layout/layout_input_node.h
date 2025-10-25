@@ -262,8 +262,9 @@ class CORE_EXPORT LayoutInputNode {
   LayoutUnit DefaultIntrinsicContentInlineSize() const {
     return box_->DefaultIntrinsicContentInlineSize();
   }
-  LayoutUnit DefaultIntrinsicContentBlockSize() const {
-    return box_->DefaultIntrinsicContentBlockSize();
+  LayoutUnit DefaultIntrinsicContentBlockSize(
+      bool children_have_geometry) const {
+    return box_->DefaultIntrinsicContentBlockSize(children_have_geometry);
   }
 
   bool ChildLayoutBlockedByDisplayLock() const {
@@ -289,10 +290,6 @@ class CORE_EXPORT LayoutInputNode {
 
   bool operator==(const LayoutInputNode& other) const {
     return box_ == other.box_ && type_ == other.type_;
-  }
-
-  bool operator!=(const LayoutInputNode& other) const {
-    return !(*this == other);
   }
 
 #if DCHECK_IS_ON()

@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -24,8 +23,11 @@
 #include "base/test/values_test_util.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "chrome/browser/actor/actor_keyed_service.h"
+#include "chrome/browser/actor/actor_task.h"
+#include "chrome/browser/actor/execution_engine.h"
+#include "chrome/browser/actor/ui/mocks/mock_event_dispatcher.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/install_verifier.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/password_manager/chrome_webauthn_credentials_delegate.h"
 #include "chrome/browser/profiles/profile.h"
@@ -41,6 +43,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/network_session_configurator/common/network_switches.h"
+#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/common/password_manager_ui.h"
 #include "components/sync/protocol/webauthn_credential_specifics.pb.h"
 #include "components/webauthn/core/browser/passkey_change_quota_tracker.h"
@@ -65,6 +68,7 @@
 #include "device/fido/virtual_fido_device.h"
 #include "device/fido/virtual_fido_device_factory.h"
 #include "extensions/browser/extension_registrar.h"
+#include "extensions/browser/install_verifier.h"
 #include "extensions/common/extension_builder.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
@@ -73,6 +77,7 @@
 #if BUILDFLAG(IS_WIN)
 #include "device/fido/win/authenticator.h"
 #include "device/fido/win/fake_webauthn_api.h"
+#include "device/fido/win/util.h"
 #include "device/fido/win/webauthn_api.h"
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -223,33 +228,6 @@ static constexpr char kGetAssertionCredID1234[] = R"((() => {
            e => 'error ' + e);
 })())";
 
-static constexpr char kMakeCredential[] = R"((() => {
-  return navigator.credentials.create({ publicKey: {
-    rp: { name: "" },
-    user: { id: new Uint8Array([0]), name: "foo", displayName: "" },
-    pubKeyCredParams: [{type: "public-key", alg: -7}],
-    challenge: new Uint8Array([0]),
-    timeout: 10000,
-    userVerification: 'discouraged',
-  }}).then(c => 'webauthn: OK',
-           e => 'error ' + e);
-})())";
-
-static constexpr char kMakeDiscoverableCredential[] = R"((() => {
-  return navigator.credentials.create({ publicKey: {
-    rp: { name: "" },
-    user: { id: new Uint8Array([0]), name: "foo", displayName: "" },
-    pubKeyCredParams: [{type: "public-key", alg: -7}],
-    challenge: new Uint8Array([0]),
-    timeout: 10000,
-    userVerification: 'discouraged',
-    authenticatorSelection: {
-      requireResidentKey: true,
-    },
-  }}).then(c => 'webauthn: OK',
-           e => 'error ' + e);
-})())";
-
 IN_PROC_BROWSER_TEST_F(WebAuthnBrowserTest, ChromeExtensions) {
   // Test that WebAuthn works inside of Chrome extensions. WebAuthn is based on
   // Relying Party IDs, which are domain names. But Chrome extensions don't have
@@ -299,8 +277,8 @@ IN_PROC_BROWSER_TEST_F(WebAuthnBrowserTest, ChromeExtensions) {
 
   auto virtual_device_factory =
       std::make_unique<device::test::VirtualFidoDeviceFactory>();
-  const GURL url = extension->ResolveExtensionURL(kPageFile);
-  auto extension_id = url.host();
+  const GURL url = extension->GetResourceURL(kPageFile);
+  auto extension_id = url.GetHost();
   virtual_device_factory->mutable_state()->InjectRegistration(
       kCredentialID, "chrome-extension://" + extension_id);
 
@@ -360,6 +338,28 @@ class WinWebAuthnBrowserTest
     : public WebAuthnBrowserTest,
       device::WinWebAuthnApiAuthenticator::TestObserver {
  public:
+  static constexpr char kMakeDiscoverableCredential[] = R"((() => {
+    return navigator.credentials.create({ publicKey: {
+      rp: { name: "" },
+      user: { id: new Uint8Array([0]), name: "foo", displayName: "" },
+      pubKeyCredParams: [{type: "public-key", alg: -7}],
+      challenge: new Uint8Array([0]),
+      timeout: 10000,
+      userVerification: 'discouraged',
+      authenticatorSelection: {
+        requireResidentKey: true,
+      },
+    }}).then(c => 'webauthn: OK',
+            e => 'error ' + e);
+  })())";
+
+  WinWebAuthnBrowserTest() {
+    scoped_feature_list_.InitWithFeatures(
+        {device::kWebAuthnHelloSignal,
+         device::kWebAuthenticationFixWindowsHelloRdp},
+        /*disabled_features=*/{});
+  }
+
   void SetUpOnMainThread() override {
     WebAuthnBrowserTest::SetUpOnMainThread();
     signal_unknown_credential_run_loop_ = std::make_unique<base::RunLoop>();
@@ -405,8 +405,7 @@ class WinWebAuthnBrowserTest
   device::FakeWinWebAuthnApi win_api_;
   device::WinWebAuthnApi::ScopedOverride win_webauthn_api_override_{&win_api_};
   std::unique_ptr<content::ScopedAuthenticatorEnvironmentForTesting> auth_env_;
-  base::test::ScopedFeatureList scoped_feature_list_{
-      device::kWebAuthnHelloSignal};
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Integration test for Large Blob on Windows.
@@ -532,6 +531,39 @@ IN_PROC_BROWSER_TEST_F(WinWebAuthnBrowserTest,
                 GetSignalAllAcceptedCredentials(kCredentialID2, user_id)));
   WaitForSignalAllAcceptedCredentials();
   EXPECT_TRUE(win_api_.registrations().empty());
+}
+
+// Tests getting an assertion with an allow-list containing internal credentials
+// under simulated RDP on Windows 11.
+// Regression test for crbug.com/443001325.
+IN_PROC_BROWSER_TEST_F(WinWebAuthnBrowserTest, WinGetAssertionRdp) {
+  constexpr char kGetAssertionInternalCredID1234[] = R"((() => {
+    let cred_id = new Uint8Array([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]);
+    return navigator.credentials.get({ publicKey: {
+      challenge: cred_id,
+      timeout: 10000,
+      userVerification: 'discouraged',
+      allowCredentials: [{
+        type: 'public-key',
+        id: cred_id,
+        transports: ['internal']
+      }],
+    }}).then(c => 'webauthn: OK',
+            e => 'error ' + e);
+  })())";
+
+  device::fido::win::ScopedIsRdpSessionOverride rdp_override(true);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_server_.GetURL("www.example.com", "/title1.html")));
+  win_api_.set_version(WEBAUTHN_API_VERSION_4);
+  win_api_.set_is_uvpaa(true);
+  win_api_.set_supports_silent_discovery(true);
+  win_api_.set_simulate_rdp(true);
+  win_api_.InjectNonDiscoverableCredential(kCredentialID, "www.example.com");
+  EXPECT_EQ(
+      "webauthn: OK",
+      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
+                      kGetAssertionInternalCredID1234));
 }
 
 #endif  // BUILDFLAG(IS_WIN)
@@ -866,9 +898,16 @@ class WebAuthnHintsTest : public WebAuthnBrowserTest {
 };
 
 // The hints parameter here contains nonsense values (which should be ignored)
-// and lists `security-key` and `hybrid` (more than once). This is contradictory
-// but Chromium will prioritize in the order of the enum values, so
-// `security-key` will win out.
+// and lists `security-key` and `hybrid` (more than once).
+//
+// According to the standard,
+//
+// "Hints are provided in order of decreasing preference so, if two hints are
+// contradictory, the first one controls. [...] If the same hint appears more
+// than once, its second and later appearances are ignored."
+//
+// In practice, Chromium will only consider the first recognised hint and ignore
+// the rest for the purposes of configuring the UI.
 static constexpr char kMakeCredentialWithHints[] = R"((() => {
   return navigator.credentials.create({ publicKey: {
     rp: { name: "" },
@@ -891,7 +930,7 @@ IN_PROC_BROWSER_TEST_F(WebAuthnHintsTest, HintsArePassedThrough) {
 
   ASSERT_TRUE(observer_->hints().transport.has_value());
   EXPECT_EQ(observer_->hints().transport.value(),
-            AuthenticatorTransport::kUsbHumanInterfaceDevice);
+            AuthenticatorTransport::kHybrid);
 }
 
 class WebAuthnConditionalUITest : public WebAuthnBrowserTest {
@@ -912,15 +951,6 @@ class WebAuthnConditionalUITest : public WebAuthnBrowserTest {
     }
 
     // ChromeAuthenticatorRequestDelegate::TestObserver:
-    void Created(ChromeAuthenticatorRequestDelegate* delegate) override {
-      delegate_ = delegate;
-    }
-
-    std::vector<std::unique_ptr<device::cablev2::Pairing>>
-    GetCablePairingsFromSyncedDevices() override {
-      return {};
-    }
-
     void OnTransportAvailabilityEnumerated(
         ChromeAuthenticatorRequestDelegate* delegate,
         device::FidoRequestHandlerBase::TransportAvailabilityInfo* tai)
@@ -949,8 +979,6 @@ class WebAuthnConditionalUITest : public WebAuthnBrowserTest {
       }
     }
 
-    raw_ptr<ChromeAuthenticatorRequestDelegate, AcrossTasksDanglingUntriaged>
-        delegate_ = nullptr;
     std::vector<std::string> accounts_;
 
    private:
@@ -1115,11 +1143,6 @@ class WebAuthnCableExtension : public WebAuthnBrowserTest {
    public:
     void Created(ChromeAuthenticatorRequestDelegate* delegate) override {}
 
-    std::vector<std::unique_ptr<device::cablev2::Pairing>>
-    GetCablePairingsFromSyncedDevices() override {
-      return {};
-    }
-
     void OnTransportAvailabilityEnumerated(
         ChromeAuthenticatorRequestDelegate* delegate,
         device::FidoRequestHandlerBase::TransportAvailabilityInfo* tai)
@@ -1144,351 +1167,6 @@ IN_PROC_BROWSER_TEST_F(WebAuthnCableExtension, ServerLink) {
 
   ASSERT_EQ(observer_.extensions_.size(), 1u);
   EXPECT_EQ(observer_.extensions_[0], "01020304");
-}
-
-// WebAuthnCableSecondFactor primarily exercises
-// ChromeAuthenticatorRequestDelegate and AuthenticatorRequestDialogController.
-// It mocks out the discovery process and thus allows the caBLE UI to be tested.
-// It uses a trace-based approach: events are recorded (as strings) in an event
-// trace which is then compared against the expected trace at the end.
-// TODO(crbug.com/372493822): remove when hybrid linking is cleaned up.
-class WebAuthnCableSecondFactor : public WebAuthnBrowserTest {
- public:
-  WebAuthnCableSecondFactor() {
-    // This makes it a little easier to compare against.
-    trace_ << std::endl;
-  }
-
-  std::ostringstream& trace() { return trace_; }
-
-  raw_ptr<AuthenticatorRequestDialogController, DanglingUntriaged>&
-  controller() {
-    return controller_;
-  }
-
- protected:
-  // DiscoveryFactory vends a single discovery that doesn't discover anything
-  // until requested to. The authenticator that is then discovered is a virtual
-  // authenticator that serves simply to end the overall WebAuthn request.
-  // Otherwise, DiscoveryFactory is responsible for tracing the caBLEv2 Pairing
-  // objects and driving the simulation when the UI requests that a phone be
-  // triggered.
-  class DiscoveryFactory : public device::FidoDiscoveryFactory {
-   public:
-    explicit DiscoveryFactory(WebAuthnCableSecondFactor* test)
-        : parent_(test) {}
-
-    std::vector<std::unique_ptr<device::FidoDiscoveryBase>> Create(
-        device::FidoTransportProtocol transport) override {
-      if (transport != device::FidoTransportProtocol::kHybrid) {
-        return {};
-      }
-
-      auto discovery = std::make_unique<PendingDiscovery>(
-          device::FidoTransportProtocol::kHybrid);
-      add_authenticator_callback_ = discovery->GetAddAuthenticatorCallback();
-      return SingleDiscovery(std::move(discovery));
-    }
-
-    void set_cable_data(
-        device::FidoRequestType request_type,
-        std::vector<device::CableDiscoveryData> cable_data,
-        const std::optional<std::array<uint8_t, device::cablev2::kQRKeySize>>&
-            qr_generator_key) override {
-      parent_->trace() << "SET_CABLE_DATA" << std::endl;
-    }
-
-    void set_cable_invalidated_pairing_callback(
-        base::RepeatingCallback<void(std::unique_ptr<device::cablev2::Pairing>)>
-            callback) override {
-      invalid_pairing_callback_ = std::move(callback);
-    }
-
-    base::RepeatingCallback<void(std::unique_ptr<device::cablev2::Pairing>)>
-    get_cable_contact_callback() override {
-      return base::BindLambdaForTesting(
-          [this](std::unique_ptr<device::cablev2::Pairing> pairing) {
-            parent_->trace()
-                << "CONTACT: phone_name=" << pairing->name << " public_key="
-                << static_cast<int>(pairing->peer_public_key_x962[0])
-                << " step=" << contact_step_number_ << std::endl;
-            switch (contact_step_number_) {
-              case 0:
-                // Simiulate the first tunnel failing with a Gone status. This
-                // should trigger a fallback to the second-priority phone with
-                // the same name.
-                base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-                    FROM_HERE, base::BindOnce(invalid_pairing_callback_,
-                                              std::move(pairing)));
-                break;
-
-              case 1:
-                // Simulate the user clicking back and trying the phone again.
-                // This should fallback to the lower-priority phone with the
-                // same name.
-                base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-                    FROM_HERE, base::BindLambdaForTesting([this]() {
-                      parent_->controller()->ContactPhoneForTesting("name2");
-                    }));
-                break;
-
-              case 2:
-                // Try some other phones.
-                base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-                    FROM_HERE, base::BindLambdaForTesting([this]() {
-                      parent_->controller()->ContactPhoneForTesting("zzz");
-                    }));
-                break;
-
-              case 3:
-                // Try some other phones.
-                base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-                    FROM_HERE, base::BindLambdaForTesting([this]() {
-                      parent_->controller()->ContactPhoneForTesting("aaa");
-                    }));
-                break;
-
-              case 4:
-                // All done. Discover a virtual authenticator in order to
-                // resolve the request.
-                add_authenticator_callback_.Run();
-                break;
-
-              default:
-                NOTREACHED();
-            }
-
-            contact_step_number_++;
-          });
-    }
-
-#if BUILDFLAG(IS_WIN)
-    std::unique_ptr<device::FidoDiscoveryBase>
-    MaybeCreateWinWebAuthnApiDiscovery() override {
-      return nullptr;
-    }
-#endif  // BUILDFLAG(IS_WIN)
-
-   private:
-    // PendingDiscovery yields a single virtual authenticator when requested to
-    // do so by calling the result of |GetAddAuthenticatorCallback|.
-    class PendingDiscovery final : public device::FidoDeviceDiscovery {
-     public:
-      explicit PendingDiscovery(device::FidoTransportProtocol transport)
-          : FidoDeviceDiscovery(transport) {}
-
-      base::RepeatingClosure GetAddAuthenticatorCallback() {
-        return base::BindRepeating(&PendingDiscovery::AddAuthenticator,
-                                   weak_ptr_factory_.GetWeakPtr());
-      }
-
-     protected:
-      void StartInternal() override {
-        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-            FROM_HERE, base::BindOnce(&PendingDiscovery::NotifyDiscoveryStarted,
-                                      weak_ptr_factory_.GetWeakPtr(),
-                                      /*success=*/true));
-      }
-
-     private:
-      void AddAuthenticator() {
-        scoped_refptr<device::VirtualFidoDevice::State> state(
-            new device::VirtualFidoDevice::State);
-        state->InjectRegistration(kCredentialID, "www.example.com");
-        state->fingerprints_enrolled = true;
-
-        device::VirtualCtap2Device::Config config;
-        config.resident_key_support = true;
-        config.internal_uv_support = true;
-
-        AddDevice(std::make_unique<device::VirtualCtap2Device>(state, config));
-      }
-
-      base::WeakPtrFactory<PendingDiscovery> weak_ptr_factory_{this};
-    };
-
-    const raw_ptr<WebAuthnCableSecondFactor> parent_;
-    base::RepeatingCallback<void(std::unique_ptr<device::cablev2::Pairing>)>
-        invalid_pairing_callback_;
-    base::RepeatingClosure add_authenticator_callback_;
-    int contact_step_number_ = 0;
-  };
-
-  class DelegateObserver
-      : public ChromeAuthenticatorRequestDelegate::TestObserver {
-   public:
-    explicit DelegateObserver(WebAuthnCableSecondFactor* test)
-        : parent_(test) {}
-
-    void Created(ChromeAuthenticatorRequestDelegate* delegate) override {
-      // Only a single delegate should be observed.
-      CHECK(!parent_->controller());
-    }
-
-    std::vector<std::unique_ptr<device::cablev2::Pairing>>
-    GetCablePairingsFromSyncedDevices() override {
-      std::vector<std::unique_ptr<device::cablev2::Pairing>> ret;
-
-      ret.emplace_back(TestPhone("name1", /*public_key=*/0,
-                                 /*last_updated=*/base::Time::FromTimeT(1),
-                                 /*channel_priority=*/1));
-
-      // The same public key as phone1, but a newer timestamp. It
-      // should shadow the first.
-      ret.emplace_back(TestPhone("name2", /*public_key=*/0,
-                                 /*last_updated=*/base::Time::FromTimeT(2),
-                                 /*channel_priority=*/1));
-
-      // Same name as the second, but a higher channel priority. It should take
-      // priority over it.
-      ret.emplace_back(TestPhone("name2", /*public_key=*/1,
-                                 /*last_updated=*/base::Time::FromTimeT(2),
-                                 /*channel_priority=*/2));
-
-      // Same name as second and third, but a newer timestamp than the third. It
-      // should be tried first.
-      ret.emplace_back(TestPhone("name2", /*public_key=*/2,
-                                 /*last_updated=*/base::Time::FromTimeT(3),
-                                 /*channel_priority=*/2));
-
-      // A different device with a name that should sort first.
-      ret.emplace_back(TestPhone("aaa", /*public_key=*/3,
-                                 /*last_updated=*/base::Time::FromTimeT(3),
-                                 /*channel_priority=*/2));
-
-      // A different device with a name that should sort last.
-      ret.emplace_back(TestPhone("zzz", /*public_key=*/4,
-                                 /*last_updated=*/base::Time::FromTimeT(3),
-                                 /*channel_priority=*/2));
-
-      return ret;
-    }
-
-    void OnTransportAvailabilityEnumerated(
-        ChromeAuthenticatorRequestDelegate* delegate,
-        device::FidoRequestHandlerBase::TransportAvailabilityInfo* tai)
-        override {
-      tai->available_transports.insert(device::FidoTransportProtocol::kHybrid);
-      tai->ble_status = device::FidoRequestHandlerBase::BleStatus::kOn;
-    }
-
-    void UIShown(ChromeAuthenticatorRequestDelegate* delegate) override {
-      parent_->controller() = delegate->dialog_controller();
-
-      for (const auto& name :
-           parent_->controller()->model()->paired_phone_names) {
-        parent_->trace() << "UINAME: " << name << std::endl;
-      }
-
-      // Simulate a click on the transport selection sheet.
-      parent_->controller()->ContactPhoneForTesting("name2");
-    }
-
-    void CableV2ExtensionSeen(
-        base::span<const uint8_t> server_link_data) override {}
-
-    void ConfiguringCable(device::FidoRequestType request_type) override {
-      switch (request_type) {
-        case device::FidoRequestType::kMakeCredential:
-          parent_->trace() << "TYPE: mc" << std::endl;
-          break;
-        case device::FidoRequestType::kGetAssertion:
-          parent_->trace() << "TYPE: ga" << std::endl;
-          break;
-      }
-    }
-
-   private:
-    const raw_ptr<WebAuthnCableSecondFactor> parent_;
-  };
-
- protected:
-  std::ostringstream trace_;
-  raw_ptr<AuthenticatorRequestDialogController, DanglingUntriaged> controller_ =
-      nullptr;
-#if BUILDFLAG(IS_WIN)
-  device::FakeWinWebAuthnApi fake_win_webauthn_api_;
-  device::WinWebAuthnApi::ScopedOverride override_win_webauthn_api_{
-      &fake_win_webauthn_api_};
-#endif
-  base::test::ScopedFeatureList scoped_feature_list_{
-      device::kWebAuthnHybridLinking};
-};
-
-// TODO(crbug.com/40186172): this test is flaky on Mac.
-#if BUILDFLAG(IS_MAC)
-#define MAYBE_Test DISABLED_Test
-#else
-#define MAYBE_Test Test
-#endif
-IN_PROC_BROWSER_TEST_F(WebAuthnCableSecondFactor, MAYBE_Test) {
-  DelegateObserver observer(this);
-  ChromeAuthenticatorRequestDelegate::SetGlobalObserverForTesting(&observer);
-  content::ScopedAuthenticatorEnvironmentForTesting auth_env(
-      std::make_unique<DiscoveryFactory>(this));
-
-  EXPECT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), https_server_.GetURL("www.example.com", "/title1.html")));
-
-  EXPECT_EQ(
-      "webauthn: OK",
-      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
-                      kGetAssertionCredID1234));
-
-  constexpr char kExpectedTrace[] = R"(
-TYPE: ga
-SET_CABLE_DATA
-UINAME: aaa
-UINAME: name2
-UINAME: zzz
-CONTACT: phone_name=name2 public_key=2 step=0
-CONTACT: phone_name=name2 public_key=1 step=1
-CONTACT: phone_name=name2 public_key=0 step=2
-CONTACT: phone_name=zzz public_key=4 step=3
-CONTACT: phone_name=aaa public_key=3 step=4
-)";
-  EXPECT_EQ(kExpectedTrace, trace_.str());
-}
-
-// These two tests are separate, rather than a for loop, because the testing
-// infrastructure needs to be reset for each test and having a separate test
-// is the easiest way to do that.
-
-IN_PROC_BROWSER_TEST_F(WebAuthnCableSecondFactor, RequestTypesMakeCredential) {
-  // Check that the correct request types are plumbed through.
-  DelegateObserver observer(this);
-  ChromeAuthenticatorRequestDelegate::SetGlobalObserverForTesting(&observer);
-  content::ScopedAuthenticatorEnvironmentForTesting auth_env(
-      std::make_unique<DiscoveryFactory>(this));
-
-  EXPECT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), https_server_.GetURL("www.example.com", "/title1.html")));
-
-  EXPECT_EQ(
-      "webauthn: OK",
-      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
-                      kMakeCredential));
-  EXPECT_TRUE(trace_.str().find("TYPE: mc\n") != std::string::npos)
-      << trace_.str();
-}
-
-IN_PROC_BROWSER_TEST_F(WebAuthnCableSecondFactor,
-                       RequestTypesMakeDiscoverableCredential) {
-  // Check that the correct request types are plumbed through.
-  DelegateObserver observer(this);
-  ChromeAuthenticatorRequestDelegate::SetGlobalObserverForTesting(&observer);
-  content::ScopedAuthenticatorEnvironmentForTesting auth_env(
-      std::make_unique<DiscoveryFactory>(this));
-
-  EXPECT_TRUE(ui_test_utils::NavigateToURL(
-      browser(), https_server_.GetURL("www.example.com", "/title1.html")));
-
-  EXPECT_EQ(
-      "webauthn: OK",
-      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
-                      kMakeDiscoverableCredential));
-  EXPECT_TRUE(trace_.str().find("TYPE: mc\n") != std::string::npos)
-      << trace_.str();
 }
 
 class ChallengeUrlBrowserTest : public WebAuthnBrowserTest {
@@ -1777,15 +1455,6 @@ IN_PROC_BROWSER_TEST_F(ChallengeUrlBrowserTest,
   EXPECT_THAT(result, testing::HasSubstr("NotAllowedError"));
 }
 
-#if BUILDFLAG(IS_LINUX)
-// TODO(crbug.com/393055190): There is segfault in Linux during the move of the
-// newly constructed `request_handler` to the `RequestState` in
-// `AuthenticatorCommonImpl::StartGetAssertionRequest`. Fix and re-enable.
-#define WebAuthnImmediateGetTest DISABLED_WebAuthnImmediateGetTest
-#else
-#define WebAuthnImmediateGetTest WebAuthnImmediateGetTest
-#endif
-
 class WebAuthnImmediateGetTest : public WebAuthnBrowserTest {
  protected:
   static constexpr std::string_view kRequestWithPasswordTemplate = R"(
@@ -1859,6 +1528,120 @@ IN_PROC_BROWSER_TEST_F(WebAuthnImmediateGetTest, Allowlist_NotAllowedError) {
       /*offsets=*/nullptr);
   const auto& result = content::EvalJs(web_contents, script);
   EXPECT_THAT(result.ExtractString(), testing::HasSubstr("NotAllowedError"));
+}
+
+class WebAuthnActorBrowserTest : public WebAuthnBrowserTest {
+ protected:
+  static constexpr std::string_view kMakeCredentialScript = R"((() => {
+    return navigator.credentials.create({ publicKey: {
+      rp: { id: "www.example.com", name: "example" },
+      user: { id: new Uint8Array([0]), name: "foo", displayName: "Foo" },
+      pubKeyCredParams: [{type: "public-key", alg: -7}],
+      challenge: new Uint8Array([0,1,2,3]),
+      timeout: 10000,
+    }}).then(c => 'webauthn: OK',
+              e => 'error ' + e);
+  })())";
+
+ public:
+  WebAuthnActorBrowserTest() {
+    scoped_feature_list_.InitWithFeatures(
+        {device::kWebAuthnActorCheck, password_manager::features::kActorLogin},
+        {});
+  }
+
+  void SetUpOnMainThread() override {
+    WebAuthnBrowserTest::SetUpOnMainThread();
+    auto virtual_device_factory =
+        std::make_unique<device::test::VirtualFidoDeviceFactory>();
+    virtual_device_factory_ = virtual_device_factory.get();
+    virtual_device_factory->mutable_state()->InjectResidentKey(
+        kCredentialID, "www.example.com", std::vector<uint8_t>{5, 6, 7, 8},
+        "flandre", "Flandre Scarlet");
+    virtual_device_factory->mutable_state()->fingerprints_enrolled = true;
+    device::VirtualCtap2Device::Config config;
+    config.resident_key_support = true;
+    config.internal_uv_support = true;
+    virtual_device_factory->SetCtap2Config(std::move(config));
+    auth_env_ =
+        std::make_unique<content::ScopedAuthenticatorEnvironmentForTesting>(
+            std::move(virtual_device_factory));
+  }
+
+  void CreateActingTask() {
+    auto* actor_service = actor::ActorKeyedService::Get(browser()->profile());
+    std::unique_ptr<actor::ExecutionEngine> execution_engine =
+        std::make_unique<actor::ExecutionEngine>(browser()->profile());
+
+    std::unique_ptr<actor::ActorTask> actor_task =
+        std::make_unique<actor::ActorTask>(
+            browser()->profile(), std::move(execution_engine),
+            actor::ui::NewUiEventDispatcher(
+                actor_service->GetActorUiStateManager()));
+    actor_task->SetState(actor::ActorTask::State::kActing);
+
+    base::RunLoop loop;
+    actor_task->AddTab(
+        browser()->GetActiveTabInterface()->GetHandle(),
+        base::BindLambdaForTesting([&](actor::mojom::ActionResultPtr result) {
+          EXPECT_TRUE(actor::IsOk(*result));
+          loop.Quit();
+        }));
+    loop.Run();
+
+    actor_service->AddActiveTask(std::move(actor_task));
+  }
+
+  void PostRunTestOnMainThread() override {
+    // To avoid dangling raw_ptr's these values need to be destroyed before
+    // this test class.
+    virtual_device_factory_ = nullptr;
+    auth_env_.reset();
+    WebAuthnBrowserTest::PostRunTestOnMainThread();
+  }
+
+ protected:
+  raw_ptr<device::test::VirtualFidoDeviceFactory> virtual_device_factory_;
+  std::unique_ptr<content::ScopedAuthenticatorEnvironmentForTesting> auth_env_;
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(WebAuthnActorBrowserTest, MakeCredentialsActorIsActive) {
+  CreateActingTask();
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_server_.GetURL("www.example.com", "/title1.html")));
+
+  content::EvalJsResult result =
+      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
+                      kMakeCredentialScript);
+  EXPECT_THAT(result.ExtractString(), testing::HasSubstr("NotAllowedError"));
+}
+
+IN_PROC_BROWSER_TEST_F(WebAuthnActorBrowserTest, GetCredentialsActorIsActive) {
+  CreateActingTask();
+  virtual_device_factory_->mutable_state()->InjectRegistration(
+      kCredentialID, "www.example.com");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_server_.GetURL("www.example.com", "/title1.html")));
+  content::EvalJsResult result =
+      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
+                      kGetAssertionCredID1234);
+  EXPECT_THAT(result.ExtractString(), testing::HasSubstr("NotAllowedError"));
+}
+
+IN_PROC_BROWSER_TEST_F(WebAuthnActorBrowserTest,
+                       GetCredentialsActorIsNotActive) {
+  virtual_device_factory_->mutable_state()->InjectRegistration(
+      kCredentialID, "www.example.com");
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), https_server_.GetURL("www.example.com", "/title1.html")));
+  // Since there is no active actor task, the request is not rejected.
+  EXPECT_EQ(
+      "webauthn: OK",
+      content::EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
+                      kGetAssertionCredID1234));
 }
 
 }  // namespace

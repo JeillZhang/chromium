@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.safe_browsing;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -18,10 +20,12 @@ import android.content.Context;
 import androidx.fragment.app.Fragment;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.ContextUtils;
@@ -50,9 +54,10 @@ import java.util.concurrent.TimeUnit;
 @DisableFeatures(PermissionsAndroidFeatureList.OS_ADDITIONAL_SECURITY_PERMISSION_KILL_SWITCH)
 @Config(manifest = Config.NONE)
 public class AdvancedProtectionMediatorTest {
+    @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Mock private WindowAndroid mWindowAndroid;
     @Mock private Context mContext;
-    private final WeakReference<Context> mWeakContext = new WeakReference<Context>(mContext);
+    private final WeakReference<Context> mWeakContext = new WeakReference<>(mContext);
     private final UnownedUserDataHost mWindowUserDataHost = new UnownedUserDataHost();
 
     @Mock private ManagedMessageDispatcher mMessageDispatcher;
@@ -69,7 +74,7 @@ public class AdvancedProtectionMediatorTest {
 
         @Override
         public void addObserver(Observer observer) {
-            assert mObserver == null;
+            assertThat(mObserver).isNull();
             mObserver = observer;
         }
 
@@ -94,7 +99,6 @@ public class AdvancedProtectionMediatorTest {
 
     @Before
     public void setUp() {
-        MockitoAnnotations.initMocks(this);
         when(mWindowAndroid.getUnownedUserDataHost()).thenReturn(mWindowUserDataHost);
         when(mWindowAndroid.getContext()).thenReturn(mWeakContext);
         MessagesFactory.attachMessageDispatcher(mWindowAndroid, mMessageDispatcher);

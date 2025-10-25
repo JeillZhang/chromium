@@ -45,6 +45,7 @@
 #import "components/translate/core/browser/translate_prefs.h"
 #import "components/translate/core/language_detection/language_detection_model.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
+#import "ios/chrome/browser/dom_distiller/model/distiller_service_factory.h"
 #import "ios/chrome/browser/lens_overlay/coordinator/lens_overlay_availability.h"
 #import "ios/chrome/browser/overlays/model/public/overlay_presenter.h"
 #import "ios/chrome/browser/overlays/model/public/overlay_request.h"
@@ -60,6 +61,8 @@
 #import "ios/chrome/browser/popup_menu/ui_bundled/overflow_menu/overflow_menu_swift.h"
 #import "ios/chrome/browser/popup_menu/ui_bundled/popup_menu_constants.h"
 #import "ios/chrome/browser/promos_manager/model/mock_promos_manager.h"
+#import "ios/chrome/browser/reader_mode/model/features.h"
+#import "ios/chrome/browser/reader_mode/model/reader_mode_tab_helper.h"
 #import "ios/chrome/browser/reading_list/model/reading_list_model_factory.h"
 #import "ios/chrome/browser/reading_list/model/reading_list_test_utils.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
@@ -84,6 +87,7 @@
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
 #import "ios/chrome/browser/signin/model/system_identity.h"
 #import "ios/chrome/browser/signin/model/system_identity_manager.h"
+#import "ios/chrome/browser/snapshots/model/snapshot_source_tab_helper.h"
 #import "ios/chrome/browser/supervised_user/model/supervised_user_service_factory.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/test/toolbar_test_navigation_manager.h"
 #import "ios/chrome/browser/web/model/font_size/font_size_java_script_feature.h"
@@ -172,9 +176,9 @@ class OverflowMenuMediatorTest : public PlatformTest {
                               ios::BookmarkModelFactory::GetDefaultFactory());
     builder.AddTestingFactory(
         IOSChromeProfilePasswordStoreFactory::GetInstance(),
-        base::BindRepeating(&password_manager::BuildPasswordStoreInterface<
-                            web::BrowserState,
-                            password_manager::MockPasswordStoreInterface>));
+        base::BindOnce(
+            &password_manager::BuildPasswordStoreInterface<
+                ProfileIOS, password_manager::MockPasswordStoreInterface>));
     builder.AddTestingFactory(
         AuthenticationServiceFactory::GetInstance(),
         AuthenticationServiceFactory::GetFactoryWithDelegate(
@@ -195,6 +199,7 @@ class OverflowMenuMediatorTest : public PlatformTest {
     navigation_item_ = web::NavigationItem::Create();
     GURL url = GURL("http://chromium.org");
     navigation_item_->SetURL(url);
+    navigation_item_->SetUserAgentType(web::UserAgentType::MOBILE);
     navigation_manager->SetVisibleItem(navigation_item_.get());
 
     std::unique_ptr<web::FakeWebState> test_web_state =
@@ -312,6 +317,22 @@ class OverflowMenuMediatorTest : public PlatformTest {
           return reading_list_model_->loaded();
         }));
     mediator_.readingListModel = reading_list_model_.get();
+  }
+
+  void SetUpReadingMode(bool active) {
+    ReaderModeTabHelper* tab_helper =
+        ReaderModeTabHelper::FromWebState(web_state_);
+    if (!tab_helper) {
+      ReaderModeTabHelper::CreateForWebState(
+          web_state_, DistillerServiceFactory::GetForProfile(profile_.get()));
+      SnapshotSourceTabHelper::CreateForWebState(web_state_);
+      tab_helper = ReaderModeTabHelper::FromWebState(web_state_);
+    }
+    if (active) {
+      tab_helper->ActivateReader(ReaderModeAccessPoint::kToolsMenu);
+    } else {
+      tab_helper->DeactivateReader();
+    }
   }
 
   void InsertNewWebState(int index) {
@@ -453,7 +474,7 @@ class OverflowMenuMediatorTest : public PlatformTest {
   std::unique_ptr<ReadingListModel> reading_list_model_;
   std::unique_ptr<TestingPrefServiceSimple> profilePrefs_;
   std::unique_ptr<TestingPrefServiceSimple> localStatePrefs_;
-  raw_ptr<web::FakeWebState> web_state_;
+  raw_ptr<web::FakeWebState, DanglingUntriaged> web_state_;
   std::unique_ptr<web::NavigationItem> navigation_item_;
   UIViewController* baseViewController_;
   translate::LanguageDetectionModel language_detection_model_;
@@ -483,10 +504,6 @@ TEST_F(OverflowMenuMediatorTest, TestMenuItemsCount) {
   mediator_.model = model_;
 
   NSUInteger number_of_action_items = 6;
-
-  if (IsLensOverlayAvailable(profilePrefs_.get())) {
-    number_of_action_items++;
-  }
 
   if (ios::provider::IsTextZoomEnabled()) {
     number_of_action_items++;
@@ -1152,4 +1169,44 @@ TEST_F(OverflowMenuMediatorTest, OpenPasswordsMetricLogged) {
   histogram_tester.ExpectBucketCount(
       "PasswordManager.ManagePasswordsReferrer",
       password_manager::ManagePasswordsReferrer::kChromeMenuItem, 1);
+}
+
+// Tests that items are disabled in RM
+TEST_F(OverflowMenuMediatorTest, TestReadingModeMenu) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(kEnableReaderMode);
+  const GURL kUrl("https://chromium.test");
+  web_state_->SetCurrentURL(kUrl);
+  // Enable FontSize entry
+  web_state_->SetWebFramesManager(
+      FontSizeJavaScriptFeature::GetInstance()->GetSupportedContentWorld(),
+      std::make_unique<web::FakeWebFramesManager>());
+  FontSizeTabHelper::CreateForWebState(
+      browser_->GetWebStateList()->GetWebStateAt(0));
+
+  CreateMediator(/*incognito=*/NO);
+  SetUpActiveWebState();
+  SetUpReadingMode(/*active*/ true);
+  mediator_.webStateList = browser_->GetWebStateList();
+  mediator_.webContentAreaOverlayPresenter = OverlayPresenter::FromBrowser(
+      browser_.get(), OverlayModality::kWebContentArea);
+
+  // Force model update.
+  mediator_.model = model_;
+  ASSERT_TRUE(HasItem(kToolsMenuReadLater, /*enabled=*/YES));
+  ASSERT_TRUE(HasItem(kToolsMenuTextZoom, /*enabled=*/YES));
+  ASSERT_TRUE(HasItem(kToolsMenuRequestDesktopId, /*enabled=*/YES));
+  ASSERT_TRUE(HasItem(kToolsMenuAddToBookmarks, /*enabled=*/YES));
+  ASSERT_TRUE(HasItem(kToolsMenuReadingListId, /*enabled=*/YES));
+
+  // Fake a navigationFinished to force the popup menu items to update.
+  // This will clear RM and reenable the item.
+  web::FakeNavigationContext context;
+  web_state_->OnNavigationFinished(&context);
+  web_state_->SetCurrentURL(kUrl);
+  ASSERT_TRUE(HasItem(kToolsMenuReadLater, /*enabled=*/YES));
+  ASSERT_TRUE(HasItem(kToolsMenuTextZoom, /*enabled=*/YES));
+  ASSERT_TRUE(HasItem(kToolsMenuRequestDesktopId, /*enabled=*/YES));
+  ASSERT_TRUE(HasItem(kToolsMenuAddToBookmarks, /*enabled=*/YES));
+  ASSERT_TRUE(HasItem(kToolsMenuReadingListId, /*enabled=*/YES));
 }

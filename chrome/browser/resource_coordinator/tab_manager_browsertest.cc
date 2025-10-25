@@ -13,6 +13,7 @@
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/simple_test_tick_clock.h"
@@ -31,8 +32,9 @@
 #include "chrome/browser/resource_coordinator/utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_features.h"
@@ -187,7 +189,7 @@ class TabManagerTest : public InProcessBrowserTest,
   TabManagerTest()
       : scoped_set_clocks_for_testing_(&test_clock_, &test_tick_clock_) {
     scoped_feature_list_.InitWithFeatureState(features::kWebContentsDiscard,
-                                              GetParam());
+                                              IsRetainedWebContents());
     // Start with a non-null TimeTicks, as there is no discard protection for
     // a tab with a null focused timestamp.
     test_tick_clock_.Advance(kShortDelay);
@@ -237,6 +239,8 @@ class TabManagerTest : public InProcessBrowserTest,
     return GetTabLifecycleUnitSource()->GetTabLifecycleUnit(
         GetWebContentsAt(index));
   }
+
+  bool IsRetainedWebContents() const { return GetParam(); }
 
   memory_pressure::test::FakeMemoryPressureMonitor
       fake_memory_pressure_monitor_;
@@ -351,14 +355,14 @@ IN_PROC_BROWSER_TEST_P(TabManagerTest, TabManagerBasics) {
   EXPECT_TRUE(IsTabDiscarded(GetWebContentsAt(2)));
 
   // Force creation of the FindBarController.
-  browser()->GetFindBarController();
+  browser()->GetFeatures().GetFindBarController();
 
   // Select the first tab.  It should reload.
   chrome::SelectNumberedTab(browser(), 0);
   content::WaitForLoadStop(
       browser()->tab_strip_model()->GetActiveWebContents());
   // Make sure the FindBarController gets the right WebContents.
-  EXPECT_EQ(browser()->GetFindBarController()->web_contents(),
+  EXPECT_EQ(browser()->GetFeatures().GetFindBarController()->web_contents(),
             tsm()->GetActiveWebContents());
   EXPECT_EQ(0, tsm()->active_index());
   EXPECT_FALSE(IsTabDiscarded(GetWebContentsAt(0)));
@@ -768,6 +772,72 @@ IN_PROC_BROWSER_TEST_P(TabManagerTestWithTwoTabs, TabUrgentDiscardAndNavigate) {
   EXPECT_EQ(true, content::EvalJs(GetWebContentsAt(0), kDiscardedStateJS));
 }
 
+IN_PROC_BROWSER_TEST_P(TabManagerTestWithTwoTabs,
+                       EmitsLatencyMetrics_NoFastShutdown) {
+  base::HistogramTester histogram_tester;
+
+  const GURL test_page(ui_test_utils::GetTestUrl(
+      base::FilePath(), base::FilePath(FILE_PATH_LITERAL("simple.html"))));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), test_page));
+
+  // Increment the worker ref count of the renderer process to keep it alive and
+  // guarantee the renderer is able to perform the discard and notify the
+  // Browser.
+  content::RenderProcessHost* process =
+      GetWebContentsAt(0)->GetPrimaryMainFrame()->GetProcess();
+  EXPECT_TRUE(process->IsInitializedAndNotDead());
+  process->IncrementWorkerRefCount();
+
+  // Discard the tab.
+  EXPECT_EQ(LifecycleUnitState::ACTIVE, GetLifecycleUnitAt(0)->GetState());
+  EXPECT_TRUE(
+      GetLifecycleUnitAt(0)->Discard(LifecycleUnitDiscardReason::EXTERNAL));
+  EXPECT_EQ(LifecycleUnitState::DISCARDED, GetLifecycleUnitAt(0)->GetState());
+
+  // Assert the Browser acknowledges and records the discard latency.
+  EXPECT_TRUE(base::test::RunUntil([&] {
+    return histogram_tester
+               .GetAllSamples("Discarding.TabLifecycleUnit.DiscardLatency")
+               .size() == 1;
+  }));
+  process->DecrementWorkerRefCount();
+}
+
+IN_PROC_BROWSER_TEST_P(TabManagerTestWithTwoTabs,
+                       EmitsLatencyMetrics_FastShutdown) {
+  base::HistogramTester histogram_tester;
+
+  const GURL test_page(ui_test_utils::GetTestUrl(
+      base::FilePath(), base::FilePath(FILE_PATH_LITERAL("simple.html"))));
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), test_page));
+
+  // Increment the worker ref count of the renderer process to keep it alive and
+  // guarantee the renderer is able to perform the discard and notify the
+  // Browser.
+  content::RenderProcessHost* process =
+      GetWebContentsAt(0)->GetPrimaryMainFrame()->GetProcess();
+  EXPECT_TRUE(process->IsInitializedAndNotDead());
+
+  // Advance time so everything is urgent discardable.
+  test_tick_clock_.Advance(kBackgroundUrgentProtectionTime);
+
+  // Discard the tab and wait for the process to exit.
+  WindowedRenderProcessHostExitObserver observer;
+  EXPECT_EQ(LifecycleUnitState::ACTIVE, GetLifecycleUnitAt(0)->GetState());
+  EXPECT_TRUE(GetLifecycleUnitAt(0)->Discard(LifecycleUnitDiscardReason::URGENT,
+                                             /*resident_set_size_estimate=*/0));
+  EXPECT_EQ(LifecycleUnitState::DISCARDED, GetLifecycleUnitAt(0)->GetState());
+  observer.Wait();
+  EXPECT_FALSE(process->IsInitializedAndNotDead());
+
+  // Assert the Browser acknowledges and records the discard latency.
+  EXPECT_TRUE(base::test::RunUntil([&] {
+    return histogram_tester
+               .GetAllSamples("Discarding.TabLifecycleUnit.DiscardLatency")
+               .size() == 1;
+  }));
+}
+
 IN_PROC_BROWSER_TEST_P(TabManagerTest, DiscardedTabHasNoProcess) {
   GURL test_page(ui_test_utils::GetTestUrl(
       base::FilePath(), base::FilePath(FILE_PATH_LITERAL("simple.html"))));
@@ -963,7 +1033,7 @@ IN_PROC_BROWSER_TEST_P(TabManagerFencedFrameTest, TabManagerWasDiscarded) {
 namespace {
 
 // Ensures that |browser| has |num_tabs| open tabs.
-void EnsureTabsInBrowser(Browser* browser, int num_tabs) {
+void EnsureTabsInBrowser(BrowserWindowInterface* browser, int num_tabs) {
   for (int i = 0; i < num_tabs; ++i) {
     ui_test_utils::NavigateToURLWithDisposition(
         browser, GURL(chrome::kChromeUICreditsURL),
@@ -972,23 +1042,24 @@ void EnsureTabsInBrowser(Browser* browser, int num_tabs) {
         ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
   }
 
-  EXPECT_EQ(num_tabs, browser->tab_strip_model()->count());
+  EXPECT_EQ(num_tabs, browser->GetTabStripModel()->count());
 }
 
 // Creates a browser with |num_tabs| tabs.
-Browser* CreateBrowserWithTabs(int num_tabs) {
-  Browser* current_browser = BrowserList::GetInstance()->GetLastActive();
-  ui_test_utils::BrowserChangeObserver new_browser_observer(
-      nullptr, ui_test_utils::BrowserChangeObserver::ChangeType::kAdded);
+BrowserWindowInterface* CreateBrowserWithTabs(int num_tabs) {
+  BrowserWindowInterface* const current_browser =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
+  ui_test_utils::BrowserCreatedObserver browser_created_observer;
   chrome::NewWindow(current_browser);
-  ui_test_utils::WaitForBrowserSetLastActive(new_browser_observer.Wait());
-  Browser* new_browser = BrowserList::GetInstance()->GetLastActive();
+  ui_test_utils::WaitForBrowserSetLastActive(browser_created_observer.Wait());
+  BrowserWindowInterface* new_browser =
+      GetLastActiveBrowserWindowInterfaceWithAnyProfile();
   EXPECT_NE(new_browser, current_browser);
 
   // To avoid flakes when focus changes, set the active tab strip model
   // explicitly.
   GetTabLifecycleUnitSource()->SetFocusedTabStripModelForTesting(
-      new_browser->tab_strip_model());
+      new_browser->GetTabStripModel());
 
   EnsureTabsInBrowser(new_browser, num_tabs);
   return new_browser;
@@ -1055,9 +1126,9 @@ IN_PROC_BROWSER_TEST_P(TabManagerTest, MAYBE_DiscardTabsWithOccludedWindow) {
   EnsureTabsInBrowser(browser(), 2);
   browser()->window()->SetBounds(gfx::Rect(10, 10, 10, 10));
   // Other browser that covers the occluded browser.
-  Browser* other_browser = CreateBrowserWithTabs(1);
+  BrowserWindowInterface* const other_browser = CreateBrowserWithTabs(1);
   EXPECT_NE(other_browser, browser());
-  other_browser->window()->SetBounds(gfx::Rect(0, 0, 100, 100));
+  other_browser->GetWindow()->SetBounds(gfx::Rect(0, 0, 100, 100));
 
   // Advance time so everything is urgent discardable.
   test_tick_clock_.Advance(kBackgroundUrgentProtectionTime);

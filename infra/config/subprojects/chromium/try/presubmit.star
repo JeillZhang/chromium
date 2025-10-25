@@ -3,15 +3,16 @@
 # found in the LICENSE file.
 """Definitions of builders in the chromium.android builder group."""
 
-load("//lib/builders.star", "os")
-load("//lib/branches.star", "branches")
-load("//lib/try.star", "try_")
-load("//lib/consoles.star", "consoles")
+load("@chromium-luci//branches.star", "branches")
+load("@chromium-luci//builders.star", "os")
+load("@chromium-luci//consoles.star", "consoles")
+load("@chromium-luci//try.star", "try_")
+load("//lib/try_constants.star", "try_constants")
 load("//project.star", "PLATFORMS", "platform")
 load("../fallback-cq.star", "fallback_cq")
 
 try_.defaults.set(
-    pool = try_.DEFAULT_POOL,
+    pool = try_constants.DEFAULT_POOL,
     cores = 8,
     os = os.LINUX_DEFAULT,
     list_view = "presubmit",
@@ -28,7 +29,7 @@ try_.defaults.set(
     # This will improve our turnaround time for landing infra/config changes
     # when addressing outages
     priority = 25,
-    service_account = try_.DEFAULT_SERVICE_ACCOUNT,
+    service_account = try_constants.DEFAULT_SERVICE_ACCOUNT,
 )
 
 consoles.list_view(
@@ -88,14 +89,13 @@ try_.presubmit_builder(
     name = "reclient-config-deployment-verifier",
     executable = "recipe:reclient_config_deploy_check/tester",
     properties = {
-        "fetch_script": "buildtools/reclient_cfgs/fetch_reclient_cfgs.py",
+        "fetch_script": "buildtools/reclient_cfgs/configure_reclient_cfgs.py",
         "rbe_project": [
             {
                 "name": "rbe-chromium-trusted",
                 "cfg_file": [
                     "buildtools/reclient_cfgs/chromium-browser-clang/rewrapper_linux.cfg",
                     "buildtools/reclient_cfgs/chromium-browser-clang/rewrapper_windows.cfg",
-                    "buildtools/reclient_cfgs/nacl/rewrapper_linux.cfg",
                 ],
             },
         ],
@@ -173,9 +173,11 @@ try_.presubmit_builder(
 )
 
 try_.presubmit_builder(
-    name = "chromium_presubmit",
+    name = "linux-presubmit",
     branch_selector = branches.selector.ALL_BRANCHES,
+    description_html = "Runs basic presubmit checks on Linux machines",
     executable = "recipe:presubmit",
+    contact_team_email = "chrome-browser-infra-team@google.com",
     execution_timeout = 40 * time.minute,
     properties = {
         "$depot_tools/presubmit": {

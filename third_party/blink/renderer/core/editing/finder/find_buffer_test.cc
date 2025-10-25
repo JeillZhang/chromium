@@ -719,23 +719,15 @@ TEST_P(FindBufferParamTest, InputTest) {
 }
 
 TEST_P(FindBufferParamTest, SelectMultipleTest) {
-  SetBodyContent("<select multiple><option>find me</option></select>");
+  SetBodyContent("<select multiple size=4><option>find me</option></select>");
   {
     FindBuffer buffer(WholeDocumentRange(), GetParam());
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
-    EXPECT_EQ(0u, buffer.FindMatches("find", FindOptions()).CountForTesting());
-#else
     EXPECT_EQ(1u, buffer.FindMatches("find", FindOptions()).CountForTesting());
-#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   }
   SetBodyContent("<select size=2><option>find me</option></select>");
   {
     FindBuffer buffer(WholeDocumentRange(), GetParam());
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
-    EXPECT_EQ(0u, buffer.FindMatches("find", FindOptions()).CountForTesting());
-#else
     EXPECT_EQ(1u, buffer.FindMatches("find", FindOptions()).CountForTesting());
-#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   }
   SetBodyContent("<select size=1><option>find me</option></select>");
   {
@@ -1158,6 +1150,26 @@ TEST_F(FindBufferTest, OrphanRubyTextCrash) {
                                              LastPositionInDocument()),
                     RubySupport::kEnabledForcefully);
   EXPECT_EQ(1u, CaseInsensitiveMatchCount(buffer, u"textd"));
+}
+
+TEST_F(FindBufferTest, TextareaMultilines) {
+  SetBodyContent("<textarea>line1\nline2\n</textarea>");
+  FindBuffer buffer(WholeDocumentRange(), RubySupport::kEnabledIfNecessary);
+  EXPECT_EQ(1u, CaseInsensitiveMatchCount(buffer, u"ne1 li"));
+}
+
+// crbug.com/453125750
+TEST_F(FindBufferTest, IsInSameUninterruptedBlockNoCrash) {
+  SetBodyContent(
+      "<option id='target'>ABC</option>"
+      "<style>* { display:-webkit-box; }</style>");
+  GetDocument().documentElement()->insertBefore(GetElementById("target"),
+                                                GetDocument().body());
+  UpdateAllLifecyclePhasesForTest();
+  FindBuffer buffer(WholeDocumentRange(), RubySupport::kEnabledIfNecessary);
+  EXPECT_EQ(1u, CaseInsensitiveMatchCount(buffer, u"ABC"));
+  // The test confirms GetInlineFormattingContext() doesn't crash.
+  // The match count result isn't important.
 }
 
 }  // namespace blink

@@ -20,12 +20,14 @@
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/login_detection/login_detection_util.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu_test_util.h"
 #include "chrome/browser/tab_contents/navigation_metrics_recorder.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
+#include "chrome/browser/ui/omnibox/omnibox_view.h"
 #include "chrome/browser/ui/sad_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/back_forward_menu_model.h"
@@ -33,11 +35,11 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/test/base/chrome_test_utils.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/profile_destruction_waiter.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/network_session_configurator/common/network_switches.h"
-#include "components/omnibox/browser/omnibox_view.h"
 #include "components/prefs/pref_service.h"
 #include "components/site_isolation/features.h"
 #include "components/site_isolation/pref_names.h"
@@ -134,7 +136,7 @@ class ChromeNavigationBrowserTest : public InProcessBrowserTest {
 // with a remote URL shows the correct tab title.
 IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest, TestViewFrameSource) {
   // The local page file:// URL.
-  GURL local_page_with_iframe_url = ui_test_utils::GetTestUrl(
+  GURL local_page_with_iframe_url = chrome_test_utils::GetTestUrl(
       base::FilePath(base::FilePath::kCurrentDirectory),
       base::FilePath(FILE_PATH_LITERAL("iframe.html")));
 
@@ -333,6 +335,12 @@ class CtrlClickShouldEndUpInSameProcessTest : public CtrlClickProcessTest {
     EXPECT_FALSE(contents1->GetSiteInstance()->IsRelatedSiteInstance(
         contents2->GetSiteInstance()));
   }
+
+ private:
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList scoped_prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
 };
 
 IN_PROC_BROWSER_TEST_F(CtrlClickShouldEndUpInSameProcessTest, NoTarget) {
@@ -355,7 +363,7 @@ IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest,
   GURL new_tab_url(
       "www.foo.com::/server-redirect?http%3A%2F%2Fbar.com%2Ftitle2.html");
   EXPECT_TRUE(new_tab_url.is_valid());
-  EXPECT_EQ("www.foo.com", new_tab_url.scheme());
+  EXPECT_EQ("www.foo.com", new_tab_url.GetScheme());
 
   // Navigate to an initial page, to ensure we have a committed document
   // from which to perform a context menu initiated navigation.
@@ -429,7 +437,7 @@ IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest,
     SCOPED_TRACE(testing::Message() << "kTestUrl = " << kTestUrl);
     GURL test_url(kTestUrl);
     EXPECT_TRUE(test_url.is_valid());
-    EXPECT_EQ("o.o", test_url.scheme());
+    EXPECT_EQ("o.o", test_url.GetScheme());
 
     // Set the test URL.
     const char kUrlSettingTemplate[] = R"(
@@ -842,8 +850,9 @@ IN_PROC_BROWSER_TEST_F(
   //    popup SiteInstance).
   EXPECT_EQ(old_subframe_site_instance.get(), popup->GetSiteInstance());
   EXPECT_NE(url::kAboutBlankURL,
-            popup->GetSiteInstance()->GetSiteURL().scheme());
-  EXPECT_NE(url::kDataScheme, popup->GetSiteInstance()->GetSiteURL().scheme());
+            popup->GetSiteInstance()->GetSiteURL().GetScheme());
+  EXPECT_NE(url::kDataScheme,
+            popup->GetSiteInstance()->GetSiteURL().GetScheme());
   if (content::AreAllSitesIsolatedForTesting()) {
     EXPECT_NE(opener->GetSiteInstance(), popup->GetSiteInstance());
     EXPECT_NE(old_popup_site_instance.get(), popup->GetSiteInstance());
@@ -853,7 +862,7 @@ IN_PROC_BROWSER_TEST_F(
     // require a dedicated process.
     EXPECT_NE(opener->GetSiteInstance()->GetProcess(),
               popup->GetSiteInstance()->GetProcess());
-    EXPECT_NE(old_popup_site_instance->GetOrCreateProcess(),
+    EXPECT_NE(old_popup_site_instance->GetOrCreateProcessForTesting(),
               popup->GetSiteInstance()->GetProcess());
   } else {
     EXPECT_EQ(opener->GetSiteInstance(), popup->GetSiteInstance());
@@ -864,7 +873,7 @@ IN_PROC_BROWSER_TEST_F(
     EXPECT_FALSE(old_popup_site_instance->RequiresDedicatedProcess());
     EXPECT_EQ(opener->GetSiteInstance()->GetProcess(),
               popup->GetSiteInstance()->GetProcess());
-    EXPECT_EQ(old_popup_site_instance->GetOrCreateProcess(),
+    EXPECT_EQ(old_popup_site_instance->GetOrCreateProcessForTesting(),
               popup->GetSiteInstance()->GetProcess());
   }
 }
@@ -982,27 +991,27 @@ IN_PROC_BROWSER_TEST_F(
     EXPECT_NE(opener->GetSiteInstance(), popup->GetSiteInstance());
     EXPECT_NE(old_popup_site_instance.get(), popup->GetSiteInstance());
     EXPECT_EQ(url::kDataScheme,
-              popup->GetSiteInstance()->GetSiteURL().scheme());
+              popup->GetSiteInstance()->GetSiteURL().GetScheme());
 
     // Verify that full isolation results in a separate process for each
     // SiteInstance. Otherwise they share a process because none of the sites
     // require a dedicated process.
     EXPECT_NE(opener->GetSiteInstance()->GetProcess(),
               popup->GetSiteInstance()->GetProcess());
-    EXPECT_NE(old_popup_site_instance->GetOrCreateProcess(),
+    EXPECT_NE(old_popup_site_instance->GetOrCreateProcessForTesting(),
               popup->GetSiteInstance()->GetProcess());
   } else {
     EXPECT_EQ(opener->GetSiteInstance(), popup->GetSiteInstance());
     EXPECT_EQ(old_popup_site_instance.get(), popup->GetSiteInstance());
     EXPECT_NE(url::kDataScheme,
-              popup->GetSiteInstance()->GetSiteURL().scheme());
+              popup->GetSiteInstance()->GetSiteURL().GetScheme());
 
     EXPECT_FALSE(opener->GetSiteInstance()->RequiresDedicatedProcess());
     EXPECT_FALSE(popup->GetSiteInstance()->RequiresDedicatedProcess());
     EXPECT_FALSE(old_popup_site_instance->RequiresDedicatedProcess());
     EXPECT_EQ(opener->GetSiteInstance()->GetProcess(),
               popup->GetSiteInstance()->GetProcess());
-    EXPECT_EQ(old_popup_site_instance->GetOrCreateProcess(),
+    EXPECT_EQ(old_popup_site_instance->GetOrCreateProcessForTesting(),
               popup->GetSiteInstance()->GetProcess());
   }
 }
@@ -1656,7 +1665,7 @@ IN_PROC_BROWSER_TEST_F(WebstoreIsolationBrowserTest, WebstorePopupIsIsolated) {
   EXPECT_NE(webstore_instance, initial_instance);
   EXPECT_NE(webstore_instance->GetProcess(), initial_instance->GetProcess());
   EXPECT_NE(webstore_instance->GetProcess(),
-            popup_instance->GetOrCreateProcess());
+            popup_instance->GetOrCreateProcessForTesting());
   EXPECT_FALSE(webstore_instance->IsRelatedSiteInstance(popup_instance.get()));
   EXPECT_FALSE(
       webstore_instance->IsRelatedSiteInstance(initial_instance.get()));
@@ -1667,7 +1676,7 @@ IN_PROC_BROWSER_TEST_F(WebstoreIsolationBrowserTest, WebstorePopupIsIsolated) {
   scoped_refptr<content::SiteInstance> final_instance(
       popup->GetPrimaryMainFrame()->GetSiteInstance());
   EXPECT_NE(final_instance->GetProcess(),
-            webstore_instance->GetOrCreateProcess());
+            webstore_instance->GetOrCreateProcessForTesting());
   EXPECT_FALSE(final_instance->IsRelatedSiteInstance(webstore_instance.get()));
 }
 
@@ -1707,7 +1716,8 @@ IN_PROC_BROWSER_TEST_F(WebstoreIsolationBrowserTest,
   EXPECT_TRUE(content::NavigateToURLFromRenderer(popup, first_url));
   scoped_refptr<content::SiteInstance> final_instance(
       popup->GetPrimaryMainFrame()->GetSiteInstance());
-  EXPECT_NE(final_instance->GetProcess(), popup_instance->GetOrCreateProcess());
+  EXPECT_NE(final_instance->GetProcess(),
+            popup_instance->GetOrCreateProcessForTesting());
   EXPECT_FALSE(final_instance->IsRelatedSiteInstance(popup_instance.get()));
 }
 
@@ -1760,7 +1770,8 @@ IN_PROC_BROWSER_TEST_F(WebstoreOverrideIsolationBrowserTest,
   EXPECT_TRUE(content::NavigateToURLFromRenderer(popup, first_url));
   scoped_refptr<content::SiteInstance> final_instance(
       popup->GetPrimaryMainFrame()->GetSiteInstance());
-  EXPECT_NE(final_instance->GetProcess(), popup_instance->GetOrCreateProcess());
+  EXPECT_NE(final_instance->GetProcess(),
+            popup_instance->GetOrCreateProcessForTesting());
   EXPECT_FALSE(final_instance->IsRelatedSiteInstance(popup_instance.get()));
 }
 
@@ -1804,33 +1815,6 @@ IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTest, CrossSiteRedirectionToPDF) {
 }
 
 using ChromeNavigationBrowserTestWithMobileEmulation = DevToolsProtocolTestBase;
-
-// Tests the behavior of navigating to a PDF when mobile emulation is enabled.
-IN_PROC_BROWSER_TEST_F(ChromeNavigationBrowserTestWithMobileEmulation,
-                       NavigateToPDFWithMobileEmulation) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  GURL initial_url = embedded_test_server()->GetURL("/title1.html");
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), initial_url));
-
-  Attach();
-  base::Value::Dict params;
-  params.Set("width", 400);
-  params.Set("height", 800);
-  params.Set("deviceScaleFactor", 1.0);
-  params.Set("mobile", true);
-  SendCommandSync("Emulation.setDeviceMetricsOverride", std::move(params));
-
-  GURL pdf_url = embedded_test_server()->GetURL("/pdf/test.pdf");
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), pdf_url));
-
-  EXPECT_EQ(pdf_url, web_contents()->GetLastCommittedURL());
-  EXPECT_EQ(
-      "<head></head>"
-      "<body><!-- no enabled plugin supports this MIME type --></body>",
-      content::EvalJs(web_contents(), "document.documentElement.innerHTML")
-          .ExtractString());
-}
 
 // Tests the behavior of cross origin redirection to a PDF with mobile emulation
 // is enabled.
@@ -2381,9 +2365,10 @@ IN_PROC_BROWSER_TEST_F(NavigationConsumingTest, TargetNavigationFocus) {
 using HistoryManipulationInterventionBrowserTest = ChromeNavigationBrowserTest;
 
 // Tests that chrome::GoBack does nothing if all the previous entries are marked
-// as skippable and the back button is disabled.
+// as skippable. The back button should remain enabled in the UI, so that the
+// user can long-press and select a skippable entry if they choose.
 IN_PROC_BROWSER_TEST_F(HistoryManipulationInterventionBrowserTest,
-                       AllEntriesSkippableBackButtonDisabled) {
+                       AllEntriesSkippableBackButtonEnabledButDoesNothing) {
   // Create a new tab to avoid confusion from having a NTP navigation entry.
   GURL skippable_url(embedded_test_server()->GetURL("/title1.html"));
   ui_test_utils::NavigateToURLWithDisposition(
@@ -2402,14 +2387,18 @@ IN_PROC_BROWSER_TEST_F(HistoryManipulationInterventionBrowserTest,
   ASSERT_TRUE(manager.WaitForNavigationFinished());
   ASSERT_EQ(redirected_url, main_contents->GetLastCommittedURL());
   ASSERT_EQ(2, main_contents->GetController().GetEntryCount());
+  EXPECT_TRUE(chrome::ShouldEnableBackButton(browser()));
+  EXPECT_EQ(main_contents->GetController().GetLastCommittedEntryIndex(), 1);
 
   // Attempting to go back should do nothing.
   ASSERT_FALSE(chrome::CanGoBack(browser()));
   chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
   ASSERT_EQ(redirected_url, main_contents->GetLastCommittedURL());
+  EXPECT_EQ(main_contents->GetController().GetLastCommittedEntryIndex(), 1);
 
-  // Back command should be disabled.
-  EXPECT_FALSE(chrome::IsCommandEnabled(browser(), IDC_BACK));
+  // The back button remains enabled.
+  EXPECT_TRUE(chrome::ShouldEnableBackButton(browser()));
+  EXPECT_TRUE(chrome::IsCommandEnabled(browser(), IDC_BACK));
 }
 
 // Tests that chrome::GoBack is successful if there is at least one entry not
@@ -2913,7 +2902,7 @@ IN_PROC_BROWSER_TEST_F(SiteIsolationForOAuthSitesBrowserTest,
   // oauthprovider.com without worrying that corresponding test files exist.
   content::URLLoaderInterceptor interceptor(base::BindLambdaForTesting(
       [&](content::URLLoaderInterceptor::RequestParams* params) {
-        if (params->url_request.url.host() == "oauthprovider.com") {
+        if (params->url_request.url.GetHost() == "oauthprovider.com") {
           content::URLLoaderInterceptor::WriteResponse(
               "chrome/test/data/title2.html", params->client.get());
           return true;

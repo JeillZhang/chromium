@@ -2,10 +2,11 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-load("//lib/builders.star", "cpu", "os", "siso")
-load("//lib/builder_config.star", "builder_config")
-load("//lib/gn_args.star", "gn_args")
-load("//lib/try.star", "try_")
+load("@chromium-luci//builder_config.star", "builder_config")
+load("@chromium-luci//builders.star", "cpu", "os")
+load("@chromium-luci//gn_args.star", "gn_args")
+load("@chromium-luci//try.star", "try_")
+load("//lib/siso.star", "siso")
 load("//lib/xcode.star", "xcode")
 
 try_.defaults.set(
@@ -22,9 +23,7 @@ try_.defaults.set(
     # Max. pending time for builds. CQ considers builds pending >2h as timed
     # out: http://shortn/_8PaHsdYmlq. Keep this in sync.
     expiration_timeout = 2 * time.hour,
-    reclient_enabled = False,
     service_account = "chromium-try-gpu-builder@chops-service-accounts.iam.gserviceaccount.com",
-    siso_enabled = True,
     siso_project = siso.project.DEFAULT_UNTRUSTED,
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
     subproject_list_view = "luci.chromium.try",
@@ -34,7 +33,7 @@ try_.defaults.set(
 def angle_mac_builder(*, name, **kwargs):
     kwargs.setdefault("builderless", True)
     kwargs.setdefault("cores", None)
-    kwargs.setdefault("os", os.MAC_ANY)
+    kwargs.setdefault("os", os.MAC_DEFAULT)
     kwargs.setdefault("ssd", None)
     return try_.builder(name = name, **kwargs)
 

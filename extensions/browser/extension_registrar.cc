@@ -49,7 +49,6 @@ namespace extensions {
 namespace {
 
 BASE_FEATURE(kExtensionUpdatesImmediatelyUnregisterWorker,
-             "ExtensionUpdatesImmediatelyUnregisterWorker",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace
@@ -288,8 +287,15 @@ void ExtensionRegistrar::RemoveExtension(const ExtensionId& extension_id,
   reloading_extensions_.erase(extension->id());
 
   if (registry_->enabled_extensions().Contains(extension_id)) {
+    // Put the pending removal extension in disabled set because underlying
+    // code of `DeactivateExtension` needs to access it.
+    // See https://crbug.com/443038597
+    registry_->AddDisabled(extension);
+
     registry_->RemoveEnabled(extension_id);
     DeactivateExtension(extension.get(), reason);
+
+    registry_->RemoveDisabled(extension_id);
   } else {
     // The extension was already deactivated from the call to
     // DisableExtension().
@@ -519,6 +525,12 @@ void ExtensionRegistrar::AddComponentExtension(const Extension* extension) {
             << old_version_string << "' to "
             << extension->version().GetString();
 
+    // If there was a previous installation, we need to clear the extension
+    // service worker. This is a workaround to ensure component extension
+    // updates are applied. See crbug.com/425464855.
+    if (old_version.IsValid()) {
+      UnregisterServiceWorkerWithRootScope(extension);
+    }
     // TODO(crbug.com/40508457): If needed, add support for Declarative Net
     // Request to component extensions and pass the ruleset install prefs here.
     AddNewOrUpdatedExtension(extension, {}, kInstallFlagNone,
@@ -756,6 +768,10 @@ void ExtensionRegistrar::BlockAllExtensions() {
 // All locked extensions should revert to being either enabled or disabled
 // as appropriate.
 void ExtensionRegistrar::UnblockAllExtensions() {
+  if (!block_extensions_) {
+    return;
+  }
+
   block_extensions_ = false;
 
   const ExtensionSet to_unblock =
@@ -825,6 +841,19 @@ void ExtensionRegistrar::OnGreylistStateRemoved(
                                                    extension_prefs_);
   RemoveDisableReasonAndMaybeEnable(extension_id,
                                     disable_reason::DISABLE_GREYLIST);
+
+  // A user can enable and disable a force-installed extension while it is
+  // greylisted. If a user disables an extension while greylisted, the
+  // extension gets a DISABLE_USER_ACTION disable reason assigned to it. So
+  // remove the DISABLE_USER_ACTION disable reason as well when a
+  // force-installed extension gets "un-greylisted" to allow the extension
+  // to be re-enabled.
+  const Extension* extension = registry_->GetInstalledExtension(extension_id);
+  if (extension && extension_system_->management_policy()->MustRemainEnabled(
+                       extension, nullptr)) {
+    RemoveDisableReasonAndMaybeEnable(extension_id,
+                                      disable_reason::DISABLE_USER_ACTION);
+  }
 }
 
 void ExtensionRegistrar::OnGreylistStateAdded(const std::string& extension_id,
@@ -869,7 +898,11 @@ void ExtensionRegistrar::GreylistExtensionForTest(
     const BitMapBlocklistState& state) {
   blocklist_prefs::SetSafeBrowsingExtensionBlocklistState(extension_id, state,
                                                           extension_prefs_);
-  OnGreylistStateAdded(extension_id, state);
+  if (state == BitMapBlocklistState::NOT_BLOCKLISTED) {
+    OnGreylistStateRemoved(extension_id);
+  } else {
+    OnGreylistStateAdded(extension_id, state);
+  }
 }
 
 void ExtensionRegistrar::OnUnpackedExtensionReloadFailed(
@@ -1000,6 +1033,12 @@ void ExtensionRegistrar::ActivateExtension(const Extension* extension,
 
 void ExtensionRegistrar::DeactivateExtension(const Extension* extension,
                                              UnloadedExtensionReason reason) {
+  // NOTE: Call `TriggerOnUnloaded` before `DeactivateTaskQueueForExtension`.
+  // If an extension service worker is running, this stops it, which triggers a
+  // synchronous notification. This notification updates the
+  // `ServiceWorkerState` and untracks the worker from `ProcessManager`.
+  // `ServiceWorkerTaskQueue` can then operate in a consistent state, safely
+  // assuming the worker is no longer active.
   registry_->TriggerOnUnloaded(extension, reason);
   renderer_helper_->OnExtensionUnloaded(*extension);
   DeactivateTaskQueueForExtension(browser_context_, extension);

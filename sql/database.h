@@ -40,6 +40,7 @@
 #include "sql/sqlite_result_code.h"
 #include "sql/sqlite_result_code_values.h"
 #include "sql/statement_id.h"
+#include "sql/streaming_blob_handle.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_proto.h"
 
 // Forward declaration for SQLite structures. Headers in the public sql:: API
@@ -243,6 +244,17 @@ struct COMPONENT_EXPORT(SQL) DatabaseOptions {
     return *this;
   }
 
+  // If true, enables SQL triggers for this database.
+  //
+  // The use of triggers should be thoughtful. See README.md for details.
+  //
+  // If this option is false, CREATE TRIGGER and DROP TRIGGER succeed, but the
+  // triggers won't fire.
+  DatabaseOptions& set_enable_triggers(bool enable_triggers) {
+    enable_triggers_ = enable_triggers;
+    return *this;
+  }
+
   // If non-null, specifies the vfs implementation for the database to look for.
   // Most use-cases do not require the use of a
   // VFS(https://www.sqlite.org/vfs.html). This option should only be used when
@@ -270,6 +282,39 @@ struct COMPONENT_EXPORT(SQL) DatabaseOptions {
     return *this;
   }
 
+  // If true, disables synchronous writes for the WAL. When this option is true,
+  // `PRAGMA synchronous = OFF` is used. Otherwise,
+  // `PRAGMA synchronous = NORMAL` is used. See
+  // https://www.sqlite.org/pragma.html#pragma_synchronous for more details.
+  DatabaseOptions& set_no_sync_on_wal_mode(bool no_sync_on_wal_mode) {
+    no_sync_on_wal_mode_ = no_sync_on_wal_mode;
+    return *this;
+  }
+
+  // Set a WAL commit callback for configuring manual WAL checkpointing.
+  //
+  // When this callback is provided, SQLite's automatic checkpointing is
+  // disabled. The callback is called each time data is committed to the
+  // database, with the number of pages currently in the write-ahead log file
+  // (including those that were just committed).
+  //
+  // The owner of the database is responsible for calling CheckpointDatabase()
+  // at appropriate times. The owner may choose to do so within the callback,
+  // or at any other time. This is useful for performance tuning, allowing
+  // checkpoints to be performed only when the process is idle to avoid
+  // blocking the main database sequence.
+  //
+  // When the callback is not set, SQLite will automatically checkpoint the
+  // database when the WAL file reaches 1000 pages.
+  //
+  // This option is only effective when WAL mode is enabled.
+  DatabaseOptions& set_wal_commit_callback(
+      base::RepeatingCallback<void(int)> wal_commit_callback) {
+    CHECK(wal_commit_callback);
+    wal_commit_callback_ = std::move(wal_commit_callback);
+    return *this;
+  }
+
  private:
   friend class Database;
   FRIEND_TEST_ALL_PREFIXES(DatabaseOptionsTest,
@@ -289,6 +334,9 @@ struct COMPONENT_EXPORT(SQL) DatabaseOptions {
   const char* vfs_name_discouraged_ = nullptr;
   bool mmap_enabled_ = true;
   bool read_only_ = false;
+  bool enable_triggers_ = false;
+  bool no_sync_on_wal_mode_ = false;
+  base::RepeatingCallback<void(int)> wal_commit_callback_;
 };
 
 // Holds database diagnostics in a structured format.
@@ -692,6 +740,17 @@ class COMPONENT_EXPORT(SQL) Database {
   scoped_refptr<Database::StatementRef> GetReadonlyStatement(
       base::cstring_view sql);
 
+  // Opens a blob for streaming. Returns nullopt on failure. Note that this
+  // should only be called if the given table, column, and row is known to
+  // exist --- everything else is an error. For a list of failure modes, see
+  // https://www.sqlite.org/c3ref/blob_open.html
+  //
+  // See `StreamingBlobHandle` docs for notes on lifetime.
+  std::optional<StreamingBlobHandle> GetStreamingBlob(base::cstring_view table,
+                                                      base::cstring_view column,
+                                                      int64_t row_id,
+                                                      bool readonly);
+
   // Performs a passive checkpoint on the main attached database if it is in
   // WAL mode. Returns true if the checkpoint was successful and false in case
   // of an error. It is a no-op if the database is not in WAL mode.
@@ -815,14 +874,11 @@ class COMPONENT_EXPORT(SQL) Database {
 
   FRIEND_TEST_ALL_PREFIXES(SQLDatabaseTest, CachedStatement);
   FRIEND_TEST_ALL_PREFIXES(SQLDatabaseTest, CollectDiagnosticInfo);
-  FRIEND_TEST_ALL_PREFIXES(SQLDatabaseTest, ComputeMmapSizeForOpen);
-  FRIEND_TEST_ALL_PREFIXES(SQLDatabaseTest, ComputeMmapSizeForOpenAltStatus);
   FRIEND_TEST_ALL_PREFIXES(SQLDatabaseTest, OnMemoryDump);
-  FRIEND_TEST_ALL_PREFIXES(SQLDatabaseTest,
-                           RazeAndPoison_ComputeMmapSizeForOpen);
   FRIEND_TEST_ALL_PREFIXES(SQLDatabaseTest, RegisterIntentToUpload);
   FRIEND_TEST_ALL_PREFIXES(SQLiteFeaturesTest, WALNoClose);
   FRIEND_TEST_ALL_PREFIXES(SQLEmptyPathDatabaseTest, EmptyPathTest);
+  FRIEND_TEST_ALL_PREFIXES(StreamingBlobHandleTest, Basic);
 
   // A scoped utility to setup error reporting during the `Open()` operation
   class ScopedOpenErrorReporter {
@@ -867,6 +923,11 @@ class COMPONENT_EXPORT(SQL) Database {
   // |forced| indicates that orderly-shutdown checks should not apply.
   void CloseInternal(bool forced);
 
+  // Called when a blob opened with `GetStreamingBlob()` is closed. `result` may
+  // or may not be an error; if it is, `error_source` identifies which sqlite3
+  // call caused the error.
+  void OnStreamingBlobClosed(SqliteResultCode result, const char* error_source);
+
   // Construct a ScopedBlockingCall to annotate IO calls, but only if
   // database wasn't open in memory. ScopedBlockingCall uses |from_here| to
   // declare its blocking execution scope (see https://www.crbug/934302).
@@ -879,6 +940,13 @@ class COMPONENT_EXPORT(SQL) Database {
 
   // Internal helper for Does*Exist() functions.
   bool DoesSchemaItemExist(std::string_view name, std::string_view type);
+
+  // This callback is registered with SQLite to be called after each commit when
+  // `set_wal_commit_callback()` is used.
+  static int WalHookCallback(void* db_ptr,
+                             sqlite3* db_handle,
+                             const char* db_name,
+                             int pages);
 
   // Used to implement the interface with sql::test::ScopedErrorExpecter.
   static ScopedErrorExpecterCallback* current_expecter_cb_;
@@ -1006,6 +1074,10 @@ class COMPONENT_EXPORT(SQL) Database {
                      Statement* statement,
                      const char* sql_statement);
 
+  // Raze the database to the ground. This is the internal version called by
+  // Raze(...).
+  bool RazeInternal();
+
   // Like Execute(), but returns a SQLite result code.
   //
   // This method returns SqliteResultCode::kOk or a SQLite error code. In other
@@ -1043,37 +1115,6 @@ class COMPONENT_EXPORT(SQL) Database {
   std::string CollectErrorInfo(int sqlite_error_code,
                                Statement* stmt,
                                DatabaseDiagnostics* diagnostics) const;
-
-  // The size of the memory mapping that SQLite should use for this database.
-  //
-  // The return value follows the semantics of "PRAGMA mmap_size". In
-  // particular, zero (0) means memory-mapping should be disabled, and the value
-  // is capped by SQLITE_MAX_MMAP_SIZE. More details at
-  // https://www.sqlite.org/pragma.html#pragma_mmap_size
-  //
-  // "Memory-mapped access" is usually shortened to "mmap", which is the name of
-  // the POSIX system call used to implement. The same principles apply on
-  // Windows, but its more-descriptive API names don't make for good shorthands.
-  //
-  // When mmap is enabled, SQLite attempts to use the memory-mapped area (by
-  // calling xFetch() in the VFS file API) instead of requesting a database page
-  // buffer from the pager and reading (via xRead() in the VFS API) into it.
-  // When this works out, the database page cache ends up only storing pages
-  // whose contents has been modified. More details at
-  // https://sqlite.org/mmap.html
-  //
-  // I/O errors on memory-mapped files result in crashes in Chrome. POSIX
-  // systems signal SIGSEGV or SIGBUS on I/O errors in mmap-ed files. Windows
-  // raises the EXECUTE_IN_PAGE_ERROR strucuted exception in this case. Chrome
-  // does not catch signals or structured exceptions.
-  //
-  // In order to avoid crashes, this method attempts to read the file using
-  // regular I/O, and returns 0 (no mmap) if it encounters any error.
-  size_t ComputeMmapSizeForOpen();
-
-  // Helpers for ComputeMmapSizeForOpen().
-  bool GetMmapAltStatus(int64_t* status);
-  bool SetMmapAltStatus(int64_t status);
 
   // Returns a SQLite VFS interface pointer to the file storing database pages.
   //
@@ -1116,6 +1157,12 @@ class COMPONENT_EXPORT(SQL) Database {
   // us when it's created or destroyed. This allows us to potentially close
   // any open statements when we encounter an error.
   std::set<raw_ptr<StatementRef>> open_statements_;
+
+  // The number of blobs open for streaming, tracked for debugging purposes.
+  size_t outstanding_blob_count_ = 0;
+
+  // When non-zero, indicates that `this` is inside `OnSqliteError()`.
+  size_t handling_error_nesting_ = 0;
 
   // Number of currently-nested transactions.
   int transaction_nesting_ = 0;
@@ -1171,6 +1218,11 @@ class COMPONENT_EXPORT(SQL) Database {
   // during `OpenInternal` or `Execute`s triggered from `Open`.
   base::RepeatingCallback<void(SqliteResultCode)>
       open_error_reporting_callback_;
+
+  // Weak factory for tracking lifetime of `this` (as opposed to
+  // `weak_factory_`, which will also invalidate pointers if the database is
+  // closed).
+  base::WeakPtrFactory<Database> weak_factory_lifetime_tracker_{this};
 
   // Vends WeakPtr<Database> for internal scoping helpers.
   base::WeakPtrFactory<Database> weak_factory_{this};

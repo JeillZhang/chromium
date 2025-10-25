@@ -1,7 +1,8 @@
 Name: Ink
 URL: https://github.com/google/ink.git
 Version: N/A
-Revision: da9cb551ada1e55309b0ac89b9fbff2d29dbfe1e
+Revision: f70052a0bbae22fe52b630844e9651b27db92ed2
+Update Mechanism: Manual
 License: Apache-2.0
 License File: LICENSE
 Shipped: yes

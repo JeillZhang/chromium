@@ -5,6 +5,7 @@
 #include "chrome/browser/actor/actor_keyed_service_factory.h"
 
 #include "chrome/browser/profiles/profile.h"
+#include "content/public/browser/browser_context.h"
 
 namespace actor {
 
@@ -13,7 +14,7 @@ ActorKeyedService* ActorKeyedServiceFactory::GetActorKeyedService(
     content::BrowserContext* browser_context) {
   return static_cast<ActorKeyedService*>(
       GetInstance()->GetServiceForBrowserContext(browser_context,
-                                                 /*create=*/false));
+                                                 /*create=*/true));
 }
 
 // static

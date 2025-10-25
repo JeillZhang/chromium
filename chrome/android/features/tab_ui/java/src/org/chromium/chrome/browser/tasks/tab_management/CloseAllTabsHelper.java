@@ -122,8 +122,8 @@ public class CloseAllTabsHelper {
 
         TabArchiver archiver = archivedOrchestrator.getTabArchiver();
         TabModel archivedTabModel = archivedOrchestrator.getTabModel();
-        for (int i = 0; i < archivedTabModel.getCount(); i++) {
-            Tab archivedTab = archivedTabModel.getTabAtChecked(i);
+        assumeNonNull(archivedTabModel);
+        for (Tab archivedTab : archivedTabModel) {
             previouslyArchivedTabIds.add(archivedTab.getId());
         }
         archiver.unarchiveAndRestoreTabs(

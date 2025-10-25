@@ -40,11 +40,14 @@ import org.robolectric.annotation.Config;
 import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.Callback;
+import org.chromium.base.supplier.ObservableSupplier;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.cc.input.BrowserControlsState;
 import org.chromium.chrome.R;
@@ -56,6 +59,7 @@ import org.chromium.chrome.browser.tab.TabObscuringHandler;
 import org.chromium.chrome.browser.tab.TabObscuringHandler.Target;
 import org.chromium.chrome.browser.toolbar.ControlContainer;
 import org.chromium.chrome.browser.toolbar.ToolbarFeatures;
+import org.chromium.chrome.browser.toolbar.ToolbarHairlineView;
 import org.chromium.chrome.browser.toolbar.top.tab_strip.TabStripTransitionCoordinator.TabStripHeightObserver;
 import org.chromium.chrome.browser.toolbar.top.tab_strip.TabStripTransitionCoordinator.TabStripTransitionDelegate;
 import org.chromium.chrome.browser.ui.desktop_windowing.AppHeaderUtils.DesktopWindowModeState;
@@ -70,7 +74,6 @@ import java.util.concurrent.TimeUnit;
 /** Unit test for {@link TabStripTransitionCoordinator}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(qualifiers = "w600dp-h800dp", shadows = ShadowLooper.class)
-@EnableFeatures(ChromeFeatureList.TAB_STRIP_TRANSITION_IN_DESKTOP_WINDOW)
 @DisableFeatures(ChromeFeatureList.TAB_STRIP_LAYOUT_OPTIMIZATION)
 public class TabStripTransitionCoordinatorUnitTest {
     private static final int TEST_TAB_STRIP_HEIGHT = 40;
@@ -155,6 +158,24 @@ public class TabStripTransitionCoordinatorUnitTest {
 
         setDeviceWidthDp(NARROW_NORMAL_WINDOW_WIDTH);
         Assert.assertEquals("Tab strip height is wrong.", 0, mObserver.heightRequested);
+    }
+
+    @Test
+    @Config(qualifiers = "w600dp")
+    @CommandLineFlags.Add("tab-strip-height-transition-threshold=700")
+    public void initWithWideWindow_CommandlineOverride() {
+        Assert.assertEquals(
+                "Init will not change the tab strip height.",
+                TEST_TAB_STRIP_HEIGHT,
+                mCoordinator.getTabStripHeight());
+        Assert.assertEquals(
+                "Tab strip height requested changing to 0.", 0, mObserver.heightRequested);
+
+        setDeviceWidthDp(800);
+        Assert.assertEquals(
+                "Changing the window to wide will request for full-size tab strip.",
+                TEST_TAB_STRIP_HEIGHT,
+                mObserver.heightRequested);
     }
 
     @Test
@@ -558,6 +579,7 @@ public class TabStripTransitionCoordinatorUnitTest {
     }
 
     @Test
+    @DisabledTest(message = "crbug.com/424161113")
     public void configurationChangedDuringDelayedTask() {
         setConfigurationWithNewWidth(NARROW_NORMAL_WINDOW_WIDTH);
         simulateLayoutChange(NARROW_NORMAL_WINDOW_WIDTH);
@@ -570,6 +592,7 @@ public class TabStripTransitionCoordinatorUnitTest {
     }
 
     @Test
+    @DisabledTest(message = "crbug.com/424161113")
     public void destroyDuringDelayedTask() {
         setConfigurationWithNewWidth(NARROW_NORMAL_WINDOW_WIDTH);
         simulateLayoutChange(NARROW_NORMAL_WINDOW_WIDTH);
@@ -584,6 +607,7 @@ public class TabStripTransitionCoordinatorUnitTest {
     }
 
     @Test
+    @DisabledTest(message = "crbug.com/424161113")
     public void destroyBeforeCapture() {
         setConfigurationWithNewWidth(NARROW_NORMAL_WINDOW_WIDTH);
         simulateLayoutChange(NARROW_NORMAL_WINDOW_WIDTH);
@@ -1172,10 +1196,14 @@ public class TabStripTransitionCoordinatorUnitTest {
                 "Top margin is wrong for findToolbar.",
                 tabStripHeight + TEST_TOOLBAR_HEIGHT,
                 mSpyControlContainer.findToolbar.getTopMargin());
+
+        int toolbarHairlineTopMargin =
+                ((MarginLayoutParams) mSpyControlContainer.toolbarHairline.getLayoutParams())
+                        .topMargin;
         Assert.assertEquals(
                 "Top margin is wrong for toolbarHairline.",
                 tabStripHeight + TEST_TOOLBAR_HEIGHT,
-                mSpyControlContainer.toolbarHairline.getTopMargin());
+                toolbarHairlineTopMargin);
     }
 
     private void assertObservedHeight(int tabStripHeight) {
@@ -1263,7 +1291,7 @@ public class TabStripTransitionCoordinatorUnitTest {
     // mocks for the sake of unit tests.
     static class TestControlContainerView extends FrameLayout {
         public TestView toolbarLayout;
-        public TestView toolbarHairline;
+        public ToolbarHairlineView toolbarHairline;
         public TestView findToolbar;
 
         @Nullable public View.OnLayoutChangeListener onLayoutChangeListener;
@@ -1307,7 +1335,7 @@ public class TabStripTransitionCoordinatorUnitTest {
             findToolbar = Mockito.spy(new TestView(context, attrs));
             when(toolbarLayout.getHeight()).thenReturn(TEST_TOOLBAR_HEIGHT);
             when(findToolbar.getHeight()).thenReturn(TEST_TOOLBAR_HEIGHT);
-            toolbarHairline = new TestView(context, attrs);
+            toolbarHairline = new ToolbarHairlineView(context, attrs);
 
             MarginLayoutParams sourceParams =
                     new MarginLayoutParams(
@@ -1348,13 +1376,19 @@ public class TabStripTransitionCoordinatorUnitTest {
         public float scrimOpacityRequested = NOTHING_OBSERVED;
         public boolean applyScrimOverlay;
         public final CallbackHelper fadeTransitionCallback = new CallbackHelper();
-        private @StripVisibilityState int mStripVisibilityState;
+
+        private final ObservableSupplierImpl<Integer> mStripVisibilitySupplier =
+                new ObservableSupplierImpl<>();
+
+        TestDelegate() {
+            mStripVisibilitySupplier.set(StripVisibilityState.VISIBLE);
+        }
 
         void reset() {
             heightChanged = NOTHING_OBSERVED;
             heightTransitionFinished = false;
             scrimOpacityRequested = NOTHING_OBSERVED;
-            mStripVisibilityState = StripVisibilityState.VISIBLE;
+            mStripVisibilitySupplier.set(StripVisibilityState.VISIBLE);
             applyScrimOverlay = false;
         }
 
@@ -1362,10 +1396,10 @@ public class TabStripTransitionCoordinatorUnitTest {
         public void onHeightChanged(int newHeight, boolean applyScrimOverlay) {
             heightChanged = newHeight;
             if (applyScrimOverlay) {
-                mStripVisibilityState =
+                mStripVisibilitySupplier.set(
                         newHeight == 0
                                 ? StripVisibilityState.HIDDEN_BY_HEIGHT_TRANSITION
-                                : StripVisibilityState.VISIBLE;
+                                : StripVisibilityState.VISIBLE);
             }
             this.applyScrimOverlay = applyScrimOverlay;
         }
@@ -1378,16 +1412,16 @@ public class TabStripTransitionCoordinatorUnitTest {
         @Override
         public void onFadeTransitionRequested(float newOpacity, int durationMs) {
             scrimOpacityRequested = newOpacity;
-            mStripVisibilityState =
+            mStripVisibilitySupplier.set(
                     newOpacity == 0f
                             ? StripVisibilityState.VISIBLE
-                            : StripVisibilityState.HIDDEN_BY_FADE;
+                            : StripVisibilityState.HIDDEN_BY_FADE);
             fadeTransitionCallback.notifyCalled();
         }
 
         @Override
-        public int getStripVisibilityState() {
-            return mStripVisibilityState;
+        public ObservableSupplier<Integer> getStripVisibilityStateSupplier() {
+            return mStripVisibilitySupplier;
         }
     }
 }

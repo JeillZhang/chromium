@@ -120,6 +120,16 @@ void BrowserManagementService::StartListeningToPrefChanges(Profile* profile) {
       base::BindRepeating(
           &BrowserManagementService::UpdateEnterpriseLabelForProfile,
           weak_ptr_factory_.GetWeakPtr(), profile));
+
+  auto* browser_process = g_browser_process->local_state();
+  if (browser_process) {
+    local_state_pref_change_registrar_.Init(g_browser_process->local_state());
+    local_state_pref_change_registrar_.Add(
+        prefs::kEnterpriseLogoUrlForBrowser,
+        base::BindRepeating(
+            &BrowserManagementService::UpdateManagementIconForBrowser,
+            weak_ptr_factory_.GetWeakPtr(), profile));
+  }
 }
 
 void BrowserManagementService::UpdateManagementIconForProfile(
@@ -127,6 +137,7 @@ void BrowserManagementService::UpdateManagementIconForProfile(
   enterprise_util::GetManagementIcon(
       GURL(profile->GetPrefs()->GetString(prefs::kEnterpriseLogoUrlForProfile)),
       profile,
+      enterprise_util::EnterpriseLogoUrlScope::kProfile,
       base::BindOnce(&BrowserManagementService::SetManagementIconForProfile,
                      weak_ptr_factory_.GetWeakPtr()));
 }
@@ -144,10 +155,12 @@ void BrowserManagementService::UpdateManagementIconForBrowser(
   std::string logo_url = g_browser_process->local_state()->GetString(
       prefs::kEnterpriseLogoUrlForBrowser);
   if (logo_url.empty()) {
+    SetManagementIconForBrowser(gfx::Image());
     return;
   }
   enterprise_util::GetManagementIcon(
       GURL(logo_url), profile,
+      enterprise_util::EnterpriseLogoUrlScope::kBrowser,
       base::BindOnce(&BrowserManagementService::SetManagementIconForBrowser,
                      weak_ptr_factory_.GetWeakPtr()));
 }
@@ -166,6 +179,7 @@ void BrowserManagementService::SetManagementIconForProfile(
 void BrowserManagementService::SetManagementIconForBrowser(
     const gfx::Image& management_icon) {
   management_icon_for_browser_ = management_icon;
+  NotifyEnterpriseLogoForBrowserUpdated();
 }
 
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)

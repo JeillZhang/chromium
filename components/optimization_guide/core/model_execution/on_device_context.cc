@@ -6,8 +6,8 @@
 
 #include "base/metrics/histogram_functions.h"
 #include "components/optimization_guide/core/model_execution/multimodal_message.h"
+#include "components/optimization_guide/core/model_execution/on_device_capability.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "services/on_device_model/ml/chrome_ml_audio_buffer.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
@@ -97,8 +97,7 @@ OnDeviceOptions::OnDeviceOptions(const OnDeviceOptions& orig)
       safety_checker(std::make_unique<SafetyChecker>(*orig.safety_checker)),
       token_limits(orig.token_limits),
       capabilities(orig.capabilities),
-      sampling_params(orig.sampling_params),
-      logger(orig.logger) {}
+      sampling_params(orig.sampling_params) {}
 
 bool OnDeviceOptions::ShouldUse() const {
   return model_client->ShouldUse();
@@ -109,9 +108,8 @@ OnDeviceContext::OnDeviceContext(OnDeviceOptions opts,
     : opts_(std::move(opts)), feature_(feature) {}
 OnDeviceContext::~OnDeviceContext() = default;
 
-bool OnDeviceContext::SetInput(
-    MultimodalMessageReadView request,
-    OptimizationGuideModelExecutor::Session::SetInputCallback callback) {
+bool OnDeviceContext::SetInput(MultimodalMessageReadView request,
+                               OnDeviceSession::SetInputCallback callback) {
   callback_ = std::move(callback);
   auto input =
       opts_.adapter->ConstructInputString(request, /*want_input_context=*/true);

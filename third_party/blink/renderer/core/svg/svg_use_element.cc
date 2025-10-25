@@ -83,12 +83,14 @@ SVGUseElement::SVGUseElement(Document& document)
           this,
           svg_names::kWidthAttr,
           SVGLengthMode::kWidth,
-          SVGLength::Initial::kUnitlessZero)),
+          SVGLength::Initial::kUnitlessZero,
+          CSSPropertyID::kWidth)),
       height_(MakeGarbageCollected<SVGAnimatedLength>(
           this,
           svg_names::kHeightAttr,
           SVGLengthMode::kHeight,
-          SVGLength::Initial::kUnitlessZero)),
+          SVGLength::Initial::kUnitlessZero,
+          CSSPropertyID::kHeight)),
       element_url_is_local_(true),
       needs_shadow_tree_recreation_(false) {
   DCHECK(HasCustomStyleCallbacks());
@@ -192,6 +194,7 @@ void SVGUseElement::UpdateDocumentContent(
     return;
   }
   auto old_load_event_delayer = std::move(load_event_delayer_);
+  notification_pending_ = false;
   if (document_content_) {
     document_content_->RemoveObserver(this);
   }
@@ -199,6 +202,7 @@ void SVGUseElement::UpdateDocumentContent(
   if (document_content_) {
     load_event_delayer_ =
         std::make_unique<IncrementLoadEventDelayCount>(GetDocument());
+    notification_pending_ = true;
     document_content_->AddObserver(this);
   }
 }
@@ -250,7 +254,9 @@ void SVGUseElement::SvgAttributeChanged(
   if (attr_name == svg_names::kXAttr || attr_name == svg_names::kYAttr ||
       attr_name == svg_names::kWidthAttr ||
       attr_name == svg_names::kHeightAttr) {
-    if (attr_name == svg_names::kXAttr || attr_name == svg_names::kYAttr) {
+    if (attr_name == svg_names::kXAttr || attr_name == svg_names::kYAttr ||
+        RuntimeEnabledFeatures::
+            WidthAndHeightStylePropertiesOnUseAndSymbolEnabled()) {
       UpdatePresentationAttributeStyle(params.property);
     }
 
@@ -333,8 +339,8 @@ Element* SVGUseElement::ResolveTargetElement() {
     } else {
       return ObserveTarget(
           target_id_observer_, OriginatingTreeScope(), element_identifier,
-          WTF::BindRepeating(&SVGUseElement::InvalidateTargetReference,
-                             WrapWeakPersistent(this)));
+          BindRepeating(&SVGUseElement::InvalidateTargetReference,
+                        WrapWeakPersistent(this)));
     }
   }
   if (!document_content_) {
@@ -461,7 +467,8 @@ static void MoveChildrenToReplacementElement(ContainerNode& source_root,
 SVGElement* SVGUseElement::CreateInstanceTree(SVGElement& target_root) const {
   NodeCloningData data{CloneOption::kIncludeDescendants};
   SVGElement* instance_root = &To<SVGElement>(target_root.CloneWithChildren(
-      data, /*document*/ nullptr, /*append_to*/ nullptr));
+      data, /*document*/ nullptr, /*append_to*/ nullptr,
+      /*fallback_registry*/ nullptr));
   if (IsA<SVGSymbolElement>(target_root)) {
     // Spec: The referenced 'symbol' and its contents are deep-cloned into
     // the generated tree, with the exception that the 'symbol' is replaced
@@ -640,7 +647,17 @@ void SVGUseElement::QueueOrDispatchPendingEvent(
 void SVGUseElement::ResourceNotifyFinished(
     SVGResourceDocumentContent* document_content) {
   DCHECK_EQ(document_content_, document_content);
+  // Early-out if we've already been notified for this resource.
+  // This can happen when a resource revalidation causes all observing <use>
+  // elements to be notified, but we only want to rebuild the shadow tree when
+  // this element has initiated the resource fetch.
+  if (RuntimeEnabledFeatures::
+          SvgPartitionSVGDocumentResourcesInMemoryCacheEnabled() &&
+      !notification_pending_) {
+    return;
+  }
   load_event_delayer_.reset();
+  notification_pending_ = false;
   if (!isConnected())
     return;
   InvalidateShadowTree();
@@ -651,8 +668,8 @@ void SVGUseElement::ResourceNotifyFinished(
   DCHECK(!pending_event_.IsActive());
   pending_event_ = PostCancellableTask(
       *GetDocument().GetTaskRunner(TaskType::kDOMManipulation), FROM_HERE,
-      WTF::BindOnce(&SVGUseElement::QueueOrDispatchPendingEvent,
-                    WrapPersistent(this), event_name));
+      BindOnce(&SVGUseElement::QueueOrDispatchPendingEvent,
+               WrapPersistent(this), event_name));
 }
 
 SVGAnimatedPropertyBase* SVGUseElement::PropertyFromAttribute(
@@ -686,8 +703,8 @@ void SVGUseElement::SynchronizeAllSVGAttributes() const {
 
 void SVGUseElement::CollectExtraStyleForPresentationAttribute(
     HeapVector<CSSPropertyValue, 8>& style) {
-  auto pres_attrs =
-      std::to_array<const SVGAnimatedPropertyBase*>({x_.Get(), y_.Get()});
+  auto pres_attrs = std::to_array<const SVGAnimatedPropertyBase*>(
+      {x_.Get(), y_.Get(), width_.Get(), height_.Get()});
   AddAnimatedPropertiesToPresentationAttributeStyle(pres_attrs, style);
   SVGGraphicsElement::CollectExtraStyleForPresentationAttribute(style);
 }

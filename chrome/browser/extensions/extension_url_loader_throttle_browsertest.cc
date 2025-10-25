@@ -11,7 +11,6 @@
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/profiles/profile_io_data.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/common/switches.h"
@@ -86,14 +85,14 @@ class ExtensionURLLoaderThrottleBrowserTest : public ExtensionBrowserTest {
                const std::string& expected_throttled_request_num) {
     ResultCatcher catcher;
     const GURL unthrottled_test_url = net::AppendQueryParameter(
-        extension_->ResolveExtensionURL(file_path), "url", request_url);
+        extension_->GetResourceURL(file_path), "url", request_url);
     const GURL test_url =
         expected_throttled_request_num.empty()
             ? unthrottled_test_url
             : net::AppendQueryParameter(unthrottled_test_url,
                                         "expectedFailRequestNum",
                                         expected_throttled_request_num);
-    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), test_url));
+    ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), test_url));
     ASSERT_TRUE(catcher.GetNextResult());
   }
 

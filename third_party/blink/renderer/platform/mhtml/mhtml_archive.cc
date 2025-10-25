@@ -44,10 +44,8 @@
 #include "third_party/blink/renderer/platform/mhtml/mhtml_parser.h"
 #include "third_party/blink/renderer/platform/mhtml/serialized_resource.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
-#include "third_party/blink/renderer/platform/text/date_components.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 #include "third_party/blink/renderer/platform/wtf/assertions.h"
-#include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/shared_buffer.h"
 #include "third_party/blink/renderer/platform/wtf/text/ascii_ctype.h"
 #include "third_party/blink/renderer/platform/wtf/text/base64.h"
@@ -423,7 +421,7 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
 void MHTMLArchive::GenerateMHTMLFooterForTesting(const String& boundary,
                                                  Vector<char>& output_buffer) {
   DCHECK(!boundary.empty());
-  std::string utf8_string = WTF::StrCat({"\r\n--", boundary, "--\r\n"}).Utf8();
+  std::string utf8_string = StrCat({"\r\n--", boundary, "--\r\n"}).Utf8();
   output_buffer.AppendSpan(base::span(utf8_string));
 }
 

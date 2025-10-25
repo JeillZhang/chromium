@@ -13,10 +13,10 @@
 #include "base/test/scoped_run_loop_timeout.h"
 #include "base/test/task_environment.h"
 #include "build/build_config.h"
-#include "components/optimization_guide/core/execution_status.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/test_optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/inference/execution_status.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
-#include "components/optimization_guide/core/test_optimization_guide_model_provider.h"
 #include "components/page_content_annotations/core/page_content_annotations_features.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -32,6 +32,7 @@ class ModelObserverTracker
   void AddObserverForOptimizationTargetModel(
       optimization_guide::proto::OptimizationTarget target,
       const std::optional<optimization_guide::proto::Any>& model_metadata,
+      scoped_refptr<base::SequencedTaskRunner> model_task_runner,
       optimization_guide::OptimizationTargetModelObserver* observer) override {
     registered_model_metadata_.insert_or_assign(target, model_metadata);
   }

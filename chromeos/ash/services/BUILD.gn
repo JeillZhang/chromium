@@ -2,8 +2,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//chromeos/ash/components/assistant/assistant.gni")
-
 assert(is_chromeos)
 
 # Use this target for adding new unit tests. To add a unit test to this target,
@@ -24,7 +22,6 @@ source_set("unit_tests") {
     "//chromeos/ash/services/cros_healthd/private/cpp:unit_tests",
     "//chromeos/ash/services/cros_healthd/public/cpp:unit_tests",
     "//chromeos/ash/services/device_sync:unit_tests",
-    "//chromeos/ash/services/federated/public/cpp:unit_tests",
     "//chromeos/ash/services/hotspot_config:unit_tests",
     "//chromeos/ash/services/ime:services_unittests",
     "//chromeos/ash/services/ime/public/mojom:unit_tests",

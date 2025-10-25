@@ -30,13 +30,11 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.Token;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.compositor.layouts.LayoutUpdateHost;
 import org.chromium.chrome.browser.compositor.overlays.strip.TabLoadTracker.TabLoadTrackerCallback;
 import org.chromium.chrome.browser.compositor.overlays.strip.TabStripIphController.IphType;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.user_education.IphCommand;
 import org.chromium.chrome.browser.user_education.UserEducationHelper;
 import org.chromium.components.feature_engagement.FeatureConstants;
@@ -46,12 +44,10 @@ import org.chromium.ui.base.LocalizationUtils;
 /** Unit tests for {@link TabStripIphController}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
-@EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
 public class TabStripIphControllerUnitTest {
     private static final float TAB_STRIP_HEIGHT = 40f;
     private static final float TAB_WIDTH = 150f;
     private static final float GROUP_TITLE_WIDTH = 100f;
-    private static final int ROOT_ID = 1;
     private static final int TAB_ID = 2;
     private static final Token TAB_GROUP_ID = new Token(1L, 2L);
 
@@ -92,7 +88,6 @@ public class TabStripIphControllerUnitTest {
                         mStripLayoutGroupTitleDelegate,
                         mKeyboardFocusHandler,
                         /* incognito= */ false,
-                        ROOT_ID,
                         TAB_GROUP_ID);
         mTab =
                 new StripLayoutTab(
@@ -102,7 +97,8 @@ public class TabStripIphControllerUnitTest {
                         mKeyboardFocusHandler,
                         mLoadTrackerCallback,
                         mUpdateHost,
-                        /* incognito= */ false);
+                        /* incognito= */ false,
+                        /* isPinned= */ false);
         mGroupTitle.setWidth(GROUP_TITLE_WIDTH);
         mGroupTitle.setHeight(TAB_STRIP_HEIGHT);
         mTab.setWidth(TAB_WIDTH);

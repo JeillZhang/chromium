@@ -59,7 +59,6 @@
 namespace blink {
 
 BASE_FEATURE(kTaskAttributionInfrastructureDisabledForTesting,
-             "TaskAttributionInfrastructureDisabledForTesting",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 namespace {
@@ -146,7 +145,6 @@ V8PerIsolateData::V8PerIsolateData(
           std::move(cpp_heap)),
       string_cache_(std::make_unique<StringCache>(GetIsolate())),
       private_property_(std::make_unique<V8PrivateProperty>()),
-      constructor_mode_(ConstructorMode::kCreateNewObject),
       runtime_call_stats_(base::DefaultTickClock::GetInstance()) {
   if (v8_context_snapshot_mode == V8ContextSnapshotMode::kTakeSnapshot) {
     // Snapshot should only execute on the main thread. SnapshotCreator enters
@@ -217,23 +215,6 @@ void V8PerIsolateData::WillBeDestroyed(v8::Isolate* isolate) {
   data->ClearScriptRegexpContext();
 
   ThreadState::Current()->DetachFromIsolate();
-
-  data->active_script_wrappable_manager_.Clear();
-  // Callbacks can be removed as they only cover single events (e.g. atomic
-  // pause) and they cannot get out of sync.
-  DCHECK_EQ(0u, data->gc_callback_depth_);
-  isolate->RemoveGCPrologueCallback(data->prologue_callback_);
-  isolate->RemoveGCEpilogueCallback(data->epilogue_callback_);
-}
-
-void V8PerIsolateData::SetGCCallbacks(
-    v8::Isolate* isolate,
-    v8::Isolate::GCCallback prologue_callback,
-    v8::Isolate::GCCallback epilogue_callback) {
-  prologue_callback_ = prologue_callback;
-  epilogue_callback_ = epilogue_callback;
-  isolate->AddGCPrologueCallback(prologue_callback_);
-  isolate->AddGCEpilogueCallback(epilogue_callback_);
 }
 
 // destroy() clear things that should be cleared after ThreadState::detach()

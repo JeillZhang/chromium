@@ -10,6 +10,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/actions/actions.h"
+#include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_unittest_util.h"
 
 namespace page_actions {
@@ -73,14 +74,24 @@ TEST_F(PageActionModelTest, VisibilityConditions) {
   EXPECT_FALSE(model_.GetVisible());
 }
 
+TEST_F(PageActionModelTest, ShouldChipBeVisible) {
+  EXPECT_CALL(observer_, OnPageActionModelChanged).Times(2);
+
+  model_.SetShouldShowSuggestionChip(PassKey(), true);
+  EXPECT_EQ(model_.ShouldShowSuggestionChip(), true);
+
+  model_.SetShouldShowSuggestionChip(PassKey(), false);
+  EXPECT_EQ(model_.ShouldShowSuggestionChip(), false);
+}
+
 TEST_F(PageActionModelTest, ChipVisibility) {
   EXPECT_CALL(observer_, OnPageActionModelChanged).Times(2);
 
-  model_.SetShowSuggestionChip(PassKey(), true);
-  EXPECT_EQ(model_.GetShowSuggestionChip(), true);
+  model_.SetIsChipShowing(PassKey(), true);
+  EXPECT_EQ(model_.IsChipShowing(), true);
 
-  model_.SetShowSuggestionChip(PassKey(), false);
-  EXPECT_EQ(model_.GetShowSuggestionChip(), false);
+  model_.SetIsChipShowing(PassKey(), false);
+  EXPECT_EQ(model_.IsChipShowing(), false);
 }
 
 TEST_F(PageActionModelTest, ShouldAnnounceChip) {
@@ -153,7 +164,7 @@ TEST_F(PageActionModelTest, SetActionItemProperties) {
   EXPECT_EQ(model_.GetActionItemIsShowingBubble(), true);
 }
 
-TEST_F(PageActionModelTest, ShouldHidePageAction) {
+TEST_F(PageActionModelTest, ShouldGetSuppressedByOmnibox) {
   model_.SetShowRequested(PassKey(), true);
   model_.SetActionItemProperties(
       PassKey(),
@@ -168,10 +179,27 @@ TEST_F(PageActionModelTest, ShouldHidePageAction) {
   //   2) true->false  => triggers a notify
   EXPECT_CALL(observer_, OnPageActionModelChanged).Times(2);
 
-  model_.SetShouldHidePageAction(PassKey(), true);
+  model_.SetIsSuppressedByOmnibox(PassKey(), true);
   EXPECT_FALSE(model_.GetVisible());
 
-  model_.SetShouldHidePageAction(PassKey(), false);
+  model_.SetIsSuppressedByOmnibox(PassKey(), false);
+  EXPECT_TRUE(model_.GetVisible());
+}
+
+TEST_F(PageActionModelTest, ShouldIgnoreOmniboxSuppression) {
+  model_.SetShowRequested(PassKey(), true);
+  model_.SetActionItemProperties(
+      PassKey(),
+      ActionItem::Builder().SetEnabled(true).SetVisible(true).Build().get());
+  model_.SetTabActive(PassKey(), true);
+  model_.SetExemptFromOmniboxSuppression(PassKey(), true);
+
+  // Confirm it's now visible by default.
+  EXPECT_TRUE(model_.GetVisible());
+
+  EXPECT_CALL(observer_, OnPageActionModelChanged).Times(1);
+
+  model_.SetIsSuppressedByOmnibox(PassKey(), true);
   EXPECT_TRUE(model_.GetVisible());
 }
 
@@ -192,6 +220,35 @@ TEST_F(PageActionModelTest, OverrideAccessibleName) {
   EXPECT_CALL(observer_, OnPageActionModelChanged).Times(1);
   model_.SetOverrideAccessibleName(PassKey(), std::nullopt);
   EXPECT_EQ(model_.GetAccessibleName(), kDefaultText);
+}
+
+TEST_F(PageActionModelTest, ActionActive) {
+  // Default state should be inactive.
+  EXPECT_FALSE(model_.GetActionActive());
+
+  // Setting active should notify and update the state.
+  EXPECT_CALL(observer_, OnPageActionModelChanged).Times(1);
+  model_.SetActionActive(PassKey(), true);
+  EXPECT_TRUE(model_.GetActionActive());
+  testing::Mock::VerifyAndClearExpectations(&observer_);
+
+  // Setting active again should not notify or change the state.
+  EXPECT_CALL(observer_, OnPageActionModelChanged).Times(0);
+  model_.SetActionActive(PassKey(), true);
+  EXPECT_TRUE(model_.GetActionActive());
+  testing::Mock::VerifyAndClearExpectations(&observer_);
+
+  // Setting inactive should notify and update the state.
+  EXPECT_CALL(observer_, OnPageActionModelChanged).Times(1);
+  model_.SetActionActive(PassKey(), false);
+  EXPECT_FALSE(model_.GetActionActive());
+  testing::Mock::VerifyAndClearExpectations(&observer_);
+
+  // Setting inactive again should not notify or change the state.
+  EXPECT_CALL(observer_, OnPageActionModelChanged).Times(0);
+  model_.SetActionActive(PassKey(), false);
+  EXPECT_FALSE(model_.GetActionActive());
+  testing::Mock::VerifyAndClearExpectations(&observer_);
 }
 
 }  // namespace

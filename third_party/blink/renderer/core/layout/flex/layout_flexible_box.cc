@@ -14,6 +14,7 @@
 #include "third_party/blink/renderer/core/layout/block_node.h"
 #include "third_party/blink/renderer/core/layout/constraint_space.h"
 #include "third_party/blink/renderer/core/layout/flex/flex_layout_algorithm.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_result.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/oof_positioned_node.h"
@@ -90,7 +91,6 @@ bool LayoutFlexibleBox::IsChildAllowed(LayoutObject* object,
   const auto* select = DynamicTo<HTMLSelectElement>(GetNode());
   if (select && select->UsesMenuList()) [[unlikely]] {
     if (select->IsAppearanceBase()) {
-      CHECK(HTMLSelectElement::CustomizableSelectEnabled(select));
       if (IsA<HTMLOptionElement>(object->GetNode()) ||
           IsA<HTMLOptGroupElement>(object->GetNode()) ||
           IsA<HTMLHRElement>(object->GetNode())) {

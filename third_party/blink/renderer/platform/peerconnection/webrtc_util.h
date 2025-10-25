@@ -32,15 +32,6 @@ ConvertToBaseTimeDelta(webrtc::TimeDelta time_delta);
 std::optional<media::VideoCodecProfile> PLATFORM_EXPORT
 WebRTCFormatToCodecProfile(const webrtc::SdpVideoFormat& sdp);
 
-// Returns an estimate of the TimeTick value at the time of the NTP epoch
-// (Jan 1, 1900). It is based on base::TimeTicks::UnixEpoch(), so look at its
-// documentation to understand the issues with this approach.
-// Restrict usage to convert timestamps of WebRTC media frames that are
-// expressed relative to the NTP epoch.
-// Use as follows:
-//  FrameTimeTicks = WebRTCFrameNtpEpoch() + FrameTimeDeltaRelativeToNtpEpoch()
-base::TimeTicks PLATFORM_EXPORT WebRTCFrameNtpEpoch();
-
 // Converts an optional webrtc::Timestamp into an optional TimeTicks and
 // optionally adds an offset to the result.
 std::optional<base::TimeTicks> PLATFORM_EXPORT ConvertToOptionalTimeTicks(
@@ -50,6 +41,14 @@ std::optional<base::TimeTicks> PLATFORM_EXPORT ConvertToOptionalTimeTicks(
 // Converts an optional webrtc::TimesDelta into an base::TimeDelta.
 std::optional<base::TimeDelta> PLATFORM_EXPORT
 ConvertToOptionalTimeDelta(std::optional<webrtc::TimeDelta> time_delta);
+
+// Checks if H.264 CBP is available for accelerated encoding on the current
+// platform.
+bool PLATFORM_EXPORT
+IsH264ConstrainedBaselineProfileAvailableForAcceleratedEncoder();
+
+// Checks whether the accelerated H.264 encoder can be used in WebRTC.
+bool PLATFORM_EXPORT UseH264AcceleratedEncoderForWebRTC();
 
 }  // namespace blink
 

@@ -271,7 +271,7 @@ void WebSettingsImpl::SetShouldReuseGlobalForUnownedMainFrame(bool enabled) {
 }
 
 void WebSettingsImpl::SetPluginsEnabled(bool enabled) {
-  dev_tools_emulator_->SetPluginsEnabled(enabled);
+  settings_->SetPluginsEnabled(enabled);
 }
 
 void WebSettingsImpl::SetAvailablePointerTypes(int pointers) {
@@ -639,10 +639,6 @@ void WebSettingsImpl::SetSyncXHRInDocumentsEnabled(bool enabled) {
 void WebSettingsImpl::SetTargetBlankImpliesNoOpenerEnabledWillBeRemoved(
     bool enabled) {
   settings_->SetTargetBlankImpliesNoOpenerEnabledWillBeRemoved(enabled);
-}
-
-void WebSettingsImpl::SetAllowNonEmptyNavigatorPlugins(bool enabled) {
-  settings_->SetAllowNonEmptyNavigatorPlugins(enabled);
 }
 
 void WebSettingsImpl::SetIgnorePermissionForDeviceChangedEvent(bool enabled) {

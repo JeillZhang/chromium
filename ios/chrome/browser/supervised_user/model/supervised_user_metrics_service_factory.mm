@@ -31,10 +31,10 @@ SupervisedUserMetricsServiceFactory::SupervisedUserMetricsServiceFactory()
 
 std::unique_ptr<KeyedService>
 SupervisedUserMetricsServiceFactory::BuildServiceInstanceFor(
-    web::BrowserState* context) const {
-  ProfileIOS* profile = ProfileIOS::FromBrowserState(context);
+    ProfileIOS* profile) const {
   return std::make_unique<supervised_user::SupervisedUserMetricsService>(
       profile->GetPrefs(),
       *SupervisedUserServiceFactory::GetForProfile(profile),
-      /*extensions_metrics_delegate=*/nullptr);
+      /*extensions_metrics_delegate=*/nullptr,
+      /*metrics_service_accessor_delegate=*/nullptr);
 }

@@ -7,11 +7,11 @@
 
 #include <memory>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/memory/weak_ptr.h"
 #include "build/build_config.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "gpu/command_buffer/common/mailbox.h"
@@ -35,9 +35,14 @@ namespace gpu {
 class MemoryTracker;
 class SharedContextState;
 class SharedImageBackingFactory;
+class SharedImageCopyManager;
 class D3DImageBackingFactory;
 struct GpuFeatureInfo;
 struct GpuPreferences;
+
+#if BUILDFLAG(IS_ANDROID)
+class AHardwareBufferImageBackingFactory;
+#endif
 
 class GPU_GLES2_EXPORT SharedImageFactory {
  public:
@@ -132,6 +137,22 @@ class GPU_GLES2_EXPORT SharedImageFactory {
 
   bool CopyToGpuMemoryBuffer(const Mailbox& mailbox);
 
+  // Creation of native buffer handles is not supported on Android (the
+  // only way that a non-null GpuMemoryBufferHandle can be created on
+  // Android is by importing an external AHB).
+#if !BUILDFLAG(IS_ANDROID)
+  // Creates a native GpuMemoryBufferHandle for MappableSI.
+  gfx::GpuMemoryBufferHandle CreateNativeGpuMemoryBufferHandle(
+      const gfx::Size& size,
+      viz::SharedImageFormat format,
+      gfx::BufferUsage usage);
+#endif
+
+  // Fills |shared_memory| with the contents of the provided
+  // |buffer_handle|. Returns whether the operation succeeded.
+  bool CopyNativeBufferToSharedMemoryAsync(
+      gfx::GpuMemoryBufferHandle buffer_handle,
+      base::UnsafeSharedMemoryRegion shared_memory);
 #if BUILDFLAG(IS_WIN)
   bool CopyToGpuMemoryBufferAsync(const Mailbox& mailbox,
                                   base::OnceCallback<void(bool)> callback);
@@ -140,8 +161,6 @@ class GPU_GLES2_EXPORT SharedImageFactory {
   void SetGpuExtraInfo(const gfx::GpuExtraInfo& gpu_info);
   bool GetGpuMemoryBufferHandleInfo(const Mailbox& mailbox,
                                     gfx::GpuMemoryBufferHandle& handle,
-                                    viz::SharedImageFormat& format,
-                                    gfx::Size& size,
                                     gfx::BufferUsage& buffer_usage);
 
   bool CreateSharedImagePool(
@@ -156,7 +175,14 @@ class GPU_GLES2_EXPORT SharedImageFactory {
 
   bool HasSharedImage(const Mailbox& mailbox) const;
 
+  SharedContextState* shared_context_state() { return context_state_.get(); }
+  const scoped_refptr<SharedImageCopyManager>& copy_manager();
+
+  base::WeakPtr<SharedImageFactory> GetWeakPtr();
+
  private:
+  friend class CompoundImageBacking;
+
   bool IsSharedBetweenThreads(gpu::SharedImageUsageSet usage);
 
   SharedImageRepresentationFactoryRef* GetFactoryRef(
@@ -171,8 +197,9 @@ class GPU_GLES2_EXPORT SharedImageFactory {
   void LogGetFactoryFailed(gpu::SharedImageUsageSet usage,
                            viz::SharedImageFormat format,
                            gfx::GpuMemoryBufferType gmb_type,
+                           const gfx::Size& size,
                            const std::string& debug_label);
-  bool IsNativeBufferSupported(gfx::BufferFormat format,
+  bool IsNativeBufferSupported(viz::SharedImageFormat format,
                                gfx::BufferUsage usage);
 #if BUILDFLAG(IS_WIN)
   bool IsD3DSharedImageSupported() const;
@@ -181,6 +208,7 @@ class GPU_GLES2_EXPORT SharedImageFactory {
   raw_ptr<SharedImageManager> shared_image_manager_;
   const scoped_refptr<SharedContextState> context_state_;
   std::unique_ptr<MemoryTypeTracker> memory_type_tracker_;
+  scoped_refptr<SharedImageCopyManager> copy_manager_;
 
   // This is used if the factory is created on display compositor to check for
   // sharing between threads.
@@ -220,7 +248,12 @@ class GPU_GLES2_EXPORT SharedImageFactory {
 #endif
   gpu::GpuDriverBugWorkarounds workarounds_;
 
+#if BUILDFLAG(IS_ANDROID)
+  raw_ptr<AHardwareBufferImageBackingFactory> ahb_factory_ = nullptr;
+#endif
+
   raw_ptr<SharedImageBackingFactory> backing_factory_for_testing_ = nullptr;
+  base::WeakPtrFactory<SharedImageFactory> weak_ptr_factory_{this};
 };
 
 class GPU_GLES2_EXPORT SharedImageRepresentationFactory {
@@ -251,7 +284,10 @@ class GPU_GLES2_EXPORT SharedImageRepresentationFactory {
   std::unique_ptr<DawnBufferRepresentation> ProduceDawnBuffer(
       const Mailbox& mailbox,
       const wgpu::Device& device,
-      wgpu::BackendType backend_type);
+      wgpu::BackendType backend_type,
+      scoped_refptr<SharedContextState> context_state);
+  std::unique_ptr<WebNNTensorRepresentation> ProduceWebNNTensor(
+      const Mailbox& mailbox);
   std::unique_ptr<OverlayImageRepresentation> ProduceOverlay(
       const Mailbox& mailbox);
   std::unique_ptr<MemoryImageRepresentation> ProduceMemory(

@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-import './shared_style_lit.css.js';
 import '/strings.m.js';
 import 'chrome://resources/cr_components/history_embeddings/icons.html.js';
 import 'chrome://resources/cr_elements/cr_toolbar/cr_toolbar.js';
@@ -114,6 +113,10 @@ export class HistoryToolbarElement extends CrLitElement {
 
   deleteSelectedItems() {
     this.fire('delete-selected');
+  }
+
+  openSelectedItems() {
+    this.fire('open-selected');
   }
 
   clearSelectedItems() {

@@ -17,8 +17,8 @@
 #include "components/payments/content/android/payment_handler_host.h"
 #include "components/payments/content/payment_event_response_util.h"
 #include "components/payments/content/payment_handler_host.h"
-#include "components/payments/content/payment_manifest_web_data_service.h"
 #include "components/payments/content/service_worker_payment_app_finder.h"
+#include "components/payments/content/web_payments_web_data_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/installed_payment_apps_finder.h"
@@ -83,7 +83,7 @@ void OnGetServiceWorkerPaymentAppsInfo(
 
   for (const auto& app_info : apps) {
     Java_ServiceWorkerPaymentAppBridge_addPaymentAppInfo(
-        env, jappsInfo, app_info.second->scope.host(), app_info.second->name,
+        env, jappsInfo, app_info.second->scope.GetHost(), app_info.second->name,
         app_info.second->icon == nullptr
             ? nullptr
             : gfx::ConvertToJavaBitmap(*app_info.second->icon));

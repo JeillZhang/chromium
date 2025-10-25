@@ -53,13 +53,23 @@ class TracingScenario::TraceReader
                         base::WeakPtr<TracingScenario> scenario,
                         scoped_refptr<base::SequencedTaskRunner> task_runner,
                         const BackgroundTracingRule* triggered_rule) {
+    base::TimeTicks read_start_time = base::TimeTicks::Now();
+    TRACE_EVENT_BEGIN(
+        "tracing.background", "ReadTrace",
+        perfetto::NamedTrack::FromPointer("Scenario.ReadTrace", reader.get()));
     reader->tracing_session->ReadTrace(
-        [task_runner, scenario, reader, triggered_rule](
+        [task_runner, scenario, reader, triggered_rule, read_start_time](
             perfetto::TracingSession::ReadTraceCallbackArgs args) mutable {
           if (args.size) {
             reader->serialized_trace.append(args.data, args.size);
           }
           if (!args.has_more) {
+            TRACE_EVENT_END("tracing.background",
+                            perfetto::NamedTrack::FromPointer(
+                                "Scenario.ReadTrace", reader.get()));
+            base::UmaHistogramMediumTimes(
+                "Tracing.Background.ReadTraceDuration",
+                base::TimeTicks::Now() - read_start_time);
             task_runner->PostTask(
                 FROM_HERE, base::BindOnce(&TracingScenario::OnFinalizingDone,
                                           scenario, reader->trace_uuid,
@@ -142,16 +152,6 @@ void NestedTracingScenario::Enable() {
   CHECK_EQ(current_state_, State::kDisabled);
   SetState(State::kEnabled);
   TracingScenarioBase::Enable();
-}
-
-void NestedTracingScenario::Stop() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  CHECK(current_state_ == State::kActive || current_state_ == State::kStopping)
-      << static_cast<int>(current_state_);
-  for (auto& rule : stop_rules_) {
-    rule->Uninstall();
-  }
-  SetState(State::kStopping);
 }
 
 bool NestedTracingScenario::Initialize(
@@ -264,7 +264,6 @@ bool TracingScenario::Initialize(
   if (!tracing::AdaptPerfettoConfigForChrome(
           &trace_config_, privacy_filtering_enabled_,
           enable_package_name_filter,
-          perfetto::protos::gen::ChromeConfig::BACKGROUND,
           enable_system_backend)) {
     return false;
   }
@@ -365,15 +364,12 @@ void TracingScenario::OnNestedScenarioStart(
     NestedTracingScenario* active_scenario) {
   CHECK_EQ(active_scenario_, nullptr);
   active_scenario_ = active_scenario;
-  // Other nested scenarios are disabled and stop rules are uninstalled.
+  // Other nested scenarios are disabled.
   for (auto& scenario : nested_scenarios_) {
     if (scenario.get() == active_scenario_) {
       continue;
     }
     scenario->Disable();
-  }
-  for (auto& rule : stop_rules_) {
-    rule->Uninstall();
   }
   // If in `kSetup`, the tracing session is started.
   if (current_state() == State::kSetup) {
@@ -384,10 +380,6 @@ void TracingScenario::OnNestedScenarioStart(
 void TracingScenario::OnNestedScenarioStop(
     NestedTracingScenario* nested_scenario) {
   CHECK_EQ(active_scenario_, nested_scenario);
-  for (auto& rule : stop_rules_) {
-    rule->Install(base::BindRepeating(&TracingScenario::OnStopTrigger,
-                                      base::Unretained(this)));
-  }
   // Stop the scenario asynchronously in case an upload trigger is triggered in
   // the same task.
   on_nested_stopped_.Reset(base::BindOnce(
@@ -417,18 +409,12 @@ void TracingScenario::OnNestedScenarioUpload(
         current_state_ == State::kRecording)
       << static_cast<int>(current_state_);
 
-  if (on_nested_stopped_.IsCancelled()) {
-    for (auto& rule : stop_rules_) {
-      rule->Install(base::BindRepeating(&TracingScenario::OnStopTrigger,
-                                        base::Unretained(this)));
-    }
-  }
   on_nested_stopped_.Cancel();
   active_scenario_ = nullptr;
   SetState(State::kCloning);
   // Skip cloning if the trace isn't allowed to save or is still starting.
-  if (!scenario_delegate_->OnScenarioCloned(this) ||
-      current_state_ == State::kStarting) {
+  if (current_state_ == State::kStarting ||
+      !scenario_delegate_->OnScenarioCloned(this)) {
     OnTracingCloned();
     return;
   }
@@ -489,6 +475,11 @@ bool TracingScenario::OnStartTrigger(
     const BackgroundTracingRule* triggered_rule) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
+  if (triggered_rule) {
+    base::UmaHistogramSparse("Tracing.Background.Scenario.Trigger.Start",
+                             TriggerNameHash(triggered_rule));
+  }
+
   if (current_state() == State::kEnabled) {
     // Move to setup before starting the session below.
     if (!OnSetupTrigger(triggered_rule)) {
@@ -508,8 +499,7 @@ bool TracingScenario::OnStartTrigger(
     perfetto::Tracing::SetupStartupTracingOpts opts;
     opts.timeout_ms = kStartupTracingTimeoutMs;
     opts.backend = perfetto::kCustomBackend;
-    tracing::PerfettoTracedProcess::Get().RequestStartupTracing(trace_config_,
-                                                                opts);
+    perfetto::Tracing::SetupStartupTracingBlocking(trace_config_, opts);
   }
 
   tracing_session_->SetOnStopCallback([task_runner = task_runner_,
@@ -520,8 +510,6 @@ bool TracingScenario::OnStartTrigger(
   tracing_session_->Start();
   if (triggered_rule) {
     TriggersDataSource::EmitTrigger(triggered_rule);
-    base::UmaHistogramSparse("Tracing.Background.Scenario.Trigger.Start",
-                             TriggerNameHash(triggered_rule));
   }
   return true;
 }
@@ -538,7 +526,8 @@ bool TracingScenario::OnStopTrigger(
   }
   if (active_scenario_) {
     on_nested_stopped_.Cancel();
-    active_scenario_->Stop();
+    active_scenario_->Disable();
+    active_scenario_ = nullptr;
   } else {
     for (auto& nested_scenario : nested_scenarios_) {
       nested_scenario->Disable();

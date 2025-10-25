@@ -27,6 +27,7 @@
 #include "components/sync/protocol/history_specifics.pb.h"
 #include "components/sync/service/sync_service_impl.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "net/base/filename_util.h"
@@ -266,7 +267,7 @@ IN_PROC_BROWSER_TEST_F(SingleClientHistorySyncTest,
   // waits for an "about:blank" tab to show up in the Sessions data on the fake
   // server. Since this test already navigated away, that'll never happen. So
   // use the slightly-weaker WAIT_FOR_SYNC_SETUP_TO_COMPLETE here.
-  ASSERT_TRUE(SetupSync(SyncTest::WAIT_FOR_SYNC_SETUP_TO_COMPLETE));
+  ASSERT_TRUE(SetupSync(kSyncTheFeature, WAIT_FOR_SYNC_SETUP_TO_COMPLETE));
 
   // After Sync was enabled, navigate further.
   GURL synced_url2 =
@@ -807,7 +808,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientHistorySyncTest,
 #if BUILDFLAG(IS_ANDROID)
   // On Android, invalidations for HISTORY are disabled, so trigger an explicit
   // refresh to fetch the updated data.
-  GetSyncService(0)->TriggerRefresh({syncer::HISTORY});
+  GetSyncService(0)->TriggerRefresh(
+      syncer::SyncService::TriggerRefreshSource::kUnknown, {syncer::HISTORY});
 #endif
 
   // Wait for the updates to arrive.
@@ -940,7 +942,8 @@ IN_PROC_BROWSER_TEST_F(SingleClientHistorySyncTest,
 #if BUILDFLAG(IS_ANDROID)
   // On Android, invalidations for HISTORY are disabled by default, so
   // explicitly trigger a GetUpdates.
-  GetSyncService(0)->TriggerRefresh({syncer::HISTORY});
+  GetSyncService(0)->TriggerRefresh(
+      syncer::SyncService::TriggerRefreshSource::kUnknown, {syncer::HISTORY});
 #endif  // BUILDFLAG(IS_ANDROID)
   WaitForLocalHistory({{new_url, testing::SizeIs(1)}});
 

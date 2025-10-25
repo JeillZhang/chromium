@@ -43,20 +43,15 @@ namespace ui {
 // BrowserAccessibilityComWin::WinAttributes
 //
 
-BrowserAccessibilityComWin::WinAttributes::WinAttributes()
-    : ignored(false), ia_role(0), ia_state(0), ia2_role(0), ia2_state(0) {}
+BrowserAccessibilityComWin::WinAttributes::WinAttributes() = default;
 
-BrowserAccessibilityComWin::WinAttributes::~WinAttributes() {}
+BrowserAccessibilityComWin::WinAttributes::~WinAttributes() = default;
 
 //
 // BrowserAccessibilityComWin::UpdateState
 //
 
-BrowserAccessibilityComWin::UpdateState::UpdateState(
-    std::unique_ptr<WinAttributes> old_win_attributes,
-    AXLegacyHypertext old_hypertext)
-    : old_win_attributes(std::move(old_win_attributes)),
-      old_hypertext(std::move(old_hypertext)) {}
+BrowserAccessibilityComWin::UpdateState::UpdateState() = default;
 
 BrowserAccessibilityComWin::UpdateState::~UpdateState() = default;
 
@@ -71,13 +66,13 @@ BrowserAccessibilityComWin::BrowserAccessibilityComWin()
 BrowserAccessibilityComWin::~BrowserAccessibilityComWin() = default;
 
 void BrowserAccessibilityComWin::OnReferenced() {
-  TRACE_EVENT("accessibility", "OnReferenced",
-              perfetto::Flow::FromPointer(this));
+  TRACE_EVENT_INSTANT("accessibility", "OnReferenced",
+                      perfetto::Flow::FromPointer(this));
 }
 
 void BrowserAccessibilityComWin::OnDereferenced() {
-  TRACE_EVENT("accessibility", "OnDereferenced",
-              perfetto::Flow::FromPointer(this));
+  TRACE_EVENT_INSTANT("accessibility", "OnDereferenced",
+                      perfetto::Flow::FromPointer(this));
 }
 
 //
@@ -590,8 +585,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_hyperlinkIndex(
 
   OnExtendedPropertiesUsed();
 
-  std::map<int32_t, int32_t>::iterator it =
-      hypertext_.hyperlink_offset_to_index.find(char_index);
+  auto it = hypertext_.hyperlink_offset_to_index.find(char_index);
   if (it == hypertext_.hyperlink_offset_to_index.end()) {
     *hyperlink_index = -1;
     return S_FALSE;
@@ -859,7 +853,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_name(LONG action_index,
     // vector, subtract the number of Blink actions.
     int32_t aria_action_id = aria_actions[action_index - actions.size()];
     BrowserAccessibilityComWin* aria_action_obj = GetFromID(aria_action_id);
-    std::string html_id = aria_action_obj->GetStringAttribute(
+    const std::string& html_id = aria_action_obj->GetStringAttribute(
         ax::mojom::StringAttribute::kHtmlId);
     action_verb = html_id.empty()
                       ? AXPlatformNodeBase::kAriaActionsPrefix
@@ -1162,17 +1156,17 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_attributes(USHORT max_attribs,
   }
 
   // For OmniPass—rebranded as Fiserv Verifast. See https://crbug.com/378908266.
-  std::string type_attr =
+  const std::string& type_attr =
       owner->GetStringAttribute(ax::mojom::StringAttribute::kInputType);
   if (!type_attr.empty()) {
     ADD_ATTRIBUTE("type", type_attr);
   }
-  std::string value_attr =
+  const std::string& value_attr =
       owner->GetStringAttribute(ax::mojom::StringAttribute::kValue);
   if (!value_attr.empty()) {
     ADD_ATTRIBUTE("value", value_attr);
   }
-  std::string name_attr =
+  const std::string& name_attr =
       owner->GetStringAttribute(ax::mojom::StringAttribute::kHtmlInputName);
   if (!name_attr.empty()) {
     ADD_ATTRIBUTE("name", name_attr);
@@ -1185,7 +1179,7 @@ IFACEMETHODIMP BrowserAccessibilityComWin::get_attributes(USHORT max_attribs,
 
   // Vispero's Inspect tool needs this temporarily, until they start tracking
   // nodes using the unique id. Also used by OmniPass / Fiserve Verifast.
-  std::string id_attr =
+  const std::string& id_attr =
       owner->GetStringAttribute(ax::mojom::StringAttribute::kHtmlId);
   if (!id_attr.empty()) {
     ADD_ATTRIBUTE("id", id_attr);
@@ -1666,17 +1660,23 @@ void BrowserAccessibilityComWin::ComputeStylesIfNeeded() {
 // Private methods.
 //
 
-void BrowserAccessibilityComWin::UpdateStep1ComputeWinAttributes() {
+void BrowserAccessibilityComWin::UpdateStep1ComputeWinAttributes(
+    UpdateState* update_state) {
   DCHECK(!update_state_);
   DCHECK(win_attributes_);
 
   BrowserAccessibilityWin* const owner = GetOwner();
 
-  // Move win_attributes_ and hypertext_ into update_state_, allowing us to see
-  // exactly what changed and fire appropriate events. Note that update_state_
-  // is destroyed at the end of UpdateStep3FireEvents.
-  update_state_ = std::make_unique<UpdateState>(std::move(win_attributes_),
-                                                std::move(hypertext_));
+  // Move win_attributes_ and hypertext_ into update_state, allowing us to see
+  // exactly what changed and fire appropriate events. Note that update_state is
+  // destroyed after UpdateStep3FireEvents.
+  update_state->old_win_attributes = std::move(win_attributes_);
+  update_state->old_hypertext = std::move(hypertext_);
+
+  // Hold a pointer to this node's update state (which the caller of this
+  // function shall keep valid) until the end of UpdateStep3FireEvents.
+  update_state_ = update_state;
+
   hypertext_ = AXLegacyHypertext();
 
   win_attributes_ = std::make_unique<WinAttributes>();
@@ -1716,7 +1716,7 @@ void BrowserAccessibilityComWin::UpdateStep3FireEvents() {
   if (ignored || (old_win_attributes.ignored != ignored &&
                   !owner->GetData().IsContainedInActiveLiveRegion() &&
                   !owner->GetData().IsActiveLiveRegionRoot())) {
-    update_state_.reset();
+    update_state_ = nullptr;
     return;
   }
 
@@ -1761,7 +1761,7 @@ void BrowserAccessibilityComWin::UpdateStep3FireEvents() {
     }
   }
 
-  update_state_.reset();
+  update_state_ = nullptr;
 }
 
 BrowserAccessibilityWin* BrowserAccessibilityComWin::GetOwner() const {

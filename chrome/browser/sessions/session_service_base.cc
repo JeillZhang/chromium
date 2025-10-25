@@ -24,12 +24,15 @@
 #include "chrome/browser/sessions/session_service_log.h"
 #include "chrome/browser/sessions/session_service_utils.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/ui_features.h"
+#include "components/saved_tab_groups/public/tab_group_sync_service.h"
 #include "components/sessions/content/content_serialized_navigation_builder.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "components/sessions/core/command_storage_manager.h"
@@ -37,6 +40,9 @@
 #include "components/sessions/core/session_constants.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sessions/core/session_types.h"
+#include "components/tabs/public/split_tab_data.h"
+#include "components/tabs/public/split_tab_id.h"
+#include "components/tabs/public/split_tab_visual_data.h"
 #include "components/tabs/public/tab_group.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
@@ -290,7 +296,7 @@ void SessionServiceBase::TabRestored(WebContents* tab, bool pinned) {
     return;
 
   BuildCommandsForTab(session_tab_helper->window_id(), tab, -1, std::nullopt,
-                      pinned, nullptr);
+                      std::nullopt, pinned, nullptr);
   command_storage_manager()->StartSaveTimer();
 }
 
@@ -551,6 +557,7 @@ void SessionServiceBase::BuildCommandsForTab(
     WebContents* tab,
     int index_in_window,
     std::optional<tab_groups::TabGroupId> group,
+    std::optional<split_tabs::SplitTabId> split,
     bool is_pinned,
     IdToRange* tab_to_available_range) {
   DCHECK(tab);
@@ -672,7 +679,7 @@ void SessionServiceBase::BuildCommandsForBrowser(
   if (tab_strip->SupportsTabGroups()) {
     TabGroupModel* group_model = tab_strip->group_model();
     tab_groups::TabGroupSyncService* tab_group_service =
-        tab_groups::SavedTabGroupUtils::GetServiceForProfile(
+        tab_groups::TabGroupSyncServiceFactory::GetForProfile(
             browser->profile());
 
     for (const tab_groups::TabGroupId& group_id :
@@ -695,12 +702,23 @@ void SessionServiceBase::BuildCommandsForBrowser(
     }
   }
 
+  if (features::IsRestoringSplitViewEnabled()) {
+    for (split_tabs::SplitTabId split_id : tab_strip->ListSplits()) {
+      command_storage_manager()->AppendRebuildCommand(
+          sessions::CreateSplitTabDataUpdateCommand(
+              split_id, tab_strip->GetSplitData(split_id)->visual_data()));
+    }
+  }
+
   for (int i = 0; i < tab_strip->count(); ++i) {
     WebContents* tab = tab_strip->GetWebContentsAt(i);
     DCHECK(tab);
     const std::optional<tab_groups::TabGroupId> group_id =
         tab_strip->GetTabGroupForTab(i);
-    BuildCommandsForTab(browser->session_id(), tab, i, group_id,
+    const std::optional<split_tabs::SplitTabId> split_id =
+        tab_strip->GetSplitForTab(i);
+
+    BuildCommandsForTab(browser->session_id(), tab, i, group_id, split_id,
                         tab_strip->IsTabPinned(i), tab_to_available_range);
   }
 
@@ -711,19 +729,22 @@ void SessionServiceBase::BuildCommandsFromBrowsers(
     IdToRange* tab_to_available_range,
     std::set<SessionID>* windows_to_track) {
   DCHECK(is_saving_enabled_);
-  for (Browser* browser : *BrowserList::GetInstance()) {
-    // Make sure the browser has tabs and a window. Browser's destructor
-    // removes itself from the BrowserList. When a browser is closed the
-    // destructor is not necessarily run immediately. This means it's possible
-    // for us to get a handle to a browser that is about to be removed. If
-    // the tab count is 0 or the window is NULL, the browser is about to be
-    // deleted, so we ignore it.
-    if (ShouldTrackBrowser(browser) && browser->tab_strip_model()->count() &&
-        browser->window()) {
-      BuildCommandsForBrowser(browser, tab_to_available_range,
-                              windows_to_track);
-    }
-  }
+  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+      [this, tab_to_available_range,
+       windows_to_track](BrowserWindowInterface* browser) {
+        // Make sure the browser has tabs and a window. Browser's destructor
+        // removes itself from the BrowserList. When a browser is closed the
+        // destructor is not necessarily run immediately. This means it's
+        // possible for us to get a handle to a browser that is about to be
+        // removed. If the tab count is 0 or the window is NULL, the browser is
+        // about to be deleted, so we ignore it.
+        if (ShouldTrackBrowser(browser->GetBrowserForMigrationOnly()) &&
+            browser->GetTabStripModel()->count() && browser->GetWindow()) {
+          BuildCommandsForBrowser(browser->GetBrowserForMigrationOnly(),
+                                  tab_to_available_range, windows_to_track);
+        }
+        return true;
+      });
 }
 
 void SessionServiceBase::ScheduleCommand(

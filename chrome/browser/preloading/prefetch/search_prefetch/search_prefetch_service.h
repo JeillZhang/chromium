@@ -25,7 +25,6 @@
 #include "components/search_engines/template_url_service.h"
 #include "components/search_engines/template_url_service_observer.h"
 #include "content/public/browser/preloading.h"
-#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "url/gurl.h"
 
@@ -273,10 +272,6 @@ class SearchPrefetchService : public KeyedService,
                                        TemplateURLService* template_url_service,
                                        const GURL& canonical_search_url);
 
-  // Preloads the compression dictionaries in the network service.
-  void MaybePreloadDictionary(const AutocompleteResult& result);
-  void DeletePreloadedDictionaries();
-
   void RecordInterceptionMetrics(const std::u16string& search_terms,
                                  SearchPrefetchServingReason serving_status);
   void RecordPotentialDuplicateSearchTermsAheadOfNavigationalPrefetch(
@@ -308,10 +303,6 @@ class SearchPrefetchService : public KeyedService,
 
   base::LRUCache<std::u16string, RealNaivigationServingResult>
       search_terms_cache_{50};
-
-  mojo::PendingRemote<network::mojom::PreloadedSharedDictionaryInfoHandle>
-      preloaded_shared_dictionaries_handle_;
-  base::OneShotTimer preloaded_shared_dictionaries_expiry_timer_;
 
   base::WeakPtrFactory<SearchPrefetchService> weak_factory_{this};
 };

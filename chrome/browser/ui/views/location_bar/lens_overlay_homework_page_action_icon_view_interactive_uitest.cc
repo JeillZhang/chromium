@@ -7,15 +7,22 @@
 // complete.
 
 #include <memory>
+#include <optional>
 
 #include "base/functional/callback_forward.h"
 #include "base/test/run_until.h"
+#include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
+#include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/actions/chrome_action_id.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/lens/lens_keyed_service.h"
+#include "chrome/browser/ui/lens/lens_keyed_service_factory.h"
+#include "chrome/browser/ui/lens/lens_search_feature_flag_utils.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/interaction/browser_elements_views.h"
 #include "chrome/browser/ui/views/location_bar/lens_overlay_homework_page_action_icon_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
@@ -23,11 +30,9 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/lens/lens_features.h"
-#include "components/omnibox/browser/omnibox_prefs.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "ui/events/test/test_event.h"
-#include "ui/views/interaction/element_tracker_views.h"
 #include "ui/views/test/widget_test.h"
 #include "url/url_constants.h"
 
@@ -61,7 +66,8 @@ class ViewVisibilityWaiter : public views::ViewObserver {
  private:
   // views::ViewObserver:
   void OnViewVisibilityChanged(views::View* observed_view,
-                               views::View* starting_view) override {
+                               views::View* starting_view,
+                               bool visible) override {
     if (expected_visible_ == observed_view->GetVisible()) {
       run_loop_.Quit();
     }
@@ -99,23 +105,28 @@ class LensOverlayHomeworkPageActionIconViewTestBase
   }
 
   LensOverlayHomeworkPageActionIconView* lens_overlay_homework_icon_view() {
-    views::View* const icon_view =
-        views::ElementTrackerViews::GetInstance()->GetFirstMatchingView(
-            kLensOverlayHomeworkPageActionIconElementId,
-            browser()->window()->GetElementContext());
-    return icon_view
-               ? views::AsViewClass<LensOverlayHomeworkPageActionIconView>(
-                     icon_view)
-               : nullptr;
+    return BrowserElementsViews::From(browser())
+        ->GetViewAs<LensOverlayHomeworkPageActionIconView>(
+            kLensOverlayHomeworkPageActionIconElementId);
   }
 
   LocationBarView* location_bar_view() {
-    views::View* const location_bar_view =
-        views::ElementTrackerViews::GetInstance()->GetUniqueView(
-            kLocationBarElementId, browser()->window()->GetElementContext());
-    return location_bar_view
-               ? views::AsViewClass<LocationBarView>(location_bar_view)
-               : nullptr;
+    return BrowserElementsViews::From(browser())->GetViewAs<LocationBarView>(
+        kLocationBarElementId);
+  }
+
+  // Sets the number of times the edu action chip has been shown.
+  void SetLensOverlayEduActionChipShownCount(Profile* profile, int count) {
+    LensKeyedService* service = LensKeyedServiceFactory::GetForProfile(
+        profile, /*create_if_necessary=*/true);
+    service->SetActionChipShownCount(count);
+  }
+
+  // Returns the number of times the edu action chip has been shown.
+  int GetLensOverlayEduActionChipShownCount(Profile* profile) {
+    LensKeyedService* service = LensKeyedServiceFactory::GetForProfile(
+        profile, /*create_if_necessary=*/true);
+    return service->GetActionChipShownCount();
   }
 
  protected:
@@ -129,15 +140,19 @@ class LensOverlayHomeworkPageActionIconViewTest
     scoped_feature_list_.InitWithFeaturesAndParameters(
         {base::test::FeatureRefAndParams(lens::features::kLensOverlay, {}),
          base::test::FeatureRefAndParams(
+             lens::features::kLensOverlayOmniboxEntryPoint, {}),
+         base::test::FeatureRefAndParams(
              lens::features::kLensOverlayEduActionChip,
              {{"url-allow-filters", "[\"*\"]"},
-              {"url-path-match-allow-filters", "[\"select\"]"}})},
-        {});
+              {"url-path-match-allow-filters", "[\"select\"]"},
+              {"max-shown-count", "3"}})},
+        {lens::features::kLensOverlayKeyboardSelection});
   }
 };
 
 IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
                        ShowsOnMatchingPage) {
+  SetLensOverlayEduActionChipShownCount(browser()->profile(), 0);
   // Navigate to a matching page.
   const GURL url = embedded_test_server()->GetURL(kDocumentWithNamedElement);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(url)));
@@ -155,10 +170,12 @@ IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
 
   EXPECT_TRUE(focus_manager->GetFocusedView());
   EXPECT_FALSE(icon_view->GetVisible());
+  EXPECT_EQ(GetLensOverlayEduActionChipShownCount(browser()->profile()), 1);
 }
 
 IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
                        HidesOnNonMatchingPage) {
+  SetLensOverlayEduActionChipShownCount(browser()->profile(), 0);
   // Navigate to a non-matching page.
   const GURL url = embedded_test_server()->GetURL(kDocument2);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(url)));
@@ -176,6 +193,30 @@ IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
 
   EXPECT_TRUE(focus_manager->GetFocusedView());
   EXPECT_FALSE(icon_view->GetVisible());
+  EXPECT_EQ(GetLensOverlayEduActionChipShownCount(browser()->profile()), 0);
+}
+
+IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
+                       HidesAfterMaxShownCountReached) {
+  SetLensOverlayEduActionChipShownCount(browser()->profile(), 4);
+  // Navigate to a matching page.
+  const GURL url = embedded_test_server()->GetURL(kDocumentWithNamedElement);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(url)));
+
+  LensOverlayHomeworkPageActionIconView* icon_view =
+      lens_overlay_homework_icon_view();
+  views::FocusManager* focus_manager = icon_view->GetFocusManager();
+  focus_manager->ClearFocus();
+  EXPECT_FALSE(focus_manager->GetFocusedView());
+  EXPECT_FALSE(icon_view->GetVisible());
+
+  // Focus in the location bar should not show the icon.
+  location_bar_view()->FocusLocation(false);
+  ViewVisibilityWaiter(icon_view, false).Wait();
+
+  EXPECT_TRUE(focus_manager->GetFocusedView());
+  EXPECT_FALSE(icon_view->GetVisible());
+  EXPECT_EQ(GetLensOverlayEduActionChipShownCount(browser()->profile()), 4);
 }
 
 #if BUILDFLAG(IS_WIN)
@@ -188,6 +229,7 @@ IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
 // Flaky failures on Windows; see https://crbug.com/419308044.
 IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
                        MAYBE_OpensNewTabWhenEnteredThroughKeyboard) {
+  SetLensOverlayEduActionChipShownCount(browser()->profile(), 0);
   const GURL url = embedded_test_server()->GetURL(kDocumentWithNamedElement);
   // Navigate to a matching page.
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(url)));
@@ -215,17 +257,70 @@ IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
 
   EXPECT_TRUE(new_tab_contents);
   content::WaitForLoadStop(new_tab_contents);
-  EXPECT_THAT(new_tab_contents->GetLastCommittedURL().query(),
+  EXPECT_THAT(new_tab_contents->GetLastCommittedURL().GetQuery(),
               MatchesRegex("ep=crmntob&re=df&s=4&st=\\d+&lm=.+"));
 }
 
-IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
-                       DoesNotShowWhenSettingDisabled) {
-  // Disable the setting.
-  browser()->profile()->GetPrefs()->SetBoolean(omnibox::kShowGoogleLensShortcut,
-                                               false);
-  const GURL url = embedded_test_server()->GetURL(kDocumentWithNamedElement);
+class LensOverlayHomeworkPageActionIconViewTest_OptimizationFilter
+    : public LensOverlayHomeworkPageActionIconViewTestBase {
+ public:
+  LensOverlayHomeworkPageActionIconViewTest_OptimizationFilter() {
+    scoped_feature_list_.InitWithFeaturesAndParameters(
+        {base::test::FeatureRefAndParams(lens::features::kLensOverlay, {}),
+         base::test::FeatureRefAndParams(
+             lens::features::kLensOverlayOmniboxEntryPoint, {}),
+         base::test::FeatureRefAndParams(
+             lens::features::kLensOverlayOptimizationFilter, {}),
+         base::test::FeatureRefAndParams(
+             lens::features::kLensOverlayEduActionChip,
+             {{"max-shown-count", "3"}})},
+        {lens::features::kLensOverlayKeyboardSelection});
+  }
+
+  void SetupOptimizationFilter() {
+    auto* optimization_guide_decider =
+        OptimizationGuideKeyedServiceFactory::GetForProfile(
+            browser()->profile());
+    // Simulate the URL being allowed by both the allowlist and the blocklist.
+    optimization_guide_decider->AddHintWithMultipleOptimizationsForTesting(
+        GURL(embedded_test_server()->GetURL(kDocumentWithNamedElement)),
+        {optimization_guide::proto::LENS_OVERLAY_EDU_ACTION_CHIP_ALLOWLIST,
+         optimization_guide::proto::LENS_OVERLAY_EDU_ACTION_CHIP_BLOCKLIST});
+  }
+};
+
+IN_PROC_BROWSER_TEST_F(
+    LensOverlayHomeworkPageActionIconViewTest_OptimizationFilter,
+    ShowsOnMatchingPage) {
+  SetupOptimizationFilter();
+  SetLensOverlayEduActionChipShownCount(browser()->profile(), 0);
   // Navigate to a matching page.
+  const GURL url = embedded_test_server()->GetURL(kDocumentWithNamedElement);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(url)));
+
+  LensOverlayHomeworkPageActionIconView* icon_view =
+      lens_overlay_homework_icon_view();
+  views::FocusManager* focus_manager = icon_view->GetFocusManager();
+  focus_manager->ClearFocus();
+  EXPECT_FALSE(focus_manager->GetFocusedView());
+  EXPECT_TRUE(icon_view->GetVisible());
+
+  // Focus in the location bar should hide the icon.
+  location_bar_view()->FocusLocation(false);
+  ViewVisibilityWaiter(icon_view, false).Wait();
+
+  EXPECT_TRUE(focus_manager->GetFocusedView());
+  EXPECT_FALSE(icon_view->GetVisible());
+  EXPECT_EQ(GetLensOverlayEduActionChipShownCount(browser()->profile()), 1);
+}
+
+IN_PROC_BROWSER_TEST_F(
+    LensOverlayHomeworkPageActionIconViewTest_OptimizationFilter,
+    HidesOnNonMatchingPage) {
+  SetupOptimizationFilter();
+  SetLensOverlayEduActionChipShownCount(browser()->profile(), 0);
+  // Navigate to a non-matching page.
+  const GURL url = embedded_test_server()->GetURL(kDocument2);
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(url)));
 
   LensOverlayHomeworkPageActionIconView* icon_view =
@@ -241,34 +336,7 @@ IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
 
   EXPECT_TRUE(focus_manager->GetFocusedView());
   EXPECT_FALSE(icon_view->GetVisible());
-}
-
-IN_PROC_BROWSER_TEST_F(LensOverlayHomeworkPageActionIconViewTest,
-                       RespectsShowShortcutPreference) {
-  // Ensure the shortcut pref starts enabled.
-  browser()->profile()->GetPrefs()->SetBoolean(omnibox::kShowGoogleLensShortcut,
-                                               true);
-
-  const GURL url = embedded_test_server()->GetURL(kDocumentWithNamedElement);
-  // Navigate to a matching page.
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GURL(url)));
-
-  views::View* icon_view = lens_overlay_homework_icon_view();
-  views::FocusManager* focus_manager = icon_view->GetFocusManager();
-  focus_manager->ClearFocus();
-  EXPECT_FALSE(focus_manager->GetFocusedView());
-  EXPECT_TRUE(icon_view->GetVisible());
-
-  // Disable the preference, the entrypoint should immediately disappear.
-  browser()->profile()->GetPrefs()->SetBoolean(omnibox::kShowGoogleLensShortcut,
-                                               false);
-  EXPECT_FALSE(icon_view->GetVisible());
-
-  // Re-enable the preference, the entrypoint should immediately become
-  // visible.
-  browser()->profile()->GetPrefs()->SetBoolean(omnibox::kShowGoogleLensShortcut,
-                                               true);
-  EXPECT_TRUE(icon_view->GetVisible());
+  EXPECT_EQ(GetLensOverlayEduActionChipShownCount(browser()->profile()), 0);
 }
 
 }  // namespace

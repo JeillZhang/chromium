@@ -8,6 +8,7 @@
 #include <memory>
 #include <optional>
 
+#include "build/build_config.h"
 #include "third_party/blink/public/mojom/clipboard/clipboard.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/frame/platform_event_dispatcher.h"
@@ -50,7 +51,7 @@ class CORE_EXPORT SystemClipboard final
   // Inherited from ClipboardListener.
   void OnClipboardDataChanged() override;
 
-  ClipboardSequenceNumberToken SequenceNumber();
+  absl::uint128 SequenceNumber();
   bool IsSelectionMode() const;
   void SetSelectionMode(bool);
   Vector<String> ReadAvailableTypes();
@@ -98,6 +99,11 @@ class CORE_EXPORT SystemClipboard final
   void CommitWrite();
 
   void CopyToFindPboard(const String& text);
+
+#if BUILDFLAG(IS_MAC)
+  void GetPlatformPermissionState(
+      mojom::blink::ClipboardHost::GetPlatformPermissionStateCallback callback);
+#endif
 
   void ReadAvailableCustomAndStandardFormats(
       mojom::blink::ClipboardHost::ReadAvailableCustomAndStandardFormatsCallback
@@ -194,7 +200,7 @@ class CORE_EXPORT SystemClipboard final
 
     mutable std::optional<mojom::blink::ClipboardFilesPtr> files_;
 
-    WTF::HashMap<String, String> custom_data_;
+    HashMap<String, String> custom_data_;
   };
 
   bool IsValidBufferType(mojom::blink::ClipboardBuffer);

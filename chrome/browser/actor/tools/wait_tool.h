@@ -6,14 +6,21 @@
 #define CHROME_BROWSER_ACTOR_TOOLS_WAIT_TOOL_H_
 
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/actor/tools/observation_delay_controller.h"
 #include "chrome/browser/actor/tools/tool.h"
+#include "chrome/browser/actor/tools/tool_request.h"
+#include "chrome/browser/actor/tools/wait_tool_request.h"
+#include "components/tabs/public/tab_interface.h"
 
 namespace actor {
 
 // Waits for a page to settle before continuing with other tools.
 class WaitTool : public Tool {
  public:
-  WaitTool();
+  explicit WaitTool(TaskId task_id,
+                    ToolDelegate& tool_delegate,
+                    base::TimeDelta wait_duration,
+                    tabs::TabHandle observe_tab_handle);
   ~WaitTool() override;
 
   // actor::Tool
@@ -22,14 +29,24 @@ class WaitTool : public Tool {
   std::string DebugString() const override;
   std::string JournalEvent() const override;
   std::unique_ptr<ObservationDelayController> GetObservationDelayer(
-      content::RenderFrameHost& target_frame) const override;
+      std::optional<ObservationDelayController::PageStabilityConfig>
+          page_stability_config) override;
+  void UpdateTaskBeforeInvoke(ActorTask& task,
+                              InvokeCallback callback) const override;
+  tabs::TabHandle GetTargetTab() const override;
 
   static void SetNoDelayForTesting();
 
  private:
   void OnDelayFinished(InvokeCallback callback);
 
+  // TODO(bokan): This could be removed in place of tests setting the wait
+  // duration explicitly.
   static bool no_delay_for_testing_;
+
+  base::TimeDelta wait_duration_;
+
+  tabs::TabHandle observe_tab_handle_;
 
   base::WeakPtrFactory<WaitTool> weak_ptr_factory_{this};
 };

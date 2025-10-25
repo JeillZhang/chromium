@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.gesturenav;
 import androidx.test.filters.SmallTest;
 
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -16,12 +17,12 @@ import org.chromium.base.task.TaskTraits;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
-import org.chromium.base.test.util.Features;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
-import org.chromium.components.embedder_support.util.UrlConstants;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ntp.RegularNewTabPageStation;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 
 import java.util.concurrent.TimeoutException;
 
@@ -29,24 +30,29 @@ import java.util.concurrent.TimeoutException;
 @Batch(Batch.PER_CLASS)
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
-@Features.EnableFeatures({ChromeFeatureList.BACK_FORWARD_TRANSITIONS})
 public class NativePageBitmapCapturerTest {
     @Rule
-    public ChromeTabbedActivityTestRule mTabbedActivityTestRule =
-            new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mTabbedActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
+
+    @Before
+    public void setUp() {
+        NativePageBitmapCapturer.setIgnoreCurrentUrlCheckForTesting();
+    }
 
     @Test
     @SmallTest
     public void testWithNativePage() throws TimeoutException {
-        mTabbedActivityTestRule.startMainActivityWithURL(UrlConstants.NTP_URL);
+        RegularNewTabPageStation ntp = mTabbedActivityTestRule.startOnNtp();
 
         CallbackHelper callbackHelper = new CallbackHelper();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Assert.assertTrue(
                             NativePageBitmapCapturer.maybeCaptureNativeView(
-                                    mTabbedActivityTestRule.getActivity().getActivityTab(),
+                                    ntp.getTab(),
                                     (bitmap) -> {
+                                        Assert.assertNotNull(bitmap);
                                         callbackHelper.notifyCalled();
                                     }));
                 });
@@ -57,14 +63,14 @@ public class NativePageBitmapCapturerTest {
     @Test
     @SmallTest
     public void testWithNonNativePage() {
-        mTabbedActivityTestRule.startMainActivityOnBlankPage();
+        WebPageStation blankPage = mTabbedActivityTestRule.startOnBlankPage();
 
         CallbackHelper callbackHelper = new CallbackHelper();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     Assert.assertFalse(
                             NativePageBitmapCapturer.maybeCaptureNativeView(
-                                    mTabbedActivityTestRule.getActivity().getActivityTab(),
+                                    blankPage.getTab(),
                                     (bitmap) -> {
                                         callbackHelper.notifyCalled();
                                     }));

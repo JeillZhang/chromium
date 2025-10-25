@@ -51,6 +51,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
 import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager;
 import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager.MaybeBlockingResult;
+import org.chromium.chrome.browser.tabmodel.TabClosingSource;
 import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModel;
@@ -65,12 +66,13 @@ import org.chromium.components.data_sharing.GroupMember;
 import org.chromium.components.data_sharing.SharedGroupTestHelper;
 import org.chromium.components.data_sharing.member_role.MemberRole;
 import org.chromium.components.signin.base.CoreAccountInfo;
-import org.chromium.components.signin.base.GaiaId;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.tab_group_sync.LocalTabGroupId;
 import org.chromium.components.tab_group_sync.SavedTabGroup;
 import org.chromium.components.tab_group_sync.SyncedGroupTestHelper;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
+import org.chromium.components.tab_groups.TabGroupColorId;
+import org.chromium.google_apis.gaia.GaiaId;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
 import java.util.List;
@@ -80,7 +82,6 @@ import java.util.List;
 @EnableFeatures(ChromeFeatureList.DATA_SHARING)
 public class TabUiUtilsUnitTest {
     private static final int TAB_ID = 123;
-    private static final int ROOT_ID = TAB_ID;
     private static final String GROUP_TITLE = "My Group";
     private static final Token TAB_GROUP_ID = new Token(1L, 2L);
 
@@ -105,23 +106,21 @@ public class TabUiUtilsUnitTest {
     @Captor private ArgumentCaptor<TabModelActionListener> mTabModelActionListenerCaptor;
     @Captor private ArgumentCaptor<Callback<Boolean>> mOutcomeCaptor;
 
-    private List<Tab> mTabsToClose;
     private SyncedGroupTestHelper mSyncedGroupTestHelper;
 
     @Before
     public void setUp() {
-        mTabsToClose = List.of(mTab);
+        List<Tab> tabsToClose = List.of(mTab);
         mSyncedGroupTestHelper = new SyncedGroupTestHelper(mTabGroupSyncService);
 
         when(mTabModel.getTabRemover()).thenReturn(mTabRemover);
         when(mFilter.getTabModel()).thenReturn(mTabModel);
         when(mTabModel.isIncognitoBranded()).thenReturn(false);
         when(mTabModel.getTabById(TAB_ID)).thenReturn(mTab);
-        when(mTab.getRootId()).thenReturn(ROOT_ID);
-        when(mFilter.getRootIdFromTabGroupId(TAB_GROUP_ID)).thenReturn(ROOT_ID);
-        when(mFilter.getTabsInGroup(TAB_GROUP_ID)).thenReturn(mTabsToClose);
-        when(mFilter.getTabCountForGroup(TAB_GROUP_ID)).thenReturn(mTabsToClose.size());
-        when(mFilter.getTabGroupTitle(ROOT_ID)).thenReturn(GROUP_TITLE);
+        when(mFilter.getTabsInGroup(TAB_GROUP_ID)).thenReturn(tabsToClose);
+        when(mFilter.getTabCountForGroup(TAB_GROUP_ID)).thenReturn(tabsToClose.size());
+        when(mFilter.getTabGroupTitle(TAB_GROUP_ID)).thenReturn(GROUP_TITLE);
+        when(mFilter.tabGroupExists(TAB_GROUP_ID)).thenReturn(true);
         when(mTabModel.getTabById(TAB_ID)).thenReturn(mTab);
         when(mTab.isClosing()).thenReturn(false);
         when(mTab.getId()).thenReturn(TAB_ID);
@@ -139,6 +138,7 @@ public class TabUiUtilsUnitTest {
         TabUiUtils.closeTabGroup(
                 mFilter,
                 Tab.INVALID_TAB_ID,
+                TabClosingSource.UNKNOWN,
                 /* allowUndo= */ true,
                 /* hideTabGroups= */ false,
                 mDidCloseTabsCallback);
@@ -160,6 +160,7 @@ public class TabUiUtilsUnitTest {
         TabUiUtils.closeTabGroup(
                 mFilter,
                 TAB_ID,
+                TabClosingSource.UNKNOWN,
                 shouldAllowUndo,
                 /* hideTabGroups= */ false,
                 /* didCloseCallback= */ null);
@@ -180,7 +181,12 @@ public class TabUiUtilsUnitTest {
         boolean hideTabGroups = false;
 
         TabUiUtils.closeTabGroup(
-                mFilter, TAB_ID, /* allowUndo= */ true, hideTabGroups, mDidCloseTabsCallback);
+                mFilter,
+                TAB_ID,
+                TabClosingSource.TABLET_TAB_STRIP,
+                /* allowUndo= */ true,
+                hideTabGroups,
+                mDidCloseTabsCallback);
 
         verify(mTabRemover)
                 .closeTabs(
@@ -188,6 +194,7 @@ public class TabUiUtilsUnitTest {
                                 TabClosureParams.forCloseTabGroup(mFilter, TAB_GROUP_ID)
                                         .hideTabGroups(hideTabGroups)
                                         .allowUndo(true)
+                                        .tabClosingSource(TabClosingSource.TABLET_TAB_STRIP)
                                         .build()),
                         eq(true),
                         mTabModelActionListenerCaptor.capture());
@@ -225,7 +232,12 @@ public class TabUiUtilsUnitTest {
         boolean hideTabGroups = true;
 
         TabUiUtils.closeTabGroup(
-                mFilter, TAB_ID, /* allowUndo= */ true, hideTabGroups, mDidCloseTabsCallback);
+                mFilter,
+                TAB_ID,
+                TabClosingSource.TABLET_TAB_STRIP,
+                /* allowUndo= */ true,
+                hideTabGroups,
+                mDidCloseTabsCallback);
 
         verify(mTabRemover)
                 .closeTabs(
@@ -233,6 +245,7 @@ public class TabUiUtilsUnitTest {
                                 TabClosureParams.forCloseTabGroup(mFilter, TAB_GROUP_ID)
                                         .hideTabGroups(hideTabGroups)
                                         .allowUndo(true)
+                                        .tabClosingSource(TabClosingSource.TABLET_TAB_STRIP)
                                         .build()),
                         eq(true),
                         mTabModelActionListenerCaptor.capture());
@@ -412,7 +425,7 @@ public class TabUiUtilsUnitTest {
         mockIdentity(EMAIL2, GAIA_ID2);
         SavedTabGroup group = createSyncGroup(COLLABORATION_ID1);
         group.title = null;
-        when(mFilter.getTabGroupTitle(ROOT_ID)).thenReturn(null);
+        when(mFilter.getTabGroupTitle(TAB_GROUP_ID)).thenReturn(null);
         createSharedGroup(GROUP_MEMBER1, GROUP_MEMBER2);
         when(mCollaborationService.getCurrentUserRoleForGroup(COLLABORATION_ID1))
                 .thenReturn(MemberRole.MEMBER);
@@ -518,6 +531,8 @@ public class TabUiUtilsUnitTest {
     public void testUpdateViewContentSensitivityForTabList() {
         final String histogram = "SensitiveContent.TabSwitching.BottomTabStripGroupUI.Sensitivity";
 
+        List<Tab> tabList = List.of(mTab);
+        when(mTabModel.iterator()).thenAnswer(invocation -> tabList.iterator());
         when(mTabModel.getCount()).thenAnswer(invocation -> 1);
         when(mTabModel.getTabAtChecked(0)).thenAnswer(invocation -> mTab);
 
@@ -536,6 +551,36 @@ public class TabUiUtilsUnitTest {
                 mTabModel, mContentSensitivitySetter, histogram);
         verify(mContentSensitivitySetter).onResult(false);
         histogramWatcherForFalseBucket.assertExpected();
+    }
+
+    @Test
+    public void testUpdateTabGroupColor() {
+        when(mFilter.tabGroupExists(TAB_GROUP_ID)).thenReturn(true);
+        when(mFilter.getTabGroupColor(TAB_GROUP_ID)).thenReturn(TabGroupColorId.BLUE);
+        TabUiUtils.updateTabGroupColor(mFilter, TAB_GROUP_ID, TabGroupColorId.RED);
+        verify(mFilter).setTabGroupColor(TAB_GROUP_ID, TabGroupColorId.RED);
+
+        TabUiUtils.updateTabGroupColor(mFilter, TAB_GROUP_ID, TabGroupColorId.BLUE);
+        verify(mFilter, never()).setTabGroupColor(TAB_GROUP_ID, TabGroupColorId.BLUE);
+
+        when(mFilter.tabGroupExists(TAB_GROUP_ID)).thenReturn(false);
+        TabUiUtils.updateTabGroupColor(mFilter, TAB_GROUP_ID, TabGroupColorId.YELLOW);
+        verify(mFilter, never()).setTabGroupColor(TAB_GROUP_ID, TabGroupColorId.YELLOW);
+    }
+
+    @Test
+    public void testUpdateTabGroupTitle() {
+        when(mFilter.tabGroupExists(TAB_GROUP_ID)).thenReturn(true);
+        when(mFilter.getTabGroupTitle(TAB_GROUP_ID)).thenReturn("B");
+        TabUiUtils.updateTabGroupTitle(mFilter, TAB_GROUP_ID, "A");
+        verify(mFilter).setTabGroupTitle(TAB_GROUP_ID, "A");
+
+        TabUiUtils.updateTabGroupTitle(mFilter, TAB_GROUP_ID, "B");
+        verify(mFilter, never()).setTabGroupTitle(TAB_GROUP_ID, "B");
+
+        when(mFilter.tabGroupExists(TAB_GROUP_ID)).thenReturn(false);
+        TabUiUtils.updateTabGroupTitle(mFilter, TAB_GROUP_ID, "C");
+        verify(mFilter, never()).setTabGroupTitle(TAB_GROUP_ID, "C");
     }
 
     private SavedTabGroup createSyncGroup(String collaborationId) {

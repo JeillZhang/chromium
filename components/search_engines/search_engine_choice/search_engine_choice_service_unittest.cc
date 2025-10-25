@@ -29,11 +29,14 @@
 #include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/testing_pref_service.h"
+#include "components/regional_capabilities/program_settings.h"
+#include "components/regional_capabilities/regional_capabilities_metrics.h"
 #include "components/regional_capabilities/regional_capabilities_service.h"
 #include "components/regional_capabilities/regional_capabilities_switches.h"
 #include "components/regional_capabilities/regional_capabilities_test_utils.h"
 #include "components/search_engines/choice_made_location.h"
 #include "components/search_engines/default_search_manager.h"
+#include "components/search_engines/search_engine_choice/buildflags.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_metrics_service_accessor.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_service_test_base.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
@@ -54,6 +57,11 @@
 #include "third_party/search_engines_data/resources/definitions/prepopulated_engines.h"
 
 using ::country_codes::CountryId;
+using regional_capabilities::CheckHistogramExpectation;
+using regional_capabilities::ExpectHistogramBucket;
+using regional_capabilities::ExpectHistogramNever;
+using regional_capabilities::FunnelStage;
+using regional_capabilities::HistogramExpectation;
 using ::search_engines::RepromptResult;
 using ::search_engines::SearchEngineChoiceWipeReason;
 using ::testing::NiceMock;
@@ -214,7 +222,7 @@ TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade) {
       SearchEngineType::SEARCH_ENGINE_GOOGLE, 1);
 }
 
-TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade_ByLocation) {
+TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade_ByLocation_Waffle) {
   // Configure to an EEA region country.
   base::CommandLine::ForCurrentProcess()->RemoveSwitch(
       switches::kSearchEngineChoiceCountry);
@@ -261,6 +269,69 @@ TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade_ByLocation) {
                                 SearchEngineChoiceWipeReason::kCommandLineFlag);
   }
 }
+
+#if BUILDFLAG(IS_IOS) || BUILDFLAG(IS_ANDROID)
+TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade_ByLocation_Taiyaki) {
+  if (!regional_capabilities::IsClientCompatibleWithProgram(
+          regional_capabilities::Program::kTaiyaki)) {
+    GTEST_SKIP();
+  }
+
+  base::test::ScopedFeatureList feature_list{switches::kTaiyaki};
+
+  base::CommandLine::ForCurrentProcess()->RemoveSwitch(
+      switches::kSearchEngineChoiceCountry);
+  base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
+      switches::kSearchEngineChoiceCountry, switches::kTaiyakiProgramOverride);
+  EXPECT_EQ(template_url_service().GetDefaultSearchProvider()->prepopulate_id(),
+            TemplateURLPrepopulateData::google.id);
+
+  auto locations = {ChoiceMadeLocation::kChoiceScreen,
+                    ChoiceMadeLocation::kSearchSettings,
+                    ChoiceMadeLocation::kSearchEngineSettings};
+  for (const ChoiceMadeLocation& choice_location : locations) {
+    base::HistogramTester scoped_histogram_tester;
+    int expected_v1_records = 0;
+    int expected_v2_records = 0;
+    bool expect_choice_prefs_presence = false;
+    switch (choice_location) {
+      case ChoiceMadeLocation::kChoiceScreen:
+        // For the choice screen, the choice should be recorded in the both
+        // histograms.
+        expected_v1_records = 1;
+        expected_v2_records = 1;
+        expect_choice_prefs_presence = true;
+        break;
+
+      case ChoiceMadeLocation::kSearchSettings:
+      case ChoiceMadeLocation::kSearchEngineSettings:
+        // For other locations, the choice should not be recorded.
+        break;
+      case ChoiceMadeLocation::kOther:
+        NOTREACHED();  // Not an allowed value for `RecordChoiceMade()`.
+    }
+
+    search_engine_choice_service().RecordChoiceMade(choice_location,
+                                                    &template_url_service());
+    scoped_histogram_tester.ExpectBucketCount(
+        search_engines::
+            kSearchEngineChoiceScreenDefaultSearchEngineTypeHistogram,
+        SearchEngineType::SEARCH_ENGINE_GOOGLE, expected_v1_records);
+    scoped_histogram_tester.ExpectBucketCount(
+        search_engines::
+            kSearchEngineChoiceScreenDefaultSearchEngineType2Histogram,
+        SearchEngineType::SEARCH_ENGINE_GOOGLE, expected_v2_records);
+
+    EXPECT_EQ(
+        expect_choice_prefs_presence,
+        pref_service()->HasPrefPath(
+            prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
+
+    WipeSearchEngineChoicePrefs(*pref_service(),
+                                SearchEngineChoiceWipeReason::kCommandLineFlag);
+  }
+}
+#endif
 
 TEST_F(SearchEngineChoiceServiceTest, RecordChoiceMade_DistributionCustom) {
   // A distribution custom search engine will have a `prepopulate_id` > 1000.
@@ -347,7 +418,8 @@ TEST_F(SearchEngineChoiceServiceTest, MaybeRecordChoiceScreenDisplayState) {
           {&TemplateURLPrepopulateData::google,
            &TemplateURLPrepopulateData::bing,
            &TemplateURLPrepopulateData::yahoo}),
-      kBelgiumCountryId, SearchTermsData());
+      /*current_default_to_highlight=*/nullptr, kBelgiumCountryId,
+      SearchTermsData());
   ChoiceScreenDisplayState display_state = choice_screen_data.display_state();
   display_state.selected_engine_index = 2;
 
@@ -396,7 +468,8 @@ TEST_F(SearchEngineChoiceServiceTest,
           {&TemplateURLPrepopulateData::google,
            &TemplateURLPrepopulateData::bing,
            &TemplateURLPrepopulateData::yahoo}),
-      kBelgiumCountryId, SearchTermsData());
+      /*current_default_to_highlight=*/nullptr, kBelgiumCountryId,
+      SearchTermsData());
   ChoiceScreenDisplayState display_state = choice_screen_data.display_state();
   display_state.selected_engine_index = 2;
 
@@ -444,7 +517,8 @@ TEST_F(SearchEngineChoiceServiceTest,
     // Unknown country.
     InitService({.force_reset = true});
     ChoiceScreenData choice_screen_data(
-        OwnedTemplateURLVectorFromPrepopulatedEngines(engines), CountryId(),
+        OwnedTemplateURLVectorFromPrepopulatedEngines(engines),
+        /*current_default_to_highlight=*/nullptr, CountryId(),
         SearchTermsData());
     ChoiceScreenDisplayState display_state = choice_screen_data.display_state();
     display_state.selected_engine_index = 0;
@@ -467,7 +541,8 @@ TEST_F(SearchEngineChoiceServiceTest,
     // Non-EEA variations country.
     InitService({.variation_country_id = kUsaCountryId, .force_reset = true});
     ChoiceScreenData choice_screen_data(
-        OwnedTemplateURLVectorFromPrepopulatedEngines(engines), kUsaCountryId,
+        OwnedTemplateURLVectorFromPrepopulatedEngines(engines),
+        /*current_default_to_highlight=*/nullptr, kUsaCountryId,
         SearchTermsData());
     ChoiceScreenDisplayState display_state = choice_screen_data.display_state();
     display_state.selected_engine_index = 0;
@@ -497,7 +572,8 @@ TEST_F(SearchEngineChoiceServiceTest,
   InitService({.variation_country_id = country_codes::CountryId("DE"),
                .force_reset = true});
   ChoiceScreenData choice_screen_data(
-      OwnedTemplateURLVectorFromPrepopulatedEngines(engines), kBelgiumCountryId,
+      OwnedTemplateURLVectorFromPrepopulatedEngines(engines),
+      /*current_default_to_highlight=*/nullptr, kBelgiumCountryId,
       SearchTermsData());
   ChoiceScreenDisplayState display_state = choice_screen_data.display_state();
   display_state.selected_engine_index = 0;
@@ -546,6 +622,8 @@ TEST_F(SearchEngineChoiceServiceTest,
       /*search_engines=*/{SEARCH_ENGINE_GOOGLE, SEARCH_ENGINE_BING,
                           SEARCH_ENGINE_YAHOO},
       /*country_id=*/kBelgiumCountryId,
+      /*is_current_default_search_presented=*/false,
+      /*includes_non_regional_set_engine=*/false,
       /*selected_engine_index=*/0);
   pref_service()->SetDict(
       prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState,
@@ -586,6 +664,8 @@ TEST_F(SearchEngineChoiceServiceTest,
       /*search_engines=*/{SEARCH_ENGINE_GOOGLE, SEARCH_ENGINE_BING,
                           SEARCH_ENGINE_YAHOO},
       /*country_id=*/kBelgiumCountryId,
+      /*is_current_default_search_presented=*/false,
+      /*includes_non_regional_set_engine=*/false,
       /*selected_engine_index=*/0);
   pref_service()->SetDict(
       prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState,
@@ -626,6 +706,8 @@ TEST_F(SearchEngineChoiceServiceTest,
       /*search_engines=*/{SEARCH_ENGINE_GOOGLE, SEARCH_ENGINE_BING,
                           SEARCH_ENGINE_YAHOO},
       /*country_id=*/kBelgiumCountryId,
+      /*is_current_default_search_presented=*/false,
+      /*includes_non_regional_set_engine=*/false,
       /*selected_engine_index=*/0);
   pref_service()->SetDict(
       prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState,
@@ -664,6 +746,8 @@ TEST_F(SearchEngineChoiceServiceTest,
       /*search_engines=*/{SEARCH_ENGINE_GOOGLE, SEARCH_ENGINE_BING,
                           SEARCH_ENGINE_YAHOO},
       /*country_id=*/kBelgiumCountryId,
+      /*is_current_default_search_presented=*/false,
+      /*includes_non_regional_set_engine=*/false,
       /*selected_engine_index=*/0);
   pref_service()->SetDict(
       prefs::kDefaultSearchProviderPendingChoiceScreenDisplayState,
@@ -713,13 +797,53 @@ TEST_F(SearchEngineChoiceServiceTest,
       kSearchEngineChoiceCompletedOnMonthHistogram, 202504, 1);
 }
 
+// Tests if choice screen completion date is recorded.
+TEST_F(SearchEngineChoiceServiceTest,
+       RecordsChoiceScreenCompletionDateBefore2022Histogram) {
+  base::HistogramTester histogram_tester;
+
+  // July 1993. What is specific about this timestamp (in windows epoch seconds)
+  // is that it is before 2022.
+  int64_t windows_epoch_timestamp = 12388103000;
+
+  pref_service()->SetString(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionVersion, "1.0.0.0");
+  pref_service()->SetInt64(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp,
+      windows_epoch_timestamp);
+
+  search_engine_choice_service();
+  histogram_tester.ExpectUniqueSample(
+      kSearchEngineChoiceCompletedOnMonthHistogram, 100001, 1);
+}
+
+// Tests if choice screen completion date is recorded.
+TEST_F(SearchEngineChoiceServiceTest,
+       RecordsChoiceScreenCompletionDateAfter2050Histogram) {
+  base::HistogramTester histogram_tester;
+
+  // December 2056. What is specific about this timestamp (in windows epoch
+  // seconds) is that it is after 2050.
+  int64_t windows_epoch_timestamp = 14388103000;
+
+  pref_service()->SetString(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionVersion, "1.0.0.0");
+  pref_service()->SetInt64(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp,
+      windows_epoch_timestamp);
+
+  search_engine_choice_service();
+  histogram_tester.ExpectUniqueSample(
+      kSearchEngineChoiceCompletedOnMonthHistogram, 300001, 1);
+}
+
 // Test that the user is not reprompted if the reprompt parameter is not a valid
 // JSON string.
 TEST_F(SearchEngineChoiceServiceTest, NoRepromptForSyntaxError) {
   // Set the reprompt parameters with invalid syntax.
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndEnableFeatureWithParameters(
-      switches::kSearchEngineChoiceTrigger,
+      switches::kSearchEngineChoiceTriggerReprompt,
       {{switches::kSearchEngineChoiceTriggerRepromptParams.name, "Foo"}});
   ASSERT_EQ("Foo", switches::kSearchEngineChoiceTriggerRepromptParams.Get());
 
@@ -809,7 +933,7 @@ TEST_F(SearchEngineChoiceServiceTest, NoRepromptByDefault) {
 TEST_F(SearchEngineChoiceServiceTest, RepromptForMissingChoiceVersion) {
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndEnableFeatureWithParameters(
-      switches::kSearchEngineChoiceTrigger,
+      switches::kSearchEngineChoiceTriggerReprompt,
       {{switches::kSearchEngineChoiceTriggerRepromptParams.name, "{}"}});
   ASSERT_EQ("{}", switches::kSearchEngineChoiceTriggerRepromptParams.Get());
 
@@ -842,7 +966,7 @@ TEST_F(SearchEngineChoiceServiceTest, RepromptForMissingChoiceVersion) {
 TEST_F(SearchEngineChoiceServiceTest, RepromptForMissingTimestamp) {
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndEnableFeatureWithParameters(
-      switches::kSearchEngineChoiceTrigger,
+      switches::kSearchEngineChoiceTriggerReprompt,
       {{switches::kSearchEngineChoiceTriggerRepromptParams.name, "{}"}});
   ASSERT_EQ("{}", switches::kSearchEngineChoiceTriggerRepromptParams.Get());
 
@@ -869,13 +993,204 @@ TEST_F(SearchEngineChoiceServiceTest, RepromptForMissingTimestamp) {
       search_engines::kSearchEngineChoiceRepromptHistogram, 0);
 }
 
+class SearchEngineChoiceServiceChoiceScreenDataTest
+    : public SearchEngineChoiceServiceTest {
+ public:
+  void SetUp() override {
+    SearchEngineChoiceServiceTest::SetUp();
+    base::CommandLine::ForCurrentProcess()->RemoveSwitch(
+        switches::kSearchEngineChoiceCountry);
+  }
+
+  void OverrideProgramAndSetHighlightSettingTo(bool enabled) {
+    test_program_settings_.choice_screen_eligibility_config
+        ->highlight_current_default = enabled;
+    regional_capabilities_service().SetCacheForTesting(CountryId("FR"),
+                                                       test_program_settings_);
+  }
+
+  void SetDefaultSearchProvider(
+      const TemplateURLPrepopulateData::PrepopulatedEngine& engine) {
+    std::unique_ptr<TemplateURLData> data =
+        TemplateURLDataFromPrepopulatedEngine(engine);
+    auto template_url = std::make_unique<TemplateURL>(*data);
+    template_url_service().SetUserSelectedDefaultSearchProvider(
+        template_url.get());
+  }
+
+ private:
+  // Cached in the instance because as we override the program settings by
+  // reference, the reference would otherwise become invalid. We initialize it
+  // from a copy of the Waffle settings.
+  regional_capabilities::ProgramSettings test_program_settings_ =
+      regional_capabilities::GetSettingsForProgram(
+          regional_capabilities::Program::kWaffle);
+};
+
+TEST_F(SearchEngineChoiceServiceChoiceScreenDataTest, DseHighlight) {
+  base::test::ScopedFeatureList scoped_feature_list{
+      switches::kCurrentDseHighlightOnChoiceScreenSupport};
+
+  OverrideProgramAndSetHighlightSettingTo(true);
+
+  auto& test_dse = TemplateURLPrepopulateData::google;
+  SetDefaultSearchProvider(test_dse);
+
+  // Calling `SearchEngineChoiceService::GetChoiceScreenData()` through the
+  // associated method from `template_url_service` which sets up the right
+  // arguments.
+  auto choice_screen_data = template_url_service().GetChoiceScreenData();
+
+  // The current default to highlight should be available, and point to an entry
+  // in the list owned by the `choice_screen_data`.
+  EXPECT_EQ(
+      choice_screen_data->current_default_to_highlight()->prepopulate_id(),
+      test_dse.id);
+  bool found_current_dse = false;
+  for (const auto& engine : choice_screen_data->search_engines()) {
+    if (engine->prepopulate_id() == test_dse.id) {
+      EXPECT_EQ(engine.get(),
+                choice_screen_data->current_default_to_highlight());
+      found_current_dse = true;
+      break;
+    }
+  }
+  ASSERT_TRUE(found_current_dse);
+}
+
+TEST_F(SearchEngineChoiceServiceChoiceScreenDataTest,
+       DseHighlight_FeatureDisabled) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      switches::kCurrentDseHighlightOnChoiceScreenSupport);
+  OverrideProgramAndSetHighlightSettingTo(true);
+
+  auto& test_dse = TemplateURLPrepopulateData::google;
+  SetDefaultSearchProvider(test_dse);
+
+  // Calling `SearchEngineChoiceService::GetChoiceScreenData()` through the
+  // associated method from `template_url_service` which sets up the right
+  // arguments.
+  auto choice_screen_data = template_url_service().GetChoiceScreenData();
+
+  // No engine should be provided for highlighting.
+  EXPECT_EQ(choice_screen_data->current_default_to_highlight(), nullptr);
+}
+
+TEST_F(SearchEngineChoiceServiceChoiceScreenDataTest,
+       DseHighlight_DisabledInProgram) {
+  base::test::ScopedFeatureList scoped_feature_list{
+      switches::kCurrentDseHighlightOnChoiceScreenSupport};
+  OverrideProgramAndSetHighlightSettingTo(false);
+
+  auto& test_dse = TemplateURLPrepopulateData::google;
+  SetDefaultSearchProvider(test_dse);
+
+  // Calling `SearchEngineChoiceService::GetChoiceScreenData()` through the
+  // associated method from `template_url_service` which sets up the right
+  // arguments.
+  auto choice_screen_data = template_url_service().GetChoiceScreenData();
+
+  // No engine should be provided for highlighting.
+  EXPECT_EQ(choice_screen_data->current_default_to_highlight(), nullptr);
+}
+
+TEST_F(SearchEngineChoiceServiceChoiceScreenDataTest,
+       DseHighlight_OffRegionDefault) {
+  base::test::ScopedFeatureList scoped_feature_list{
+      switches::kCurrentDseHighlightOnChoiceScreenSupport};
+  OverrideProgramAndSetHighlightSettingTo(true);
+
+  auto& test_dse = TemplateURLPrepopulateData::naver;
+  SetDefaultSearchProvider(test_dse);
+
+  // Calling `SearchEngineChoiceService::GetChoiceScreenData()` through the
+  // associated method from `template_url_service` which sets up the right
+  // arguments.
+  auto choice_screen_data = template_url_service().GetChoiceScreenData();
+
+  // No engine should be provided for highlighting.
+  EXPECT_EQ(choice_screen_data->current_default_to_highlight(), nullptr);
+}
+
+class SearchEngineChoiceServiceWipeOnMissingDSETest
+    : public SearchEngineChoiceServiceTest,
+      public testing::WithParamInterface<bool> {
+ public:
+  SearchEngineChoiceServiceWipeOnMissingDSETest() {
+    scoped_feature_list_.InitWithFeatureState(
+        switches::kWipeChoicePrefsOnMissingDefaultSearchEngine,
+        IsFeatureEnabled());
+  }
+
+  bool IsFeatureEnabled() const { return GetParam(); }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+TEST_P(SearchEngineChoiceServiceWipeOnMissingDSETest, WipeOnMissingDSE) {
+  {
+    // Set up services and make some DSE choice.
+    std::unique_ptr<TemplateURLData> data =
+        TemplateURLDataFromPrepopulatedEngine(
+            TemplateURLPrepopulateData::google);
+    auto template_url = std::make_unique<TemplateURL>(*data);
+    template_url_service().SetUserSelectedDefaultSearchProvider(
+        template_url.get(), ChoiceMadeLocation::kChoiceScreen);
+
+    // Check that choice prefs are present.
+    EXPECT_TRUE(pref_service()->HasPrefPath(
+        prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
+    EXPECT_TRUE(pref_service()->HasPrefPath(
+        prefs::kDefaultSearchProviderChoiceScreenCompletionVersion));
+    EXPECT_TRUE(pref_service()->HasPrefPath(
+        DefaultSearchManager::kDefaultSearchProviderDataPrefName));
+
+    ResetServices();
+  }
+
+  // Remove the DSE pref.
+  pref_service()->ClearPref(
+      DefaultSearchManager::kDefaultSearchProviderDataPrefName);
+
+  // Instantiating the service should wipe the choice prefs when the feature is
+  // enabled.
+  search_engine_choice_service();
+
+  if (IsFeatureEnabled()) {
+    EXPECT_FALSE(pref_service()->HasPrefPath(
+        prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
+    EXPECT_FALSE(pref_service()->HasPrefPath(
+        prefs::kDefaultSearchProviderChoiceScreenCompletionVersion));
+    histogram_tester_.ExpectUniqueSample(
+        search_engines::kSearchEngineChoiceWipeReasonHistogram,
+        SearchEngineChoiceWipeReason::kMissingDefaultSearchEngine, 1);
+    histogram_tester_.ExpectUniqueSample(
+        "Search.ChoicePrefsCheck.WipeOnMissingDse", true, 1);
+  } else {
+    EXPECT_TRUE(pref_service()->HasPrefPath(
+        prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
+    EXPECT_TRUE(pref_service()->HasPrefPath(
+        prefs::kDefaultSearchProviderChoiceScreenCompletionVersion));
+    histogram_tester_.ExpectTotalCount(
+        search_engines::kSearchEngineChoiceWipeReasonHistogram, 0);
+    histogram_tester_.ExpectUniqueSample(
+        "Search.ChoicePrefsCheck.WipeOnMissingDse", false, 1);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(,
+                         SearchEngineChoiceServiceWipeOnMissingDSETest,
+                         ::testing::Bool());
+
 struct DeviceRestoreTestParam {
   std::string test_suffix;
   bool restore_detected_in_current_session;
   bool choice_predates_restore;
   bool is_feature_enabled;
   bool is_invalidation_retroactive;
-  bool expect_choice_info_wipe;
+  bool expect_invalidation_timestamp;
 };
 
 class SearchEngineChoiceServiceDeviceRestoreTest
@@ -912,31 +1227,31 @@ INSTANTIATE_TEST_SUITE_P(
                                .choice_predates_restore = true,
                                .is_feature_enabled = true,
                                .is_invalidation_retroactive = false,
-                               .expect_choice_info_wipe = true},
+                               .expect_invalidation_timestamp = true},
         DeviceRestoreTestParam{.test_suffix = "WipeForRetroactiveDetection",
                                .restore_detected_in_current_session = false,
                                .choice_predates_restore = true,
                                .is_feature_enabled = true,
                                .is_invalidation_retroactive = true,
-                               .expect_choice_info_wipe = true},
+                               .expect_invalidation_timestamp = true},
         DeviceRestoreTestParam{.test_suffix = "NoWipeForLateDetection",
                                .restore_detected_in_current_session = false,
                                .choice_predates_restore = true,
                                .is_feature_enabled = true,
                                .is_invalidation_retroactive = false,
-                               .expect_choice_info_wipe = false},
+                               .expect_invalidation_timestamp = false},
         DeviceRestoreTestParam{.test_suffix = "NoWipeForNewChoice",
                                .restore_detected_in_current_session = true,
                                .choice_predates_restore = false,
                                .is_feature_enabled = true,
                                .is_invalidation_retroactive = false,
-                               .expect_choice_info_wipe = false},
+                               .expect_invalidation_timestamp = false},
         DeviceRestoreTestParam{.test_suffix = "NoWipeForFeatureDisabled",
                                .restore_detected_in_current_session = true,
                                .choice_predates_restore = true,
                                .is_feature_enabled = false,
                                .is_invalidation_retroactive = false,
-                               .expect_choice_info_wipe = false},
+                               .expect_invalidation_timestamp = false},
     }),
     &SearchEngineChoiceServiceDeviceRestoreTest::GetTestSuffix);
 
@@ -945,7 +1260,11 @@ TEST_P(SearchEngineChoiceServiceDeviceRestoreTest, RepromptOnRestoreDetection) {
             switches::kSearchEngineChoiceTriggerRepromptParams.Get());
 
   SetChoiceCompletionMetadata(*pref_service(),
-                              {base::Time::Now(), base::Version("1.0.0.0")});
+                              {base::Time::Now(), base::Version("1.0.0.0"),
+                               regional_capabilities::SerializeProgram(
+                                   regional_capabilities::Program::kWaffle)});
+  ASSERT_TRUE(pref_service()->HasPrefPath(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
 
   // Trigger the creation of the service, which should check for the reprompt.
   InitService({
@@ -955,24 +1274,71 @@ TEST_P(SearchEngineChoiceServiceDeviceRestoreTest, RepromptOnRestoreDetection) {
       .choice_predates_restore = GetParam().choice_predates_restore,
   });
 
-  if (GetParam().expect_choice_info_wipe) {
-    EXPECT_FALSE(pref_service()->HasPrefPath(
-        prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
-    histogram_tester_.ExpectUniqueSample(
-        search_engines::kSearchEngineChoiceWipeReasonHistogram,
-        SearchEngineChoiceWipeReason::kDeviceRestored, 1);
-    histogram_tester_.ExpectTotalCount(
-        search_engines::kSearchEngineChoiceRepromptHistogram, 0);
-  } else {
-    EXPECT_TRUE(pref_service()->HasPrefPath(
-        prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
-    histogram_tester_.ExpectTotalCount(
-        search_engines::kSearchEngineChoiceWipeReasonHistogram, 0);
-    histogram_tester_.ExpectBucketCount(
-        search_engines::kSearchEngineChoiceRepromptHistogram,
-        RepromptResult::kNoReprompt, 1);
-  }
+  auto static_eligibility =
+      search_engine_choice_service().GetStaticChoiceScreenConditions(
+          policy_service(), template_url_service());
+  search_engine_choice_service().RecordProfileLoadEligibility(
+      static_eligibility);
+#if BUILDFLAG(IS_IOS)
+  search_engine_choice_service().RecordLegacyStaticEligibility(
+      static_eligibility);
+#endif  // BUILDFLAG(IS_IOS)
 
+  search_engine_choice_service().RecordTriggeringEligibility(
+      search_engine_choice_service().GetDynamicChoiceScreenConditions(
+          template_url_service()));
+
+  EXPECT_TRUE(pref_service()->HasPrefPath(
+      prefs::kDefaultSearchProviderChoiceScreenCompletionTimestamp));
+  histogram_tester_.ExpectBucketCount(
+      search_engines::kSearchEngineChoiceRepromptHistogram,
+      RepromptResult::kNoReprompt, 1);
+  histogram_tester_.ExpectTotalCount(
+      search_engines::kSearchEngineChoiceWipeReasonHistogram, 0);
+  EXPECT_EQ(pref_service()->HasPrefPath(
+                prefs::kDefaultSearchProviderChoiceInvalidationTimestamp),
+            GetParam().expect_invalidation_timestamp);
+
+  SearchEngineChoiceScreenConditions expected_eligibility_condition =
+#if !BUILDFLAG(CHOICE_SCREEN_IN_CHROME)
+      SearchEngineChoiceScreenConditions::kUnsupportedBrowserType;
+#else
+      GetParam().expect_invalidation_timestamp
+          ? SearchEngineChoiceScreenConditions::kEligible
+          : SearchEngineChoiceScreenConditions::kAlreadyCompleted;
+#endif
+  histogram_tester_.ExpectUniqueSample(
+      search_engines::kSearchEngineChoiceScreenProfileInitConditionsHistogram,
+      expected_eligibility_condition, 1);
+  histogram_tester_.ExpectUniqueSample(
+      "RegionalCapabilities.FunnelStage.Eligibility",
+      expected_eligibility_condition, 1);
+  if (GetParam().restore_detected_in_current_session &&
+      GetParam().is_feature_enabled) {
+    histogram_tester_.ExpectUniqueSample(
+        search_engines::kChoiceScreenProfileInitConditionsPostRestoreHistogram,
+        expected_eligibility_condition, 1);
+  } else {
+    histogram_tester_.ExpectTotalCount(
+        search_engines::kChoiceScreenProfileInitConditionsPostRestoreHistogram,
+        0);
+  }
+  histogram_tester_.ExpectUniqueSample(
+      search_engines::kSearchEngineChoiceScreenNavigationConditionsHistogram,
+      expected_eligibility_condition, 1);
+  histogram_tester_.ExpectUniqueSample(
+      "RegionalCapabilities.FunnelStage.Triggering",
+      expected_eligibility_condition, 1);
+  if (GetParam().restore_detected_in_current_session &&
+      GetParam().is_feature_enabled) {
+    histogram_tester_.ExpectUniqueSample(
+        search_engines::kChoiceScreenNavigationConditionsPostRestoreHistogram,
+        expected_eligibility_condition, 1);
+  } else {
+    histogram_tester_.ExpectTotalCount(
+        search_engines::kChoiceScreenNavigationConditionsPostRestoreHistogram,
+        0);
+  }
   histogram_tester_.ExpectTotalCount(
       search_engines::kSearchEngineChoiceRepromptSpecificCountryHistogram, 0);
   histogram_tester_.ExpectTotalCount(
@@ -1017,7 +1383,7 @@ TEST_P(SearchEngineChoiceUtilsParamTest, Reprompt) {
 
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndEnableFeatureWithParameters(
-      switches::kSearchEngineChoiceTrigger,
+      switches::kSearchEngineChoiceTriggerReprompt,
       {{switches::kSearchEngineChoiceTriggerRepromptParams.name,
         feature_param_value}});
   ASSERT_EQ(feature_param_value,
@@ -1187,5 +1553,155 @@ constexpr RepromptTestParam kRepromptTestParams[] = {
 INSTANTIATE_TEST_SUITE_P(,
                          SearchEngineChoiceUtilsParamTest,
                          ::testing::ValuesIn(kRepromptTestParams));
+
+struct FunnelTestParam {
+  std::string test_suffix;
+  SearchEngineChoiceScreenConditions condition;
+  HistogramExpectation expected_if_static;
+  HistogramExpectation expected_if_dynamic;
+};
+
+class SearchEngineChoiceServiceFunnelTest
+    : public SearchEngineChoiceServiceTest,
+      public testing::WithParamInterface<FunnelTestParam> {
+ public:
+  static std::string GetTestSuffix(
+      const testing::TestParamInfo<FunnelTestParam>& info) {
+    return info.param.test_suffix;
+  }
+};
+
+TEST_P(SearchEngineChoiceServiceFunnelTest, RecordsFunnelStage) {
+  InitService({.force_reset = true});
+
+  {
+    base::HistogramTester scoped_histogram_tester;
+    search_engine_choice_service().RecordProfileLoadEligibility(
+        GetParam().condition);
+    CheckHistogramExpectation(scoped_histogram_tester,
+                              "RegionalCapabilities.FunnelStage.Reported",
+                              GetParam().expected_if_static);
+  }
+
+  {
+    base::HistogramTester scoped_histogram_tester;
+    search_engine_choice_service().RecordTriggeringEligibility(
+        GetParam().condition);
+    CheckHistogramExpectation(scoped_histogram_tester,
+                              "RegionalCapabilities.FunnelStage.Reported",
+                              GetParam().expected_if_dynamic);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    SearchEngineChoiceServiceFunnelTest,
+    testing::ValuesIn<FunnelTestParam>({
+        {.test_suffix = "NotInRegionalScope",
+         .condition = SearchEngineChoiceScreenConditions::kNotInRegionalScope,
+         .expected_if_static =
+             ExpectHistogramUnique(FunnelStage::kNotInRegionalScope),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotInRegionalScope)},
+
+        {.test_suffix = "AlreadyCompleted",
+         .condition = SearchEngineChoiceScreenConditions::kAlreadyCompleted,
+         .expected_if_static =
+             ExpectHistogramUnique(FunnelStage::kAlreadyCompleted),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kAlreadyCompleted)},
+
+        {.test_suffix = "Eligible",
+         .condition = SearchEngineChoiceScreenConditions::kEligible,
+         .expected_if_static = ExpectHistogramNever(),
+         .expected_if_dynamic = ExpectHistogramUnique(FunnelStage::kEligible)},
+
+        {.test_suffix = "HasCustomSearchEngine",
+         .condition =
+             SearchEngineChoiceScreenConditions::kHasCustomSearchEngine,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "SearchProviderOverride",
+         .condition =
+             SearchEngineChoiceScreenConditions::kSearchProviderOverride,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "ControlledByPolicy",
+         .condition = SearchEngineChoiceScreenConditions::kControlledByPolicy,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "ProfileOutOfScope",
+         .condition = SearchEngineChoiceScreenConditions::kProfileOutOfScope,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "ExtensionControlled",
+         .condition = SearchEngineChoiceScreenConditions::kExtensionControlled,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "UnsupportedBrowserType",
+         .condition =
+             SearchEngineChoiceScreenConditions::kUnsupportedBrowserType,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "FeatureSuppressed",
+         .condition = SearchEngineChoiceScreenConditions::kFeatureSuppressed,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "SuppressedByOtherDialog",
+         .condition =
+             SearchEngineChoiceScreenConditions::kSuppressedByOtherDialog,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "BrowserWindowTooSmall",
+         .condition =
+             SearchEngineChoiceScreenConditions::kBrowserWindowTooSmall,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "HasDistributionCustomSearchEngine",
+         .condition = SearchEngineChoiceScreenConditions::
+             kHasDistributionCustomSearchEngine,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "HasRemovedPrepopulatedSearchEngine",
+         .condition = SearchEngineChoiceScreenConditions::
+             kHasRemovedPrepopulatedSearchEngine,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "HasNonGoogleSearchEngine",
+         .condition =
+             SearchEngineChoiceScreenConditions::kHasNonGoogleSearchEngine,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "AppStartedByExternalIntent",
+         .condition =
+             SearchEngineChoiceScreenConditions::kAppStartedByExternalIntent,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "AlreadyBeingShown",
+         .condition = SearchEngineChoiceScreenConditions::kAlreadyBeingShown,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+        {.test_suffix = "UsingPersistedGuestSessionChoice",
+         .condition = SearchEngineChoiceScreenConditions::
+             kUsingPersistedGuestSessionChoice,
+         .expected_if_static = ExpectHistogramUnique(FunnelStage::kNotEligible),
+         .expected_if_dynamic =
+             ExpectHistogramUnique(FunnelStage::kNotEligible)},
+    }),
+    &SearchEngineChoiceServiceFunnelTest::GetTestSuffix);
 
 }  // namespace search_engines

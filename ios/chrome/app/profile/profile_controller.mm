@@ -31,6 +31,7 @@
 #import "components/language/core/browser/language_usage_metrics.h"
 #import "components/language/core/browser/pref_names.h"
 #import "components/prefs/pref_service.h"
+#import "components/sharing_message/features.h"
 #import "components/translate/core/browser/translate_metrics_logger_impl.h"
 #import "ios/chrome/app/application_delegate/app_state.h"
 #import "ios/chrome/app/application_delegate/metrics_mediator.h"
@@ -42,16 +43,20 @@
 #import "ios/chrome/app/profile/features.h"
 #import "ios/chrome/app/profile/first_run_profile_agent.h"
 #import "ios/chrome/app/profile/identity_confirmation_profile_agent.h"
+#import "ios/chrome/app/profile/multi_profile_forced_migration_profile_agent.h"
 #import "ios/chrome/app/profile/post_restore_profile_agent.h"
 #import "ios/chrome/app/profile/profile_state.h"
 #import "ios/chrome/app/profile/profile_state_observer.h"
 #import "ios/chrome/app/profile/search_engine_choice_profile_agent.h"
 #import "ios/chrome/app/profile/session_metrics_profile_agent.h"
+#import "ios/chrome/app/profile/synced_set_up_profile_agent.h"
 #import "ios/chrome/app/profile/welcome_back_screen_profile_agent.h"
 #import "ios/chrome/app/spotlight/spotlight_manager.h"
 #import "ios/chrome/app/tests_hook.h"
 #import "ios/chrome/browser/content_settings/model/host_content_settings_map_factory.h"
 #import "ios/chrome/browser/credential_provider/model/credential_provider_buildflags.h"
+#import "ios/chrome/browser/cross_platform_promos/model/cross_platform_promos_service.h"
+#import "ios/chrome/browser/cross_platform_promos/model/cross_platform_promos_service_factory.h"
 #import "ios/chrome/browser/enterprise/model/idle/idle_service.h"
 #import "ios/chrome/browser/enterprise/model/idle/idle_service_factory.h"
 #import "ios/chrome/browser/external_files/model/external_file_remover.h"
@@ -76,6 +81,7 @@
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list_factory.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
+#import "ios/chrome/browser/shared/model/profile/features.h"
 #import "ios/chrome/browser/shared/model/profile/profile_attributes_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_attributes_storage_ios.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
@@ -84,9 +90,11 @@
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
+#import "ios/chrome/browser/snapshots/model/constants.h"
 #import "ios/chrome/browser/translate/model/chrome_ios_translate_client.h"
 #import "ios/chrome/browser/web_state_list/model/session_metrics.h"
 #import "ios/chrome/browser/web_state_list/model/web_usage_enabler/web_usage_enabler_browser_agent.h"
+#import "ios/chrome/browser/welcome_back/model/features.h"
 #import "ios/components/cookie_util/cookie_util.h"
 #import "ios/public/provider/chrome/browser/raccoon/raccoon_api.h"
 #import "ios/web/public/thread/web_task_traits.h"
@@ -129,7 +137,7 @@ NSString* const kStartResyncSpotlightIndex = @"StartResyncSpotlightIndex";
 NSString* const kStartupCleanupFavicons = @"StartupCleanupFavicons";
 #endif
 
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 // Name of the block logging the storage metrics.
 NSString* const kStartupLogStorageMetrics = @"StartupLogStorageMetrics";
 
@@ -166,7 +174,7 @@ void PurgeDataForSessions(const SessionIds& session_ids,
   const std::array<base::FilePath::StringViewType, 3> directories = {
       kLegacySessionsDirname,
       kSessionRestorationDirname,
-      FILE_PATH_LITERAL("Snapshots"),
+      kSnapshotsDirName,
   };
 
   for (const base::FilePath& storage_path : storage_paths) {
@@ -244,6 +252,9 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
 
   // Keep the loaded profile alive.
   ScopedProfileKeepAliveIOS _scopedProfileKeepAlive;
+
+  // Used to control whether the animations should be cancelled.
+  base::OneShotTimer _cancelAnimationTimer;
 }
 
 - (instancetype)initWithAppState:(AppState*)appState
@@ -331,11 +342,19 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
 
     case ProfileInitStage::kFirstRun:
     case ProfileInitStage::kChoiceScreen:
+      // Nothing to do.
+      break;
+
     case ProfileInitStage::kNormalUI:
+      [self restartAnimations];
+      break;
+
     case ProfileInitStage::kFinal:
       // Nothing to do.
       break;
   }
+
+  _cancelAnimationTimer.Stop();
 }
 
 - (void)profileState:(ProfileState*)profileState
@@ -375,7 +394,7 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
 
     case ProfileInitStage::kFirstRun:
     case ProfileInitStage::kChoiceScreen:
-      // Nothing to do.
+      [self handleBlockingInInitStage:nextInitStage];
       break;
 
     case ProfileInitStage::kNormalUI:
@@ -383,7 +402,6 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
       break;
 
     case ProfileInitStage::kFinal:
-      // Nothing to do.
       break;
   }
 }
@@ -527,6 +545,11 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
   enterprise_idle::IdleServiceFactory::GetForProfile(profile)
       ->OnApplicationWillEnterForeground();
 
+  if (IsMobilePromoOnDesktopNotificationsEnabled()) {
+    CrossPlatformPromosServiceFactory::GetForProfile(profile)
+        ->OnApplicationWillEnterForeground();
+  }
+
   // Send the "Chrome opened" event to the feature engagement tracker on a
   // warm start.
   [self sendChromeOpenedEvent];
@@ -644,6 +667,7 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
 - (void)attachProfileAgents {
   [_state addAgent:[[CertificatePolicyProfileAgent alloc] init]];
   [_state addAgent:[[FirstRunProfileAgent alloc] init]];
+  [_state addAgent:[[MultiProfileForcedMigrationProfileAgent alloc] init]];
   [_state addAgent:[[IdentityConfirmationProfileAgent alloc] init]];
   [_state addAgent:[[ProfileActivityProfileAgent alloc] init]];
   [_state addAgent:[[PostRestoreProfileAgent alloc] init]];
@@ -661,8 +685,12 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
     }
   }
 
-  if (first_run::IsWelcomeBackInFirstRunEnabled()) {
+  if (IsWelcomeBackInFirstRunEnabled()) {
     [_state addAgent:[[WelcomeBackScreenProfileAgent alloc] init]];
+  }
+
+  if (IsSyncedSetUpEnabled()) {
+    [_state addAgent:[[SyncedSetUpProfileAgent alloc] init]];
   }
 }
 
@@ -695,11 +723,49 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
   [self sendChromeOpenedEvent];
 
   _spotlightManager = [SpotlightManager spotlightManagerWithProfile:profile];
-  ShareExtensionServiceFactory::GetForProfile(profile)->Initialize();
+  if (!IsShareExtensionForMultiprofileEnabled()) {
+    ShareExtensionServiceFactory::GetForProfile(profile)->Initialize();
+  }
 
 #if BUILDFLAG(IOS_CREDENTIAL_PROVIDER_ENABLED)
   CredentialProviderServiceFactory::GetForProfile(profile);
 #endif
+}
+
+// Schedule a task to execute in one run loop that will cancel all in-progress
+// animation on all connected scenes if the init stage has not progressed. It
+// is part of the contract of those stages that the transition must either be
+// instantaneous or require user interaction (and thus the animations have to
+// be cancelled).
+- (void)handleBlockingInInitStage:(ProfileInitStage)initStage {
+  CHECK_GT(initStage, ProfileInitStage::kUIReady);
+  CHECK_LT(initStage, ProfileInitStage::kNormalUI);
+
+  __weak ProfileController* weakSelf = self;
+  _cancelAnimationTimer.Start(FROM_HERE, base::Seconds(0), base::BindOnce(^{
+                                [weakSelf cancelAnimationsIfInStage:initStage];
+                              }));
+}
+
+// Cancel animations on all connected scenes if the current init state is
+// equal to `initStage`. Scheduled by -handleBlockingInInitStage: to execute
+// after a delay of one run loop.
+- (void)cancelAnimationsIfInStage:(ProfileInitStage)initStage {
+  CHECK_GT(initStage, ProfileInitStage::kUIReady);
+  CHECK_LT(initStage, ProfileInitStage::kNormalUI);
+
+  if (_state.initStage == initStage) {
+    for (SceneState* sceneState in _state.connectedScenes) {
+      [sceneState.animator cancelAnimation];
+    }
+  }
+}
+
+// Restart animations for all connected scenes (if necessary).
+- (void)restartAnimations {
+  for (SceneState* sceneState in _state.connectedScenes) {
+    [sceneState.animator restartAnimation];
+  }
 }
 
 - (void)startUpAfterFirstWindowCreated {
@@ -724,6 +790,10 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
   DCHECK(_state.profile);
   enterprise_idle::IdleServiceFactory::GetForProfile(_state.profile)
       ->OnApplicationWillEnterForeground();
+  if (IsMobilePromoOnDesktopNotificationsEnabled()) {
+    CrossPlatformPromosServiceFactory::GetForProfile(_state.profile)
+        ->OnApplicationWillEnterForeground();
+  }
 }
 
 - (void)sendChromeOpenedEvent {
@@ -826,7 +896,7 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
 
 // Schedules logging the storage metrics.
 - (void)scheduleLogStorageMetrics {
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
   if (!base::FeatureList::IsEnabled(kLogApplicationStorageSizeMetrics)) {
     return;
   }
@@ -896,7 +966,7 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
 }
 #endif  // BUILDFLAG(IOS_CREDENTIAL_PROVIDER_ENABLED)
 
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 // Logs storage metrics.
 - (void)logStorageMetrics {
   DCHECK(_state.profile);
@@ -911,6 +981,6 @@ void RecordDiscardedSceneConnectedAfterBeingPurged(
   LogApplicationStorageMetrics(profile->GetStatePath(),
                                profile->GetOffTheRecordStatePath());
 }
-#endif  // !TARGET_IPHONE_SIMULATOR
+#endif  // !TARGET_OS_SIMULATOR
 
 @end

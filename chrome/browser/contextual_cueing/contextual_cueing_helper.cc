@@ -6,6 +6,8 @@
 
 #include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
+#include "chrome/browser/actor/actor_keyed_service.h"
+#include "chrome/browser/actor/actor_keyed_service_factory.h"
 #include "chrome/browser/contextual_cueing/contextual_cueing_enums.h"
 #include "chrome/browser/contextual_cueing/contextual_cueing_features.h"
 #include "chrome/browser/contextual_cueing/contextual_cueing_page_data.h"
@@ -20,6 +22,9 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/tabs/glic_nudge_controller.h"
+#include "chrome/browser/ui/tabs/public/tab_features.h"
+#include "chrome/browser/ui/user_education/browser_user_education_interface.h"
+#include "components/history/core/browser/features.h"
 #include "components/optimization_guide/core/hints/hints_processing_util.h"
 #include "components/optimization_guide/core/hints/optimization_guide_decider.h"
 #include "components/optimization_guide/core/hints/optimization_metadata.h"
@@ -28,14 +33,18 @@
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
+#include "net/http/http_response_headers.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
+#include "third_party/blink/public/common/features.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_enabling.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
+#include "chrome/browser/ui/views/side_panel/glic/glic_side_panel_coordinator.h"
 #endif
 
 namespace contextual_cueing {
@@ -102,6 +111,10 @@ tabs::GlicNudgeController* ContextualCueingHelper::GetGlicNudgeController() {
   return browser->browser_window_features()->glic_nudge_controller();
 }
 
+void ContextualCueingHelper::PrimaryPageChanged(content::Page& page) {
+  has_first_contentful_paint_ = false;
+}
+
 void ContextualCueingHelper::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
   // Ignore sub-frame and uncommitted navigations.
@@ -123,21 +136,21 @@ void ContextualCueingHelper::DidFinishNavigation(
     return;
   }
 
-  // Ignore fragment changes.
-  if (navigation_handle->GetPreviousPrimaryMainFrameURL().GetWithoutRef() ==
-      navigation_handle->GetURL().GetWithoutRef()) {
-    return;
-  }
-
   // Reset FCP state.
   has_first_contentful_paint_ = false;
 
   // Clear zero state suggestions if needed.
-  if (base::FeatureList::IsEnabled(kGlicZeroStateSuggestions) &&
+  if (IsZeroStateSuggestionsEnabled() && navigation_handle->IsSameDocument() &&
       ZeroStateSuggestionsPageData::GetForPage(
           web_contents()->GetPrimaryPage())) {
     ZeroStateSuggestionsPageData::DeleteForPage(
         web_contents()->GetPrimaryPage());
+  }
+
+  // Ignore fragment changes.
+  if (navigation_handle->GetPreviousPrimaryMainFrameURL().GetWithoutRef() ==
+      navigation_handle->GetURL().GetWithoutRef()) {
+    return;
   }
 
   if (!base::FeatureList::IsEnabled(kContextualCueing)) {
@@ -149,7 +162,7 @@ void ContextualCueingHelper::DidFinishNavigation(
   auto* glic_nudge_controller = GetGlicNudgeController();
   if (glic_nudge_controller) {
     glic_nudge_controller->UpdateNudgeLabel(
-        web_contents(), std::string(),
+        web_contents(), std::string(), /*prompt_suggestion=*/std::nullopt,
         tabs::GlicNudgeActivity::kNudgeIgnoredNavigation, base::DoNothing());
   }
 
@@ -157,6 +170,19 @@ void ContextualCueingHelper::DidFinishNavigation(
   if (navigation_handle->IsErrorPage() ||
       !navigation_handle->ShouldUpdateHistory()) {
     return;
+  }
+
+  // If `history::kVisitedLinksOn404` is enabled, then
+  // `navigation_handle->ShouldUpdateHistory()` will return true for reachable
+  // 404 pages. In that case, we need to ignore such pages.
+  if (base::FeatureList::IsEnabled(history::kVisitedLinksOn404)) {
+    const int status_code =
+        navigation_handle->GetResponseHeaders()
+            ? navigation_handle->GetResponseHeaders()->response_code()
+            : 0;
+    if (status_code == 404) {
+      return;
+    }
   }
 
   // We have already initiated nudging sequence for the page. Do not report page
@@ -193,7 +219,7 @@ void ContextualCueingHelper::PrimaryMainDocumentElementAvailable() {
 }
 
 void ContextualCueingHelper::OnFirstContentfulPaintInPrimaryMainFrame() {
-  if (!base::FeatureList::IsEnabled(kGlicZeroStateSuggestions)) {
+  if (!IsZeroStateSuggestionsEnabled()) {
     return;
   }
 
@@ -208,7 +234,7 @@ void ContextualCueingHelper::OnFirstContentfulPaintInPrimaryMainFrame() {
 }
 
 void ContextualCueingHelper::DocumentOnLoadCompletedInPrimaryMainFrame() {
-  if (!base::FeatureList::IsEnabled(kGlicZeroStateSuggestions)) {
+  if (!IsZeroStateSuggestionsEnabled()) {
     return;
   }
 
@@ -266,7 +292,7 @@ bool ContextualCueingHelper::IsBrowserBlockingNudges(
   }
 
   auto* user_education_interface =
-      browser_window_interface->GetUserEducationInterface();
+      BrowserUserEducationInterface::From(browser_window_interface);
   if (!user_education_interface) {
     return false;
   }
@@ -288,10 +314,29 @@ bool ContextualCueingHelper::IsBrowserBlockingNudges(
   auto* glic_service =
       glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile);
 
-  if (glic_service->IsWindowShowing()) {
+  if (glic_service->IsPanelShowingForBrowser(*browser_window_interface)) {
     recorder->set_nudge_decision(NudgeDecision::kNudgeNotShownWindowShowing);
     return true;
   }
+
+  auto* glic_side_panel_coordinator =
+      tab_interface->GetTabFeatures() &&
+              tab_interface->GetTabFeatures()->glic_side_panel_coordinator()
+          ? tab_interface->GetTabFeatures()->glic_side_panel_coordinator()
+          : nullptr;
+  if (glic_side_panel_coordinator && glic_side_panel_coordinator->IsShowing()) {
+    recorder->set_nudge_decision(
+        NudgeDecision::kNudgeNotShownSidePanelForTabShowing);
+    return true;
+  }
+
+  auto* actor_service =
+      actor::ActorKeyedServiceFactory::GetActorKeyedService(profile);
+  if (actor_service && actor_service->IsActiveOnTab(*tab_interface)) {
+    recorder->set_nudge_decision(NudgeDecision::kNudgeNotShownActorActiveOnTab);
+    return true;
+  }
+
 #endif  // BUILDFLAG(ENABLE_GLIC)
 
   return false;
@@ -300,7 +345,7 @@ bool ContextualCueingHelper::IsBrowserBlockingNudges(
 void ContextualCueingHelper::OnCueingDecision(
     std::unique_ptr<ScopedNudgeDecisionRecorder> decision_recorder,
     base::TimeTicks document_available_time,
-    base::expected<std::string, NudgeDecision> decision_result) {
+    base::expected<CueingResult, NudgeDecision> decision_result) {
   CHECK_EQ(NudgeDecision::kUnknown, decision_recorder->nudge_decision());
   if (ContextualCueingPageData::GetForPage(web_contents()->GetPrimaryPage())) {
     ContextualCueingPageData::DeleteForPage(web_contents()->GetPrimaryPage());
@@ -311,7 +356,8 @@ void ContextualCueingHelper::OnCueingDecision(
     return;
   }
 
-  std::string cue_label = decision_result.value();
+  std::string cue_label = decision_result.value().cue_label;
+  std::string prompt_suggestion = decision_result.value().prompt_suggestion;
   if (IsBrowserBlockingNudges(decision_recorder.get())) {
     return;
   }
@@ -324,7 +370,10 @@ void ContextualCueingHelper::OnCueingDecision(
   }
 
   GetGlicNudgeController()->UpdateNudgeLabel(
-      web_contents(), cue_label, /*activity=*/std::nullopt,
+      web_contents(), cue_label,
+      prompt_suggestion.empty() ? std::nullopt
+                                : std::make_optional(prompt_suggestion),
+      /*activity=*/std::nullopt,
       base::BindRepeating(&ContextualCueingService::OnNudgeActivity,
                           contextual_cueing_service_->GetWeakPtr(),
                           web_contents(), document_available_time));

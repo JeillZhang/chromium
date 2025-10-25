@@ -108,8 +108,10 @@ class DiskSpaceCalculator {
   }
 
   static DiskSpaceInfo GetDiskSpaceBlocking(const base::FilePath& mount_path) {
-    int64_t free_bytes = base::SysInfo::AmountOfFreeDiskSpace(mount_path);
-    int64_t total_bytes = base::SysInfo::AmountOfTotalDiskSpace(mount_path);
+    int64_t free_bytes =
+        base::SysInfo::AmountOfFreeDiskSpace(mount_path).value_or(-1);
+    int64_t total_bytes =
+        base::SysInfo::AmountOfTotalDiskSpace(mount_path).value_or(-1);
     return DiskSpaceInfo{free_bytes, total_bytes};
   }
 
@@ -156,19 +158,20 @@ void PeriodicMetricsService::RecordPeriodicMetrics(
 }
 
 void PeriodicMetricsService::RecordRamUsage() const {
-  int64_t available_ram = base::SysInfo::AmountOfAvailablePhysicalMemory();
-  int64_t total_ram = base::SysInfo::AmountOfPhysicalMemory();
+  int64_t available_ram =
+      base::SysInfo::AmountOfAvailablePhysicalMemory().InBytes();
+  int64_t total_ram = base::SysInfo::AmountOfPhysicalMemory().InBytes();
   ReportUsedPercentage(kKioskRamUsagePercentageHistogram, available_ram,
                        total_ram);
 }
 
 void PeriodicMetricsService::RecordSwapUsage() const {
-  base::SystemMemoryInfoKB memory;
+  base::SystemMemoryInfo memory;
   if (!base::GetSystemMemoryInfo(&memory)) {
     return;
   }
-  int64_t swap_free = memory.swap_free;
-  int64_t swap_total = memory.swap_total;
+  int64_t swap_free = memory.swap_free.InKiB();
+  int64_t swap_total = memory.swap_total.InKiB();
   ReportUsedPercentage(kKioskSwapUsagePercentageHistogram, swap_free,
                        swap_total);
 }

@@ -7,20 +7,24 @@
 #include <optional>
 #include <utility>
 
+#include "base/containers/flat_set.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/no_destructor.h"
+#include "base/notimplemented.h"
 #include "build/build_config.h"
 #include "components/autofill/core/browser/filling/filling_product.h"
-#include "components/autofill/core/browser/integrators/autofill_ai/autofill_ai_delegate.h"
+#include "components/autofill/core/browser/integrators/autofill_ai/autofill_ai_manager.h"
 #include "components/autofill/core/browser/integrators/compose/autofill_compose_delegate.h"
 #include "components/autofill/core/browser/integrators/identity_credential/identity_credential_delegate.h"
 #include "components/autofill/core/browser/integrators/password_manager/password_manager_delegate.h"
 #include "components/autofill/core/browser/integrators/plus_addresses/autofill_plus_address_delegate.h"
 #include "components/autofill/core/browser/payments/credit_card_access_manager.h"
 #include "components/autofill/core/browser/studies/autofill_ablation_study.h"
+#include "components/autofill/core/browser/studies/autofill_experiments.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "components/autofill/core/browser/ui/popup_open_enums.h"
+#include "components/optimization_guide/core/model_execution/remote_model_executor.h"
 #include "components/optimization_guide/proto/features/common_quality_data.pb.h"
 #include "components/version_info/channel.h"
 
@@ -70,8 +74,8 @@ const ValuablesDataManager* AutofillClient::GetValuablesDataManager() const {
   return const_cast<AutofillClient*>(this)->GetValuablesDataManager();
 }
 
-AutofillOptimizationGuide* AutofillClient::GetAutofillOptimizationGuide()
-    const {
+AutofillOptimizationGuideDecider*
+AutofillClient::GetAutofillOptimizationGuideDecider() const {
   return nullptr;
 }
 
@@ -102,7 +106,7 @@ void AutofillClient::GetAiPageContent(GetAiPageContentCallback callback) {
   std::move(callback).Run(std::nullopt);
 }
 
-AutofillAiDelegate* AutofillClient::GetAutofillAiDelegate() {
+AutofillAiManager* AutofillClient::GetAutofillAiManager() {
   return nullptr;
 }
 
@@ -111,6 +115,11 @@ AutofillAiModelCache* AutofillClient::GetAutofillAiModelCache() {
 }
 
 AutofillAiModelExecutor* AutofillClient::GetAutofillAiModelExecutor() {
+  return nullptr;
+}
+
+optimization_guide::RemoteModelExecutor*
+AutofillClient::GetRemoteModelExecutor() {
   return nullptr;
 }
 
@@ -191,6 +200,25 @@ void AutofillClient::TriggerUserPerceptionOfAutofillSurvey(
   NOTIMPLEMENTED();
 }
 
+void AutofillClient::TriggerDeclinedSaveAddressReasonSurvey() {
+  NOTIMPLEMENTED();
+}
+
+void AutofillClient::TriggerAutofillAiFillingJourneySurvey(
+    bool suggestion_accepted,
+    EntityType entity_type,
+    const base::flat_set<EntityTypeName>& saved_entities,
+    const FieldTypeSet& triggering_field_types) {
+  NOTIMPLEMENTED();
+}
+
+void AutofillClient::TriggerAutofillAiSavePromptSurvey(
+    bool prompt_accepted,
+    EntityType entity_type,
+    const base::flat_set<EntityTypeName>& saved_entities) {
+  NOTIMPLEMENTED();
+}
+
 std::unique_ptr<device_reauth::DeviceAuthenticator>
 AutofillClient::GetDeviceAuthenticator() {
   return nullptr;
@@ -233,6 +261,22 @@ void AutofillClient::UpdateAutofillSuggestions(
   NOTIMPLEMENTED();
 }
 
+bool AutofillClient::IsCvcSavingSupported() const {
+  return true;
+}
+
+bool AutofillClient::IsCreditCardUploadEnabled() const {
+  return ::autofill::IsCreditCardUploadEnabled(
+      GetSyncService(), *GetPrefs(),
+      GetPersonalDataManager()
+          .payments_data_manager()
+          .GetCountryCodeForExperimentGroup(),
+      GetPersonalDataManager()
+          .payments_data_manager()
+          .GetPaymentsSigninStateForMetrics(),
+      const_cast<AutofillClient*>(this)->GetCurrentLogManager());
+}
+
 void AutofillClient::set_test_addresses(
     std::vector<AutofillProfile> test_addresses) {}
 
@@ -253,6 +297,33 @@ void AutofillClient::TriggerPlusAddressUserPerceptionSurvey(
 const syncer::SyncService* AutofillClient::GetSyncService() const {
   return const_cast<const syncer::SyncService*>(
       const_cast<AutofillClient*>(this)->GetSyncService());
+}
+
+optimization_guide::ModelQualityLogsUploaderService*
+AutofillClient::GetMqlsUploadService() {
+  return nullptr;
+}
+
+void AutofillClient::ShowEntityImportBubble(
+    EntityInstance new_entity,
+    std::optional<EntityInstance> old_entity,
+    EntityImportPromptResultCallback prompt_closed_callback) {}
+
+void AutofillClient::ShowEmailVerifiedToast() {
+  NOTIMPLEMENTED();
+}
+
+OtpFieldDetector* AutofillClient::GetOtpFieldDetector() {
+  return nullptr;
+}
+
+one_time_tokens::OneTimeTokenService* AutofillClient::GetOneTimeTokenService()
+    const {
+  return nullptr;
+}
+
+bool AutofillClient::DocumentUsedWebOTP() {
+  return false;
 }
 
 }  // namespace autofill

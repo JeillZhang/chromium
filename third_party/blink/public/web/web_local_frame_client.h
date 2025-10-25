@@ -51,7 +51,6 @@
 #include "third_party/blink/public/common/frame/frame_owner_element_type.h"
 #include "third_party/blink/public/common/loader/loading_behavior_flag.h"
 #include "third_party/blink/public/common/loader/url_loader_factory_bundle.h"
-#include "third_party/blink/public/common/performance/performance_timeline_constants.h"
 #include "third_party/blink/public/common/subresource_load_metrics.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/common/use_counter/use_counter_feature.h"
@@ -95,6 +94,7 @@
 #include "third_party/blink/public/web/web_navigation_params.h"
 #include "third_party/blink/public/web/web_navigation_policy.h"
 #include "third_party/blink/public/web/web_navigation_type.h"
+#include "third_party/blink/public/web/web_performance_metrics_for_reporting.h"
 #include "ui/accessibility/ax_enums.mojom-shared.h"
 #include "ui/accessibility/ax_event.h"
 #include "ui/accessibility/ax_location_and_scroll_updates.h"
@@ -172,6 +172,12 @@ enum class DetachReason {
   // new WebLocalFrame (possibly in a different renderer process) that will
   // replace the current one and takes its place in the same browsing context.
   kNavigation,
+};
+
+enum class BFCacheStateChange {
+  kStoredToBFCache,
+  kRestoredFromBFCache,
+  kNoChange,
 };
 
 class BLINK_EXPORT WebLocalFrameClient {
@@ -473,7 +479,7 @@ class BLINK_EXPORT WebLocalFrameClient {
   virtual void DidOpenDocumentInputStream(const WebURL&) {}
 
   // Called when a frame's page lifecycle state gets updated.
-  virtual void DidSetPageLifecycleState(bool restoring_from_bfcache) {}
+  virtual void DidSetPageLifecycleState(BFCacheStateChange bfcache_change) {}
 
   // Immediately notifies the browser of a change in the current HistoryItem.
   // Prefer DidUpdateCurrentHistoryItem().
@@ -554,11 +560,10 @@ class BLINK_EXPORT WebLocalFrameClient {
   virtual void OnMainFrameViewportRectangleChanged(
       const gfx::Rect& main_frame_viewport_rect) {}
 
-  // Called when an image ad rectangle changed. An empty `image_ad_rect` is used
-  // to signal the removal of the rectangle. Only invoked on the main frame.
-  virtual void OnMainFrameImageAdRectangleChanged(
-      int element_id,
-      const gfx::Rect& image_ad_rect) {}
+  // Called when an ad element's geometry changed. An empty `ad_rect` is used to
+  // signal the removal of the element. Only invoked on the main frame.
+  virtual void OnMainFrameAdRectangleChanged(int element_id,
+                                             const gfx::Rect& ad_rect) {}
 
   // Called when an overlay interstitial pop up ad is detected.
   virtual void OnOverlayPopupAdDetected() {}
@@ -647,7 +652,8 @@ class BLINK_EXPORT WebLocalFrameClient {
   virtual void DidObserveNewFeatureUsage(const UseCounterFeature&) {}
 
   // A new soft navigation was observed.
-  virtual void DidObserveSoftNavigation(blink::SoftNavigationMetrics metrics) {}
+  virtual void DidObserveSoftNavigation(
+      blink::SoftNavigationMetricsForReporting metrics) {}
 
   // Reports that visible elements in the frame shifted (bit.ly/lsm-explainer).
   virtual void DidObserveLayoutShift(double score, bool after_input_or_scroll) {
@@ -783,12 +789,6 @@ class BLINK_EXPORT WebLocalFrameClient {
     return v8::Local<v8::Object>();
   }
 
-  // Returns true if it has a focused plugin. |rect| is an output parameter to
-  // get a caret bounds from the focused plugin.
-  virtual bool GetCaretBoundsFromFocusedPlugin(gfx::Rect& rect) {
-    return false;
-  }
-
   // Update the current frame selection to the browser if it has changed since
   // the last call. Note that this only synchronizes the selection, if the
   // TextInputState may have changed call DidChangeSelection instead.
@@ -818,10 +818,6 @@ class BLINK_EXPORT WebLocalFrameClient {
   // WebMeaningfulLayout for details.)
   virtual void DidMeaningfulLayout(WebMeaningfulLayout) {}
 
-  // Notification that the BeginMainFrame completed, was committed into the
-  // compositor (thread) and submitted to the display compositor.
-  virtual void DidCommitAndDrawCompositorFrame() {}
-
   // Inform the widget that it was hidden.
   virtual void WasHidden() {}
 
@@ -831,9 +827,8 @@ class BLINK_EXPORT WebLocalFrameClient {
   virtual void OnFrameVisibilityChanged(mojom::FrameVisibility render_status) {}
 
   // Called after a navigation which set the shared memory region for
-  // tracking smoothness and dropped frames UKMs.
-  virtual void SetUpSharedMemoryForUkms(
-      base::ReadOnlySharedMemoryRegion smoothness_memory,
+  // tracking dropped frames UKM.
+  virtual void SetUpSharedMemoryForDroppedFrames(
       base::ReadOnlySharedMemoryRegion dropped_frames_memory) {}
 
   // Returns the last commited URL used for UKM. This is slightly different
@@ -895,6 +890,9 @@ class BLINK_EXPORT WebLocalFrameClient {
   virtual base::ScopedClosureRunner CreateScopedClientNavigationThrottler() {
     return {};
   }
+
+  // Returns true if this frame is for the initial WebUI.
+  virtual bool IsForInitialWebUI() const { return false; }
 };
 
 }  // namespace blink

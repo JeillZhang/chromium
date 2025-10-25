@@ -229,11 +229,10 @@ static inline bool FeatureWithValidIdent(const String& media_feature,
     }
   }
 
-  if (RuntimeEnabledFeatures::CSSScrollDirectionContainerQueriesEnabled()) {
-    if (media_feature == media_feature_names::kScrollDirectionMediaFeature) {
+  if (RuntimeEnabledFeatures::CSSScrolledContainerQueriesEnabled()) {
+    if (media_feature == media_feature_names::kScrolledMediaFeature) {
       switch (ident) {
         case CSSValueID::kNone:
-        case CSSValueID::kAny:
         case CSSValueID::kTop:
         case CSSValueID::kLeft:
         case CSSValueID::kBottom:
@@ -251,6 +250,11 @@ static inline bool FeatureWithValidIdent(const String& media_feature,
           return false;
       }
     }
+  }
+
+  if (RuntimeEnabledFeatures::CSSFallbackContainerQueriesEnabled() &&
+      media_feature == media_feature_names::kFallbackMediaFeature) {
+    return ident == CSSValueID::kNone;
   }
 
   return false;
@@ -308,8 +312,7 @@ static inline bool FeatureExpectingInteger(const String& media_feature,
       media_feature == media_feature_names::kMinColorIndexMediaFeature ||
       media_feature == media_feature_names::kMonochromeMediaFeature ||
       media_feature == media_feature_names::kMaxMonochromeMediaFeature ||
-      media_feature == media_feature_names::kMinMonochromeMediaFeature ||
-      media_feature == media_feature_names::kFallbackMediaFeature) {
+      media_feature == media_feature_names::kMinMonochromeMediaFeature) {
     return true;
   }
 
@@ -459,13 +462,13 @@ MediaQueryExp::MediaQueryExp(const MediaQueryExp& other)
 MediaQueryExp::MediaQueryExp(const String& media_feature,
                              const MediaQueryExpValue& value)
     : MediaQueryExp(media_feature,
-                    MediaQueryExpBounds(MediaQueryExpComparison(value))) {}
+                    MediaQueryExpBounds(MediaQueryExpComparison(value)),
+                    Type::kMediaFeature) {}
 
 MediaQueryExp::MediaQueryExp(const String& media_feature,
-                             const MediaQueryExpBounds& bounds)
-    : type_(Type::kMediaFeature),
-      media_feature_(media_feature),
-      bounds_(bounds) {}
+                             const MediaQueryExpBounds& bounds,
+                             Type type)
+    : type_(type), media_feature_(media_feature), bounds_(bounds) {}
 
 MediaQueryExp::MediaQueryExp(const CSSUnparsedDeclarationValue& reference_value,
                              const MediaQueryExpBounds& bounds)
@@ -511,6 +514,14 @@ std::optional<MediaQueryExpValue> MediaQueryExpValue::Consume(
   DCHECK_EQ(media_feature, media_feature.LowerASCII())
       << "Under the assumption that custom properties in style() container "
          "queries are currently the only case sensitive features";
+
+  if (media_feature == media_feature_names::kFallbackMediaFeature) {
+    if (CSSValue* fallback_value =
+            css_parsing_utils::ConsumeAnchoredFallbackQueryValue(stream,
+                                                                 context)) {
+      return MediaQueryExpValue(*fallback_value);
+    }
+  }
 
   CSSPrimitiveValue* value = css_parsing_utils::ConsumeInteger(
       stream, context, -std::numeric_limits<double>::max() /* minimum_value */);
@@ -604,7 +615,11 @@ const char* MediaQueryOperatorToString(MediaQueryOperator op) {
 
 MediaQueryExp MediaQueryExp::Create(const AtomicString& media_feature,
                                     const MediaQueryExpBounds& bounds) {
-  return MediaQueryExp(media_feature, bounds);
+  return MediaQueryExp(media_feature, bounds, Type::kMediaFeature);
+}
+
+MediaQueryExp MediaQueryExp::Create(const AtomicString& custom_media) {
+  return MediaQueryExp(custom_media, MediaQueryExpBounds(), Type::kCustomMedia);
 }
 
 MediaQueryExp MediaQueryExp::Create(const MediaQueryExpValue& reference_value,
@@ -634,16 +649,18 @@ String MediaQueryExp::Serialize() const {
   // <mf-boolean> e.g. (color)
   // <mf-plain>  e.g. (width: 100px)
   if (!bounds_.IsRange()) {
-    if (HasMediaFeature()) {
+    if (HasMediaFeature() || IsCustomMedia()) {
       result.Append(media_feature_);
     } else {
       result.Append(reference_value_->CssText());
     }
     if (bounds_.right.IsValid()) {
+      DCHECK(!IsCustomMedia());
       result.Append(": ");
       result.Append(bounds_.right.value.CssText());
     }
   } else {
+    DCHECK(!IsCustomMedia());
     if (bounds_.left.IsValid()) {
       result.Append(bounds_.left.value.CssText());
       result.Append(" ");
@@ -851,8 +868,8 @@ MediaQueryExpNode::FeatureFlags MediaQueryFeatureExpNode::CollectFeatureFlags()
                media_feature_names::kScrollableMediaFeature) {
       return kFeatureScrollable;
     } else if (exp_.MediaFeature() ==
-               media_feature_names::kScrollDirectionMediaFeature) {
-      return kFeatureScrollDirection;
+               media_feature_names::kScrolledMediaFeature) {
+      return kFeatureScrolled;
     } else if (exp_.MediaFeature() ==
                media_feature_names::kFallbackMediaFeature) {
       return kFeatureAnchored;

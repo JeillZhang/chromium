@@ -56,6 +56,10 @@ declare namespace chrome {
     let darkTheme: number;
     let yellowTheme: number;
     let blueTheme: number;
+    let highContrastTheme: number;
+    let lowContrastTheme: number;
+    let sepiaLightTheme: number;
+    let sepiaDarkTheme: number;
     let autoHighlighting: number;
     let wordHighlighting: number;
     let phraseHighlighting: number;
@@ -72,6 +76,12 @@ declare namespace chrome {
 
     // Whether the Read Aloud feature flag is enabled.
     let isReadAloudEnabled: boolean;
+
+    // Whether the TS text segmentation feature flag is enabled.
+    let isTsTextSegmentationEnabled: boolean;
+
+    // Whether Readability.js is used as the primary distillation method.
+    let isReadabilityEnabled: boolean;
 
     // Whether the phrase highlighting feature flag is enabled.
     let isPhraseHighlightingEnabled: boolean;
@@ -100,6 +110,9 @@ declare namespace chrome {
 
     // If the speech tree has been initialized in the renderer.
     let isSpeechTreeInitialized: boolean;
+
+    // Max number of characters to display in one line of Reading mode.
+    let maxLineWidth: number;
 
     // Returns whether the reading highlight is currently on.
     function isHighlightOn(): boolean;
@@ -202,6 +215,11 @@ declare namespace chrome {
     // Called when the voice used for speech is changed via the webui toolbar.
     function onVoiceChange(voice: string, lang: string): void;
 
+    // Signals that a system voice was used during a speech playback session,
+    // which will be used to log the installation state of the TTS engine
+    // extension.
+    function logExtensionState(): void;
+
     // Called when the highlight granularity is changed via the webui toolbar.
     function onHighlightGranularityChanged(value: number): void;
 
@@ -211,7 +229,7 @@ declare namespace chrome {
 
     // Called when there is no text content after building the tree but we're
     // not showing the empty page either.
-    function onNoTextContent(previouslyHadContent: boolean): void;
+    function onNoTextContent(): void;
 
     // Returns the actual spacing value to use based on the given lineSpacing
     // category.
@@ -231,6 +249,12 @@ declare namespace chrome {
     // Called when a user collapses the selection. This is usually accomplished
     // by clicking.
     function onCollapseSelection(): void;
+
+    // Called when the number of words seen by a reading mode user changes.
+    function updateWordsSeen(wordsSeen: number): void;
+
+    // Called when the number of words heard by a read aloud user changes.
+    function updateWordsHeard(wordsHeard: number): void;
 
     // Set the content. Used by tests only.
     // SnapshotLite is a data structure which resembles an AXTreeUpdate. E.g.:
@@ -319,20 +343,9 @@ declare namespace chrome {
     // position, but we should be able to remove this in the future.
     function initAxPositionWithNode(startingNodeId: number): void;
 
-    // Gets the starting text index for the current Read Aloud text segment
-    // for the given node. nodeId should be a node returned by getCurrentText.
-    // Returns -1 if the node is invalid.
-    function getCurrentTextStartIndex(nodeId: number): number;
-
-    // Gets the ending text index for the current Read Aloud text segment
-    // for the given node. nodeId should be a node returned by getCurrentText or
-    // getPreviousText. Returns -1 if the node is invalid.
-    function getCurrentTextEndIndex(nodeId: number): number;
-
-    // Gets the nodes of the  next text that should be spoken and highlighted.
-    // Use getCurrentTextStartIndex and getCurrentTextEndIndex to get the bounds
-    // for text associated with these nodes.
-    function getCurrentText(): number[];
+    // Gets the text content of the next text that should be spoken and
+    // highlighted.
+    function getCurrentTextContent(): string;
 
     // Resets the granularity index.
     function resetGranularityIndex(): void;
@@ -395,6 +408,9 @@ declare namespace chrome {
     // Log when speech stops and why.
     function logSpeechStop(source: number): void;
 
+    // Log when the empty state page is shown.
+    function logEmptyState(): void;
+
     // Returns a list of node ids and ranges (start and length) associated with
     // the index within the given text segment. The intended use is for
     // highlighting the ranges. Note that a highlight can span over multiple
@@ -409,6 +425,14 @@ declare namespace chrome {
     // index of 0, and a length of 8 (covering the word "segment ").
     function getHighlightForCurrentSegmentIndex(
         index: number, phrases: boolean):
+        Array<{nodeId: number, start: number, length: number}>;
+
+    // Returns a list of node ids and ranges (start and length) associated with
+    // the full next text segment to speak and highlight. Note that a highlight
+    // can span over multiple nodes in certain cases. This is different from
+    // getHighlightForCurrentSegmentIndex in that this returns the full sentence
+    // whereas the other returns a segment (word or phrase) within the sentence.
+    function getCurrentTextSegments():
         Array<{nodeId: number, start: number, length: number}>;
   }
 }

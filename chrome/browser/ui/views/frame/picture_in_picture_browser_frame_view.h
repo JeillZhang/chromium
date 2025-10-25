@@ -7,6 +7,7 @@
 
 #include <optional>
 
+#include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -14,10 +15,12 @@
 #include "base/scoped_observation.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_widget_fade_animator.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_window.h"
 #include "chrome/browser/ui/content_settings/content_setting_image_model_states.h"
 #include "chrome/browser/ui/toolbar/chrome_location_bar_model_delegate.h"
-#include "chrome/browser/ui/views/frame/browser_frame.h"
-#include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
+#include "chrome/browser/ui/views/frame/browser_frame_view.h"
+#include "chrome/browser/ui/views/frame/browser_widget.h"
 #include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
 #include "chrome/browser/ui/views/location_bar/location_icon_view.h"
 #include "chrome/browser/ui/views/overlay/close_image_button.h"
@@ -32,7 +35,8 @@
 #include "ui/views/layout/flex_layout_view.h"
 #include "ui/views/widget/widget_observer.h"
 
-class BrowserFrameBoundsChangeAnimation;
+class PictureInPictureBoundsChangeAnimation;
+class PictureInPictureTucker;
 
 namespace views {
 class Label;
@@ -44,17 +48,18 @@ class WindowEventObserver;
 }  // namespace
 
 class PictureInPictureBrowserFrameView
-    : public BrowserNonClientFrameView,
+    : public BrowserFrameView,
       public ChromeLocationBarModelDelegate,
       public LocationIconView::Delegate,
       public IconLabelBubbleView::Delegate,
       public ContentSettingImageView::Delegate,
       public views::WidgetObserver,
+      public PictureInPictureWindow,
       public gfx::AnimationDelegate {
-  METADATA_HEADER(PictureInPictureBrowserFrameView, BrowserNonClientFrameView)
+  METADATA_HEADER(PictureInPictureBrowserFrameView, BrowserFrameView)
 
  public:
-  PictureInPictureBrowserFrameView(BrowserFrame* frame,
+  PictureInPictureBrowserFrameView(BrowserWidget* widget,
                                    BrowserView* browser_view);
   PictureInPictureBrowserFrameView(const PictureInPictureBrowserFrameView&) =
       delete;
@@ -62,14 +67,13 @@ class PictureInPictureBrowserFrameView
       const PictureInPictureBrowserFrameView&) = delete;
   ~PictureInPictureBrowserFrameView() override;
 
-  // BrowserNonClientFrameView:
+  // BrowserFrameView:
   gfx::Rect GetBoundsForTabStripRegion(
       const gfx::Size& tabstrip_minimum_size) const override;
   gfx::Rect GetBoundsForWebAppFrameToolbar(
       const gfx::Size& toolbar_preferred_size) const override;
-  void LayoutWebAppWindowTitle(const gfx::Rect& available_space,
-                               views::Label& window_title_label) const override;
   int GetTopInset(bool restored) const override;
+  bool ShouldShowWebAppFrameToolbar() const override;
   void OnBrowserViewInitViewsComplete() override;
   void UpdateThrobber(bool running) override {}
   gfx::Rect GetBoundsForClientView() const override;
@@ -118,8 +122,12 @@ class PictureInPictureBrowserFrameView
   // views::WidgetObserver:
   void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
   void OnWidgetDestroying(views::Widget* widget) override;
+  void OnWidgetVisibilityChanged(views::Widget* eidget, bool visible) override;
   void OnWidgetBoundsChanged(views::Widget* widget,
                              const gfx::Rect& new_bounds) override;
+
+  // PictureInPictureWindow:
+  void SetForcedTucking(bool tuck) override;
 
   // gfx::AnimationDelegate:
   void AnimationEnded(const gfx::Animation* animation) override;
@@ -180,6 +188,7 @@ class PictureInPictureBrowserFrameView
   views::View* GetBackToTabButtonForTesting();
   views::View* GetCloseButtonForTesting();
   views::Label* GetWindowTitleForTesting();
+  PictureInPictureWidgetFadeAnimator* GetFadeAnimatorForTesting();
 
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
@@ -227,6 +236,8 @@ class PictureInPictureBrowserFrameView
  private:
   // Show `auto_pip_setting_overlay_` if we have it, and have a widget.
   void ShowOverlayIfNeeded();
+
+  void EnforceTucking();
 
   CloseReason close_reason_ = CloseReason::kOther;
 
@@ -283,6 +294,16 @@ class PictureInPictureBrowserFrameView
       kSizedToChildren,
     };
 
+    // Animates the picture-in-picture child dialogs that are waiting to be
+    // resized.
+    //
+    // When child dialogs that require a resize of the parent window are
+    // opened, we first make them transparent and non-interactive to avoid
+    // visual glitches while the parent resizes. This function is called after
+    // the parent resize is complete to fade in the child dialogs and make them
+    // interactive again.
+    void AnimateDialogsWaitingForResize();
+
     void PostResizeForChild(const gfx::Rect& new_bounds);
     void FinishPendingResizeForChild();
 
@@ -308,6 +329,19 @@ class PictureInPictureBrowserFrameView
     // The bounds that we forced the window to be in response to a child dialog
     // opening.
     gfx::Rect latest_child_dialog_forced_bounds_;
+
+    // The child dialogs that are waiting for the picture-in-picture window to
+    // resize.
+    //
+    // Used to disable visibility changed animations while child
+    // dialogs are waiting for the picture-in-picture window to resize. After
+    // the picture-in-picture window resizes, or if the user resizes the
+    // picture-in-picture window before the resize takes place, this set
+    // is used to enable visibility changed animations.
+    base::flat_set<raw_ptr<views::Widget>> child_dialogs_waiting_for_resize_;
+
+    // The sizes of the child dialogs. Used to avoid unnecessary resizes.
+    base::flat_map<raw_ptr<views::Widget>, gfx::Size> child_dialog_sizes_;
 
     // The bounds that the window would ideally be if we did not have to enlarge
     // to fit a child dialog.
@@ -378,7 +412,15 @@ class PictureInPictureBrowserFrameView
 
   // Animates programmatic changes to bounds (e.g. via `resizeTo()` or
   // `resizeBy()` calls).
-  std::unique_ptr<BrowserFrameBoundsChangeAnimation> bounds_change_animation_;
+  std::unique_ptr<PictureInPictureBoundsChangeAnimation>
+      bounds_change_animation_;
+
+  // Used to animate the Picture-in-Picture window creation.
+  std::unique_ptr<PictureInPictureWidgetFadeAnimator> fade_animator_;
+
+  // Used to tuck/untuck this widget into the side of the screen.
+  std::unique_ptr<PictureInPictureTucker> tucker_;
+  bool is_tucking_forced_ = false;
 
   base::WeakPtrFactory<PictureInPictureBrowserFrameView> weak_factory_{this};
 };

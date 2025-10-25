@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/platform/scheduler/web_scoped_virtual_time_pauser.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
 #include "third_party/blink/renderer/platform/scheduler/public/frame_scheduler.h"
@@ -28,9 +29,6 @@ class PLATFORM_EXPORT PageScheduler {
 
     // An "ordinary" page is a fully-featured page owned by a web view.
     virtual bool IsOrdinary() const = 0;
-    // Returns true if the request has been succcessfully relayed to the
-    // compositor.
-    virtual bool RequestBeginMainFrameNotExpected(bool new_state) = 0;
     virtual void OnSetPageFrozen(bool is_frozen) = 0;
   };
 
@@ -64,6 +62,7 @@ class PLATFORM_EXPORT PageScheduler {
   // it.
   virtual std::unique_ptr<FrameScheduler> CreateFrameScheduler(
       FrameScheduler::Delegate* delegate,
+      const LocalFrameToken& frame_token,
       bool is_in_embedded_frame_tree,
       FrameScheduler::FrameType) = 0;
 
@@ -76,10 +75,6 @@ class PLATFORM_EXPORT PageScheduler {
   virtual bool IsExemptFromBudgetBasedThrottling() const = 0;
 
   virtual bool OptedOutFromAggressiveThrottlingForTest() const = 0;
-
-  // Returns true if the request has been succcessfully relayed to the
-  // compositor.
-  virtual bool RequestBeginMainFrameNotExpected(bool new_state) = 0;
 
   // Returns AgentGroupScheduler
   virtual AgentGroupScheduler& GetAgentGroupScheduler() = 0;

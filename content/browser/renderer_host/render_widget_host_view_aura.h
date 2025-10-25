@@ -78,6 +78,10 @@ class InputMethod;
 class LocatedEvent;
 }
 
+namespace viz {
+struct CopyOutputBitmapWithMetadata;
+}  // namespace viz
+
 namespace wm {
 class ScopedTooltipDisabler;
 }
@@ -94,6 +98,13 @@ class MouseWheelPhaseHandler;
 class RenderFrameHostImpl;
 class RenderWidgetHostView;
 class TouchSelectionControllerClientAura;
+
+// For use in conditional Arabic digit substitution. See comment in InsertChar.
+inline constexpr char16_t kArabicIndicZero = u'\u0660';
+
+#if BUILDFLAG(IS_WIN)
+CONTENT_EXPORT void ResetArabicDigitSubStateForTesting();
+#endif  // BUILDFLAG(IS_WIN)
 
 // RenderWidgetHostView class hierarchy described in render_widget_host_view.h.
 class CONTENT_EXPORT RenderWidgetHostViewAura
@@ -161,7 +172,8 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
   void CopyFromSurface(
       const gfx::Rect& src_rect,
       const gfx::Size& output_size,
-      base::OnceCallback<void(const SkBitmap&)> callback) override;
+      base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+          callback) override;
   void EnsureSurfaceSynchronizedForWebTest() override;
   void TransformPointToRootSurface(gfx::PointF* point) override;
   gfx::Rect GetBoundsInRootWindow() override;
@@ -293,14 +305,12 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
       const std::vector<ui::GrammarFragment>& fragments) override;
 #endif
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_CHROMEOS)
   // Returns the control and selection bounds of the EditContext or control
   // bounds of the active editable element. This is used to report the layout
   // bounds of the text input control to TSF on Windows.
   void GetActiveTextInputControlLayoutBounds(
       std::optional<gfx::Rect>* control_bounds,
       std::optional<gfx::Rect>* selection_bounds) override;
-#endif
 
 #if BUILDFLAG(IS_WIN)
   // API to notify accessibility whether there is an active composition
@@ -850,7 +860,7 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
   bool double_tap_to_zoom_enabled_ = false;
 
   // Current visibility state. Initialized based on
-  // RenderWidgetHostImpl::is_hidden().
+  // RenderWidgetHostImpl::IsHidden().
   Visibility visibility_;
 
   // Represents a feature of the physical display whose offset and mask_length

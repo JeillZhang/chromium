@@ -28,6 +28,7 @@
 #include "content/browser/loader/download_utils_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/content_client.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -37,10 +38,13 @@
 #include "net/base/mime_sniffer.h"
 #include "net/cookies/cookie_access_result.h"
 #include "net/cookies/cookie_util.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/redirect_util.h"
 #include "net/url_request/referrer_policy.h"
+#include "net/url_request/url_request_job.h"  // For static util methods.
+#include "services/network/public/cpp/content_decoding_interceptor.h"
 #include "services/network/public/cpp/cors/cors.h"
 #include "services/network/public/cpp/header_util.h"
 #include "services/network/public/cpp/record_ontransfersizeupdate_utils.h"
@@ -53,6 +57,7 @@
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "third_party/blink/public/platform/resource_request_blocked_reason.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 namespace content {
 
@@ -526,6 +531,7 @@ class InterceptionJob : public network::mojom::URLLoaderClient,
 
   std::unique_ptr<BodyReader> body_reader_;
   std::unique_ptr<ResponseMetadata> response_metadata_;
+  std::vector<net::SourceStreamType> client_side_content_decoding_types_;
   mojo::ScopedDataPipeConsumerHandle body_;
   bool registered_in_global_request_map_;
 
@@ -994,7 +1000,8 @@ void InterceptionJob::Detach() {
   if (state_ == State::kAuthRequired) {
     state_ = State::kRequestSent;
     waiting_for_resolution_ = false;
-    TRACE_EVENT_NESTABLE_ASYNC_END0("devtools", "Fetch.requestPaused", this);
+    // Corresponds to the TRACE_EVENT_BEGIN in CompleteNotifyingClient.
+    TRACE_EVENT_END("devtools", perfetto::Track::FromPointer(this));
     std::move(pending_auth_callback_).Run(true, std::nullopt);
     return;
   }
@@ -1008,7 +1015,8 @@ Response InterceptionJob::InnerContinueRequest(
         "Invalid state for continueInterceptedRequest");
   }
   waiting_for_resolution_ = false;
-  TRACE_EVENT_NESTABLE_ASYNC_END0("devtools", "Fetch.requestPaused", this);
+  // Corresponds to the TRACE_EVENT_BEGIN in CompleteNotifyingClient.
+  TRACE_EVENT_END("devtools", perfetto::Track::FromPointer(this));
   if (modifications->intercept_response.has_value()) {
     stages_.PutOrRemove(InterceptionStage::kResponse,
                         modifications->intercept_response.value());
@@ -1151,8 +1159,25 @@ void InterceptionJob::ApplyModificationsToRequest(
   if (modifications->modified_url.has_value()) {
     DCHECK_EQ(url_chain_.back(), request->url);
     const GURL new_url(modifications->modified_url.value());
+    const bool is_same_site =
+        net::SchemefulSite::IsSameSite(request->url, new_url);
     request->url = new_url;
     url_chain_.back() = new_url;
+
+    if (!is_same_site) {
+      GURL new_referrer = net::URLRequestJob::ComputeReferrerForPolicy(
+          request->referrer_policy, request->referrer, new_url,
+          /* same_origin_out_for_metrics*/ nullptr);
+      // net/ has a similar check but would block a request with wrong referrer,
+      // so help clients a bit.
+      if (new_referrer != request->referrer) {
+        request->referrer = {};
+      }
+      request->site_for_cookies = net::SiteForCookies::FromUrl(new_url);
+      if (request->trusted_params) {
+        request->trusted_params->isolation_info = {};
+      }
+    }
   }
 
   if (modifications->modified_method.has_value()) {
@@ -1341,7 +1366,8 @@ void InterceptionJob::ProcessRedirectByClient(const GURL& redirect_url) {
       net::RedirectInfo::ComputeRedirectInfo(
           request.method, request.url, request.site_for_cookies,
           first_party_url_policy, request.referrer_policy,
-          request.referrer.spec(), headers.response_code(), redirect_url,
+          request.referrer.spec(), request.request_initiator,
+          headers.response_code(), redirect_url,
           net::RedirectUtil::GetReferrerPolicyHeader(&headers),
           false /* insecure_scheme_was_upgraded */, true /* copy_fragment */));
 
@@ -1372,6 +1398,7 @@ void InterceptionJob::SendResponse(scoped_refptr<base::RefCountedMemory> body,
     DCHECK_EQ(0u, res);
     DCHECK_EQ(actually_written_bytes, bytes_to_write.size());
   }
+  response_metadata_->head->client_side_content_decoding_types.clear();
   client_->OnReceiveResponse(std::move(response_metadata_->head),
                              std::move(consumer_handle),
                              std::move(response_metadata_->cached_metadata));
@@ -1537,7 +1564,8 @@ void InterceptionJob::CompleteNotifyingClient(
           create_loader_params_->request,
           request_cookies_.value_or(std::string()), request_bodies_);
 
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("devtools", "Fetch.requestPaused", this);
+  TRACE_EVENT_BEGIN("devtools", "Fetch.requestPaused",
+                    perfetto::Track::FromPointer(this));
   waiting_for_resolution_ = true;
   interceptor_->request_intercepted_callback_.Run(std::move(request_info));
 }
@@ -1659,6 +1687,8 @@ void InterceptionJob::OnReceiveResponse(
   }
   client_receiver_.Pause();
   body_ = std::move(body);
+  client_side_content_decoding_types_ =
+      head->client_side_content_decoding_types;
 
   auto request_info = BuildRequestInfo(head);
   const network::ResourceRequest& request = create_loader_params_->request;
@@ -1719,6 +1749,12 @@ void InterceptionJob::OnTransferSizeUpdated(int32_t transfer_size_diff) {
 
 void InterceptionJob::StartLoadingResponseBody(
     mojo::ScopedDataPipeConsumerHandle body) {
+  if (!client_side_content_decoding_types_.empty()) {
+    network::ContentDecodingInterceptor::DecodeOnNetworkService(
+        *GetNetworkService(), client_side_content_decoding_types_, body,
+        network::ContentDecodingInterceptor::ClientType::kDevTools,
+        base::DoNothing());
+  }
   if (pending_response_body_pipe_callback_) {
     DCHECK_EQ(State::kResponseTaken, state_);
     DCHECK(!body_reader_);

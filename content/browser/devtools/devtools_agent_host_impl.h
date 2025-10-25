@@ -23,6 +23,7 @@
 #include "services/network/public/cpp/cross_origin_embedder_policy.h"
 #include "services/network/public/cpp/cross_origin_opener_policy.h"
 #include "services/network/public/mojom/content_security_policy.mojom.h"
+#include "services/network/public/mojom/network_context.mojom-forward.h"
 
 namespace content {
 
@@ -54,6 +55,7 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
   std::string GetParentId() override;
   std::string GetOpenerId() override;
   std::string GetOpenerFrameId() override;
+  std::string GetParentFrameId() override;
   bool CanAccessOpener() override;
   std::string GetDescription() override;
   GURL GetFaviconURL() override;
@@ -85,6 +87,8 @@ class CONTENT_EXPORT DevToolsAgentHostImpl : public DevToolsAgentHost {
   virtual DevToolsSession::Mode GetSessionMode();
 
   bool Inspect();
+
+  scoped_refptr<DevToolsAgentHost> OpenDevTools();
 
   template <typename Handler>
   std::vector<Handler*> HandlersByName(const std::string& name) {

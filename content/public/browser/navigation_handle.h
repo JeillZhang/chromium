@@ -15,6 +15,7 @@
 #include "base/supports_user_data.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/child_process_id.h"
+#include "content/public/browser/error_navigation_trigger.h"
 #include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/frame_type.h"
 #include "content/public/browser/navigation_discard_reason.h"
@@ -66,6 +67,7 @@ struct GlobalRequestID;
 class NavigationEntry;
 class NavigationThrottle;
 class NavigationUIData;
+class ProcessSelectionUserData;
 class RenderFrameHost;
 class SiteInstance;
 class WebContents;
@@ -143,7 +145,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // frame and for a prerendered main frame, but false for a <fencedframe>. See
   // documentation for `RenderFrameHost::GetParentOrOuterDocument()` for more
   // details.
-  virtual bool IsInOutermostMainFrame() = 0;
+  virtual bool IsInOutermostMainFrame() const = 0;
 
   // Prerender2:
   // Whether the navigation is taking place in the main frame of the
@@ -293,7 +295,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   virtual bool IsExternalProtocol() = 0;
 
   // Whether the navigation is restoring a page from back-forward cache.
-  virtual bool IsServedFromBackForwardCache() = 0;
+  virtual bool IsServedFromBackForwardCache() const = 0;
 
   // Whether this navigation is activating an existing page (e.g. served from
   // the BackForwardCache or Prerender).
@@ -307,6 +309,14 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
 
   // The details why `net::Error` was emitted.
   virtual int GetNetExtendedErrorCode() = 0;
+
+  // The trigger for early cancellation of a navigation. Note that despite the
+  // name, this might be set even when `GetNetErrorCode()` is returning
+  // `net::OK`, and this might not be set even when `GetNetErrorCode()` is not
+  // returning `net::OK`. Currently, this returns non-nullopt in mostly
+  // `net::ERR_ABORTED` cases or navigation discards caused by
+  // `kInternalCancellation` for investigation purposes.
+  virtual std::optional<ErrorNavigationTrigger> GetErrorNavigationTrigger() = 0;
 
   // Returns the RenderFrameHost this navigation is committing in.  The
   // RenderFrameHost returned will be the final host for the navigation. (Use
@@ -400,6 +410,12 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // navigations that the users may not think of as navigations (such as
   // happens with 'history.replaceState()'), or navigations in non-primary frame
   // trees that should not appear in history.
+  //
+  // NOTE: When `history::kVisitedLinksOn404` is enabled, this method will
+  // return true for 404s from reachable URLs. When
+  // `history::kVisitedLinksOn404` is disabled, this method will return false
+  // for 404s. If callers wish to filter out 404s, they must perform an explicit
+  // response code check.
   virtual bool ShouldUpdateHistory() = 0;
 
   // The previous main frame URL that the user was on. This may be empty if
@@ -504,6 +520,9 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // Returns true if the navigation response was cached.
   virtual bool WasResponseCached() = 0;
 
+  // Returns true if the navigation accessed the network.
+  virtual bool NetworkAccessed() = 0;
+
   // Returns the value of the hrefTranslate attribute if this navigation was
   // initiated from a link that had that attribute set.
   virtual const std::string& GetHrefTranslate() = 0;
@@ -549,6 +568,12 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // Whether the new document will be hosted in the same process as the current
   // document or not. Set only when the navigation commits.
   virtual bool IsSameProcess() = 0;
+
+  // Returns a pointer to the ProcessSelectionUserData instance associated with
+  // this navigation. This object is a container for embedder-specific data that
+  // can be populated by a ProcessSelectionDeferringCondition and later used by
+  // the process selection logic.
+  virtual ProcessSelectionUserData& GetProcessSelectionUserData() = 0;
 
   // Returns the NavigationEntry associated with this, which may be null.
   virtual NavigationEntry* GetNavigationEntry() const = 0;
@@ -684,6 +709,7 @@ class CONTENT_EXPORT NavigationHandle : public base::SupportsUserData {
   // Used for metrics.
   virtual PreloadingTriggerType GetPrerenderTriggerType() = 0;
   virtual std::string GetPrerenderEmbedderHistogramSuffix() = 0;
+  virtual bool IsPrerenderHostReused() = 0;
 
   // Returns a SafeRef to this handle.
   virtual base::SafeRef<NavigationHandle> GetSafeRef() = 0;

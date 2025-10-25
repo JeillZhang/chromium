@@ -8,11 +8,13 @@
 #include "cc/base/features.h"
 #include "cc/test/pixel_comparator.h"
 #include "cc/test/pixel_test_utils.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "content/browser/compositor/surface_utils.h"
 #include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/view_transition_opt_in_state.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/back_forward_cache_util.h"
 #include "content/public/test/browser_test.h"
@@ -421,10 +423,11 @@ class ViewTransitionCaptureTest
 
  protected:
   SkBitmap TakeScreenshot() {
-    base::test::TestFuture<const SkBitmap&> future_bitmap;
+    base::test::TestFuture<const viz::CopyOutputBitmapWithMetadata&>
+        future_bitmap;
     shell()->web_contents()->GetRenderWidgetHostView()->CopyFromSurface(
         gfx::Rect(), gfx::Size(), future_bitmap.GetCallback());
-    return future_bitmap.Take();
+    return future_bitmap.Take().bitmap;
   }
 
   void WaitForSurfaceAnimationManager(RenderFrameHost* render_frame_host) {

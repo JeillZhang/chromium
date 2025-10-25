@@ -6,14 +6,14 @@
 
 #include "chrome/browser/glic/glic_pref_names.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_action_container.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #endif
 
 namespace tabs {
@@ -31,6 +31,7 @@ GlicNudgeController::~GlicNudgeController() = default;
 void GlicNudgeController::UpdateNudgeLabel(
     content::WebContents* web_contents,
     const std::string& nudge_label,
+    std::optional<std::string> prompt_suggestion,
     std::optional<GlicNudgeActivity> activity,
     GlicNudgeActivityCallback callback) {
   auto* const tab_interface =
@@ -68,6 +69,8 @@ void GlicNudgeController::UpdateNudgeLabel(
   } else {
     OnNudgeActivity(tabs::GlicNudgeActivity::kNudgeShown);
   }
+
+  prompt_suggestion_ = prompt_suggestion;
 }
 
 void GlicNudgeController::OnNudgeActivity(GlicNudgeActivity activity) {
@@ -85,7 +88,7 @@ void GlicNudgeController::OnNudgeActivity(GlicNudgeActivity activity) {
       auto* profile = browser_window_interface_->GetProfile();
       auto* glic_service =
           glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile);
-      glic_service->TryPreloadFre();
+      glic_service->TryPreloadFre(glic::GlicPrewarmingFreSource::kNudge);
 #endif
       nudge_activity_callback_.Run(GlicNudgeActivity::kNudgeShown);
       scoped_window_call_to_action_ptr =
@@ -116,7 +119,7 @@ void GlicNudgeController::SetNudgeActivityCallbackForTesting() {
 void GlicNudgeController::OnActiveTabChanged(
     BrowserWindowInterface* browser_interface) {
   if (delegate_ && delegate_->GetIsShowingGlicNudge()) {
-    delegate_->OnTriggerGlicNudgeUI(std::string());
+    delegate_->OnHideGlicNudgeUI();
     OnNudgeActivity(tabs::GlicNudgeActivity::kNudgeIgnoredActiveTabChanged);
   }
 }

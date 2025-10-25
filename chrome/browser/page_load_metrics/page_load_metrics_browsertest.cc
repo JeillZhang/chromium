@@ -34,7 +34,6 @@
 #include "cc/base/switches.h"
 #include "chrome/browser/page_load_metrics/observers/core/ukm_page_load_metrics_observer.h"
 #include "chrome/browser/page_load_metrics/observers/document_write_page_load_metrics_observer.h"
-#include "chrome/browser/page_load_metrics/observers/service_worker_page_load_metrics_observer.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_initialize.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/preloading/prefetch/no_state_prefetch/no_state_prefetch_manager_factory.h"
@@ -50,10 +49,10 @@
 #include "chrome/browser/sessions/session_service_test_helper.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
@@ -71,6 +70,7 @@
 #include "components/no_state_prefetch/common/no_state_prefetch_origin.h"
 #include "components/page_load_metrics/browser/observers/abandoned_page_load_metrics_observer.h"
 #include "components/page_load_metrics/browser/observers/core/uma_page_load_metrics_observer.h"
+#include "components/page_load_metrics/browser/observers/service_worker_page_load_metrics_observer.h"
 #include "components/page_load_metrics/browser/observers/use_counter_page_load_metrics_observer.h"
 #include "components/page_load_metrics/browser/page_load_metrics_test_waiter.h"
 #include "components/page_load_metrics/browser/page_load_tracker.h"
@@ -191,6 +191,53 @@ std::unique_ptr<net::test_server::HttpResponse> HandleCachableRequestHandler(
   response->set_content("hi");
   return std::move(response);
 }
+
+struct DecoupleWidthFromStyleCase {
+  const char* property_name;
+  WebFeature feature;
+};
+
+static const DecoupleWidthFromStyleCase kDecoupleComputedWidthCases[] = {
+    {
+        "border-top-width",
+        WebFeature::kComputedBorderTopWidthWithNoneOrHiddenStyle,
+    },
+    {
+        "border-right-width",
+        WebFeature::kComputedBorderRightWidthWithNoneOrHiddenStyle,
+    },
+    {
+        "border-bottom-width",
+        WebFeature::kComputedBorderBottomWidthWithNoneOrHiddenStyle,
+    },
+    {
+        "border-left-width",
+        WebFeature::kComputedBorderLeftWidthWithNoneOrHiddenStyle,
+    },
+    {
+        "border-width",
+        WebFeature::kComputedBorderWidthWithNoneOrHiddenStyle,
+    },
+    {
+        "column-rule-width",
+        WebFeature::kComputedColumnRuleWidthWithNoneOrHiddenStyle,
+    },
+    {
+        "outline-width",
+        WebFeature::kComputedOutlineWidthWithNoneOrHiddenStyle,
+    },
+};
+
+static const DecoupleWidthFromStyleCase kDecoupleResolvedWidthCases[] = {
+    {
+        "column-rule-width",
+        WebFeature::kResolvedColumnRuleWidthWithNoneOrHiddenStyle,
+    },
+    {
+        "outline-width",
+        WebFeature::kResolvedOutlineWidthWithNoneOrHiddenStyle,
+    },
+};
 
 }  // namespace
 
@@ -527,7 +574,7 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, PageLCPImagePriority) {
         }
       })
   )");
-  EXPECT_EQ("", result.error);
+  EXPECT_TRUE(result.is_ok());
 
   img_response->Send(kImgHttpResponseHeader);
   img_response->Send(file_contents);
@@ -547,7 +594,7 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, PageLCPImagePriority) {
      }))
      .observe({type: 'largest-contentful-paint', buffered: true});
  })})())");
-  EXPECT_EQ("", result2.error);
+  EXPECT_TRUE(result2.is_ok());
   waiter->Wait();
 
   // LCP is collected only at the end of the page lifecycle. Navigate to
@@ -653,7 +700,7 @@ class PageLoadMetricsBrowserTestAnimatedLCP
   await new Promise(r => setTimeout(r, 50));
   return timestamp;
 })();)");
-    EXPECT_EQ("", result.error);
+    EXPECT_TRUE(result.is_ok());
     double timestamp = result.ExtractDouble();
 
     img_response->Send(second_frame);
@@ -673,7 +720,7 @@ class PageLoadMetricsBrowserTestAnimatedLCP
      }))
      .observe({type: 'largest-contentful-paint', buffered: true});
  })})())");
-    EXPECT_EQ("", result2.error);
+    EXPECT_TRUE(result2.is_ok());
     waiter->Wait();
 
     // LCP is collected only at the end of the page lifecycle. Navigate to
@@ -1438,22 +1485,6 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, NonHtmlMainResource) {
       << "Recorded metrics: " << GetRecordedPageLoadMetricNames();
 }
 
-// TODO(crbug.com/40774566): Test flakes on Chrome OS.
-#if BUILDFLAG(IS_CHROMEOS)
-#define MAYBE_NonHttpOrHttpsUrl DISABLED_NonHttpOrHttpsUrl
-#else
-#define MAYBE_NonHttpOrHttpsUrl NonHttpOrHttpsUrl
-#endif
-IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, MAYBE_NonHttpOrHttpsUrl) {
-  ASSERT_TRUE(embedded_test_server()->Start());
-
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(),
-                                           GURL(chrome::kChromeUIVersionURL)));
-  NavigateToUntrackedUrl();
-  EXPECT_TRUE(NoPageLoadMetricsRecorded())
-      << "Recorded metrics: " << GetRecordedPageLoadMetricNames();
-}
-
 IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, HttpErrorPage) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -1949,6 +1980,102 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTestWithAutoupgradesDisabled,
 
   histogram_tester_->ExpectBucketCount("Blink.UseCounter.WebDXFeatures",
                                        WebDXFeature::kWebAnimations, 1);
+}
+
+class PageLoadMetricsBrowserTestWithDecoupleComputedBorderWidthFromStyle
+    : public PageLoadMetricsBrowserTest,
+      public testing::WithParamInterface<DecoupleWidthFromStyleCase> {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    PageLoadMetricsBrowserTest::SetUpCommandLine(command_line);
+    feature_list_.InitAndEnableFeature(
+        blink::features::kDecoupleComputedBorderWidthFromStyle);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    PageLoadMetricsBrowserTestWithDecoupleComputedBorderWidthFromStyle,
+    testing::ValuesIn(kDecoupleComputedWidthCases));
+
+IN_PROC_BROWSER_TEST_P(
+    PageLoadMetricsBrowserTestWithDecoupleComputedBorderWidthFromStyle,
+    UseCounterForComputedSingleProperty) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  // Expect 0 hits before we query for the property.
+  histogram_tester_->ExpectBucketCount("Blink.UseCounter.Features",
+                                       GetParam().feature, 0);
+
+  auto waiter = CreatePageLoadMetricsTestWaiter("waiter");
+  waiter->AddPageExpectation(TimingField::kLoadEvent);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(
+                     "/page_load_metrics/use_counter_features.html")));
+  waiter->Wait();
+
+  content::EvalJsResult result =
+      EvalJs(browser()->tab_strip_model()->GetActiveWebContents(),
+             base::StringPrintf("document.getElementById('width-no-style')."
+                                "computedStyleMap().get('%s');",
+                                GetParam().property_name));
+  EXPECT_TRUE(result.is_ok());
+
+  NavigateToUntrackedUrl();
+
+  histogram_tester_->ExpectBucketCount("Blink.UseCounter.Features",
+                                       GetParam().feature, 1);
+}
+
+class PageLoadMetricsBrowserTestWithDecoupleResolvedWidthFromStyle
+    : public PageLoadMetricsBrowserTest,
+      public testing::WithParamInterface<DecoupleWidthFromStyleCase> {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    PageLoadMetricsBrowserTest::SetUpCommandLine(command_line);
+    feature_list_.InitAndEnableFeature(
+        blink::features::kDecoupleResolvedColumnRuleWidthFromStyle);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(
+    All,
+    PageLoadMetricsBrowserTestWithDecoupleResolvedWidthFromStyle,
+    testing::ValuesIn(kDecoupleResolvedWidthCases));
+
+IN_PROC_BROWSER_TEST_P(
+    PageLoadMetricsBrowserTestWithDecoupleResolvedWidthFromStyle,
+    UseCounterForResolvedSingleProperty) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  // Expect 0 hits before we query for the property via `getComputedStyle`.
+  histogram_tester_->ExpectBucketCount("Blink.UseCounter.Features",
+                                       GetParam().feature, 0);
+
+  auto waiter = CreatePageLoadMetricsTestWaiter("waiter");
+  waiter->AddPageExpectation(TimingField::kLoadEvent);
+  ASSERT_TRUE(ui_test_utils::NavigateToURL(
+      browser(), embedded_test_server()->GetURL(
+                     "/page_load_metrics/use_counter_features.html")));
+  waiter->Wait();
+
+  content::EvalJsResult result = EvalJs(
+      browser()->tab_strip_model()->GetActiveWebContents(),
+      base::StringPrintf("window.getComputedStyle(document.getElementById('"
+                         "width-no-style')).getPropertyValue('%s');",
+                         GetParam().property_name));
+  EXPECT_TRUE(result.is_ok());
+
+  NavigateToUntrackedUrl();
+
+  histogram_tester_->ExpectBucketCount("Blink.UseCounter.Features",
+                                       GetParam().feature, 1);
 }
 
 IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest,
@@ -2447,8 +2574,9 @@ class SessionRestorePageLoadMetricsBrowserTest
     ASSERT_TRUE(embedded_test_server()->Start());
   }
 
-  Browser* QuitBrowserAndRestore(Browser* browser) {
-    Profile* profile = browser->profile();
+  BrowserWindowInterface* QuitBrowserAndRestore(
+      BrowserWindowInterface* browser) {
+    Profile* const profile = browser->GetProfile();
 
     SessionStartupPref::SetStartupPref(
         profile, SessionStartupPref(SessionStartupPref::LAST));
@@ -2466,13 +2594,13 @@ class SessionRestorePageLoadMetricsBrowserTest
     // Create a new window, which should trigger session restore.
     chrome::NewEmptyWindow(profile);
     SessionRestoreTestHelper().Wait();
-    return BrowserList::GetInstance()->GetLastActive();
+    return GetLastActiveBrowserWindowInterfaceWithAnyProfile();
   }
 
-  void WaitForTabsToLoad(Browser* browser) {
-    for (int i = 0; i < browser->tab_strip_model()->count(); ++i) {
-      content::WebContents* contents =
-          browser->tab_strip_model()->GetWebContentsAt(i);
+  void WaitForTabsToLoad(TabStripModel* tab_strip_model) {
+    for (int i = 0; i < tab_strip_model->count(); ++i) {
+      content::WebContents* const contents =
+          tab_strip_model->GetWebContentsAt(i);
       contents->GetController().LoadIfNecessary();
       ASSERT_TRUE(content::WaitForLoadStop(contents));
     }
@@ -2493,9 +2621,8 @@ class SessionRestorePageLoadMetricsBrowserTest
 IN_PROC_BROWSER_TEST_F(SessionRestorePageLoadMetricsBrowserTest,
                        InitialVisibilityOfSingleRestoredTab) {
   ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), GetTestURL()));
-
-  Browser* new_browser = QuitBrowserAndRestore(browser());
-  ASSERT_NO_FATAL_FAILURE(WaitForTabsToLoad(new_browser));
+  ASSERT_NO_FATAL_FAILURE(
+      WaitForTabsToLoad(QuitBrowserAndRestore(browser())->GetTabStripModel()));
 }
 
 IN_PROC_BROWSER_TEST_F(SessionRestorePageLoadMetricsBrowserTest,
@@ -2505,10 +2632,10 @@ IN_PROC_BROWSER_TEST_F(SessionRestorePageLoadMetricsBrowserTest,
       browser(), GetTestURL(), WindowOpenDisposition::NEW_BACKGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
 
-  Browser* new_browser = QuitBrowserAndRestore(browser());
-  ASSERT_NO_FATAL_FAILURE(WaitForTabsToLoad(new_browser));
+  BrowserWindowInterface* const new_browser = QuitBrowserAndRestore(browser());
+  ASSERT_NO_FATAL_FAILURE(WaitForTabsToLoad(new_browser->GetTabStripModel()));
 
-  TabStripModel* tab_strip = new_browser->tab_strip_model();
+  TabStripModel* const tab_strip = new_browser->GetTabStripModel();
   ASSERT_TRUE(tab_strip);
   ASSERT_EQ(2, tab_strip->count());
 }
@@ -2571,7 +2698,7 @@ IN_PROC_BROWSER_TEST_P(PageLoadMetricsResourceLoadBrowserTest,
       browser(), embedded_test_server()->GetURL(
                      "foo.com", "/cross_site_iframe_factory.html?foo")));
   waiter->Wait();
-  int64_t one_frame_page_size = waiter->current_network_bytes();
+  base::ByteCount one_frame_page_size = waiter->current_network_bytes();
 
   waiter = CreatePageLoadMetricsTestWaiter("waiter");
   waiter->AddPageExpectation(TimingField::kLoadEvent);
@@ -2581,7 +2708,8 @@ IN_PROC_BROWSER_TEST_P(PageLoadMetricsResourceLoadBrowserTest,
           "a.com", "/cross_site_iframe_factory.html?a(b,c,d(e,f,g))")));
   // Verify that 7 iframes are fetched, with some amount of tolerance since
   // favicon is fetched only once.
-  waiter->AddMinimumNetworkBytesExpectation(7 * (one_frame_page_size - 100));
+  waiter->AddMinimumNetworkBytesExpectation(
+      7 * (one_frame_page_size - base::ByteCount(100)));
   waiter->Wait();
 }
 
@@ -2622,7 +2750,8 @@ IN_PROC_BROWSER_TEST_P(PageLoadMetricsResourceLoadBrowserTest,
   waiter->Wait();
 
   // Verify that overheads for each chunk are not reported as body bytes.
-  EXPECT_EQ(waiter->current_network_body_bytes(), kChunkSize * kNumChunks);
+  EXPECT_EQ(waiter->current_network_body_bytes().InBytes(),
+            kChunkSize * kNumChunks);
 }
 
 IN_PROC_BROWSER_TEST_P(PageLoadMetricsResourceLoadBrowserTest,
@@ -2661,7 +2790,7 @@ IN_PROC_BROWSER_TEST_P(PageLoadMetricsResourceLoadBrowserTest,
   main_html_response->Send(std::string(1000, ' '));
   main_html_response->Done();
   waiter->AddMinimumCompleteResourcesExpectation(1);
-  waiter->AddMinimumNetworkBytesExpectation(1000);
+  waiter->AddMinimumNetworkBytesExpectation(base::ByteCount(1000));
   waiter->Wait();
 
   script_response->WaitForRequest();
@@ -2673,18 +2802,18 @@ IN_PROC_BROWSER_TEST_P(PageLoadMetricsResourceLoadBrowserTest,
   script_response->Send(std::string(1000, ' '));
   // Data received but resource not complete
   waiter->AddMinimumCompleteResourcesExpectation(1);
-  waiter->AddMinimumNetworkBytesExpectation(2000);
+  waiter->AddMinimumNetworkBytesExpectation(base::ByteCount(2000));
 
   if (!IsReduceTransferSizeUpdatedIPCEnabled()) {
     // When ReduceTransferSizeUpdatedIPC is disabled, network bytes information
     // is sent almost every time when the body data is received. So we can call
-    // Wait() before finising `script_response`,
+    // Wait() before finishing `script_response`,
     waiter->Wait();
     script_response->Done();
   } else {
     // But when ReduceTransferSizeUpdatedIPC is enabled, network bytes
     // information is sent only when the resource is complete. So we need to
-    // call Wait() after finising `script_response`.
+    // call Wait() after finishing `script_response`.
     script_response->Done();
     waiter->Wait();
   }
@@ -2697,7 +2826,7 @@ IN_PROC_BROWSER_TEST_P(PageLoadMetricsResourceLoadBrowserTest,
   iframe_response->Send(std::string(2000, ' '));
   iframe_response->Done();
   waiter->AddMinimumCompleteResourcesExpectation(3);
-  waiter->AddMinimumNetworkBytesExpectation(4000);
+  waiter->AddMinimumNetworkBytesExpectation(base::ByteCount(4000));
   waiter->Wait();
 }
 
@@ -2744,8 +2873,7 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, MAYBE_InputEventsForClick) {
 
 class SoftNavigationBrowserTest : public PageLoadMetricsBrowserTest {
  public:
-  void TestSoftNavigation(bool wait_for_second_lcp) {
-    StartTracing();
+  void TestSoftNavigation(bool soft_navs_is_web_exposed) {
     embedded_test_server()->ServeFilesFromSourceDirectory("content/test/data");
     content::SetupCrossSiteRedirector(embedded_test_server());
     ASSERT_TRUE(embedded_test_server()->Start());
@@ -2764,51 +2892,39 @@ class SoftNavigationBrowserTest : public PageLoadMetricsBrowserTest {
     content::WaitForHitTestData(web_contents->GetPrimaryMainFrame());
 
     waiter->AddPageExpectation(TimingField::kSoftNavigationCountUpdated);
-    if (wait_for_second_lcp) {
-      waiter->AddPageExpectation(TimingField::kLargestContentfulPaint);
-    }
+    waiter->AddPageExpectation(TimingField::kLargestContentfulPaint);
 
-    const std::string wait_for_lcp = R"(
-      (async () => {
-        await new Promise(
-          resolve => {
-            (new PerformanceObserver(()=>resolve())).observe(
-              {type: 'largest-contentful-paint',
-               includeSoftNavigationObservations: true})});
-      })();
+    const std::string get_lcp_startTime = R"(
+      (() => new Promise(resolve => {
+        new PerformanceObserver(list => {
+          resolve(list.getEntries().at(-1).startTime);
+        }).observe({type: 'largest-contentful-paint', buffered: true});
+      }))();
     )";
-
-    const std::string get_last_lcp_start = R"(
-      (async () => {
-        const last_lcp_entry = await new Promise(
-          resolve => {
-            (new PerformanceObserver(
-              list => {
-                const entries = list.getEntries();
-                resolve(entries[entries.length - 1]);
-              })).observe({type: 'largest-contentful-paint', buffered: true,
-                           includeSoftNavigationObservations: true})});
-        return last_lcp_entry.startTime;
-      })();
-    )";
-
     // Get the web exposed LCP value before the click.
-    int lcp_start_before =
-        EvalJs(web_contents, get_last_lcp_start).ExtractDouble();
+    int lcp_startTime = EvalJs(web_contents, get_lcp_startTime).ExtractDouble();
 
     content::SimulateMouseClickAt(
         browser()->tab_strip_model()->GetActiveWebContents(), 0,
         blink::WebMouseEvent::Button::kLeft, gfx::Point(100, 100));
 
-    // Wait for an LCP entry to fire.
-    if (wait_for_second_lcp) {
-      ASSERT_TRUE(EvalJs(web_contents, wait_for_lcp).error.empty());
+    // Get the web exposed ICP value only if the feature flag for exposing to
+    // performance timeline is enabled.
+    if (soft_navs_is_web_exposed) {
+      const std::string get_icp_startTime = R"(
+        (() => new Promise(resolve => {
+          new PerformanceObserver(list => {
+            resolve(list.getEntries().at(-1).startTime);
+          }).observe({
+            type: 'interaction-contentful-paint',
+            buffered: true,
+          });
+        }))();
+      )";
+      int icp_startTime =
+          EvalJs(web_contents, get_icp_startTime).ExtractDouble();
+      ASSERT_GE(icp_startTime, lcp_startTime);
     }
-
-    // Get the web exposed LCP value after the click
-    int lcp_start_after =
-        EvalJs(web_contents, get_last_lcp_start).ExtractDouble();
-    ASSERT_GE(lcp_start_after, lcp_start_before);
 
     // Wait for a soft navigation count update.
     waiter->Wait();
@@ -2829,73 +2945,7 @@ class SoftNavigationBrowserTest : public PageLoadMetricsBrowserTest {
 
     // The histogram value represents the low end of the bucket, not the actual
     // value. Therefore it is lower or equal to the web exposed value.
-    ASSERT_LE(lcp_value_bucket_start, lcp_start_before);
-
-    VerifyTraceEvents(StopTracing(), wait_for_second_lcp ? 3UL : 1UL);
-  }
-
- private:
-  void StartTracing() {
-    base::RunLoop wait_for_tracing;
-    content::TracingController::GetInstance()->StartTracing(
-        base::trace_event::TraceConfig(
-            "{\"included_categories\": [\"devtools.timeline\"]}"),
-        wait_for_tracing.QuitClosure());
-    wait_for_tracing.Run();
-  }
-
-  std::string StopTracing() {
-    base::RunLoop wait_for_tracing;
-    std::string trace_output;
-    content::TracingController::GetInstance()->StopTracing(
-        content::TracingController::CreateStringEndpoint(
-            base::BindLambdaForTesting(
-                [&](std::unique_ptr<std::string> trace_str) {
-                  trace_output = std::move(*trace_str);
-                  wait_for_tracing.Quit();
-                })));
-    wait_for_tracing.Run();
-    return trace_output;
-  }
-
-  void VerifyTraceEvents(const std::string& trace_str,
-                         size_t expected_event_number) {
-    std::unique_ptr<TraceAnalyzer> analyzer(TraceAnalyzer::Create(trace_str));
-    TraceEventVector events;
-    auto query =
-        Query::EventNameIs("SoftNavigationHeuristics_SoftNavigationDetected") ||
-        Query::EventNameIs("largestContentfulPaint::Candidate");
-    size_t num_events = analyzer->FindEvents(query, &events);
-    EXPECT_EQ(expected_event_number, num_events);
-
-    std::string previous_frame;
-    std::string navigation_id;
-    double soft_navigation_timestamp = 0.0;
-    for (auto* event : events) {
-      EXPECT_TRUE(event->HasStringArg("frame"));
-      std::string frame = event->GetKnownArgAsString("frame");
-      if (!previous_frame.empty()) {
-        EXPECT_EQ(frame, previous_frame);
-      }
-      previous_frame = frame;
-      if (event->name == "SoftNavigationHeuristics_SoftNavigationDetected") {
-        soft_navigation_timestamp = event->timestamp;
-        EXPECT_TRUE(event->HasStringArg("navigationId"));
-        navigation_id = event->GetKnownArgAsString("navigationId");
-      } else if (soft_navigation_timestamp > 0.0) {
-        EXPECT_LE(soft_navigation_timestamp, event->timestamp);
-        EXPECT_EQ(event->name, "largestContentfulPaint::Candidate");
-        base::Value::Dict data = event->GetKnownArgAsDict("data");
-        if (!navigation_id.empty()) {
-          EXPECT_EQ(navigation_id, *data.FindString("navigationId"));
-        }
-      }
-    }
-    // If we have more than one event, one of them needs to be a soft
-    // navigation.
-    if (expected_event_number > 1) {
-      EXPECT_TRUE(soft_navigation_timestamp > 0);
-    }
+    ASSERT_LE(lcp_value_bucket_start, lcp_startTime);
   }
 };
 
@@ -2904,8 +2954,7 @@ class SoftNavigationBrowserTestWithSoftNavigationHeuristicsFlag
  public:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     PageLoadMetricsBrowserTest::SetUpCommandLine(command_line);
-    features_list_.InitWithFeatures({blink::features::kSoftNavigationHeuristics,
-                                     blink::features::kNavigationId},
+    features_list_.InitWithFeatures({blink::features::kSoftNavigationHeuristics},
                                     {});
   }
 
@@ -2913,16 +2962,13 @@ class SoftNavigationBrowserTestWithSoftNavigationHeuristicsFlag
   base::test::ScopedFeatureList features_list_;
 };
 
-// TODO(crbug.com/341578843): Flaky on many platforms.
-IN_PROC_BROWSER_TEST_F(SoftNavigationBrowserTest, DISABLED_SoftNavigation) {
-  TestSoftNavigation(/*wait_for_second_lcp=*/false);
+IN_PROC_BROWSER_TEST_F(SoftNavigationBrowserTest, SoftNavigation) {
+  TestSoftNavigation(/*soft_navs_is_web_exposed=*/false);
 }
 
-// TODO(crbug.com/40946340): Flaky on several platforms.
 IN_PROC_BROWSER_TEST_F(
-    SoftNavigationBrowserTestWithSoftNavigationHeuristicsFlag,
-    DISABLED_SoftNavigation) {
-  TestSoftNavigation(/*wait_for_second_lcp=*/true);
+    SoftNavigationBrowserTestWithSoftNavigationHeuristicsFlag, SoftNavigation) {
+  TestSoftNavigation(/*soft_navs_is_web_exposed=*/true);
 }
 
 IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTest, InputEventsForOmniboxMatch) {
@@ -3795,19 +3841,12 @@ IN_PROC_BROWSER_TEST_F(PageLoadMetricsBrowserTestTerminatedPage,
 // This class is used to verify page load metrics are recorded in case of
 // crashes of different kinds. These crashes are simulated by navigating to the
 // chrome debug urls.
-class PageLoadMetricsBrowserTestCrashedPage
+class PageLoadMetricsBrowserTestRendererCrashedPage
     : public PageLoadMetricsBrowserTestTerminatedPage,
       public ::testing::WithParamInterface<const char*> {};
 
-IN_PROC_BROWSER_TEST_P(PageLoadMetricsBrowserTestCrashedPage,
+IN_PROC_BROWSER_TEST_P(PageLoadMetricsBrowserTestRendererCrashedPage,
                        UkmIsRecordedForCrashedTabPage) {
-  base::test::ScopedCommandLine scoped_command_line;
-  if (GetParam() == blink::kChromeUIGpuCrashURL) {
-    // This flag must be enabled to log metrics for blink::kChromeUIGpuCrashURL.
-    scoped_command_line.GetProcessCommandLine()->AppendSwitch(
-        switches::kEnableGpuBenchmarking);
-  }
-
   // Open a new foreground tab and navigate.
   content::WebContents* contents = OpenTabAndNavigate();
 
@@ -3832,14 +3871,71 @@ IN_PROC_BROWSER_TEST_P(PageLoadMetricsBrowserTestCrashedPage,
                              WindowOpenDisposition::CURRENT_TAB,
                              ui::PAGE_TRANSITION_TYPED, false),
       /*navigation_handle_callback=*/{});
-  crash_observer.Wait();
 
-  // Page being crashed is only verifiable in these crashes.
-  if (GetParam() == blink::kChromeUIKillURL ||
-      GetParam() == blink::kChromeUICrashURL) {
-    EXPECT_TRUE(web_contents()->IsCrashed());
-    EXPECT_FALSE(crash_observer.did_exit_normally());
+  crash_observer.Wait();
+  EXPECT_FALSE(crash_observer.did_exit_normally());
+  EXPECT_TRUE(web_contents()->IsCrashed());
+
+  // Verify page load metric is recorded.
+  EXPECT_NEAR(
+      GetUKMPageLoadMetric(
+          PageLoad::kPaintTiming_NavigationToLargestContentfulPaint2Name),
+      lcp_time, 10);
+}
+
+INSTANTIATE_TEST_SUITE_P(RendererCrashCases,
+                         PageLoadMetricsBrowserTestRendererCrashedPage,
+                         testing::ValuesIn({blink::kChromeUIKillURL,
+                                            blink::kChromeUICrashURL}));
+
+// Similar to the crashes above, this test verifies page load metrics are
+// recorded in case severe errors that don't actually crash the
+// renderer process (e.g. only the GPU process may crash), but rather cause
+// the renderer to be terminated.
+class PageLoadMetricsBrowserTestNoRendererCrashedPage
+    : public PageLoadMetricsBrowserTestTerminatedPage,
+      public ::testing::WithParamInterface<const char*> {};
+
+IN_PROC_BROWSER_TEST_P(PageLoadMetricsBrowserTestNoRendererCrashedPage,
+                       UkmIsRecordedForCrashedTabPage) {
+  base::test::ScopedCommandLine scoped_command_line;
+  if (GetParam() == blink::kChromeUIGpuCrashURL) {
+    // This flag must be enabled to log metrics for blink::kChromeUIGpuCrashURL.
+    scoped_command_line.GetProcessCommandLine()->AppendSwitch(
+        switches::kEnableGpuBenchmarking);
   }
+
+  // Open a new foreground tab and navigate.
+  content::WebContents* contents = OpenTabAndNavigate();
+
+  // The back/forward cache is disabled because page load metrics can also be
+  // recorded when entering into the bfcache. We want to test that page load
+  // metrics are recorded via the PageLoadTracker destructor which is called in
+  // all crash cases.
+  content::DisableBackForwardCacheForTesting(
+      contents, content::BackForwardCache::TEST_REQUIRES_NO_CACHING);
+
+  // Wait for LCP emission and observation. This is to ensure there is an LCP
+  // entry to report at the time of killing the page.
+  double lcp_time = GetLCPTimeFromEmittedLCPEntry(contents);
+
+  // Wait for the destruction of the RenderProcessHost, which is triggered by
+  // the navigation to the chrome debug url; then assert that we've navigated
+  // to the correct URL.
+  content::RenderProcessHostWatcher destruction_observer(contents,
+      content::RenderProcessHostWatcher::WATCH_FOR_HOST_DESTRUCTION);
+
+  browser()->OpenURL(
+      content::OpenURLParams(GURL(GetParam()), content::Referrer(),
+                             WindowOpenDisposition::CURRENT_TAB,
+                             ui::PAGE_TRANSITION_TYPED, false),
+      /*navigation_handle_callback=*/{});
+
+  destruction_observer.Wait();
+  EXPECT_TRUE(web_contents() == contents);
+  EXPECT_FALSE(contents->IsCrashed());
+  EXPECT_EQ(GURL(GetParam()), contents->GetLastCommittedURL());
+  EXPECT_FALSE(contents->HasUncommittedNavigationInPrimaryMainFrame());
 
   // Verify page load metric is recorded.
   EXPECT_NEAR(
@@ -3849,10 +3945,9 @@ IN_PROC_BROWSER_TEST_P(PageLoadMetricsBrowserTestCrashedPage,
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    CrashCases,
-    PageLoadMetricsBrowserTestCrashedPage,
-    testing::ValuesIn({blink::kChromeUIKillURL, blink::kChromeUICrashURL,
-                       blink::kChromeUIGpuCrashURL,
+    NoRendererCrashCases,
+    PageLoadMetricsBrowserTestNoRendererCrashedPage,
+    testing::ValuesIn({blink::kChromeUIGpuCrashURL,
                        blink::kChromeUINetworkErrorURL,
                        blink::kChromeUIProcessInternalsURL}));
 

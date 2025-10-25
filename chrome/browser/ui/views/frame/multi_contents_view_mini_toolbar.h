@@ -7,6 +7,8 @@
 
 #include <optional>
 
+#include "base/memory/raw_ptr.h"
+#include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/view.h"
@@ -41,8 +43,13 @@ class MultiContentsViewMiniToolbar : public views::View,
                                ContentsWebView* web_view);
   ~MultiContentsViewMiniToolbar() override;
 
-  void UpdateWebContents(views::WebView* web_view);
-  void ClearWebContents(views::WebView*);
+  void UpdateState(bool is_active, bool is_highlighted);
+
+  // Trigger an update of the tab data used to populate the mini toolbar.
+  void UpdateContents();
+
+  views::Label* domain_label_for_testing() { return domain_label_; }
+  views::ImageButton* image_button_for_testing() { return image_button_; }
 
  private:
   // TabStripModelObserver:
@@ -51,9 +58,11 @@ class MultiContentsViewMiniToolbar : public views::View,
                     TabChangeType change_type) override;
 
   // View:
-  void OnBoundsChanged(const gfx::Rect& previous_bounds) override;
   void OnPaint(gfx::Canvas* canvas) override;
   void OnThemeChanged() override;
+
+  void UpdateWebContents(views::WebView* web_view);
+  void ClearWebContents(views::WebView*);
 
   void RegisterTabAlertSubscription();
   void OnAlertStatusIndicatorChanged(std::optional<tabs::TabAlert> new_alert);
@@ -62,12 +71,14 @@ class MultiContentsViewMiniToolbar : public views::View,
   // Updates the favicon and domain based on the provided |tab_data|.
   void UpdateContents(TabRendererData tab_data);
   void UpdateFavicon(TabRendererData tab_data);
+
   void OpenSplitViewMenu();
+  void CloseCurrentView();
 
   raw_ptr<views::ImageView> favicon_;
   raw_ptr<views::Label> domain_label_;
   raw_ptr<views::ImageView> alert_state_indicator_;
-  raw_ptr<views::ImageButton> menu_button_;
+  raw_ptr<views::ImageButton> image_button_;
   // Model for the split view menu.
   std::unique_ptr<ui::MenuModel> menu_model_;
   // Runner for the split view menu.

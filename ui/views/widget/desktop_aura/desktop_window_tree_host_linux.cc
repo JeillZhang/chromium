@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/scoped_observation.h"
 #include "ui/aura/null_window_targeter.h"
 #include "ui/aura/scoped_window_targeter.h"
@@ -295,7 +296,7 @@ bool DesktopWindowTreeHostLinux::IsOverrideRedirect(
 }
 
 gfx::Rect DesktopWindowTreeHostLinux::GetGuessedFullScreenSizeInPx() const {
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   const display::Display display =
       screen->GetDisplayMatching(GetWindowBoundsInScreen());
   return gfx::Rect(gfx::ScaleToFlooredPoint(display.bounds().origin(),

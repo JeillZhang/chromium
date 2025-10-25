@@ -18,10 +18,10 @@
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/observer_list_threadsafe.h"
-#include "components/services/storage/service_worker/service_worker_storage.h"
-#include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_core_observer.h"
 #include "content/browser/service_worker/service_worker_identifiability_metrics.h"
+#include "content/browser/service_worker/service_worker_process_manager.h"
+#include "content/browser/service_worker/service_worker_registry.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/global_routing_id.h"
@@ -38,7 +38,6 @@ class FilePath;
 
 namespace storage {
 class QuotaManagerProxy;
-class ServiceWorkerStorageControlImpl;
 class SpecialStoragePolicy;
 }  // namespace storage
 
@@ -50,6 +49,7 @@ namespace content {
 
 class BrowserContext;
 class ChromeBlobStorageContext;
+class ServiceWorkerContextCore;
 class ServiceWorkerContextObserver;
 class StoragePartitionImpl;
 
@@ -179,6 +179,9 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
                              ServiceWorkerVersion::Status status) override;
   void OnWindowOpened(const GURL& script_url, const GURL& url) override;
   void OnClientNavigated(const GURL& script_url, const GURL& url) override;
+  void OnPushEventFinished(
+      const GURL& script_url,
+      const std::optional<std::vector<GURL>>& requested_urls) override;
 
   // ServiceWorkerContext implementation:
   void AddObserver(ServiceWorkerContextObserver* observer) override;
@@ -247,6 +250,8 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
   GetRunningServiceWorkerInfos() override;
   bool IsLiveStartingServiceWorker(int64_t service_worker_version_id) override;
   bool IsLiveRunningServiceWorker(int64_t service_worker_version_id) override;
+  void UpdateAllCanvasNoiseTokensFromTopLevelSite(
+      const GURL& top_level_site) override;
   service_manager::InterfaceProvider& GetRemoteInterfaces(
       int64_t service_worker_version_id) override;
   blink::AssociatedInterfaceProvider& GetRemoteAssociatedInterfaces(
@@ -428,20 +433,15 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
       int64_t version_id,
       network::mojom::ClientSecurityStatePtr client_security_state);
 
-  // Binds a ServiceWorkerStorageControl.
-  void BindStorageControl(
-      mojo::PendingReceiver<storage::mojom::ServiceWorkerStorageControl>
-          receiver);
-
-  scoped_refptr<storage::ServiceWorkerStorage::StorageSharedBuffer>&
-  storage_shared_buffer() {
-    return storage_shared_buffer_;
-  }
+  const base::FilePath& user_data_directory() { return user_data_directory_; }
 
   using StorageControlBinder = base::RepeatingCallback<void(
       mojo::PendingReceiver<storage::mojom::ServiceWorkerStorageControl>)>;
   // Sets a callback to bind ServiceWorkerStorageControl for testing.
   void SetStorageControlBinderForTest(StorageControlBinder binder);
+  StorageControlBinder& storage_control_binder_for_test() {
+    return storage_control_binder_for_test_;
+  }
 
   void SetForceUpdateOnPageLoadForTesting(
       bool force_update_on_page_load) override;
@@ -604,13 +604,6 @@ class CONTENT_EXPORT ServiceWorkerContextWrapper
       running_service_workers_;
 
   std::unique_ptr<ServiceWorkerIdentifiabilityMetrics> identifiability_metrics_;
-
-  // TODO(crbug.com/40120038): Remove `storage_control_` when
-  // ServiceWorkerStorage is sandboxed. An instance of this impl should live in
-  // the storage service, not here.
-  std::unique_ptr<storage::ServiceWorkerStorageControlImpl> storage_control_;
-  scoped_refptr<storage::ServiceWorkerStorage::StorageSharedBuffer>
-      storage_shared_buffer_;
 
   // These fields are used to (re)create `storage_control_`.
   base::FilePath user_data_directory_;

@@ -45,6 +45,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/serialized_script_value_factory.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_throw_dom_exception.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_trustedscripturl_usvstring.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
 #include "third_party/blink/renderer/core/dom/events/native_event_listener.h"
@@ -336,12 +337,21 @@ void ServiceWorkerContainer::Trace(Visitor* visitor) const {
 ScriptPromise<ServiceWorkerRegistration>
 ServiceWorkerContainer::registerServiceWorker(
     ScriptState* script_state,
-    const String& url,
-    const RegistrationOptions* options) {
+    const V8UnionTrustedScriptURLOrUSVString* untrusted_url,
+    const RegistrationOptions* options,
+    ExceptionState& exception_state) {
+  // step 2 of
+  // https://w3c.github.io/ServiceWorker/#dom-serviceworkercontainer-register
+  String url = TrustedTypesCheckForScriptURL(
+      untrusted_url, GetExecutionContext(), "ServiceWorkerContainer",
+      "register", exception_state);
+  if (exception_state.HadException()) {
+    return {};
+  }
+
   if (!script_state->ContextIsValid()) {
-    V8ThrowDOMException::Throw(script_state->GetIsolate(),
-                               DOMExceptionCode::kInvalidStateError,
-                               "The document is in an invalid state.");
+    exception_state.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                      "The document is in an invalid state.");
     return {};
   }
 
@@ -473,7 +483,7 @@ ServiceWorkerContainer::registerServiceWorker(
   if (GetExecutionContext()->IsWindow()) {
     Document* document = To<LocalDOMWindow>(GetExecutionContext())->document();
     if (document->IsPrerendering()) {
-      document->AddPostPrerenderingActivationStep(WTF::BindOnce(
+      document->AddPostPrerenderingActivationStep(BindOnce(
           &ServiceWorkerContainer::RegisterServiceWorkerInternal,
           WrapWeakPersistent(this), scope_url, script_url,
           std::move(script_type), update_via_cache,
@@ -601,6 +611,17 @@ ServiceWorkerContainer::getRegistrations(ScriptState* script_state) {
   return promise;
 }
 
+ScriptPromise<ServiceWorkerRegistration>
+ServiceWorkerContainer::registerServiceWorkerWithoutTrustedTypes(
+    ScriptState* script_state,
+    const String& script_url,
+    const RegistrationOptions* options) {
+  return registerServiceWorker(
+      script_state,
+      MakeGarbageCollected<V8UnionTrustedScriptURLOrUSVString>(script_url),
+      options, ASSERT_NO_EXCEPTION);
+}
+
 // https://w3c.github.io/ServiceWorker/#dom-serviceworkercontainer-startmessages
 void ServiceWorkerContainer::startMessages() {
   // "startMessages() method must enable the context object’s client message
@@ -626,8 +647,8 @@ ScriptPromise<ServiceWorkerRegistration> ServiceWorkerContainer::ready(
     ready_ = CreateReadyProperty();
     if (provider_) {
       provider_->GetRegistrationForReady(
-          WTF::BindOnce(&ServiceWorkerContainer::OnGetRegistrationForReady,
-                        WrapPersistent(this)));
+          BindOnce(&ServiceWorkerContainer::OnGetRegistrationForReady,
+                   WrapPersistent(this)));
     }
   }
 
@@ -803,8 +824,7 @@ void ServiceWorkerContainer::DispatchMessageEvent(
     if (!msg.sender_origin ||
         !msg.sender_origin->IsSameOriginWith(target_origin)) {
       event = MessageEvent::CreateError(
-          GetExecutionContext()->GetSecurityOrigin()->ToString(),
-          service_worker);
+          GetExecutionContext()->GetSecurityOrigin(), service_worker);
     }
   }
   if (!event) {
@@ -813,11 +833,12 @@ void ServiceWorkerContainer::DispatchMessageEvent(
          context->IsSameAgentCluster(msg.sender_agent_cluster_id)) &&
         msg.message->CanDeserializeIn(context)) {
       event = MessageEvent::Create(ports, std::move(msg.message),
-                                   context->GetSecurityOrigin()->ToString(),
+                                   context->GetSecurityOrigin(),
+                                   MessageEvent::kMessageIsSameOrigin,
                                    String() /* lastEventId */, service_worker);
     } else {
-      event = MessageEvent::CreateError(
-          context->GetSecurityOrigin()->ToString(), service_worker);
+      event = MessageEvent::CreateError(context->GetSecurityOrigin(),
+                                        service_worker);
     }
   }
   // Schedule the event to be dispatched on the correct task source:

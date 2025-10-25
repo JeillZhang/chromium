@@ -4,8 +4,9 @@
 
 #include "ui/linux/fallback_linux_ui.h"
 
-#include "base/time/time.h"
+#include "base/notimplemented.h"
 #include "ui/base/ime/linux/linux_input_method_context.h"
+#include "ui/base/ime/text_edit_commands.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/events/keycodes/dom/dom_keyboard_layout_map.h"
 #include "ui/gfx/font_render_params.h"
@@ -15,7 +16,6 @@
 #include "ui/linux/nav_button_provider.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/shell_dialogs/select_file_policy.h"
-#include "ui/views/controls/textfield/textfield.h"
 
 namespace ui {
 
@@ -92,10 +92,6 @@ void FallbackLinuxUi::GetActiveSelectionFgColor(SkColor* color) const {}
 void FallbackLinuxUi::GetInactiveSelectionBgColor(SkColor* color) const {}
 
 void FallbackLinuxUi::GetInactiveSelectionFgColor(SkColor* color) const {}
-
-base::TimeDelta FallbackLinuxUi::GetCursorBlinkInterval() const {
-  return views::Textfield::GetCaretBlinkInterval();
-}
 
 gfx::Image FallbackLinuxUi::GetIconForContentType(
     const std::string& content_type,

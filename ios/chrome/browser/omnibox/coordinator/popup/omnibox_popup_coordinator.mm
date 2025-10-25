@@ -25,7 +25,6 @@
 #import "ios/chrome/browser/omnibox/debugger/omnibox_debugger_view_controller.h"
 #import "ios/chrome/browser/omnibox/model/omnibox_autocomplete_controller.h"
 #import "ios/chrome/browser/omnibox/model/omnibox_image_fetcher.h"
-#import "ios/chrome/browser/omnibox/model/omnibox_popup_view_ios.h"
 #import "ios/chrome/browser/omnibox/public/omnibox_ui_features.h"
 #import "ios/chrome/browser/omnibox/ui/popup/carousel/carousel_item.h"
 #import "ios/chrome/browser/omnibox/ui/popup/carousel/carousel_item_menu_provider.h"
@@ -52,15 +51,13 @@
 #import "ui/base/device_form_factor.h"
 
 @interface OmniboxPopupCoordinator () <OmniboxPopupMediatorProtocolProvider,
-                                       OmniboxPopupMediatorSharingDelegate> {
-  std::unique_ptr<OmniboxPopupViewIOS> _popupView;
-}
+                                       OmniboxPopupMediatorSharingDelegate>
 
 @property(nonatomic, strong) OmniboxPopupViewController* popupViewController;
 @property(nonatomic, strong) OmniboxPopupMediator* mediator;
 @property(nonatomic, strong) SharingCoordinator* sharingCoordinator;
 
-// Owned by OmniboxEditModel.
+// Owned by OmniboxAutocompleteController.
 @property(nonatomic, assign) AutocompleteController* autocompleteController;
 
 @end
@@ -72,6 +69,8 @@
   OmniboxDebuggerMediator* _omniboxDebuggerMediator;
   /// The omnibox image fetcher.
   OmniboxImageFetcher* _omniboxImageFetcher;
+  /// The context in which the omnibox is presented.
+  OmniboxPresentationContext _presentationContext;
 }
 
 #pragma mark - Public
@@ -80,19 +79,19 @@
                                    browser:(Browser*)browser
                     autocompleteController:
                         (AutocompleteController*)autocompleteController
-                                 popupView:
-                                     (std::unique_ptr<OmniboxPopupViewIOS>)
-                                         popupView
              omniboxAutocompleteController:
-                 (OmniboxAutocompleteController*)omniboxAutocompleteController {
+                 (OmniboxAutocompleteController*)omniboxAutocompleteController
+                       presentationContext:
+                           (OmniboxPresentationContext)presentationContext {
   self = [super initWithBaseViewController:nil browser:browser];
   if (self) {
     DCHECK(autocompleteController);
     _autocompleteController = autocompleteController;
-    _popupView = std::move(popupView);
-    _popupViewController = [[OmniboxPopupViewController alloc] init];
+    _popupViewController = [[OmniboxPopupViewController alloc]
+        initWithPresentationContext:presentationContext];
     _KeyboardDelegate = _popupViewController;
     _omniboxAutocompleteController = omniboxAutocompleteController;
+    _presentationContext = presentationContext;
   }
   return self;
 }
@@ -120,6 +119,7 @@
       templateURLService && templateURLService->GetDefaultSearchProvider() &&
       templateURLService->GetDefaultSearchProvider()->GetEngineType(
           templateURLService->search_terms_data()) == SEARCH_ENGINE_GOOGLE;
+  self.mediator.templateURLService = templateURLService;
   self.mediator.protocolProvider = self;
   self.mediator.sharingDelegate = self;
   BrowserActionFactory* actionFactory = [[BrowserActionFactory alloc]
@@ -156,7 +156,8 @@
       initWithPopupPresenterDelegate:self.presenterDelegate
                  popupViewController:self.popupViewController
                    layoutGuideCenter:LayoutGuideCenterForBrowser(self.browser)
-                           incognito:isIncognito];
+                           incognito:isIncognito
+                 presentationContext:_presentationContext];
 
   if (experimental_flags::IsOmniboxDebuggingEnabled()) {
     [self setupDebug];
@@ -165,10 +166,15 @@
 
 - (void)stop {
   [_omniboxDebuggerMediator disconnect];
+  _omniboxDebuggerMediator = nil;
 
   [self.sharingCoordinator stop];
   self.sharingCoordinator = nil;
-  _popupView.reset();
+
+  self.popupViewController = nil;
+  self.mediator = nil;
+  self.autocompleteController = nullptr;
+  _omniboxImageFetcher = nil;
 }
 
 - (BOOL)isOpen {
@@ -237,6 +243,7 @@
   PopupDebugInfoViewController* viewController =
       [[PopupDebugInfoViewController alloc] init];
   _omniboxDebuggerMediator.consumer = viewController;
+  viewController.mutator = _omniboxDebuggerMediator;
 
   UINavigationController* navController = [[UINavigationController alloc]
       initWithRootViewController:viewController];

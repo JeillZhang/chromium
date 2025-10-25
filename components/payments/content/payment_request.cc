@@ -21,6 +21,7 @@
 #include "components/payments/content/payment_request_converter.h"
 #include "components/payments/content/payment_request_web_contents_manager.h"
 #include "components/payments/content/secure_payment_confirmation_no_creds.h"
+#include "components/payments/content/secure_payment_confirmation_transaction_mode.h"
 #include "components/payments/core/error_message_util.h"
 #include "components/payments/core/error_strings.h"
 #include "components/payments/core/features.h"
@@ -31,6 +32,7 @@
 #include "components/payments/core/payment_details_validation.h"
 #include "components/payments/core/payment_prefs.h"
 #include "components/payments/core/payment_request_delegate.h"
+#include "components/payments/core/payments_experimental_features.h"
 #include "components/payments/core/payments_validators.h"
 #include "components/payments/core/url_util.h"
 #include "components/prefs/pref_service.h"
@@ -81,7 +83,7 @@ PaymentRequest::PaymentRequest(
           delegate_->GetRenderFrameHost()->GetLastCommittedOrigin()),
       spc_transaction_mode_(
           PaymentRequestWebContentsManager::GetOrCreateForWebContents(
-              *web_contents())
+              web_contents())
               ->transaction_mode()),
       journey_logger_(delegate_->GetRenderFrameHost()->GetPageUkmSourceId()) {
   CHECK(!delegate_->GetRenderFrameHost()->IsInLifecycleState(
@@ -307,7 +309,7 @@ void PaymentRequest::Show(bool wait_for_updated_details,
   if (!had_user_activation) {
     PaymentRequestWebContentsManager* manager =
         PaymentRequestWebContentsManager::GetOrCreateForWebContents(
-            *web_contents());
+            web_contents());
     VLOG(2) << "PaymentRequest (" << *spec_->details().id
             << ").show(); manager->HadActivationlessShow(): "
             << manager->HadActivationlessShow();
@@ -572,7 +574,9 @@ void PaymentRequest::CanMakePayment() {
   }
 
   if (!can_make_payment_allowed_by_pref) {
-    CanMakePaymentCallback(/*can_make_payment=*/false);
+    CanMakePaymentCallback(
+        /*can_make_payment=*/PaymentsExperimentalFeatures::IsEnabled(
+            features::kCanMakePaymentTrueWhenPrivate));
   } else {
     state_->CanMakePayment(
         base::BindOnce(&PaymentRequest::CanMakePaymentCallback,

@@ -33,10 +33,9 @@ BASE_DECLARE_FEATURE(kNtpAlphaBackgroundCollections);
 BASE_DECLARE_FEATURE(kNtpBackgroundImageErrorDetection);
 BASE_DECLARE_FEATURE(kNtpCalendarModule);
 BASE_DECLARE_FEATURE(kNtpChromeCartModule);
-BASE_DECLARE_FEATURE(kNtpSearchboxComposebox);
-BASE_DECLARE_FEATURE(kNtpSearchboxComposeEntrypoint);
+BASE_DECLARE_FEATURE(kNtpCustomizeChromeAutoOpen);
 BASE_DECLARE_FEATURE(kNtpDriveModule);
-BASE_DECLARE_FEATURE(kNtpDriveModuleNoSyncRequirement);
+BASE_DECLARE_FEATURE(kNtpDriveModuleHistorySyncRequirement);
 BASE_DECLARE_FEATURE(kNtpDriveModuleSegmentation);
 BASE_DECLARE_FEATURE(kNtpDriveModuleShowSixFiles);
 #if !defined(OFFICIAL_BUILD)
@@ -80,8 +79,11 @@ BASE_DECLARE_FEATURE(kNtpWallpaperSearchButtonAnimation);
 BASE_DECLARE_FEATURE(kNtpWallpaperSearchButtonAnimationShownThreshold);
 BASE_DECLARE_FEATURE(kNtpMobilePromo);
 BASE_DECLARE_FEATURE(kNtpMicrosoftAuthenticationModule);
+BASE_DECLARE_FEATURE(kNtpNextFeatures);
 BASE_DECLARE_FEATURE(kNtpOneGoogleBarAsyncBarParts);
 BASE_DECLARE_FEATURE(kNtpFooter);
+BASE_DECLARE_FEATURE(kNtpTabGroupsModule);
+BASE_DECLARE_FEATURE(kNtpTabGroupsModuleZeroState);
 
 // Parameter for controlling the luminosity difference for NTP elements on light
 // backgrounds.
@@ -150,6 +152,8 @@ extern const char kNtpMostRelevantTabResumptionModuleDataParam[];
 // Parameter determining the max visits to show.
 extern const char kNtpMostRelevantTabResumptionModuleMaxVisitsParam[];
 extern const char kNtpRealboxWidthBehaviorParam[];
+// Parameter determining the type of tab groups data to render.
+extern const char kNtpTabGroupsModuleDataParam[];
 // Parameter for determining the categories a tab must not fall into
 // to be shown.
 extern const char kNtpTabResumptionModuleCategoriesBlocklistParam[];
@@ -187,6 +191,13 @@ extern const base::FeatureParam<base::TimeDelta>
 // window.
 extern const base::FeatureParam<base::TimeDelta>
     kNtpCalendarModuleWindowStartDeltaParam;
+// Parameter for the maximum number of times to automatically show
+// Customize Chrome.
+extern const base::FeatureParam<int> kNtpCustomizeChromeAutoShownMaxCount;
+// Parameter for the maximum number of times to automatically show
+// Customize Chrome in a session.
+extern const base::FeatureParam<int>
+    kNtpCustomizeChromeAutoShownSessionMaxCount;
 // Parameter determining whether the existence of Outlook attachment pages
 // should be checked.
 extern const base::FeatureParam<bool>
@@ -228,6 +239,15 @@ extern const base::FeatureParam<int>
 // that are associated with local tabs.
 extern const base::FeatureParam<bool>
     kNtpMostRelevantTabResumptionModuleFilterLocalTabsParam;
+// Parameter determining the time range of events.
+extern const base::FeatureParam<base::TimeDelta>
+    kNtpTabGroupsModuleWindowEndDeltaParam;
+// Parameter determing the max number of tab groups to show in the module.
+extern const base::FeatureParam<size_t> kNtpTabGroupsModuleMaxGroupCountParam;
+
+// Parameter determining the max number of MV tiles before the "Show more"
+// button is shown.
+extern const base::FeatureParam<int> kNtpNextMaxMVTilesBeforeShowMoreParam;
 
 // Returns the timeout after which the load of a module should be aborted.
 base::TimeDelta GetModulesLoadTimeout();
@@ -252,6 +272,11 @@ int GetWallpaperSearchButtonAnimationShownThreshold();
 int GetWallpaperSearchButtonHideCondition();
 
 std::string GetMobilePromoTargetURL();
+
+// Returns the max number of tiles to show before the "show more" button is
+// shown.
+int GetMaxTilesBeforeShowMore();
+
 }  // namespace ntp_features
 
 #endif  // COMPONENTS_SEARCH_NTP_FEATURES_H_

@@ -52,10 +52,7 @@ DataType IntToDataTypeChecked(int type) {
 
 ScopedJavaLocalRef<jintArray> DataTypeSetToJavaIntArray(JNIEnv* env,
                                                         DataTypeSet types) {
-  std::vector<int> type_vector;
-  for (DataType type : types) {
-    type_vector.push_back(type);
-  }
+  std::vector<int> type_vector(types.begin(), types.end());
   return base::android::ToJavaIntArray(env, type_vector);
 }
 
@@ -74,6 +71,7 @@ ScopedJavaLocalRef<jintArray> UserSelectableTypeSetToJavaIntArray(
     JNIEnv* env,
     UserSelectableTypeSet types) {
   std::vector<int> type_vector;
+  type_vector.reserve(types.size());
   for (UserSelectableType type : types) {
     type_vector.push_back(static_cast<int>(type));
   }
@@ -100,7 +98,9 @@ void NativeGetLocalDataDescriptionsCallback(
     const base::android::ScopedJavaGlobalRef<jobject>& callback,
     std::map<DataType, LocalDataDescription> localDataDescription) {
   std::vector<int> data_types;
+  data_types.reserve(localDataDescription.size());
   std::vector<LocalDataDescription> local_data_descriptions;
+  local_data_descriptions.reserve(localDataDescription.size());
   for (const auto& [data_type, description] : localDataDescription) {
     data_types.push_back(data_type);
     local_data_descriptions.push_back(description);
@@ -108,7 +108,7 @@ void NativeGetLocalDataDescriptionsCallback(
   base::android::ScopedJavaLocalRef<jclass> localdatadescription_clazz =
       base::android::GetClass(
           env, "org/chromium/components/sync/LocalDataDescription");
-  base::android::ScopedJavaLocalRef<jobjectArray> array(
+  auto array = base::android::ScopedJavaLocalRef<jobjectArray>::Adopt(
       env, env->NewObjectArray(local_data_descriptions.size(),
                                localdatadescription_clazz.obj(), nullptr));
   base::android::CheckException(env);
@@ -381,6 +381,10 @@ jint SyncServiceAndroidBridge::GetTransportState(JNIEnv* env) {
   return static_cast<jint>(native_sync_service_->GetTransportState());
 }
 
+jint SyncServiceAndroidBridge::GetUserActionableError(JNIEnv* env) {
+  return static_cast<jint>(native_sync_service_->GetUserActionableError());
+}
+
 void SyncServiceAndroidBridge::SetEncryptionPassphrase(
     JNIEnv* env,
     const JavaParamRef<jstring>& passphrase) {
@@ -412,14 +416,6 @@ void SyncServiceAndroidBridge::GetAllNodes(
 
 GoogleServiceAuthError SyncServiceAndroidBridge::GetAuthError(JNIEnv* env) {
   return native_sync_service_->GetAuthError();
-}
-
-jboolean SyncServiceAndroidBridge::HasUnrecoverableError(JNIEnv* env) {
-  return native_sync_service_->HasUnrecoverableError();
-}
-
-jboolean SyncServiceAndroidBridge::RequiresClientUpgrade(JNIEnv* env) {
-  return native_sync_service_->RequiresClientUpgrade();
 }
 
 base::android::ScopedJavaLocalRef<jobject>
@@ -456,7 +452,9 @@ jboolean SyncServiceAndroidBridge::ShouldOfferTrustedVaultOptIn(JNIEnv* env) {
 }
 
 void SyncServiceAndroidBridge::TriggerRefresh(JNIEnv* env) {
-  native_sync_service_->TriggerRefresh(DataTypeSet::All());
+  native_sync_service_->TriggerRefresh(
+      SyncService::TriggerRefreshSource::kAndroidSyncServiceBridge,
+      DataTypeSet::All());
 }
 
 jlong SyncServiceAndroidBridge::GetLastSyncedTimeForDebugging(JNIEnv* env) {

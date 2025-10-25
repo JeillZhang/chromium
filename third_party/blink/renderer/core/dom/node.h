@@ -295,11 +295,13 @@ class CORE_EXPORT Node : public EventTarget {
   // requires each Element's children to be cloned before they are appended to
   // the Element, whereas the Chromium implementation first attaches a new
   // clone to its parent, and then clones children. This avoids an O(log-n^2)
-  // set of calls to Node::InsertedInto().
+  // set of calls to Node::InsertedInto(). Fallback registry is used for
+  // element cloning when the element's registry is not available.
   virtual Node* Clone(
       Document& factory,
       NodeCloningData& data,
       ContainerNode* append_to,
+      CustomElementRegistry* fallback_registry,
       ExceptionState& append_exception_state = ASSERT_NO_EXCEPTION) const = 0;
 
   // This is not web-exposed. We should rename it or remove it.
@@ -402,7 +404,6 @@ class CORE_EXPORT Node : public EventTarget {
   }
   virtual PseudoId GetPseudoId() const { return kPseudoIdNone; }
   virtual PseudoId GetPseudoIdForStyling() const { return kPseudoIdNone; }
-  virtual const AtomicString& GetPseudoArgument() const { return g_null_atom; }
 
   CustomElementState GetCustomElementState() const {
     return static_cast<CustomElementState>(node_flags_ &
@@ -418,6 +419,7 @@ class CORE_EXPORT Node : public EventTarget {
   virtual bool IsScrollMarkerPseudoElement() const { return false; }
   virtual bool IsScrollMarkerGroupPseudoElement() const { return false; }
   virtual bool IsScrollButtonPseudoElement() const { return false; }
+  virtual bool IsInterestHintPseudoElement() const { return false; }
   virtual bool IsMediaControlElement() const { return false; }
   virtual bool IsMediaControls() const { return false; }
   virtual bool IsMediaElement() const { return false; }
@@ -429,7 +431,7 @@ class CORE_EXPORT Node : public EventTarget {
   virtual bool IsMediaRemotingInterstitial() const { return false; }
   virtual bool IsPictureInPictureInterstitial() const { return false; }
 
-  // Either ::scroll-marker or ::scroll-*-button pseudo element.
+  // Either ::scroll-marker or ::scroll-*-button pseudo-element.
   bool IsScrollControlPseudoElement() const {
     return IsScrollMarkerPseudoElement() || IsScrollButtonPseudoElement();
   }
@@ -586,7 +588,7 @@ class CORE_EXPORT Node : public EventTarget {
   // Propagates a dirty bit breadcrumb for this element up the ancestor chain.
   void MarkAncestorsWithChildNeedsStyleRecalc();
 
-  // Traverses subtree (include pseudo elements and shadow trees) and
+  // Traverses subtree (include pseudo-elements and shadow trees) and
   // invalidates nodes whose styles depend on font metrics (e.g., 'ex' unit).
   void MarkSubtreeNeedsStyleRecalcForFontUpdates();
 
@@ -757,6 +759,7 @@ class CORE_EXPORT Node : public EventTarget {
   // https://dom.spec.whatwg.org/#concept-shadow-including-ancestor
   bool IsShadowIncludingAncestorOf(const Node&) const;
   bool ContainsIncludingHostElements(const Node&) const;
+  bool ContainsViaFlatTree(const Node&) const;
   Node* CommonAncestor(const Node&,
                        ContainerNode* (*parent)(const Node&)) const;
 
@@ -1084,11 +1087,6 @@ class CORE_EXPORT Node : public EventTarget {
 
   void Trace(Visitor*) const override;
 
-  bool IsModifiedBySoftNavigation() const {
-    return GetFlag(kModifiedBySoftNavigation);
-  }
-  void SetIsModifiedBySoftNavigation() { SetFlag(kModifiedBySoftNavigation); }
-
   bool HasNodePart() const { return GetFlag(kHasNodePart); }
   void SetHasNodePart() { SetFlag(kHasNodePart); }
   void ClearHasNodePart() { ClearFlag(kHasNodePart); }
@@ -1151,16 +1149,12 @@ class CORE_EXPORT Node : public EventTarget {
     kSelfOrAncestorHasDirAutoAttribute = 1u << 27,
     kCachedDirectionalityIsRtl = 1u << 28,
 
-    // Indicates that the node was added in a task descendant of a potential
-    // soft navigation.
-    kModifiedBySoftNavigation = 1u << 29,
-
     // Bits indicating this Node is a NodePart or a ChildNodePart endpoint.
-    kHasNodePart = 1u << 30,
+    kHasNodePart = 1u << 29,
 
     // Indicate the node is in a hierarchy that needs to be considered for
     // ContainerTiming events.
-    kSelfOrAncestorHasContainerTiming = 1u << 31,
+    kSelfOrAncestorHasContainerTiming = 1u << 30,
 
     kDefaultNodeFlags = kIsFinishedParsingChildrenFlag,
 
@@ -1254,9 +1248,9 @@ class CORE_EXPORT Node : public EventTarget {
 
  private:
   static constexpr struct ParentNodeTag {
-  } kParentNodeTag;
+  } kParentNodeTag{};
   static constexpr struct ShadowHostTag {
-  } kShadowHostTag;
+  } kShadowHostTag{};
 
   using TaggedParentOrShadowHostNode =
       subtle::TaggedUncompressedMember<Node, ParentNodeTag, ShadowHostTag>;

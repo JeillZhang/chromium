@@ -9,14 +9,17 @@
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_view_transition_callback.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_view_transition_options.h"
+#include "third_party/blink/renderer/core/css/style_change_reason.h"
 #include "third_party/blink/renderer/core/css/style_engine.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/pseudo_element.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
+#include "third_party/blink/renderer/core/layout/layout_object.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/page/page_animator.h"
+#include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
 #include "third_party/blink/renderer/core/view_transition/dom_view_transition.h"
 #include "third_party/blink/renderer/core/view_transition/page_swap_event.h"
@@ -24,7 +27,6 @@
 #include "third_party/blink/renderer/core/view_transition/view_transition_utils.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.h"
-#include "third_party/blink/renderer/platform/scheduler/public/task_attribution_tracker.h"
 
 namespace blink {
 
@@ -61,16 +63,6 @@ DOMViewTransition* ViewTransitionSupplement::StartViewTransitionForElement(
   }
 
   auto* supplement = From(element->GetDocument());
-
-  if (callback) {
-    auto* tracker =
-        scheduler::TaskAttributionTracker::From(script_state->GetIsolate());
-    // Set the parent task ID if we're not in an extension task (as extensions
-    // are not currently supported in TaskAttributionTracker).
-    if (tracker && script_state->World().IsMainWorld()) {
-      callback->SetParentTask(tracker->RunningTask());
-    }
-  }
   return supplement->StartTransition(*element, callback, types,
                                      exception_state);
 }
@@ -104,6 +96,18 @@ DOMViewTransition* ViewTransitionSupplement::startViewTransition(
       script_state, document.documentElement(),
       static_cast<V8ViewTransitionCallback*>(nullptr), std::nullopt,
       exception_state);
+}
+
+// static
+DOMViewTransition* ViewTransitionSupplement::activeViewTransition(
+    Document& document) {
+  auto* supplement = FromIfExists(document);
+  if (!supplement) {
+    return nullptr;
+  }
+  return supplement->document_transition_
+             ? supplement->document_transition_->GetScriptDelegate()
+             : nullptr;
 }
 
 DOMViewTransition* ViewTransitionSupplement::StartTransition(
@@ -216,6 +220,15 @@ void ViewTransitionSupplement::StartTransition(
   // https://drafts.csswg.org/css-view-transitions-2/#setup-outbound-transition.
 
   if (document_transition_) {
+    // TODO(nrosenthal): limit eligible animations to those that started after
+    // navigation was initiated and have a short while before they are scheduled
+    // to end.
+    if (RuntimeEnabledFeatures::TwoPhaseViewTransitionEnabled() &&
+        document_transition_->HasActiveAnimations()) {
+      pending_navigation_transition_.emplace(PendingNavigationTransition{
+          navigation_id, std::move(params), std::move(callback)});
+      return;
+    }
     // We should skip a transition if one exists, regardless of how it was
     // created, since navigation transition takes precedence.
     document_transition_->SkipTransition();
@@ -260,12 +273,45 @@ void ViewTransitionSupplement::StartTransition(
 void ViewTransitionSupplement::OnTransitionFinished(
     ViewTransition* transition) {
   CHECK(transition);
+
   // Clear the transition so it can be garbage collected if needed (and to
   // prevent callers of GetTransition thinking there's an ongoing transition).
   if (transition == document_transition_) {
     document_transition_ = nullptr;
+    if (pending_navigation_transition_) {
+      CHECK(RuntimeEnabledFeatures::TwoPhaseViewTransitionEnabled());
+      GetSupplementable()
+          ->GetTaskRunner(TaskType::kDOMManipulation)
+          ->PostTask(
+              FROM_HERE,
+              BindOnce(
+                  [](ViewTransitionSupplement* supplement,
+                     PendingNavigationTransition
+                         pending_navigation_transition) {
+                    supplement->StartTransition(
+                        *supplement->GetSupplementable(),
+                        pending_navigation_transition.navigation_id,
+                        std::move(pending_navigation_transition.params),
+                        std::move(pending_navigation_transition.callback));
+                  },
+                  WrapWeakPersistent(this),
+                  std::move(*pending_navigation_transition_)));
+      pending_navigation_transition_.reset();
+    }
   } else {
-    element_transitions_.erase(transition->Scope());
+    Element* scope = transition->Scope();
+    element_transitions_.erase(scope);
+    LayoutObject* layout_object = scope->GetLayoutObject();
+    if (scope != scope->GetDocument().documentElement() && layout_object &&
+        !(layout_object->StyleRef().Contain() & kContainsViewTransition) &&
+        layout_object->HasLayer()) {
+      // Element may have had an added stacking context purely for being the
+      // scope of a view transition. Ensure correctness of the adjusted style.
+      layout_object->EnclosingLayer()->SetNeedsCompositingInputsUpdate();
+      scope->SetNeedsStyleRecalc(kLocalStyleChange,
+                                 StyleChangeReasonForTracing::Create(
+                                     style_change_reason::kViewTransition));
+    }
   }
 
   // Notify the animator if the set of active view transitions is empty.
@@ -451,9 +497,9 @@ ViewTransitionSupplement::ResolveCrossDocumentViewTransition() {
 viz::ViewTransitionElementResourceId
 ViewTransitionSupplement::GenerateResourceId(
     const blink::ViewTransitionToken& transition_token,
-    bool for_subframe_snapshot) {
+    bool for_scope_snapshot) {
   return viz::ViewTransitionElementResourceId(
-      transition_token, ++resource_local_id_sequence_, for_subframe_snapshot);
+      transition_token, ++resource_local_id_sequence_, for_scope_snapshot);
 }
 
 void ViewTransitionSupplement::InitializeResourceIdSequence(

@@ -10,8 +10,6 @@ import android.content.Context;
 import android.content.res.ColorStateList;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
-import android.os.Build.VERSION;
 import android.os.Handler;
 import android.transition.ChangeBounds;
 import android.transition.Fade;
@@ -53,8 +51,10 @@ import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarButtonVariant
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarFeatures;
 import org.chromium.chrome.browser.toolbar.optional_button.ButtonData.ButtonSpec;
 import org.chromium.chrome.browser.toolbar.optional_button.OptionalButtonConstants.TransitionType;
+import org.chromium.chrome.browser.toolbar.optional_button.OptionalButtonProperties.OnBeforeWidthTransitionCallback;
 import org.chromium.chrome.browser.util.ChromeAccessibilityUtil;
 import org.chromium.components.browser_ui.widget.textbubble.TextBubble;
+import org.chromium.components.dom_distiller.core.DomDistillerFeatures;
 import org.chromium.ui.interpolators.Interpolators;
 import org.chromium.ui.listmenu.ListMenuButton;
 import org.chromium.ui.widget.ViewRectProvider;
@@ -101,6 +101,10 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
     private @AdaptiveToolbarButtonVariant int mCurrentButtonVariant =
             AdaptiveToolbarButtonVariant.NONE;
     private boolean mCanCurrentButtonShow;
+
+    // Indicates whether this optional button can change its own the visibility or leave the control
+    // to some other entity. {@code true} by default.
+    private boolean mCanChangeOwnVisibility = true;
     private @ButtonType int mCurrentButtonType;
     private @ButtonType int mNextButtonType;
 
@@ -108,6 +112,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
     private @Nullable OnLongClickListener mLongClickListener;
     private @Nullable Callback<Integer> mTransitionStartedCallback;
     private @Nullable Callback<Integer> mTransitionFinishedCallback;
+    private @Nullable OnBeforeWidthTransitionCallback mOnBeforeWidthTransitionCallback;
     private @Nullable BooleanSupplier mIsAnimationAllowedPredicate;
     private final Runnable mCollapseActionChipRunnable =
             new Runnable() {
@@ -153,6 +158,10 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
 
     void setTransitionStartedCallback(Callback<Integer> callback) {
         mTransitionStartedCallback = callback;
+    }
+
+    void setOnBeforeWidthTransitionCallback(OnBeforeWidthTransitionCallback callback) {
+        mOnBeforeWidthTransitionCallback = callback;
     }
 
     void setTransitionFinishedCallback(Callback<Integer> callback) {
@@ -267,7 +276,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         final boolean canAnimate = isAnimationAllowedByParent && isButtonVariantChanging;
 
         mCurrentButtonVariant = buttonSpec.getButtonVariant();
-        mCanCurrentButtonShow = canShow;
+        mCanCurrentButtonShow = true;
         mCurrentButtonSupportsTinting = buttonSpec.getSupportsTinting();
 
         mIconDrawable = buttonSpec.getDrawable();
@@ -321,8 +330,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         // Set hover state tooltip text for optional toolbar buttons(e.g. share, voice search, new
         // tab and profile).
         if (buttonSpec.getHoverTooltipTextId() != ButtonSpec.INVALID_TOOLTIP_TEXT_ID
-                && mButton != null
-                && VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                && mButton != null) {
             TooltipCompat.setTooltipText(
                     mButton, getContext().getString(buttonSpec.getHoverTooltipTextId()));
         } else {
@@ -440,6 +448,10 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         mActionChipLabel.setEnabled(enabled);
     }
 
+    void setCanChangeVisibility(boolean canChange) {
+        mCanChangeOwnVisibility = canChange;
+    }
+
     /**
      * Gets a handler used to schedule the action chip collapse animation after the action chip
      * finishes expanding. Tests can set their own handler with {@code setHandlerForTesting}.
@@ -512,7 +524,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         mAnimationImage.setVisibility(GONE);
 
         if (mState == State.HIDDEN) {
-            this.setVisibility(GONE);
+            if (mCanChangeOwnVisibility) this.setVisibility(GONE);
         } else {
             mButton.setVisibility(VISIBLE);
             mButton.setImageDrawable(mIconDrawable);
@@ -752,7 +764,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         }
 
         if (getVisibility() == GONE) {
-            setVisibility(VISIBLE);
+            if (mCanChangeOwnVisibility) this.setVisibility(VISIBLE);
             setWidth(0);
         }
 
@@ -811,6 +823,10 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         setWidth(expandedStateWidthPx);
 
         mState = State.RUNNING_ACTION_CHIP_EXPANSION_TRANSITION;
+        if (mOnBeforeWidthTransitionCallback != null) {
+            mOnBeforeWidthTransitionCallback.onResult(
+                    getCurrentTransitionType(), expandedStateWidthPx - mCollapsedStateWidthPx);
+        }
     }
 
     private void animateActionChipCollapse() {
@@ -820,9 +836,14 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
 
         mBackground.setColorFilter(mBackgroundColorFilter);
         mActionChipLabel.setVisibility(GONE);
+        int widthDelta = mCollapsedStateWidthPx - getLayoutParams().width;
+
         setWidth(mCollapsedStateWidthPx);
 
         mState = State.RUNNING_ACTION_CHIP_COLLAPSE_TRANSITION;
+        if (mOnBeforeWidthTransitionCallback != null) {
+            mOnBeforeWidthTransitionCallback.onResult(getCurrentTransitionType(), widthDelta);
+        }
     }
 
     private void showTextBubble(@StringRes int stringId) {
@@ -884,7 +905,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
         }
 
         // Prepare views for the transition, these changes aren't animated.
-        this.setVisibility(VISIBLE);
+        if (mCanChangeOwnVisibility) this.setVisibility(VISIBLE);
         setWidth(0);
 
         mButton.setVisibility(GONE);
@@ -915,6 +936,12 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
     }
 
     private void beginDelayedTransition(Transition transition) {
+        // TODO(crbug.com/425817689): The optional button transition was clobbering the URL focus
+        //  animations for the GTS and app menu buttons. Revisit to see if this is always safe to
+        //  add this target, or if we need to limit this to the URL focus change case.
+        if (ChromeFeatureList.sToolbarPhoneAnimationRefactor.isEnabled()) {
+            transition.addTarget(this);
+        }
         if (mFakeBeginTransitionForTesting != null) {
             mFakeBeginTransitionForTesting.onResult(transition);
             return;
@@ -932,6 +959,7 @@ class OptionalButtonView extends FrameLayout implements TransitionListener {
     // ============================================================================================
     public static boolean isCpaSpecUpdateEnabled() {
         return ChromeFeatureList.sCpaSpecUpdate.isEnabled()
+                || DomDistillerFeatures.sReaderModeDistillInApp.isEnabled()
                 || ThemeModuleUtils.isForceEnableDependencies();
     }
 }

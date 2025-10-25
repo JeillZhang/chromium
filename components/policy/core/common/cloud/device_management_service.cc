@@ -308,7 +308,7 @@ JobConfigurationBase::JobConfigurationBase(
   CHECK(!auth_data_.has_oauth_token()) << "Use |oauth_token| instead";
 
 #if !BUILDFLAG(IS_IOS)
-  if (oauth_token_ && auth_data.token_type() != DMAuthTokenType::kOidc) {
+  if (oauth_token_ && auth_data_.token_type() != DMAuthTokenType::kOidc) {
     // Put the oauth token in the query parameters for platforms that are not
     // iOS. On iOS we are trying the oauth token in the request headers
     // (crbug.com/1312158). We might want to use the iOS approach on all
@@ -604,9 +604,10 @@ DeviceManagementService::JobImpl::OnURLLoaderCompleteInternal(
   LOG_POLICY(WARNING, CBCM_ENROLLMENT)
       << "Request of type "
       << JobConfiguration::GetJobTypeAsString(config_->GetType())
-      << " failed (net_error = " << net_error
-      << ", response_code = " << response_code << "), retrying in "
-      << retry_delay << "ms.";
+      << " failed (net_error = " << net::ErrorToString(net_error) << " ("
+      << net_error
+      << "), response_code = " << ResponseCodeToString(response_code) << "( "
+      << response_code << ")), retrying in " << retry_delay << "ms.";
   if (!is_test) {
     task_runner_->PostDelayedTask(
         FROM_HERE,
@@ -766,6 +767,10 @@ DeviceManagementService::CreateJobForTesting(
   auto job = std::make_unique<JobImpl>(task_runner_, std::move(config));
   JobForTesting job_for_testing(job.get());  // IN-TEST
   return std::make_pair(std::move(job), std::move(job_for_testing));
+}
+
+const scoped_refptr<base::SequencedTaskRunner> DeviceManagementService::GetTaskRunnerForTesting() {
+  return task_runner_;
 }
 
 std::unique_ptr<DeviceManagementService::Job>

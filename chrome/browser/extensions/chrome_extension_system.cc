@@ -27,9 +27,10 @@
 #include "chrome/browser/extensions/extension_garbage_collector.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/extensions/install_verifier.h"
+#include "chrome/browser/extensions/install_verifier_factory.h"
 #include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/extensions/shared_module_service.h"
+#include "chrome/browser/extensions/sync/extension_sync_service.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/notifications/notifier_state_tracker.h"
 #include "chrome/browser/notifications/notifier_state_tracker_factory.h"
@@ -50,12 +51,14 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/browser/install_verifier.h"
 #include "extensions/browser/quota_service.h"
 #include "extensions/browser/service_worker_manager.h"
 #include "extensions/browser/state_store.h"
 #include "extensions/browser/update_install_gate.h"
 #include "extensions/browser/updater/uninstall_ping_sender.h"
 #include "extensions/browser/user_script_manager.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/common/manifest_url_handlers.h"
@@ -63,7 +66,6 @@
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/chrome_app_sorting.h"
-#include "chrome/browser/extensions/extension_sync_service.h"
 #else
 #include "chrome/browser/extensions/chrome_extension_registrar_delegate.h"
 #include "extensions/browser/null_app_sorting.h"
@@ -82,6 +84,8 @@
 #include "chromeos/components/mgs/managed_guest_session_utils.h"
 #include "components/user_manager/user_manager.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -169,7 +173,8 @@ void ChromeExtensionSystem::Shared::RegisterManagementPolicyProviders() {
   }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-  management_policy_->RegisterProvider(InstallVerifier::Get(profile_));
+  management_policy_->RegisterProvider(
+      InstallVerifierFactory::GetForBrowserContext(profile_));
 }
 
 void ChromeExtensionSystem::Shared::InitInstallGates() {
@@ -230,7 +235,7 @@ void ChromeExtensionSystem::Shared::Init(bool extensions_enabled) {
   // These services must be registered before the ExtensionService tries to
   // load any extensions.
   {
-    InstallVerifier::Get(profile_)->Init();
+    InstallVerifierFactory::GetForBrowserContext(profile_)->Init();
     ChromeContentVerifierDelegate::VerifyInfo::Mode mode =
         ChromeContentVerifierDelegate::GetDefaultMode();
 #if BUILDFLAG(IS_CHROMEOS)
@@ -289,10 +294,8 @@ void ChromeExtensionSystem::Shared::Init(bool extensions_enabled) {
 
   extension_service_->Init();
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
   // Make sure ExtensionSyncService is created.
   ExtensionSyncService::Get(profile_);
-#endif
 
   // Make the chrome://extension-icon/ resource available.
   content::URLDataSource::Add(profile_,

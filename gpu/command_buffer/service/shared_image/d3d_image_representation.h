@@ -86,6 +86,27 @@ class DawnD3DBufferRepresentation : public DawnBufferRepresentation {
   wgpu::Buffer buffer_;
 };
 
+// Representation of a D3DImageBacking as a tensor.
+class WebNND3DTensorRepresentation : public WebNNTensorRepresentation {
+ public:
+  WebNND3DTensorRepresentation(SharedImageManager* manager,
+                               SharedImageBacking* backing,
+                               MemoryTypeTracker* tracker);
+  ~WebNND3DTensorRepresentation() override;
+
+ private:
+  bool BeginAccess() override;
+  void EndAccess() override;
+
+  Microsoft::WRL::ComPtr<ID3D12Resource> GetD3D12Buffer() const override;
+  scoped_refptr<gfx::D3DSharedFence> GetAcquireFence() const override;
+  void SetReleaseFence(
+      scoped_refptr<gfx::D3DSharedFence> release_fence) override;
+
+  scoped_refptr<gfx::D3DSharedFence> acquire_fence_;
+  scoped_refptr<gfx::D3DSharedFence> release_fence_;
+};
+
 // Representation of a D3DImageBacking as an overlay.
 class OverlayD3DImageRepresentation : public OverlayImageRepresentation {
  public:
@@ -171,7 +192,7 @@ class D3DSkiaGraphiteDawnImageRepresentation
   ~D3DSkiaGraphiteDawnImageRepresentation() override;
 
   bool SupportsMultipleConcurrentReadAccess() override;
-  bool NeedGraphiteContextSubmitBeforeEndAccess() override;
+  bool SupportsDeferredGraphiteSubmit() override;
 
  private:
   std::vector<scoped_refptr<GraphiteTextureHolder>> WrapBackendTextures(

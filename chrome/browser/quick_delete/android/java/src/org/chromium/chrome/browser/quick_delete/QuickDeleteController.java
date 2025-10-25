@@ -7,7 +7,6 @@ package org.chromium.chrome.browser.quick_delete;
 import static org.chromium.build.NullUtil.assumeNonNull;
 
 import android.content.Context;
-import android.os.Build;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.view.LayoutInflater;
@@ -29,6 +28,7 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
 import org.chromium.components.feature_engagement.Tracker;
+import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.ui.modaldialog.DialogDismissalCause;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -39,6 +39,9 @@ import java.util.List;
 /** A controller responsible for setting up quick delete MVC. */
 @NullMarked
 public class QuickDeleteController {
+    // LINT.IfChange(TipsPrefNames)
+    public static final String QUICK_DELETE_EVER_USED_PREF = "browser.quick_delete_ever_used";
+    // LINT.ThenChange(//components/browsing_data/core/pref_names.h:TipsPrefNames)
 
     private final Context mContext;
     private final QuickDeleteDelegate mDelegate;
@@ -49,10 +52,10 @@ public class QuickDeleteController {
     private final LayoutManager mLayoutManager;
     private final Profile mProfile;
     private final TabModel mTabModel;
-    private final QuickDeleteBridge mQuickDeleteBridge;
     private final QuickDeleteMediator mQuickDeleteMediator;
     private final PropertyModel mPropertyModel;
     private final PropertyModelChangeProcessor mPropertyModelChangeProcessor;
+    private final QuickDeleteDialogDelegate mDialogDelegate;
 
     /**
      * Constructor for the QuickDeleteController with a dialog and confirmation snackbar.
@@ -96,7 +99,6 @@ public class QuickDeleteController {
             mDeleteArchivedTabsFilter = null;
         }
         mProfile = assumeNonNull(tabModelSelector.getCurrentModel().getProfile());
-        mQuickDeleteBridge = new QuickDeleteBridge(mProfile);
 
         // MVC setup.
         View quickDeleteView =
@@ -115,11 +117,10 @@ public class QuickDeleteController {
                 new QuickDeleteMediator(
                         mPropertyModel,
                         mProfile,
-                        mQuickDeleteBridge,
                         mDeleteRegularTabsFilter,
                         mDeleteArchivedTabsFilter);
 
-        QuickDeleteDialogDelegate dialogDelegate =
+        mDialogDelegate =
                 new QuickDeleteDialogDelegate(
                         context,
                         quickDeleteView,
@@ -127,12 +128,11 @@ public class QuickDeleteController {
                         this::onDialogDismissed,
                         tabModelSelector,
                         mQuickDeleteMediator);
-        dialogDelegate.showDialog();
     }
 
     void destroy() {
         mPropertyModelChangeProcessor.destroy();
-        mQuickDeleteBridge.destroy();
+        mQuickDeleteMediator.destroy();
     }
 
     /**
@@ -140,6 +140,11 @@ public class QuickDeleteController {
      */
     public static boolean isQuickDeleteSurveyEnabled() {
         return ChromeFeatureList.sQuickDeleteAndroidSurvey.isEnabled();
+    }
+
+    /** Show the Quick Delete dialog. */
+    public void showDialog() {
+        mDialogDelegate.showDialog();
     }
 
     /** A method called when the user confirms or cancels the dialog. */
@@ -173,6 +178,7 @@ public class QuickDeleteController {
             @TimePeriod int timePeriod, boolean isTabClosureDisabled) {
         RecordHistogram.recordBooleanHistogram(
                 "Privacy.QuickDelete.TabsEnabled", !isTabClosureDisabled);
+        UserPrefs.get(mProfile).setBoolean(QUICK_DELETE_EVER_USED_PREF, true);
 
         // Ensure that no in-product help is triggered during tab closure and the post-deletion
         // experience.
@@ -233,12 +239,7 @@ public class QuickDeleteController {
     private void triggerHapticFeedback() {
         Vibrator v = (Vibrator) mContext.getSystemService(Context.VIBRATOR_SERVICE);
         final long duration = 50;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            v.vibrate(VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE));
-        } else {
-            // Deprecated in API 26.
-            v.vibrate(duration);
-        }
+        v.vibrate(VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE));
     }
 
     /** A method to show the quick delete snack-bar. */

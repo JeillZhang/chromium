@@ -15,14 +15,14 @@
 #include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "chrome/browser/enterprise/connectors/common.h"
-#include "chrome/browser/extensions/api/safe_browsing_private/safe_browsing_private_event_router.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/binary_upload_service.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/file_opening_job.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
+#include "components/enterprise/connectors/core/reporting_constants.h"
 #include "components/file_access/scoped_file_access.h"
 #include "components/file_access/scoped_file_access_delegate.h"
-#include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
+#include "components/safe_browsing/content/browser/web_ui/web_ui_content_info_singleton.h"
 
 namespace enterprise_connectors {
 
@@ -39,36 +39,35 @@ FilesRequestHandler::Factory* GetFactoryStorage() {
 }
 
 AnalysisConnector AccessPointToEnterpriseConnector(
-    safe_browsing::DeepScanAccessPoint access_point) {
+    DeepScanAccessPoint access_point) {
   switch (access_point) {
-    case safe_browsing::DeepScanAccessPoint::FILE_TRANSFER:
+    case DeepScanAccessPoint::FILE_TRANSFER:
       return enterprise_connectors::FILE_TRANSFER;
-    case safe_browsing::DeepScanAccessPoint::UPLOAD:
-    case safe_browsing::DeepScanAccessPoint::DRAG_AND_DROP:
-    case safe_browsing::DeepScanAccessPoint::PASTE:
+    case DeepScanAccessPoint::UPLOAD:
+    case DeepScanAccessPoint::DRAG_AND_DROP:
+    case DeepScanAccessPoint::PASTE:
       // A file can be uploaded to a website by either a normal file picker, a
       // dragNdrop event or using copy+paste.
       return enterprise_connectors::FILE_ATTACHED;
-    case safe_browsing::DeepScanAccessPoint::DOWNLOAD:
-    case safe_browsing::DeepScanAccessPoint::PRINT:
+    case DeepScanAccessPoint::DOWNLOAD:
+    case DeepScanAccessPoint::PRINT:
       NOTREACHED();
   }
   return enterprise_connectors::FILE_ATTACHED;
 }
 
-std::string AccessPointToTriggerString(
-    safe_browsing::DeepScanAccessPoint access_point) {
+std::string AccessPointToTriggerString(DeepScanAccessPoint access_point) {
   switch (access_point) {
-    case safe_browsing::DeepScanAccessPoint::FILE_TRANSFER:
-      return extensions::SafeBrowsingPrivateEventRouter::kTriggerFileTransfer;
-    case safe_browsing::DeepScanAccessPoint::UPLOAD:
-    case safe_browsing::DeepScanAccessPoint::DRAG_AND_DROP:
-    case safe_browsing::DeepScanAccessPoint::PASTE:
+    case DeepScanAccessPoint::FILE_TRANSFER:
+      return kFileTransferDataTransferEventTrigger;
+    case DeepScanAccessPoint::UPLOAD:
+    case DeepScanAccessPoint::DRAG_AND_DROP:
+    case DeepScanAccessPoint::PASTE:
       // A file can be uploaded to a website by either a normal file picker, a
       // dragNdrop event or using copy+paste.
-      return extensions::SafeBrowsingPrivateEventRouter::kTriggerFileUpload;
-    case safe_browsing::DeepScanAccessPoint::DOWNLOAD:
-    case safe_browsing::DeepScanAccessPoint::PRINT:
+      return kFileUploadDataTransferEventTrigger;
+    case DeepScanAccessPoint::DOWNLOAD:
+    case DeepScanAccessPoint::PRINT:
       NOTREACHED();
   }
   return "";
@@ -88,7 +87,7 @@ FilesRequestHandler::FilesRequestHandler(
     const std::string& source,
     const std::string& destination,
     const std::string& content_transfer_method,
-    safe_browsing::DeepScanAccessPoint access_point,
+    DeepScanAccessPoint access_point,
     const std::vector<base::FilePath>& paths,
     CompletionCallback callback)
     : RequestHandlerBase(content_analysis_info,
@@ -115,7 +114,7 @@ std::unique_ptr<FilesRequestHandler> FilesRequestHandler::Create(
     const std::string& source,
     const std::string& destination,
     const std::string& content_transfer_method,
-    safe_browsing::DeepScanAccessPoint access_point,
+    DeepScanAccessPoint access_point,
     const std::vector<base::FilePath>& paths,
     CompletionCallback callback) {
   if (GetFactoryStorage()->is_null()) {
@@ -152,11 +151,12 @@ void FilesRequestHandler::ReportWarningBypass(
     size_t index = warning.first;
 
     ReportAnalysisConnectorWarningBypass(
-        profile_, url_, url_, source_, destination_,
+        profile_, *content_analysis_info_, source_, destination_,
         paths_[index].AsUTF8Unsafe(), file_info_[index].sha256,
         file_info_[index].mime_type, AccessPointToTriggerString(access_point_),
-        content_transfer_method_, access_point_, file_info_[index].size,
-        warning.second, user_justification);
+        content_transfer_method_, file_info_[index].size,
+        content_analysis_info_->referrer_chain(), warning.second,
+        user_justification);
   }
 }
 
@@ -285,12 +285,16 @@ void FilesRequestHandler::FinishRequestEarly(
     safe_browsing::BinaryUploadService::Result result) {
   // We add the request here in case we never actually uploaded anything, so it
   // wasn't added in OnGetRequestData
-  safe_browsing::WebUIInfoSingleton::GetInstance()->AddToDeepScanRequests(
-      request->per_profile_request(), /*access_token*/ "", /*upload_info*/ "",
-      /*upload_url=*/"", request->content_analysis_request());
-  safe_browsing::WebUIInfoSingleton::GetInstance()->AddToDeepScanResponses(
-      /*token=*/"", safe_browsing::BinaryUploadService::ResultToString(result),
-      enterprise_connectors::ContentAnalysisResponse());
+  safe_browsing::WebUIContentInfoSingleton::GetInstance()
+      ->AddToDeepScanRequests(request->per_profile_request(),
+                              /*access_token*/ "", /*upload_info*/ "",
+                              /*upload_url=*/"",
+                              request->content_analysis_request());
+  safe_browsing::WebUIContentInfoSingleton::GetInstance()
+      ->AddToDeepScanResponses(
+          /*token=*/"",
+          safe_browsing::BinaryUploadService::ResultToString(result),
+          enterprise_connectors::ContentAnalysisResponse());
 
   request->FinishRequest(result,
                          enterprise_connectors::ContentAnalysisResponse());
@@ -357,10 +361,13 @@ void FilesRequestHandler::FileRequestCallback(
   }
 
   MaybeReportDeepScanningVerdict(
-      profile_, url_, url_, source_, destination_, path.AsUTF8Unsafe(),
-      file_info_[index].sha256, file_info_[index].mime_type,
-      AccessPointToTriggerString(access_point_), content_transfer_method_,
-      access_point_, file_info_[index].size, upload_result, response,
+      profile_, content_analysis_info_.get(), source_, destination_,
+      path.AsUTF8Unsafe(), file_info_[index].sha256,
+      file_info_[index].mime_type, AccessPointToTriggerString(access_point_),
+      content_transfer_method_,
+      content_analysis_info_->GetContentAreaAccountEmail(),
+      file_info_[index].size, content_analysis_info_->referrer_chain(),
+      upload_result, response,
       CalculateEventResult(analysis_settings, request_handler_result.complies,
                            result_is_warning));
 

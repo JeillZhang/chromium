@@ -25,6 +25,7 @@
 #include "components/url_formatter/elide_url.h"
 #include "components/url_formatter/url_formatter.h"
 #include "third_party/skia/include/core/SkPath.h"
+#include "third_party/skia/include/core/SkRRect.h"
 #include "third_party/skia/include/pathops/SkPathOps.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
@@ -450,11 +451,10 @@ void StatusView::OnPaint(gfx::Canvas* canvas) {
   float scale = canvas->UndoDeviceScaleFactor();
   const float radius = kBubbleCornerRadius * scale;
 
-  std::array<SkScalar, 8> rad{};
+  std::array<SkVector, 4> rad{};
   auto round_corner = [&rad, radius](gfx::RRectF::Corner c) {
     int index = base::to_underlying(c);
-    rad[2 * index] = radius;
-    rad[2 * index + 1] = radius;
+    rad[index] = {radius, radius};
   };
 
   // Top Edges - if the bubble is in its bottom position (sticking downwards),
@@ -480,13 +480,11 @@ void StatusView::OnPaint(gfx::Canvas* canvas) {
 #if BUILDFLAG(IS_MAC)
     // Mac's window has rounded corners, but the corner radius might be
     // different on different versions. Status bubble will use its own round
-    // corner on Mac when there is no download shelf beneath.
-    if (!status_bubble_->download_shelf_is_visible_) {
-      if (base::i18n::IsRTL() != (style_ == BubbleStyle::kStandard)) {
-        round_corner(gfx::RRectF::Corner::kLowerLeft);
-      } else {
-        round_corner(gfx::RRectF::Corner::kLowerRight);
-      }
+    // corner on Mac.
+    if (base::i18n::IsRTL() != (style_ == BubbleStyle::kStandard)) {
+      round_corner(gfx::RRectF::Corner::kLowerLeft);
+    } else {
+      round_corner(gfx::RRectF::Corner::kLowerRight);
     }
 #endif
   }
@@ -530,8 +528,8 @@ void StatusView::OnPaint(gfx::Canvas* canvas) {
   // Align to pixel centers now that the layout is correct.
   bubble_rect.Inset(0.5);
 
-  SkPath path;
-  path.addRoundRect(gfx::RectFToSkRect(bubble_rect), rad.data());
+  const SkPath path = SkPath::RRect(
+      SkRRect::MakeRectRadii(gfx::RectFToSkRect(bubble_rect), rad.data()));
 
   cc::PaintFlags flags;
   flags.setStyle(cc::PaintFlags::kStroke_Style);
@@ -729,9 +727,9 @@ void StatusBubbleViews::InitPopup() {
 #endif
     params.opacity = views::Widget::InitParams::WindowOpacity::kTranslucent;
     params.accept_events = false;
-    views::Widget* frame = base_view_->GetWidget();
-    params.parent = frame->GetNativeView();
-    params.context = frame->GetNativeWindow();
+    views::Widget* widget = base_view_->GetWidget();
+    params.parent = widget->GetNativeView();
+    params.context = widget->GetNativeWindow();
     params.name = "StatusBubble";
 #if BUILDFLAG(IS_CHROMEOS)
     params.init_properties_container.SetProperty(ash::kHideInOverviewKey, true);
@@ -918,8 +916,7 @@ void StatusBubbleViews::Hide() {
 }
 
 void StatusBubbleViews::MouseMoved(bool left_content) {
-  MouseMovedAt(display::Screen::GetScreen()->GetCursorScreenPoint(),
-               left_content);
+  MouseMovedAt(display::Screen::Get()->GetCursorScreenPoint(), left_content);
 }
 
 void StatusBubbleViews::MouseMovedAt(const gfx::Point& location,
@@ -940,10 +937,6 @@ void StatusBubbleViews::MouseMovedAt(const gfx::Point& location,
       AvoidMouse(location);
     }
   }
-}
-
-void StatusBubbleViews::UpdateDownloadShelfVisibility(bool visible) {
-  download_shelf_is_visible_ = visible;
 }
 
 void StatusBubbleViews::AvoidMouse(const gfx::Point& location) {
@@ -997,17 +990,13 @@ void StatusBubbleViews::AvoidMouse(const gfx::Point& location) {
       view_->SetStyle(StatusView::BubbleStyle::kStandard);
     }
 
-    // Check if the bubble sticks out from the monitor or will obscure
-    // download shelf.
+    // Check if the bubble sticks out from the monitor.
     gfx::NativeView view = base_view_->GetWidget()->GetNativeView();
     gfx::Rect monitor_rect =
-        display::Screen::GetScreen()->GetDisplayNearestView(view).work_area();
+        display::Screen::Get()->GetDisplayNearestView(view).work_area();
     const int bubble_bottom_y = top_left.y() + position_.y() + size_.height();
 
-    if (bubble_bottom_y + offset > monitor_rect.height() ||
-        (download_shelf_is_visible_ &&
-         (view_->GetStyle() == StatusView::BubbleStyle::kFloating ||
-          view_->GetStyle() == StatusView::BubbleStyle::kBottom))) {
+    if (bubble_bottom_y + offset > monitor_rect.height()) {
       // The offset is still too large. Move the bubble to the right and reset
       // Y offset_ to zero.
       view_->SetStyle(StatusView::BubbleStyle::kStandardRight);
@@ -1035,18 +1024,18 @@ void StatusBubbleViews::AvoidMouse(const gfx::Point& location) {
 }
 
 bool StatusBubbleViews::IsFrameVisible() {
-  views::Widget* frame = base_view_->GetWidget();
-  if (!frame->IsVisible()) {
+  views::Widget* widget = base_view_->GetWidget();
+  if (!widget->IsVisible()) {
     return false;
   }
 
-  views::Widget* window = frame->GetTopLevelWidget();
+  views::Widget* window = widget->GetTopLevelWidget();
   return !window || !window->IsMinimized();
 }
 
 bool StatusBubbleViews::IsFrameMaximized() {
-  views::Widget* frame = base_view_->GetWidget();
-  views::Widget* window = frame->GetTopLevelWidget();
+  views::Widget* widget = base_view_->GetWidget();
+  views::Widget* window = widget->GetTopLevelWidget();
   return window && window->IsMaximized();
 }
 

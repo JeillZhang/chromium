@@ -51,6 +51,10 @@ component("gl_enums") {
   public_deps = [ "//third_party/angle:includes" ]
 }
 
+source_set("gl_headers") {
+  public_deps = [ "//third_party/angle:includes" ]
+}
+
 component("gl") {
   output_name = "gl_wrapper"  # Avoid colliding with OS X"s libGL.dylib.
 
@@ -136,6 +140,8 @@ component("gl") {
     "scoped_binders.h",
     "scoped_egl_image.cc",
     "scoped_egl_image.h",
+    "scoped_gl_texture.cc",
+    "scoped_gl_texture.h",
     "scoped_make_current.cc",
     "scoped_make_current.h",
     "scoped_make_current_unsafe.cc",
@@ -173,6 +179,7 @@ component("gl") {
   ]
   public_deps = [
     ":gl_enums",
+    ":gl_headers",
     "//base",
     "//ui/events/platform",
     "//ui/gfx",
@@ -219,7 +226,7 @@ component("gl") {
     deps += [
       "//ui/base:features",
       "//ui/base/x",
-      "//ui/events/platform/x11:x11",
+      "//ui/events/platform/x11",
       "//ui/gfx/linux:gpu_memory_buffer_support_x11",
     ]
 
@@ -287,7 +294,7 @@ component("gl") {
     ]
     deps += [
       "//ui/base",
-      "//ui/display:display",
+      "//ui/display",
       "//ui/gfx/mojom:dxgi_info",
     ]
 
@@ -333,7 +340,6 @@ component("gl") {
       "Quartz.framework",
     ]
 
-    data_deps += [ "//third_party/mesa_headers" ]
     if (!use_static_angle) {
       data_deps += [
         "//third_party/angle:libEGL",
@@ -549,6 +555,7 @@ test("gl_unittests") {
 
   deps = [
     ":gl",
+    ":gl_headers",
     ":gl_unittest_utils",
     ":run_all_unittests",
     ":test_support",
@@ -556,7 +563,7 @@ test("gl_unittests") {
     "//testing/gmock",
     "//testing/gtest",
     "//third_party/angle:includes",
-    "//ui/base:base",
+    "//ui/base",
     "//ui/gfx",
     "//ui/gfx:test_support",
     "//ui/gfx/geometry",
@@ -565,10 +572,7 @@ test("gl_unittests") {
     "//ui/platform_window:platform_impls",
   ]
 
-  data_deps = [
-    "//testing/buildbot/filters:gl_unittests_filters",
-    "//third_party/mesa_headers",
-  ]
+  data_deps = [ "//testing/buildbot/filters:gl_unittests_filters" ]
 
   if (is_win) {
     deps += [
@@ -581,6 +585,10 @@ test("gl_unittests") {
   if (use_ozone) {
     deps += [ "//ui/ozone" ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 # We can't run this test on real Chrome OS hardware for Ozone, so new target.

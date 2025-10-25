@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/sync/test/integration/bookmarks_helper.h"
 
 #include <stddef.h>
@@ -18,6 +13,7 @@
 #include <set>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/stack.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -77,16 +73,16 @@ const char kSyncedBookmarksTag[] = "synced_bookmarks";
 const char kOtherBookmarksTag[] = "other_bookmarks";
 
 const BookmarkNode* GetPermanentNodeForServerTag(
-    int profile_index,
+    const sync_bookmarks::BookmarkModelView& model_view,
     const std::string& server_defined_unique_tag) {
   if (server_defined_unique_tag == kBookmarkBarTag) {
-    return GetBookmarkBarNode(profile_index);
+    return model_view.bookmark_bar_node();
   }
   if (server_defined_unique_tag == kSyncedBookmarksTag) {
-    return GetSyncedBookmarksNode(profile_index);
+    return model_view.mobile_node();
   }
   if (server_defined_unique_tag == kOtherBookmarksTag) {
-    return GetOtherNode(profile_index);
+    return model_view.other_node();
   }
 
   return nullptr;
@@ -256,8 +252,8 @@ bool FaviconRawBitmapsMatch(const SkBitmap& bitmap_a,
   EXPECT_TRUE(node_pixel_addr_a);
   void* node_pixel_addr_b = bitmap_b.getPixels();
   EXPECT_TRUE(node_pixel_addr_b);
-  if (memcmp(node_pixel_addr_a, node_pixel_addr_b,
-             bitmap_a.computeByteSize()) != 0) {
+  if (UNSAFE_TODO(memcmp(node_pixel_addr_a, node_pixel_addr_b,
+                         bitmap_a.computeByteSize())) != 0) {
     LOG(ERROR) << "Favicon bitmap mismatch";
     return false;
   } else {
@@ -506,6 +502,17 @@ void TriggerAllFaviconLoading(BookmarkModel* model) {
       model->GetFavicon(node);
     }
   }
+}
+
+std::unique_ptr<sync_bookmarks::BookmarkModelView> CreateBookmarkModelView(
+    bookmarks::BookmarkModel* model,
+    bool is_transport_mode) {
+  if (is_transport_mode) {
+    return std::make_unique<sync_bookmarks::BookmarkModelViewUsingAccountNodes>(
+        model);
+  }
+  return std::make_unique<
+      sync_bookmarks::BookmarkModelViewUsingLocalOrSyncableNodes>(model);
 }
 
 }  // namespace
@@ -963,11 +970,10 @@ bool BookmarksMatchChecker::IsExitConditionSatisfied(std::ostream* os) {
   return AllModelsMatch();
 }
 
-bool BookmarksMatchChecker::Wait() {
+void BookmarksMatchChecker::WillStartWaiting() {
   for (int i = 0; i < sync_datatype_helper::test()->num_clients(); ++i) {
     TriggerAllFaviconLoading(GetBookmarkModel(i));
   }
-  return BookmarkModelStatusChangeChecker::Wait();
 }
 
 SingleBookmarkModelStatusChangeChecker::SingleBookmarkModelStatusChangeChecker(
@@ -1133,12 +1139,16 @@ BookmarksUuidChecker::BookmarksUuidChecker(int profile, const base::Uuid& uuid)
 BookmarksUuidChecker::~BookmarksUuidChecker() = default;
 
 BookmarkModelMatchesFakeServerChecker::BookmarkModelMatchesFakeServerChecker(
-    int profile,
+    bookmarks::BookmarkModel* model,
     syncer::SyncServiceImpl* service,
-    fake_server::FakeServer* fake_server)
+    fake_server::FakeServer* fake_server,
+    bool is_transport_mode)
     : SingleClientStatusChangeChecker(service),
       fake_server_(fake_server),
-      profile_index_(profile) {}
+      model_view_(CreateBookmarkModelView(model, is_transport_mode)) {}
+
+BookmarkModelMatchesFakeServerChecker::
+    ~BookmarkModelMatchesFakeServerChecker() = default;
 
 bool BookmarkModelMatchesFakeServerChecker::IsExitConditionSatisfied(
     std::ostream* os) {
@@ -1157,14 +1167,13 @@ bool BookmarkModelMatchesFakeServerChecker::IsExitConditionSatisfied(
   // |bookmarks_count| is used to check that the bookmark model doesn't have
   // less nodes than the fake server.
   size_t bookmarks_count = 0;
-  const bookmarks::BookmarkNode* root_node =
-      GetBookmarkModel(profile_index_)->root_node();
+  const bookmarks::BookmarkNode* root_node = model_view_->root_node();
   ui::TreeNodeIterator<const bookmarks::BookmarkNode> iterator(root_node);
   while (iterator.has_next()) {
     const BookmarkNode* node = iterator.Next();
 
-    // Do not check permanent nodes.
-    if (node->is_permanent_node()) {
+    // Do not check permanent nodes or nodes not related to the current view.
+    if (!model_view_->IsNodeSyncable(node) || node->is_permanent_node()) {
       continue;
     }
 
@@ -1258,7 +1267,7 @@ bool BookmarkModelMatchesFakeServerChecker::CheckPermanentParentNode(
 
   if (parent_node !=
       GetPermanentNodeForServerTag(
-          profile_index_,
+          *model_view_,
           permanent_parent_iter->second.server_defined_unique_tag())) {
     *os << " Permanent parent node mismatch for node: " << node->GetTitle();
     return false;

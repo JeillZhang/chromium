@@ -221,7 +221,6 @@
 <translation id="181434555916624618">現時点では、人物が含まれる結果は表示されません。別のプロンプトをお試しください。</translation>
 <translation id="1815850098929213707">選択したキーは <ph name="KEYS" /> です。コントロールを編集するにはボタンをタップします</translation>
 <translation id="1818174214124933000">[送信] を選択すると、フィードバックとコンテンツ（以下に表示）が Google に送信され、人間による確認が行われます。また、<ph name="LINK_POLICY_BEGIN" />プライバシー ポリシー<ph name="LINK_POLICY_END" />と <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Google 利用規約<ph name="LINK_TERMS_OF_SERVICE_END" />に沿って、プロダクトおよびサービスのトレーニングや改善の目的で使用されます。</translation>
-<translation id="1821075635029692203">教師がサポートされていないリソースを送信しました。伝える必要があります。</translation>
 <translation id="1823120442877418684">キャラクター</translation>
 <translation id="1827738518074806965">アート ギャラリー</translation>
 <translation id="183287940576828840">不適切 / 危険</translation>
@@ -328,9 +327,10 @@
 <translation id="2240366984605217732">レイアウトの切り替え</translation>
 <translation id="224421911978987610">長時間露光</translation>
 <translation id="2244834438220057800">緑色</translation>
+<translation id="2248689665683494517">黒色の背景でガラスの花瓶に入った数本のケシの花のミニマルな静物画</translation>
 <translation id="225692081236532131">起動状態</translation>
 <translation id="2267285889943769271">スクリーンショットを追加</translation>
-<translation id="2268044343513325586">絞り込み</translation>
+<translation id="2268044343513325586">修正</translation>
 <translation id="2271469253353559191">ダークモードのスケジュールを設定する</translation>
 <translation id="2276999893457278469">関連するヘルプ コンテンツ</translation>
 <translation id="2277631741861284101">音声を簡単に録音して共有</translation>
@@ -756,8 +756,10 @@
 <translation id="4300073214558989"><ph name="IMAGE_COUNT" /> 件の画像</translation>
 <translation id="4300272766492248925">アプリを開く</translation>
 <translation id="430786093962686457">シフォン</translation>
+<translation id="4309762678330556039">文字起こしを自動で作成したり、音声を検索したりできます。インターネットに接続していなくても録音できます。</translation>
 <translation id="4310735698903592804">Google AI を活用した最近の壁紙</translation>
 <translation id="4320904097188876154">ネオンピンク</translation>
+<translation id="432961742358282111">右クリックまたは長押しすると、定義、翻訳、単位変換を取得できます。左右矢印キーでこの機能を管理できます。</translation>
 <translation id="4333390807948134856"><ph name="KEY_NAME" /> キーを押しました</translation>
 <translation id="4334293042716981313"><ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />独自のプロンプトを記述する<ph name="END_LINK_FREEFORM_SUBPAGE" />こともできます</translation>
 <translation id="4354430579665871434">キー</translation>
@@ -949,7 +951,7 @@
 <translation id="5145331109270917438">更新日</translation>
 <translation id="5154917547274118687">メモリ</translation>
 <translation id="5160857336552977725"><ph name="DEVICE_TYPE" /> にログインしてください</translation>
-<translation id="5168185087976003268">電池の状態</translation>
+<translation id="5168185087976003268">バッテリー ヘルス</translation>
 <translation id="5170568018924773124">フォルダを開く</translation>
 <translation id="517075088756846356">更新プロセスを続行するには、<ph name="DEVICE_NAME" /> の電源ケーブルを取り外してから、もう一度差し込んでください</translation>
 <translation id="5180108905184566358">バオバブの木々</translation>
@@ -1437,7 +1439,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Chromebook ヘルプ フォーラムのエキスパートに問い合わせる</translation>
-<translation id="7309823890857024809">黒色の背景でガラスの花瓶に入った数本のケシの茎のミニマルな静物画</translation>
 <translation id="7311368985037279727">キーボードの色</translation>
 <translation id="7317831949569936035">教育機関の登録</translation>
 <translation id="7319430975418800333">A3</translation>
@@ -1472,6 +1473,7 @@
 <translation id="7425832472614771259"><ph name="LANGUAGE_NAME" /> の音声文字変換モデルを <ph name="PROGRESS_PERCENTAGE" />% ダウンロード済み</translation>
 <translation id="7427315641433634153">MSCHAP</translation>
 <translation id="7438298994385592770">この APN を無効化または削除できません。有効になっている <ph name="ATTACH" /> APN を無効化または削除しようとしていることを確認してください。</translation>
+<translation id="7458359366992324037">リモート ディスプレイ</translation>
 <translation id="7458970041932198923">アバターを表示、設定するには、ネットワークに接続してページを再読み込みしてください。</translation>
 <translation id="7469648432129124067">ポータルが検出されました</translation>
 <translation id="7481312909269577407">進む</translation>
@@ -1543,7 +1545,7 @@
 <translation id="779591286616261875">新しい報告を送信</translation>
 <translation id="7799817062559422778">ライトモード</translation>
 <translation id="7802764839223122985">キーが設定されていません。<ph name="REASSIGN_INSTRUCTION" /></translation>
-<translation id="780301667611848630">キャンセル</translation>
+<translation id="780301667611848630">利用しない</translation>
 <translation id="7805768142964895445">ステータス</translation>
 <translation id="7811024689617730980">自動リセットの日付として 1～31 のうちいずれかを選択します</translation>
 <translation id="7813073042185856802">山</translation>
@@ -1613,7 +1615,7 @@
 <translation id="8079860070590459552">花畑</translation>
 <translation id="8082366717211101304">Android アプリから DNS を解決できません</translation>
 <translation id="8082644724189923105">キーボード ゾーン</translation>
-<translation id="808894953321890993">パスワードの変更</translation>
+<translation id="808894953321890993">パスワードを変更</translation>
 <translation id="8088963492174775412">押すと録音を開始します</translation>
 <translation id="8094062939584182041">この問題に関するメールの送信を Google に許可する</translation>
 <translation id="8104083085214006426">保護されていないオープン ネットワークを使用しています</translation>
@@ -1738,7 +1740,7 @@
 <translation id="8689520252402395106">更新プロセスを続行するには、<ph name="DEVICE_NAME" /> の USB ケーブルをもう一度差し込んでください</translation>
 <translation id="8699053192961439771">クリックしてタブを自動的に非表示</translation>
 <translation id="8709616837707653427"><ph name="DESC_TEXT" /> 左右矢印キーでこの機能を管理できます。</translation>
-<translation id="8712637175834984815">理解した</translation>
+<translation id="8712637175834984815">理解しました</translation>
 <translation id="871560550817059752">失敗 - インクがありません</translation>
 <translation id="8721554916373590179">サンプル プロンプト</translation>
 <translation id="8723108084122415655">デフォルト以外のネットワークの応答時間がしきい値を超えています</translation>

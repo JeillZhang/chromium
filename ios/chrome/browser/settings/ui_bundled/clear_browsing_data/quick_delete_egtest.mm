@@ -4,6 +4,7 @@
 
 #import <XCTest/XCTest.h>
 
+#import "base/ios/ios_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #import "base/test/metrics/histogram_tester.h"
@@ -14,14 +15,12 @@
 #import "components/signin/internal/identity_manager/account_capabilities_constants.h"
 #import "components/strings/grit/components_strings.h"
 #import "components/sync/base/command_line_switches.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/browser/recent_tabs/ui_bundled/recent_tabs_constants.h"
-#import "ios/chrome/browser/settings/ui_bundled/cells/clear_browsing_data_constants.h"
-#import "ios/chrome/browser/settings/ui_bundled/clear_browsing_data/clear_browsing_data_ui_constants.h"
-#import "ios/chrome/browser/settings/ui_bundled/clear_browsing_data/features.h"
+#import "ios/chrome/browser/settings/ui_bundled/clear_browsing_data/quick_delete_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/password/password_settings_app_interface.h"
 #import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
@@ -237,7 +236,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 
   // Disable tab selection so the tab closure animation is not ran in all the
   // tests.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   if (![self isRunningTest:@selector(testInactiveTabsForDeletion)]) {
@@ -261,7 +260,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   [ChromeEarlGrey resetBrowsingDataPrefs];
 
   // Reenable the tab selection so it goes back to the default state.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   if (![self isRunningTest:@selector(testInactiveTabsForDeletion)]) {
@@ -280,7 +279,6 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 - (AppLaunchConfiguration)appConfigurationForTestCase {
   AppLaunchConfiguration config;
   config.relaunch_policy = NoForceRelaunchAndResetState;
-  config.features_enabled.push_back(kIOSQuickDelete);
   config.additional_args.push_back(std::string("--") +
                                    syncer::kSyncShortNudgeDelayForTest);
   config.features_enabled.push_back(
@@ -293,7 +291,6 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 - (void)relaunchAppWithInactiveTabsTestMode {
   AppLaunchConfiguration config;
   config.relaunch_policy = ForceRelaunchByCleanShutdown;
-  config.features_enabled.push_back(kIOSQuickDelete);
   config.additional_args.push_back("-InactiveTabsTestMode");
   config.additional_args.push_back("true");
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];
@@ -313,11 +310,9 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 - (void)openQuickDeleteFromThreeDotMenu {
   [ChromeEarlGreyUI openToolsMenu];
 
-  [[EarlGrey
-      selectElementWithMatcher:ButtonWithAccessibilityLabel(
-                                   l10n_util::GetNSString(
-                                       IDS_IOS_TOOLS_MENU_CLEAR_BROWSING_DATA))]
-      performAction:grey_tap()];
+  [ChromeEarlGreyUI
+      tapToolsMenuAction:ButtonWithAccessibilityLabel(l10n_util::GetNSString(
+                             IDS_IOS_TOOLS_MENU_CLEAR_BROWSING_DATA))];
 
   // Wait for the summary to be loaded.
   [ChromeEarlGrey waitForUIElementToDisappearWithMatcher:
@@ -507,17 +502,17 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 // selected.
 - (void)testDisabledBrowsingDataButtonWhenNoSelection {
   // Disable selection of all browsing data types.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteBrowsingHistory];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kCloseTabs];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCookies];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCache];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeletePasswords];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteFormData];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -529,7 +524,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
       assertWithMatcher:grey_not(grey_enabled())];
 
   // Select a browsing data type.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kDeleteBrowsingHistory];
 
   // Check that the browsing data button is enabled.
@@ -617,7 +612,15 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 }
 
 // Tests that the browsing data summary is updated when the time range changes.
-- (void)testSummaryUpdatesWhenTimeRangeChanges {
+// TODO(crbug.com/443704367): Test disabled on simulator.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testSummaryUpdatesWhenTimeRangeChanges \
+  DISABLED_testSummaryUpdatesWhenTimeRangeChanges
+#else
+#define MAYBE_testSummaryUpdatesWhenTimeRangeChanges \
+  testSummaryUpdatesWhenTimeRangeChanges
+#endif
+- (void)MAYBE_testSummaryUpdatesWhenTimeRangeChanges {
   // Set pref to the last hour.
   [ChromeEarlGrey
       setIntegerValue:static_cast<int>(browsing_data::TimePeriod::LAST_HOUR)
@@ -676,7 +679,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   [ChromeEarlGrey addHistoryServiceTypedURL:kMockURL];
 
   // Set pref to select deletion of browsing history.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kDeleteBrowsingHistory];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -737,8 +740,18 @@ NSString* CapitalizeFirstLetter(NSString* string) {
                                        timeout:kSyncOperationTimeout];
 
   // Set pref to select deletion of browsing history.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kDeleteBrowsingHistory];
+  [ChromeEarlGrey setBoolValue:NO
+                   forUserPref:browsing_data::prefs::kCloseTabs];
+  [ChromeEarlGrey setBoolValue:NO
+                   forUserPref:browsing_data::prefs::kDeleteCookies];
+  [ChromeEarlGrey setBoolValue:NO
+                   forUserPref:browsing_data::prefs::kDeleteCache];
+  [ChromeEarlGrey setBoolValue:NO
+                   forUserPref:browsing_data::prefs::kDeletePasswords];
+  [ChromeEarlGrey setBoolValue:NO
+                   forUserPref:browsing_data::prefs::kDeleteFormData];
 
   [self openQuickDeleteFromThreeDotMenu];
 
@@ -773,7 +786,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   [ChromeEarlGrey addHistoryServiceTypedURL:kMockURL];
 
   // Set pref to keep browsing history.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteBrowsingHistory];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -805,7 +818,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 // that the tabs get closed when the deletion of tabs is selected.
 - (void)testTabsForDeletion {
   // Set pref to close tabs.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   // Load page in tab.
@@ -891,7 +904,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   }
 
   // Set pref to close tabs.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   // Load page in tab.
@@ -932,7 +945,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   }
 
   // Set pref to close tabs.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   // Load page in tab.
@@ -977,17 +990,17 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   [self relaunchAppWithInactiveTabsTestMode];
 
   // Set to close tabs, but nothing else.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteBrowsingHistory];
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kCloseTabs];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCookies];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCache];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeletePasswords];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteFormData];
 
   // Load a url in the NTP tab.
@@ -1029,12 +1042,15 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 // also tests that the tabs in tab groups get closed when the deletion of tabs
 // is selected.
 - (void)testTabsForDeletionInTabGroup {
-  if (@available(iOS 17, *)) {
-  } else if ([ChromeEarlGrey isIPadIdiom]) {
-    EARL_GREY_TEST_SKIPPED(@"Only available on iOS 17+ on iPad.");
+  // TODO(crbug.com/446597022): Re-enable the test on iOS26 device.
+#if !TARGET_OS_SIMULATOR
+  if (base::ios::IsRunningOnIOS26OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26 and on device.");
   }
+#endif
+
   // Set pref to close tabs.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   // Load page in tab.
@@ -1078,13 +1094,14 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 // tabs should include tabs in all windows, not just the ones where quick delete
 // is triggered from. It also tests that the tabs in both windows get closed
 // when the deletion of tabs is selected.
-- (void)testTabsForDeletionInMultiwindow {
+// TODO(crbug.com/358141981): Deflake the test.
+- (void)FLAKY_testTabsForDeletionInMultiwindow {
   if (![ChromeEarlGrey areMultipleWindowsSupported]) {
     EARL_GREY_TEST_DISABLED(@"Multiple windows can't be opened.");
   }
 
   // Set pref to close tabs.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   GREYAssertTrue(self.testServer->Start(), @"Test server failed to start.");
@@ -1132,6 +1149,11 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 - (void)testTimeRangeSelectionUpdatesInMultiwindow {
   if (![ChromeEarlGrey areMultipleWindowsSupported]) {
     EARL_GREY_TEST_DISABLED(@"Multiple windows can't be opened.");
+  }
+  if (@available(iOS 19.0, *)) {
+    // TODO(crbug.com/427699033): Re-enable test on iOS 26.
+    // Fails final histogram check.
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
   }
 
   // Set time range pref to the last hour.
@@ -1233,7 +1255,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   [ChromeEarlGrey waitForWebStateContainingText:"Echo"];
 
   // Set pref to close tabs.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -1264,11 +1286,11 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 // data row when cookies are selected as a data type for deletion.
 - (void)testCookiesForDeletion {
   // Set pref to select deletion of cookies.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kDeleteCookies];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCache];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -1299,11 +1321,11 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 // browsing data row when cookies are not selected as a data type for deletion.
 - (void)testKeepCookies {
   // Set pref to keep cookies.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCookies];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCache];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -1328,11 +1350,11 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 // data row when cache is selected as a data type for deletion.
 - (void)testCacheForDeletion {
   // Set pref to select deletion of cache.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kDeleteCache];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCookies];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -1363,11 +1385,11 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 // browsing data row when cache is not selected as a data type for deletion.
 - (void)testKeepCache {
   // Set pref to keep cache.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCache];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCookies];
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kCloseTabs];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -1398,7 +1420,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
       saveExamplePasswordToProfileWithCount:kPasswordCount];
 
   // Set pref to select deletion of passwords.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kDeletePasswords];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -1438,7 +1460,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
       saveExamplePasswordToProfileWithCount:kPasswordCount];
 
   // Set pref to keep passwords.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeletePasswords];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -1475,7 +1497,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   [AutofillAppInterface saveLocalCreditCard];
 
   // Set pref to select deletion of form data.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kDeleteFormData];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -1509,7 +1531,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   [AutofillAppInterface saveLocalCreditCard];
 
   // Set pref to keep form data.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteFormData];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -1545,7 +1567,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   }
 
   // Set pref to keep browsing history.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteBrowsingHistory];
 
   [self openQuickDeleteFromThreeDotMenu];
@@ -1567,7 +1589,8 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 
 // Tests the footer search history link is opened correctly and metrics are
 // recorded in the corrresponding histogram bucket.
-- (void)testOpenSearchHistoryMyActivityFooterLink {
+// TODO(crbug.com/443704367): Re-enable test.
+- (void)DISABLED_testOpenSearchHistoryMyActivityFooterLink {
   GREYAssertTrue(self.testServer->Start(), @"Test server failed to start.");
   // Sign in is required to show the footer.
   [self signIn];
@@ -1594,7 +1617,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 
   // Check that my activity link was opened.
   GREYAssertEqual(std::string(kMyActivityURL),
-                  [ChromeEarlGrey webStateVisibleURL].host(),
+                  [ChromeEarlGrey webStateVisibleURL].GetHost(),
                   @"Did not navigate to the search activity url.");
 
   // Assert that the metrics are populated.
@@ -1633,7 +1656,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 
   // Check that my activity link was opened.
   GREYAssertEqual(std::string(kMyActivityURL),
-                  [ChromeEarlGrey webStateVisibleURL].host(),
+                  [ChromeEarlGrey webStateVisibleURL].GetHost(),
                   @"Did not navigate to the search activity url.");
 
   // Assert that the metrics are populated.
@@ -1683,7 +1706,15 @@ NSString* CapitalizeFirstLetter(NSString* string) {
 
 // Tests that a user in the `ConsentLevel::kSignin` state will remain signed in
 // after clearing their browsing history.
-- (void)testUserSignedInWhenClearingBrowsingData {
+// TODO(crbug.com/443704367): Test disabled on simulator.
+#if TARGET_OS_SIMULATOR
+#define MAYBE_testUserSignedInWhenClearingBrowsingData \
+  DISABLED_testUserSignedInWhenClearingBrowsingData
+#else
+#define MAYBE_testUserSignedInWhenClearingBrowsingData \
+  testUserSignedInWhenClearingBrowsingData
+#endif
+- (void)MAYBE_testUserSignedInWhenClearingBrowsingData {
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   [SigninEarlGreyUI signinWithFakeIdentity:fakeIdentity];
 
@@ -1717,9 +1748,14 @@ NSString* CapitalizeFirstLetter(NSString* string) {
   if (![ChromeEarlGrey areMultipleWindowsSupported]) {
     EARL_GREY_TEST_DISABLED(@"Multiple windows can't be opened.");
   }
+  if (@available(iOS 19.0, *)) {
+    // TODO(crbug.com/427699033): Re-enable test on iOS 26.
+    // Fails interacting with both windows.
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
 
   // Set the cache preference to true.
-  [ChromeEarlGrey setBoolValue:true
+  [ChromeEarlGrey setBoolValue:YES
                    forUserPref:browsing_data::prefs::kDeleteCache];
 
   GREYAssertTrue(self.testServer->Start(), @"Test server failed to start.");
@@ -1754,7 +1790,7 @@ NSString* CapitalizeFirstLetter(NSString* string) {
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Set the cache preference to false.
-  [ChromeEarlGrey setBoolValue:false
+  [ChromeEarlGrey setBoolValue:NO
                    forUserPref:browsing_data::prefs::kDeleteCache];
 
   // Focus on the first window.

@@ -88,6 +88,13 @@ class VisitDatabase {
   // may still be no matches).
   bool GetVisitsForURL(URLID url_id, VisitVector* visits);
 
+  // Fills in the given vector with all of the visits that did not have an HTTP
+  // response code of 404 for the given page ID, sorted in ascending order of
+  // date. Returns true on success (although there may still be no matches). An
+  // empty `visits` does not imply that the URL has no visits overall, as there
+  // may be 404 visits.
+  bool GetNon404VisitsForURL(URLID url_id, VisitVector* visits);
+
   // Fills in the given vector with the visits for the given page ID which
   // should be user-visible, which excludes things like redirects and subframes,
   // and match the set of options passed, sorted in ascending order of date.
@@ -102,7 +109,8 @@ class VisitDatabase {
   //
   // The results will be in no particular order.  Also, no duplicate
   // detection is performed, so if `times` has duplicate times,
-  // `visits` may have duplicate visits.
+  // `visits` may have duplicate visits. Includes visits that result in 404
+  // error response codes.
   bool GetVisitsForTimes(const std::vector<base::Time>& times,
                          VisitVector* visits);
 
@@ -115,7 +123,8 @@ class VisitDatabase {
   // there are more results than that, the oldest ones will be returned. (This
   // is used for history expiration.)
   //
-  // The results will be in increasing order of date.
+  // The results will be in increasing order of date. Includes visits that
+  // result in 404 error response codes.
   bool GetAllVisitsInRange(base::Time begin_time,
                            base::Time end_time,
                            std::optional<std::string> app_id,
@@ -130,7 +139,8 @@ class VisitDatabase {
   // there are more results than that, the oldest ones will be returned. (This
   // is used for history expiration.)
   //
-  // The results will be in increasing order of date.
+  // The results will be in increasing order of date. Includes visits that
+  // result in 404 error response codes.
   bool GetVisitsInRangeForTransition(base::Time begin_time,
                                      base::Time end_time,
                                      int max_results,
@@ -140,16 +150,12 @@ class VisitDatabase {
   // Fills some foreign visits (i.e. with a non-empty `originator_cache_guid`)
   // into `visits` - at most `max_visits` of them, and only those with a (local)
   // visit_id <= `max_visit_id`. Returns true on success and false otherwise.
+  // Includes visits that result in 404 error response codes.
   // NOTE: This returns only redirect-chain-ends (including individual visits
   // without redirects).
   bool GetSomeForeignVisits(VisitID max_visit_id,
                             int max_results,
                             VisitVector* visits);
-
-  // Looks up URLIDs for all visits with specified transition. Returns true on
-  // success and false otherwise.
-  bool GetAllURLIDsForTransition(ui::PageTransition transition,
-                                 std::vector<URLID>* urls);
 
   // Looks up all the app IDs found in the database entries. Returns a struct
   // containing the list of the IDs.
@@ -173,24 +179,32 @@ class VisitDatabase {
                                VisitVector* visits);
 
   // Returns the visit ID for the most recent visit of the given URL ID, or 0
-  // if there is no visit for the URL.
+  // if there is no visit for the URL. Includes or excludes 404 visits according
+  // to `policy_for_404_visits`.
   //
   // If non-NULL, the given visit row will be filled with the information of
   // the found visit. When no visit is found, the row will be unchanged.
-  VisitID GetMostRecentVisitForURL(URLID url_id, VisitRow* visit_row);
+  VisitID GetMostRecentVisitForURL(URLID url_id,
+                                   VisitRow* visit_row,
+                                   VisitQuery404sPolicy policy_for_404_visits);
 
-  // Returns the `max_results` most recent visit sessions for `url_id`.
+  // Returns the `max_results` most recent visit sessions for `url_id`. Includes
+  // or excludes visits with an HTTP response code of 404 according to
+  // `policy_for_404_visits`.
   //
   // Returns false if there's a failure preparing the statement. True
-  // otherwise. (No results are indicated with an empty `visits`
+  // otherwise. (No matching results is indicated with an empty `visits`
   // vector.)
   bool GetMostRecentVisitsForURL(URLID url_id,
                                  int max_results,
+                                 VisitQuery404sPolicy policy_for_404_visits,
                                  VisitVector* visits);
 
   // Finds a redirect coming from the given `from_visit`. If a redirect is
   // found, it fills the visit ID and URL into the out variables and returns
-  // true. If there is no redirect from the given visit, returns false.
+  // true. If there is no redirect from the given visit, returns false. Includes
+  // or excludes redirects that result in a 404 response based on
+  // `policy_for_404_visits`.
   //
   // If there is more than one redirect, this will compute a random one. But
   // duplicates should be very rare, and we don't actually care which one we
@@ -200,7 +214,8 @@ class VisitDatabase {
   // to_visit and to_url can be NULL in which case they are ignored.
   bool GetRedirectFromVisit(VisitID from_visit,
                             VisitID* to_visit,
-                            GURL* to_url);
+                            GURL* to_url,
+                            VisitQuery404sPolicy policy_for_404_visits);
 
   // Similar to the above function except finds a redirect going to a given
   // `to_visit`; or, if there is no such redirect, finds the referral going to
@@ -213,6 +228,7 @@ class VisitDatabase {
   // scheme/host/port as `url`, as well as the time of the earliest visit.
   // "User-visible" is defined as in GetVisibleVisitsInRange() above, i.e.
   // excluding redirects and subframes.
+  // Visits with an HTTP response code of 404 are also excluded.
   // This function is only valid for HTTP and HTTPS URLs; all other schemes
   // cause the function to return false.
   bool GetVisibleVisitCountToHost(const GURL& url,
@@ -221,12 +237,13 @@ class VisitDatabase {
 
   // Gets the number of URLs as seen in chrome://history within the time
   // range [`begin_time`, `end_time`). "User-visible" is defined as in
-  // GetVisibleVisitsInRange() above, i.e. excluding redirects and subframes.
+  // `GetVisibleVisitsInRange()` above, i.e. excluding redirects and subframes.
   // Each URL is counted only once per day. For determination of the date,
-  // timestamps are converted to dates using local time. Returns false if
-  // there is a failure executing the statement. True otherwise.
+  // timestamps are converted to dates using local time. Returns false if there
+  // is a failure executing the statement. True otherwise.
   bool GetHistoryCount(const base::Time& begin_time,
                        const base::Time& end_time,
+                       VisitQuery404sPolicy policy_for_404_visits,
                        int* count);
 
   // Gets the last time any webpage on the given host was visited within the
@@ -237,19 +254,24 @@ class VisitDatabase {
   bool GetLastVisitToHost(const std::string& host,
                           base::Time begin_time,
                           base::Time end_time,
+                          VisitQuery404sPolicy policy_for_404_visits,
                           base::Time* last_visit);
 
   // Same as the above, but for the given origin instead of host.
   bool GetLastVisitToOrigin(const url::Origin& origin,
                             base::Time begin_time,
                             base::Time end_time,
+                            VisitQuery404sPolicy policy_for_404_visits,
                             base::Time* last_visit);
 
-  // Gets counts for total visits and days visited for pages matching `host`'s
-  // scheme, port, and host. Counts only user-visible visits.
-  DailyVisitsResult GetDailyVisitsToHost(const GURL& host,
-                                         base::Time begin_time,
-                                         base::Time end_time);
+  // Gets counts for total visits and days visited for pages matching `origin`.
+  // Counts only user-visible visits. Counts or ignores visits with an HTTP
+  // response code of 404 based on `policy_for_404_visits`.
+  DailyVisitsResult GetDailyVisitsToOrigin(
+      const url::Origin& origin,
+      base::Time begin_time,
+      base::Time end_time,
+      VisitQuery404sPolicy policy_for_404_visits);
 
   // Get the time of the first item in our database.
   bool GetStartDate(base::Time* first_visit);
@@ -298,6 +320,50 @@ class VisitDatabase {
   static bool FillVisitVectorWithOptions(sql::Statement& statement,
                                          const QueryOptions& options,
                                          VisitVector* visits);
+
+  // Called by the derived classes to migrate the older visits table which
+  // don't have visit_duration column yet.
+  bool MigrateVisitsWithoutDuration();
+
+  // Called by the derived classes to migrate the older visits table which
+  // don't have incremented_omnibox_typed_score column yet.
+  bool MigrateVisitsWithoutIncrementedOmniboxTypedScore();
+
+  // Called by the derived classes to migrate the older visits table which
+  // don't have publicly_routable column yet.
+  bool MigrateVisitsWithoutPubliclyRoutableColumn();
+
+  // Called by the derived classes to migrate the older visits table which
+  // which doesn't have `opener_visit` column and also drops `publicly_routable`
+  // column which is no longer used.
+  bool MigrateVisitsWithoutOpenerVisitColumnAndDropPubliclyRoutableColumn();
+
+  // Called by the derived classes to migrate the older visits table which
+  // which aren't ready to accommodate Sync. It sets `id` to AUTOINCREMENT, and
+  // ensures the existence of the `originator_cache_guid` and
+  // `originator_visit_id` columns.
+  bool MigrateVisitsAutoincrementIdAndAddOriginatorColumns();
+
+  // Called by the derived classes to migrate the older visits table which
+  // doesn't have the `originator_from_visit` and `originator_opener_visit`
+  // columns.
+  bool MigrateVisitsAddOriginatorFromVisitAndOpenerVisitColumns();
+
+  // Return true if the visits table's schema contains "AUTOINCREMENT".
+  // false if table do not contain AUTOINCREMENT, or the table is not created.
+  bool VisitTableContainsAutoincrement();
+
+  // A subprocedure in the process of migration to version 40.
+  bool GetAllVisitedURLRowidsForMigrationToVersion40(
+      std::vector<URLID>* visited_url_rowids_sorted);
+
+  // Called by the derived classes to migrate the older visits table which
+  // doesn't have the `is_known_to_sync` column.
+  bool MigrateVisitsAddIsKnownToSyncColumn();
+
+  // Called by the derived classes to migrate the older visits table which
+  // doesn't have the `consider_for_ntp_most_visited` column.
+  bool MigrateVisitsAddConsiderForNewTabPageMostVisitedColumn();
 
   // Called by the derived classes to migrate the older visits table which
   // doesn't have the `external_referrer_url` column.

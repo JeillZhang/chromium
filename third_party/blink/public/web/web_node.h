@@ -83,6 +83,9 @@ class BLINK_EXPORT WebNode {
 
   bool IsConnected() const;
 
+  bool Contains(const WebNode*) const;
+  bool ContainsViaFlatTree(const WebNode*) const;
+
   WebNode ParentNode() const;
   WebNode ParentOrShadowHostNode() const;
   bool IsInUserAgentShadowRoot() const;
@@ -204,10 +207,6 @@ class BLINK_EXPORT WebNode {
 
 inline bool operator==(const WebNode& a, const WebNode& b) {
   return a.Equals(b);
-}
-
-inline bool operator!=(const WebNode& a, const WebNode& b) {
-  return !(a == b);
 }
 
 inline bool operator<(const WebNode& a, const WebNode& b) {

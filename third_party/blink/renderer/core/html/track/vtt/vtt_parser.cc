@@ -47,7 +47,6 @@
 #include "third_party/blink/renderer/platform/loader/fetch/text_resource_decoder_options.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/segmented_string.h"
-#include "third_party/blink/renderer/platform/wtf/date_math.h"
 #include "third_party/blink/renderer/platform/wtf/text/character_names.h"
 #include "third_party/blink/renderer/platform/wtf/text/wtf_string.h"
 
@@ -94,7 +93,7 @@ VTTParser::VTTParser(VTTParserClient* client, Document& document)
       state_(kInitial),
       decoder_(std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
           TextResourceDecoderOptions::kPlainTextContent,
-          UTF8Encoding()))),
+          Utf8Encoding()))),
       current_start_time_(0),
       current_end_time_(0),
       current_region_(nullptr),
@@ -225,9 +224,9 @@ bool VTTParser::HasRequiredFileIdentifier(const String& line) {
     UChar maybe_separator = line[kFileIdentifierLength];
     // The line reader handles the line break characters, so we don't need
     // to check for LF here.
-    if (maybe_separator != kSpaceCharacter &&
-        maybe_separator != kTabulationCharacter)
+    if (maybe_separator != uchar::kSpace && maybe_separator != uchar::kTab) {
       return false;
+    }
   }
   return true;
 }
@@ -245,7 +244,7 @@ VTTParser::ParseState VTTParser::CollectStyleSheet(const String& line) {
   if (line.empty() || line.Contains("-->")) {
     auto* parser_context = MakeGarbageCollected<CSSParserContext>(
         *document_, NullURL(), true /* origin_clean */, Referrer(),
-        UTF8Encoding(), ResourceFetchRestriction::kOnlyDataUrls);
+        Utf8Encoding(), ResourceFetchRestriction::kOnlyDataUrls);
     auto* style_sheet_contents =
         MakeGarbageCollected<StyleSheetContents>(parser_context);
     CSSParser::ParseSheet(
@@ -545,9 +544,12 @@ bool VTTParser::CollectTimeStamp(VTTScanner& input, double& time_stamp) {
     return false;
 
   // Steps 18 - 19 - Calculate result.
-  time_stamp = (value1 * kMinutesPerHour * kSecondsPerMinute) +
-               (value2 * kSecondsPerMinute) + value3 +
-               (value4 * (1 / kMsPerSecond));
+  base::TimeDelta time_stamp_delta = base::Hours(value1);
+  time_stamp_delta += base::Minutes(value2);
+  time_stamp_delta += base::Seconds(value3);
+  time_stamp_delta += base::Milliseconds(value4);
+
+  time_stamp = time_stamp_delta.InSecondsF();
   return true;
 }
 

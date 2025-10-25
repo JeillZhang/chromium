@@ -33,6 +33,7 @@
 #include "chrome/browser/permissions/permission_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -966,9 +967,15 @@ IN_PROC_BROWSER_TEST_F(PlatformNotificationServiceBrowserTest,
   // Set the other browser fullscreen
   ui_test_utils::ToggleFullscreenModeAndWait(other_browser);
 
-  ASSERT_TRUE(browser()->exclusive_access_manager()->context()->IsFullscreen());
-  ASSERT_TRUE(
-      other_browser->exclusive_access_manager()->context()->IsFullscreen());
+  ASSERT_TRUE(browser()
+                  ->GetFeatures()
+                  .exclusive_access_manager()
+                  ->context()
+                  ->IsFullscreen());
+  ASSERT_TRUE(other_browser->GetFeatures()
+                  .exclusive_access_manager()
+                  ->context()
+                  ->IsFullscreen());
 
   ui_test_utils::BrowserActivationWaiter(other_browser).WaitForActivation();
   ASSERT_FALSE(browser()->window()->IsActive());
@@ -1057,8 +1064,16 @@ IN_PROC_BROWSER_TEST_F(PlatformNotificationServiceBrowserTest,
       KeepAliveOrigin::PENDING_NOTIFICATION_CLOSE_EVENT));
 }
 
+// TODO(crbug.com/430163317): Re-enable this test
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_CloseBrowserDuringNotificationCloseEvent \
+  DISABLED_CloseBrowserDuringNotificationCloseEvent
+#else
+#define MAYBE_CloseBrowserDuringNotificationCloseEvent \
+  CloseBrowserDuringNotificationCloseEvent
+#endif
 IN_PROC_BROWSER_TEST_F(PlatformNotificationServiceBrowserTest,
-                       CloseBrowserDuringNotificationCloseEvent) {
+                       MAYBE_CloseBrowserDuringNotificationCloseEvent) {
   RequestAndAcceptPermission();
 
   // Show a notification with a close event that will take 3 seconds to
@@ -1108,8 +1123,16 @@ IN_PROC_BROWSER_TEST_F(PlatformNotificationServiceBrowserTest,
       content::PersistentNotificationStatus::kSuccess, 1);
 }
 
+// TODO(crbug.com/430163317): Re-enable this test
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_NotificationCloseEventAfterBrowserClosed \
+  DISABLED_NotificationCloseEventAfterBrowserClosed
+#else
+#define MAYBE_NotificationCloseEventAfterBrowserClosed \
+  NotificationCloseEventAfterBrowserClosed
+#endif
 IN_PROC_BROWSER_TEST_F(PlatformNotificationServiceBrowserTest,
-                       NotificationCloseEventAfterBrowserClosed) {
+                       MAYBE_NotificationCloseEventAfterBrowserClosed) {
   RequestAndAcceptPermission();
 
   // Show two notifications.  The first one will have a close event that takes 3

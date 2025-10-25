@@ -15,9 +15,12 @@
 #include "base/containers/flat_set.h"
 #include "base/containers/flat_tree.h"
 #include "base/containers/span.h"
+#include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/time/clock.h"
+#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "components/sync/base/data_type.h"
 #include "components/sync/base/deletion_origin.h"
@@ -31,6 +34,7 @@
 #include "components/webauthn/core/browser/passkey_model.h"
 #include "components/webauthn/core/browser/passkey_model_change.h"
 #include "components/webauthn/core/browser/passkey_model_utils.h"
+#include "components/webauthn/features.h"
 
 namespace webauthn {
 namespace {
@@ -262,6 +266,12 @@ PasskeySyncBridge::GetAllPasskeys() const {
   return passkeys;
 }
 
+std::vector<sync_pb::WebauthnCredentialSpecifics>
+PasskeySyncBridge::GetUnShadowedPasskeys() const {
+  std::vector<sync_pb::WebauthnCredentialSpecifics> passkeys = GetAllPasskeys();
+  return passkey_model_utils::FilterShadowedCredentials(passkeys);
+}
+
 std::optional<sync_pb::WebauthnCredentialSpecifics>
 PasskeySyncBridge::GetPasskeyByCredentialId(
     const std::string& rp_id,
@@ -353,19 +363,29 @@ bool PasskeySyncBridge::DeletePasskey(const std::string& credential_id,
   return true;
 }
 
-bool PasskeySyncBridge::SetPasskeyHidden(const std::string& credential_id,
-                                         bool hidden) {
+bool PasskeySyncBridge::HidePasskey(const std::string& credential_id,
+                                    base::Time hidden_time) {
   return UpdateSinglePasskey(
       credential_id,
       base::BindOnce(
-          [](bool hidden,
+          [](base::Time hidden_time,
              sync_pb::WebauthnCredentialSpecifics* passkey) -> bool {
-            passkey->set_hidden(hidden);
+            passkey->set_hidden(true);
             passkey->set_hidden_time(
-                base::Time::Now().InMillisecondsSinceUnixEpoch());
+                hidden_time.InMillisecondsSinceUnixEpoch());
             return true;
           },
-          hidden));
+          hidden_time));
+}
+
+bool PasskeySyncBridge::UnhidePasskey(const std::string& credential_id) {
+  return UpdateSinglePasskey(
+      credential_id,
+      base::BindOnce([](sync_pb::WebauthnCredentialSpecifics* passkey) -> bool {
+        passkey->set_hidden(false);
+        passkey->clear_hidden_time();
+        return true;
+      }));
 }
 
 // The following implementation is more efficient than the simple one which
@@ -432,6 +452,20 @@ bool PasskeySyncBridge::UpdatePasskeyTimestamp(const std::string& credential_id,
             return true;
           },
           last_used_time));
+}
+
+bool PasskeySyncBridge::UpdatePasskeyEncryptedBlob(
+    const std::string& credential_id,
+    const std::string& new_encrypted_blob) {
+  return UpdateSinglePasskey(
+      credential_id,
+      base::BindOnce(
+          [](const std::string& blob,
+             sync_pb::WebauthnCredentialSpecifics* passkey) -> bool {
+            passkey->set_encrypted(blob);
+            return true;
+          },
+          new_encrypted_blob));
 }
 
 sync_pb::WebauthnCredentialSpecifics PasskeySyncBridge::CreatePasskey(
@@ -544,6 +578,16 @@ void PasskeySyncBridge::OnStoreReadAllDataAndMetadata(
   NotifyPasskeysChanged(std::move(changes));
   change_processor()->ModelReadyToSync(std::move(metadata_batch));
   NotifyPasskeyModelIsReady(ready_);
+
+  // Trigger maintenance tasks now and periodically, for users who keep Chrome
+  // open for long periods.
+  if (base::FeatureList::IsEnabled(features::kDeleteOldHiddenPasskeys)) {
+    DeleteOldHiddenPasskeys();
+    delete_old_hidden_passkeys_timer_.Start(
+        FROM_HERE, base::Hours(24),
+        base::BindRepeating(&PasskeySyncBridge::DeleteOldHiddenPasskeys,
+                            weak_ptr_factory_.GetWeakPtr()));
+  }
 }
 
 void PasskeySyncBridge::OnStoreCommitWriteBatch(
@@ -610,6 +654,24 @@ bool PasskeySyncBridge::UpdateSinglePasskey(
   NotifyPasskeysChanged({PasskeyModelChange(
       PasskeyModelChange::ChangeType::UPDATE, passkey_it->second)});
   return true;
+}
+
+void PasskeySyncBridge::DeleteOldHiddenPasskeys() {
+  std::vector<std::string> credential_ids_to_delete;
+  base::Time date_cutoff = clock_->Now() - kHiddenPasskeyLifetime;
+  for (const auto& passkey : data_) {
+    if (!passkey.second.hidden() || !passkey.second.has_hidden_time()) {
+      continue;
+    }
+    base::Time hidden_time = base::Time::FromMillisecondsSinceUnixEpoch(
+        passkey.second.hidden_time());
+    if (hidden_time < date_cutoff) {
+      credential_ids_to_delete.emplace_back(passkey.second.credential_id());
+    }
+  }
+  for (const std::string& credential_id : credential_ids_to_delete) {
+    DeletePasskey(credential_id, FROM_HERE);
+  }
 }
 
 }  // namespace webauthn

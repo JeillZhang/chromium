@@ -19,15 +19,31 @@
 
 namespace blink {
 
-class CanvasResourceHost;
+class CanvasResourceProvider;
+
+inline constexpr char kCanvasHibernationEventHistogramName[] =
+    "Blink.Canvas.HibernationEvents2";
 
 PLATFORM_EXPORT BASE_DECLARE_FEATURE(kCanvasHibernationSnapshotZstd);
 
 // All the fields are main-thread only. See DCheckInvariant() for invariants.
 class PLATFORM_EXPORT CanvasHibernationHandler {
  public:
+  class Delegate {
+   public:
+    virtual ~Delegate() = default;
+
+    virtual CanvasResourceProvider* GetResourceProvider() const = 0;
+    virtual bool IsPageVisible() const = 0;
+    virtual bool IsContextLost() const = 0;
+    virtual void ResetResourceProvider() = 0;
+    virtual void SetNeedsCompositingUpdate() = 0;
+    virtual void ClearCanvas2DLayerTexture() {}
+  };
+
   // The values of the enum entries must not change because they are used for
   // usage metrics histograms. New values can be added to the end.
+  // LINT.IfChange(CanvasHibernationEvent)
   enum HibernationEvent {
     kHibernationScheduled = 0,
     kHibernationAbortedDueToDestructionWhileHibernatePending = 1,
@@ -42,15 +58,17 @@ class PLATFORM_EXPORT CanvasHibernationHandler {
     kHibernationEndedWithFallbackToSW = 10,
     kHibernationEndedWithTeardown = 11,
     kHibernationAbortedBecauseNoSurface = 12,
-    kMaxValue = kHibernationAbortedBecauseNoSurface,
+    kHibernationEndedOnReset = 13,
+    kMaxValue = kHibernationEndedOnReset,
   };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/blink/enums.xml:CanvasHibernationEvent)
 
   static void ReportHibernationEvent(
       CanvasHibernationHandler::HibernationEvent event) {
-    UMA_HISTOGRAM_ENUMERATION("Blink.Canvas.HibernationEvents", event);
+    UMA_HISTOGRAM_ENUMERATION(kCanvasHibernationEventHistogramName, event);
   }
 
-  explicit CanvasHibernationHandler(CanvasResourceHost& resource_host);
+  explicit CanvasHibernationHandler(Delegate& delegate);
   CanvasHibernationHandler(const CanvasHibernationHandler&) = delete;
   CanvasHibernationHandler& operator=(const CanvasHibernationHandler&) = delete;
 
@@ -88,23 +106,9 @@ class PLATFORM_EXPORT CanvasHibernationHandler {
   int width() const { return width_; }
   int height() const { return height_; }
 
-  void SetTaskRunnersForTesting(
-      scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner>
-          background_thread_task_runner) {
-    main_thread_task_runner_for_testing_ = main_thread_task_runner;
-    background_thread_task_runner_for_testing_ = background_thread_task_runner;
-  }
-
-  // Sets a callback that will be invoked on each completion of OnEncoded().
-  // The client can then check whether encoding has succeeded by check
-  // CanvasHibernationHandler::IsEncoded().
-  void SetOnEncodedCallbackForTesting(
-      base::RepeatingClosure on_encoded_callback) {
-    on_encoded_callback_for_testing_ = std::move(on_encoded_callback);
-  }
-  void SetBeforeCompressionDelayForTesting(base::TimeDelta delay) {
-    before_compression_delay_ = delay;
+  void SetBackgroundTaskRunnerForTesting(
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+    background_thread_task_runner_for_testing_ = task_runner;
   }
 
   enum class CompressionAlgorithm { kZlib, kZstd };
@@ -159,17 +163,13 @@ class PLATFORM_EXPORT CanvasHibernationHandler {
   CompressionAlgorithm algorithm_ = CompressionAlgorithm::kZlib;
   std::unique_ptr<MemoryManagedPaintRecorder> recorder_;
   scoped_refptr<base::SingleThreadTaskRunner>
-      main_thread_task_runner_for_testing_;
-  scoped_refptr<base::SingleThreadTaskRunner>
       background_thread_task_runner_for_testing_;
-  base::RepeatingClosure on_encoded_callback_for_testing_;
-  base::TimeDelta before_compression_delay_ = kBeforeCompressionDelay;
   int width_;
   int height_;
   int bytes_per_pixel_;
 
   bool hibernation_scheduled_ = false;
-  const base::raw_ref<CanvasResourceHost> resource_host_;
+  const base::raw_ref<Delegate> delegate_;
   base::WeakPtrFactory<CanvasHibernationHandler> weak_ptr_factory_{this};
 };
 
@@ -190,7 +190,7 @@ class PLATFORM_EXPORT HibernatedCanvasMemoryDumpProvider
   HibernatedCanvasMemoryDumpProvider();
 
   base::Lock lock_;
-  WTF::HashSet<CanvasHibernationHandler*> handlers_ GUARDED_BY(lock_);
+  HashSet<CanvasHibernationHandler*> handlers_ GUARDED_BY(lock_);
 };
 
 }  // namespace blink

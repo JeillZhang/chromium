@@ -6,14 +6,14 @@ package org.chromium.chrome.test.transit;
 
 import static org.junit.Assert.assertTrue;
 
+import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
+import static org.chromium.base.test.transit.Triggers.noopTo;
+import static org.chromium.chrome.test.util.ChromeTabUtils.getTabCountOnUiThread;
+
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.Token;
-import org.chromium.base.supplier.Supplier;
-import org.chromium.base.test.transit.Condition;
-import org.chromium.base.test.transit.Station;
-import org.chromium.base.test.transit.Transition.Trigger;
 import org.chromium.base.test.transit.TravelException;
+import org.chromium.base.test.transit.TripBuilder;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.tab.Tab;
@@ -24,7 +24,8 @@ import org.chromium.chrome.test.transit.hub.NewTabGroupDialogFacility;
 import org.chromium.chrome.test.transit.hub.TabSwitcherGroupCardFacility;
 import org.chromium.chrome.test.transit.hub.TabSwitcherListEditorFacility;
 import org.chromium.chrome.test.transit.hub.TabSwitcherStation;
-import org.chromium.chrome.test.transit.page.PageStation;
+import org.chromium.chrome.test.transit.page.BasePageStation;
+import org.chromium.chrome.test.transit.page.CtaPageStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.transit.tabmodel.TabThumbnailCondition;
 import org.chromium.chrome.test.util.TabBinningUtil;
@@ -34,6 +35,7 @@ import org.chromium.chrome.test.util.tabmodel.TabBinList.TabBinPosition;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /* Helper class for extended multi-stage Trips. */
 public class Journeys {
@@ -43,7 +45,7 @@ public class Journeys {
      * Make Chrome have {@code numRegularTabs} of regular Tabs and {@code numIncognitoTabs} of
      * incognito tabs with {@code url} loaded.
      *
-     * @param <T> specific type of PageStation for all opened tabs.
+     * @param <T> specific type of {@link CtaPageStation} for all opened tabs.
      * @param startingStation The current active station.
      * @param numRegularTabs The number of regular tabs.
      * @param numIncognitoTabs The number of incognito tabs.
@@ -51,12 +53,12 @@ public class Journeys {
      * @param pageStationFactory A factory method to create the PageStations for each tab.
      * @return the last opened tab's PageStation.
      */
-    public static <T extends PageStation> T prepareTabs(
-            PageStation startingStation,
+    public static <T extends CtaPageStation> T prepareTabs(
+            CtaPageStation startingStation,
             int numRegularTabs,
             int numIncognitoTabs,
             String url,
-            Supplier<PageStation.Builder<T>> pageStationFactory) {
+            Supplier<BasePageStation.Builder<T>> pageStationFactory) {
         List<String> regularTabs = getListOfIdenticalUrls(numRegularTabs, url);
         List<String> incognitoTabs = getListOfIdenticalUrls(numIncognitoTabs, url);
 
@@ -69,15 +71,15 @@ public class Journeys {
     }
 
     /**
-     * Same as {@link #prepareTabs(PageStation, int, int, String, Supplier)}, but ensures tab
+     * Same as {@link #prepareTabs(CtaPageStation, int, int, String, Supplier)}, but ensures tab
      * thumbnails are captured to disk.
      */
-    public static <T extends PageStation> T prepareTabsWithThumbnails(
-            PageStation startingStation,
+    public static <T extends CtaPageStation> T prepareTabsWithThumbnails(
+            CtaPageStation startingStation,
             int numRegularTabs,
             int numIncognitoTabs,
             String url,
-            Supplier<PageStation.Builder<T>> pageStationFactory) {
+            Supplier<BasePageStation.Builder<T>> pageStationFactory) {
         List<String> regularTabs = getListOfIdenticalUrls(numRegularTabs, url);
         List<String> incognitoTabs = getListOfIdenticalUrls(numIncognitoTabs, url);
 
@@ -108,19 +110,19 @@ public class Journeys {
     /**
      * Create {@code numTabs} of {@link Tab}s with {@code url} loaded to Chrome.
      *
-     * @param <T> specific type of PageStation for all opened tabs.
+     * @param <T> specific type of {@link CtaPageStation} for all opened tabs.
      * @param startingPage The current active station.
      * @param urls The URLs to load.
      * @param isIncognito Whether to open an incognito tab.
      * @param pageStationFactory A factory method to create the PageStations for each tab.
-     * @return the last opened tab's PageStation.
+     * @return the last opened tab's {@link CtaPageStation}.
      */
     @SuppressWarnings("unused")
-    private static <T extends PageStation> T createTabs(
-            final PageStation startingPage,
+    private static <T extends CtaPageStation> T createTabs(
+            final CtaPageStation startingPage,
             List<String> urls,
             boolean isIncognito,
-            Supplier<PageStation.Builder<T>> pageStationFactory) {
+            Supplier<BasePageStation.Builder<T>> pageStationFactory) {
         return doCreateTabs(
                 startingPage,
                 urls,
@@ -130,12 +132,12 @@ public class Journeys {
     }
 
     /** Creates identical tabs and ensures tab thumbnails are captured to disk. */
-    public static <T extends PageStation> T createTabsWithThumbnails(
-            final PageStation startingPage,
+    public static <T extends CtaPageStation> T createTabsWithThumbnails(
+            final CtaPageStation startingPage,
             int numTabs,
             String url,
             boolean isIncognito,
-            Supplier<PageStation.Builder<T>> pageStationFactory) {
+            Supplier<BasePageStation.Builder<T>> pageStationFactory) {
         List<String> urls = getListOfIdenticalUrls(numTabs, url);
         return doCreateTabs(
                 startingPage, urls, isIncognito, pageStationFactory, /* captureThumbnails= */ true);
@@ -143,7 +145,7 @@ public class Journeys {
 
     /** Open and display multiple web pages in regular tabs, return the last page. */
     public static WebPageStation createRegularTabsWithWebPages(
-            final PageStation startingPage, List<String> urls) {
+            final CtaPageStation startingPage, List<String> urls) {
         return doCreateTabs(
                 startingPage,
                 urls,
@@ -154,7 +156,7 @@ public class Journeys {
 
     /** Open and display multiple web pages in incognito tabs, return the last page. */
     public static WebPageStation createIncognitoTabsWithWebPages(
-            final PageStation startingPage, List<String> urls) {
+            final CtaPageStation startingPage, List<String> urls) {
         return doCreateTabs(
                 startingPage,
                 urls,
@@ -164,18 +166,18 @@ public class Journeys {
     }
 
     // TODO(crbug.com/411430975): Open all tabs at once instead of one by one.
-    private static <T extends PageStation> T doPrepareTabs(
-            PageStation startingStation,
+    private static <T extends CtaPageStation> T doPrepareTabs(
+            CtaPageStation startingStation,
             List<String> urlsForRegularTabs,
             List<String> urlsForIncognitoTabs,
-            Supplier<PageStation.Builder<T>> pageStationFactory,
+            Supplier<BasePageStation.Builder<T>> pageStationFactory,
             boolean captureThumbnails) {
         assert urlsForRegularTabs.size() >= 1;
-        TabModelSelector tabModelSelector =
-                ThreadUtils.runOnUiThreadBlocking(
-                        () -> startingStation.getActivity().getTabModelSelector());
-        int currentTabCount = tabModelSelector.getModel(/* incognito= */ false).getCount();
-        int currentIncognitoTabCount = tabModelSelector.getModel(/* incognito= */ true).getCount();
+        TabModelSelector tabModelSelector = startingStation.getTabModelSelector();
+        int currentTabCount =
+                getTabCountOnUiThread(tabModelSelector.getModel(/* incognito= */ false));
+        int currentIncognitoTabCount =
+                getTabCountOnUiThread(tabModelSelector.getModel(/* incognito= */ true));
         assert currentTabCount == 1;
         assert currentIncognitoTabCount == 0;
         T station =
@@ -205,21 +207,21 @@ public class Journeys {
         return station;
     }
 
-    private static <T extends PageStation> T doCreateTabs(
-            final PageStation startingPage,
+    private static <T extends CtaPageStation> T doCreateTabs(
+            final CtaPageStation startingPage,
             List<String> urls,
             boolean isIncognito,
-            Supplier<PageStation.Builder<T>> pageStationFactory,
+            Supplier<BasePageStation.Builder<T>> pageStationFactory,
             boolean captureThumbnails) {
         assert !urls.isEmpty();
 
-        TabModelSelector tabModelSelector = startingPage.getActivity().getTabModelSelector();
+        TabModelSelector tabModelSelector = startingPage.getTabModelSelector();
 
-        PageStation currentPage = startingPage;
+        CtaPageStation currentPage = startingPage;
         for (int i = 0; i < urls.size(); i++) {
             String url = urls.get(i);
-            PageStation previousPage = currentPage;
-            Tab previousTab = previousPage.loadedTabElement.get();
+            CtaPageStation previousPage = currentPage;
+            Tab previousTab = previousPage.loadedTabElement.value();
             if (i == 0 && startingPage.isIncognito() && !isIncognito) {
                 currentPage =
                         currentPage
@@ -240,9 +242,9 @@ public class Journeys {
 
             boolean tryToFixThumbnail = false;
             try {
-                Condition.waitFor(
-                        TabThumbnailCondition.etc1(tabModelSelector, previousTab),
-                        TabThumbnailCondition.jpeg(tabModelSelector, previousTab));
+                noopTo().waitFor(
+                                TabThumbnailCondition.etc1(tabModelSelector, previousTab),
+                                TabThumbnailCondition.jpeg(tabModelSelector, previousTab));
             } catch (TravelException e) {
                 tryToFixThumbnail = true;
             }
@@ -255,14 +257,14 @@ public class Journeys {
                         i,
                         previousTab.getId());
 
-                Tab tabToComeBackTo = currentPage.loadedTabElement.get();
-                PageStation previousPageAgain =
-                        currentPage.selectTabFast(previousTab, PageStation::newGenericBuilder);
+                Tab tabToComeBackTo = currentPage.loadedTabElement.value();
+                CtaPageStation previousPageAgain =
+                        currentPage.selectTabFast(previousTab, CtaPageStation::newGenericBuilder);
                 currentPage = previousPageAgain.selectTabFast(tabToComeBackTo, pageStationFactory);
 
-                Condition.waitFor(
-                        TabThumbnailCondition.etc1(tabModelSelector, previousTab),
-                        TabThumbnailCondition.jpeg(tabModelSelector, previousTab));
+                noopTo().waitFor(
+                                TabThumbnailCondition.etc1(tabModelSelector, previousTab),
+                                TabThumbnailCondition.jpeg(tabModelSelector, previousTab));
             }
         }
         return (T) currentPage;
@@ -276,8 +278,9 @@ public class Journeys {
      */
     public static TabSwitcherGroupCardFacility mergeAllTabsToNewGroup(
             TabSwitcherStation tabSwitcher) {
-        TabModel tabModel = tabSwitcher.tabModelElement.get();
-        List<Tab> tabs = TabModelUtils.convertTabListToListOfTabs(tabModel);
+        TabModel tabModel = tabSwitcher.tabModelElement.value();
+        List<Tab> tabs =
+                runOnUiThreadBlocking(() -> TabModelUtils.convertTabListToListOfTabs(tabModel));
         return mergeTabsToNewGroup(tabSwitcher, tabs);
     }
 
@@ -292,10 +295,11 @@ public class Journeys {
     public static TabSwitcherGroupCardFacility mergeTabsToNewGroup(
             TabSwitcherStation tabSwitcher, List<Tab> tabs) {
         assert !tabs.isEmpty();
-        TabModel currentModel = tabSwitcher.tabModelElement.get();
+        TabModel currentModel = tabSwitcher.tabModelElement.value();
         TabSwitcherListEditorFacility editor = tabSwitcher.openAppMenu().clickSelectTabs();
 
-        TabBinList tabBinList = TabBinningUtil.binTabsByCard(currentModel);
+        TabBinList tabBinList =
+                runOnUiThreadBlocking(() -> TabBinningUtil.binTabsByCard(currentModel));
         for (Tab tab : tabs) {
             TabBinPosition tabPosition = tabBinList.tabIdToPositionMap.get(tab.getId());
             assert tabPosition != null;
@@ -316,18 +320,17 @@ public class Journeys {
      * Begins a new tab group creation UI flow. See {@link TabGroupCreationUiDelegate}
      *
      * @param <HostStationT> The type of station this is scoped to.
-     * @param station the station to begin the flow from.
-     * @param trigger The trigger used to begin the flow.
+     * @param tripBuilder TripBuilder with the Trigger to begin the flow from.
      */
-    public static <HostStationT extends Station<ChromeTabbedActivity>>
+    public static <HostStationT extends ChromeActivityTabModelBoundStation<ChromeTabbedActivity>>
             NewTabGroupDialogFacility<HostStationT> beginNewTabGroupUiFlow(
-                    HostStationT station, Trigger trigger) {
+                    TripBuilder tripBuilder) {
         assertTrue(ChromeFeatureList.sTabGroupEntryPointsAndroid.isEnabled());
 
         SoftKeyboardFacility softKeyboard = new SoftKeyboardFacility();
         NewTabGroupDialogFacility<HostStationT> dialog =
                 new NewTabGroupDialogFacility<>(softKeyboard);
-        station.enterFacilitiesSync(List.of(dialog, softKeyboard), trigger);
+        tripBuilder.enterFacilities(dialog, softKeyboard);
         return dialog;
     }
 
@@ -341,7 +344,7 @@ public class Journeys {
         List<Token> tabGroupIdsOfGroupedTabs = new ArrayList<>();
         for (Tab tab : tabs) {
             int id = tab.getId();
-            Tab tabById = currentModel.getTabById(id);
+            Tab tabById = runOnUiThreadBlocking(() -> currentModel.getTabById(id));
             if (tabById != null) {
                 Token tabGroupId = tabById.getTabGroupId();
                 tabGroupIdsOfGroupedTabs.add(tabGroupId);

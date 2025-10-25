@@ -9,6 +9,7 @@
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
 #include "base/functional/callback_helpers.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/path_service.h"
 #include "base/scoped_environment_variable_override.h"
@@ -165,7 +166,7 @@ void VulkanImplementationHeadless::RegisterSysmemBufferCollection(
     VkDevice device,
     zx::eventpair service_handle,
     zx::channel sysmem_token,
-    gfx::BufferFormat format,
+    viz::SharedImageFormat format,
     gfx::BufferUsage usage,
     gfx::Size size,
     size_t min_buffer_count,

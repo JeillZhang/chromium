@@ -11,13 +11,14 @@ import androidx.core.util.Pair;
 
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModel.ReadableObjectPropertyKey;
 import org.chromium.ui.modelutil.PropertyModel.WritableObjectPropertyKey;
+
+import java.util.function.Supplier;
 
 @NullMarked
 class TabListContainerProperties {
@@ -74,6 +75,12 @@ class TabListContainerProperties {
     public static final ReadableObjectPropertyKey<Callback<TabKeyEventData>> PAGE_KEY_LISTENER =
             new ReadableObjectPropertyKey<>();
 
+    public static final PropertyModel.WritableBooleanPropertyKey SUPPRESS_ACCESSIBILITY =
+            new PropertyModel.WritableBooleanPropertyKey();
+
+    public static final PropertyModel.WritableBooleanPropertyKey SEARCH_BOX_PADDING =
+            new PropertyModel.WritableBooleanPropertyKey();
+
     /** Keys for {@link TabSwitcherPaneCoordinator}. */
     public static final PropertyKey[] ALL_KEYS =
             new PropertyKey[] {
@@ -89,5 +96,7 @@ class TabListContainerProperties {
                 IS_SCROLLING_SUPPLIER_CALLBACK,
                 IS_CONTENT_SENSITIVE,
                 PAGE_KEY_LISTENER,
+                SUPPRESS_ACCESSIBILITY,
+                SEARCH_BOX_PADDING,
             };
 }

@@ -13,7 +13,7 @@
 #include "base/test/test_future.h"
 #include "chrome/browser/ai/ai_test_utils.h"
 #include "chrome/browser/optimization_guide/mock_optimization_guide_keyed_service.h"
-#include "components/optimization_guide/core/mock_optimization_guide_model_executor.h"
+#include "components/optimization_guide/core/model_execution/test/mock_on_device_capability.h"
 #include "components/optimization_guide/core/optimization_guide_proto_util.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
@@ -113,13 +113,12 @@ class AIWriterTest : public AITestUtils::AITestBase {
     MockCreateWriterClient mock_create_writer_client;
     base::RunLoop run_loop;
     EXPECT_CALL(mock_create_writer_client, OnResult(_))
-        .WillOnce(testing::Invoke(
-            [&](mojo::PendingRemote<::blink::mojom::AIWriter> writer) {
-              EXPECT_TRUE(writer);
-              writer_remote =
-                  mojo::Remote<blink::mojom::AIWriter>(std::move(writer));
-              run_loop.Quit();
-            }));
+        .WillOnce([&](mojo::PendingRemote<::blink::mojom::AIWriter> writer) {
+          EXPECT_TRUE(writer);
+          writer_remote =
+              mojo::Remote<blink::mojom::AIWriter>(std::move(writer));
+          run_loop.Quit();
+        });
 
     mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
     ai_manager->CreateWriter(
@@ -141,28 +140,26 @@ class AIWriterTest : public AITestUtils::AITestBase {
         /*output_language=*/AILanguageCode::New(""));
     expected.set_allocated_options(AIWriter::ToProtoOptions(options).release());
     EXPECT_CALL(session_, ExecuteModel(_, _))
-        .WillOnce(testing::Invoke(
-            [&](const google::protobuf::MessageLite& request,
-                optimization_guide::
-                    OptimizationGuideModelExecutionResultStreamingCallback
-                        callback) {
-              EXPECT_THAT(request, EqualsProto(expected));
-              callback.Run(CreateExecutionResult("Result text",
-                                                 /*is_complete=*/true));
-            }));
+        .WillOnce([&](const google::protobuf::MessageLite& request,
+                      optimization_guide::
+                          OptimizationGuideModelExecutionResultStreamingCallback
+                              callback) {
+          EXPECT_THAT(request, EqualsProto(expected));
+          callback.Run(CreateExecutionResult("Result text",
+                                             /*is_complete=*/true));
+        });
 
     mojo::Remote<blink::mojom::AIWriter> writer_remote;
     {
       MockCreateWriterClient mock_create_writer_client;
       base::RunLoop run_loop;
       EXPECT_CALL(mock_create_writer_client, OnResult(_))
-          .WillOnce(testing::Invoke(
-              [&](mojo::PendingRemote<::blink::mojom::AIWriter> writer) {
-                EXPECT_TRUE(writer);
-                writer_remote =
-                    mojo::Remote<blink::mojom::AIWriter>(std::move(writer));
-                run_loop.Quit();
-              }));
+          .WillOnce([&](mojo::PendingRemote<::blink::mojom::AIWriter> writer) {
+            EXPECT_TRUE(writer);
+            writer_remote =
+                mojo::Remote<blink::mojom::AIWriter>(std::move(writer));
+            run_loop.Quit();
+          });
 
       mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
       ai_manager->CreateWriter(
@@ -174,15 +171,13 @@ class AIWriterTest : public AITestUtils::AITestBase {
 
     base::RunLoop run_loop;
     EXPECT_CALL(mock_responder, OnStreaming(_))
-        .WillOnce(testing::Invoke([&](const std::string& text) {
-          EXPECT_THAT(text, "Result text");
-        }));
+        .WillOnce(
+            [&](const std::string& text) { EXPECT_THAT(text, "Result text"); });
 
     EXPECT_CALL(mock_responder, OnCompletion(_))
-        .WillOnce(testing::Invoke(
-            [&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
-              run_loop.Quit();
-            }));
+        .WillOnce([&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
+          run_loop.Quit();
+        });
 
     writer_remote->Write(kInputString, kContextString,
                          mock_responder.BindNewPipeAndPassRemote());
@@ -238,20 +233,33 @@ TEST_F(AIWriterTest, CanCreateUnIsLanguagesSupported) {
   GetAIManagerInterface()->CanCreateWriter(std::move(options), callback.Get());
 }
 
+TEST_F(AIWriterTest, ToProtoOptionsLanguagesSupported) {
+  // Writer proto expects base language display names in English.
+  std::vector<std::pair<std::string, std::string>> languages = {
+      {"en", "English"},  {"en-us", "English"},  {"en-uk", "English"},
+      {"es", "Spanish"},  {"es-sp", "Spanish"},  {"es-mx", "Spanish"},
+      {"ja", "Japanese"}, {"ja-jp", "Japanese"}, {"ja-foo", "Japanese"},
+  };
+  blink::mojom::AIWriterCreateOptionsPtr options = GetDefaultOptions();
+  for (const auto& language : languages) {
+    options->output_language = AILanguageCode::New(language.first);
+    const auto proto_options = AIWriter::ToProtoOptions(options);
+    EXPECT_EQ(proto_options->output_language(), language.second);
+  }
+}
+
 TEST_F(AIWriterTest, CreateWriterNoService) {
   SetupNullOptimizationGuideKeyedService();
   MockCreateWriterClient mock_create_writer_client;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_create_writer_client, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::AIManagerCreateClientError
-                                        error,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::AIManagerCreateClientError error,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         ASSERT_EQ(
             error,
             blink::mojom::AIManagerCreateClientError::kUnableToCreateSession);
         run_loop.Quit();
-      }));
+      });
 
   mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
   ai_manager->CreateWriter(mock_create_writer_client.BindNewPipeAndPassRemote(),
@@ -262,10 +270,11 @@ TEST_F(AIWriterTest, CreateWriterNoService) {
 TEST_F(AIWriterTest, CreateWriterModelNotEligible) {
   SetupMockOptimizationGuideKeyedService();
   EXPECT_CALL(*mock_optimization_guide_keyed_service_, StartSession(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
-              const std::optional<optimization_guide::SessionConfigParams>&
-                  config_params) { return nullptr; }));
+              const optimization_guide::SessionConfigParams& config_params) {
+            return nullptr;
+          });
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               GetOnDeviceModelEligibilityAsync(_, _, _))
       .WillOnce([](auto feature, auto capabilities, auto callback) {
@@ -277,15 +286,13 @@ TEST_F(AIWriterTest, CreateWriterModelNotEligible) {
   MockCreateWriterClient mock_create_writer_client;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_create_writer_client, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::AIManagerCreateClientError
-                                        error,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::AIManagerCreateClientError error,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         ASSERT_EQ(
             error,
             blink::mojom::AIManagerCreateClientError::kUnableToCreateSession);
         run_loop.Quit();
-      }));
+      });
 
   mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
   ai_manager->CreateWriter(mock_create_writer_client.BindNewPipeAndPassRemote(),
@@ -298,21 +305,19 @@ TEST_F(AIWriterTest, CreateWriterRetryAfterConfigNotAvailableForFeature) {
 
   // StartSession must be called twice.
   EXPECT_CALL(*mock_optimization_guide_keyed_service_, StartSession(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
-              const std::optional<optimization_guide::SessionConfigParams>&
-                  config_params) {
+              const optimization_guide::SessionConfigParams& config_params) {
             // Returns a nullptr for the first call.
             return nullptr;
-          }))
-      .WillOnce(testing::Invoke(
+          })
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
-              const std::optional<optimization_guide::SessionConfigParams>&
-                  config_params) {
+              const optimization_guide::SessionConfigParams& config_params) {
             // Returns a MockSession for the second call.
             return std::make_unique<
                 testing::NiceMock<optimization_guide::MockSession>>(&session_);
-          }));
+          });
 
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               GetOnDeviceModelEligibilityAsync(_, _, _))
@@ -328,32 +333,31 @@ TEST_F(AIWriterTest, CreateWriterRetryAfterConfigNotAvailableForFeature) {
   base::RunLoop run_loop_for_add_observer;
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               AddOnDeviceModelAvailabilityChangeObserver(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
               optimization_guide::OnDeviceModelAvailabilityObserver* observer) {
             availability_observer = observer;
             run_loop_for_add_observer.Quit();
-          }));
+          });
 
   EXPECT_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::MultimodalMessageReadView request_metadata,
               optimization_guide::OptimizationGuideModelSizeInTokenCallback
                   callback) {
             std::move(callback).Run(
                 blink::mojom::kWritingAssistanceMaxInputTokenSize);
-          }));
+          });
 
   mojo::Remote<blink::mojom::AIWriter> writer_remote;
   MockCreateWriterClient mock_create_writer_client;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_create_writer_client, OnResult(_))
-      .WillOnce(testing::Invoke(
-          [&](mojo::PendingRemote<::blink::mojom::AIWriter> writer) {
-            // Create writer should succeed.
-            EXPECT_TRUE(writer);
-            run_loop.Quit();
-          }));
+      .WillOnce([&](mojo::PendingRemote<::blink::mojom::AIWriter> writer) {
+        // Create writer should succeed.
+        EXPECT_TRUE(writer);
+        run_loop.Quit();
+      });
 
   mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
   ai_manager->CreateWriter(mock_create_writer_client.BindNewPipeAndPassRemote(),
@@ -380,10 +384,11 @@ TEST_F(AIWriterTest, CreateWriterAbortAfterConfigNotAvailableForFeature) {
   SetupMockOptimizationGuideKeyedService();
 
   EXPECT_CALL(*mock_optimization_guide_keyed_service_, StartSession(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
-              const std::optional<optimization_guide::SessionConfigParams>&
-                  config_params) { return nullptr; }));
+              const optimization_guide::SessionConfigParams& config_params) {
+            return nullptr;
+          });
 
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               GetOnDeviceModelEligibilityAsync(_, _, _))
@@ -400,20 +405,20 @@ TEST_F(AIWriterTest, CreateWriterAbortAfterConfigNotAvailableForFeature) {
   base::RunLoop run_loop_for_remove_observer;
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               AddOnDeviceModelAvailabilityChangeObserver(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
               optimization_guide::OnDeviceModelAvailabilityObserver* observer) {
             availability_observer = observer;
             run_loop_for_add_observer.Quit();
-          }));
+          });
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               RemoveOnDeviceModelAvailabilityChangeObserver(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
               optimization_guide::OnDeviceModelAvailabilityObserver* observer) {
             EXPECT_EQ(availability_observer, observer);
             run_loop_for_remove_observer.Quit();
-          }));
+          });
 
   auto mock_create_writer_client = std::make_unique<MockCreateWriterClient>();
   mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
@@ -436,21 +441,19 @@ TEST_F(AIWriterTest, CreateWriterContextLimitExceededError) {
   SetupMockSession();
 
   EXPECT_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [](optimization_guide::MultimodalMessageReadView request_metadata,
              optimization_guide::OptimizationGuideModelSizeInTokenCallback
                  callback) {
             std::move(callback).Run(
                 blink::mojom::kWritingAssistanceMaxInputTokenSize + 1);
-          }));
+          });
 
   MockCreateWriterClient mock_create_writer_client;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_create_writer_client, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::AIManagerCreateClientError
-                                        error,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::AIManagerCreateClientError error,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         ASSERT_EQ(
             error,
             blink::mojom::AIManagerCreateClientError::kInitialInputTooLarge);
@@ -460,7 +463,7 @@ TEST_F(AIWriterTest, CreateWriterContextLimitExceededError) {
         ASSERT_EQ(quota_error_info->quota,
                   blink::mojom::kWritingAssistanceMaxInputTokenSize);
         run_loop.Quit();
-      }));
+      });
 
   mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
   ai_manager->CreateWriter(mock_create_writer_client.BindNewPipeAndPassRemote(),
@@ -510,20 +513,18 @@ TEST_F(AIWriterTest, InputLimitExceededError) {
   auto writer_remote = GetAIWriterRemote();
 
   EXPECT_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [](optimization_guide::MultimodalMessageReadView request_metadata,
              optimization_guide::OptimizationGuideModelSizeInTokenCallback
                  callback) {
             std::move(callback).Run(
                 blink::mojom::kWritingAssistanceMaxInputTokenSize + 1);
-          }));
+          });
   AITestUtils::MockModelStreamingResponder mock_responder;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_responder, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::ModelStreamingResponseStatus
-                                        status,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::ModelStreamingResponseStatus status,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         EXPECT_EQ(
             status,
             blink::mojom::ModelStreamingResponseStatus::kErrorInputTooLarge);
@@ -533,7 +534,7 @@ TEST_F(AIWriterTest, InputLimitExceededError) {
         ASSERT_EQ(quota_error_info->quota,
                   blink::mojom::kWritingAssistanceMaxInputTokenSize);
         run_loop.Quit();
-      }));
+      });
 
   writer_remote->Write(kInputString, kContextString,
                        mock_responder.BindNewPipeAndPassRemote());
@@ -544,33 +545,29 @@ TEST_F(AIWriterTest, ModelExecutionError) {
   SetupMockOptimizationGuideKeyedService();
   SetupMockSession();
   EXPECT_CALL(session_, ExecuteModel(_, _))
-      .WillOnce(testing::Invoke(
-          [](const google::protobuf::MessageLite& request,
-             optimization_guide::
-                 OptimizationGuideModelExecutionResultStreamingCallback
-                     callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
-            callback.Run(CreateExecutionErrorResult(
-                optimization_guide::OptimizationGuideModelExecutionError::
-                    FromModelExecutionError(
-                        optimization_guide::
-                            OptimizationGuideModelExecutionError::
-                                ModelExecutionError::kPermissionDenied)));
-          }));
+      .WillOnce([](const google::protobuf::MessageLite& request,
+                   optimization_guide::
+                       OptimizationGuideModelExecutionResultStreamingCallback
+                           callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
+        callback.Run(CreateExecutionErrorResult(
+            optimization_guide::OptimizationGuideModelExecutionError::
+                FromModelExecutionError(
+                    optimization_guide::OptimizationGuideModelExecutionError::
+                        ModelExecutionError::kPermissionDenied)));
+      });
 
   auto writer_remote = GetAIWriterRemote();
   AITestUtils::MockModelStreamingResponder mock_responder;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_responder, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::ModelStreamingResponseStatus
-                                        status,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::ModelStreamingResponseStatus status,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         EXPECT_EQ(
             status,
             blink::mojom::ModelStreamingResponseStatus::kErrorPermissionDenied);
         run_loop.Quit();
-      }));
+      });
 
   writer_remote->Write(kInputString, kContextString,
                        mock_responder.BindNewPipeAndPassRemote());
@@ -581,32 +578,27 @@ TEST_F(AIWriterTest, WriteMultipleResponse) {
   SetupMockOptimizationGuideKeyedService();
   SetupMockSession();
   EXPECT_CALL(session_, ExecuteModel(_, _))
-      .WillOnce(testing::Invoke(
-          [](const google::protobuf::MessageLite& request,
-             optimization_guide::
-                 OptimizationGuideModelExecutionResultStreamingCallback
-                     callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
-            callback.Run(
-                CreateExecutionResult("Result ", /*is_complete=*/false));
-            callback.Run(CreateExecutionResult("text",
-                                               /*is_complete=*/true));
-          }));
+      .WillOnce([](const google::protobuf::MessageLite& request,
+                   optimization_guide::
+                       OptimizationGuideModelExecutionResultStreamingCallback
+                           callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
+        callback.Run(CreateExecutionResult("Result ", /*is_complete=*/false));
+        callback.Run(CreateExecutionResult("text",
+                                           /*is_complete=*/true));
+      });
 
   auto writer_remote = GetAIWriterRemote();
   AITestUtils::MockModelStreamingResponder mock_responder;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_responder, OnStreaming(_))
-      .WillOnce(testing::Invoke(
-          [&](const std::string& text) { EXPECT_THAT(text, "Result "); }))
-      .WillOnce(testing::Invoke(
-          [&](const std::string& text) { EXPECT_THAT(text, "text"); }));
+      .WillOnce([&](const std::string& text) { EXPECT_THAT(text, "Result "); })
+      .WillOnce([&](const std::string& text) { EXPECT_THAT(text, "text"); });
 
   EXPECT_CALL(mock_responder, OnCompletion(_))
-      .WillOnce(testing::Invoke(
-          [&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
-            run_loop.Quit();
-          }));
+      .WillOnce([&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
+        run_loop.Quit();
+      });
 
   writer_remote->Write(kInputString, kContextString,
                        mock_responder.BindNewPipeAndPassRemote());
@@ -617,40 +609,36 @@ TEST_F(AIWriterTest, MultipleWrite) {
   SetupMockOptimizationGuideKeyedService();
   SetupMockSession();
   EXPECT_CALL(session_, ExecuteModel(_, _))
-      .WillOnce(testing::Invoke(
-          [](const google::protobuf::MessageLite& request,
-             optimization_guide::
-                 OptimizationGuideModelExecutionResultStreamingCallback
-                     callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
-            callback.Run(CreateExecutionResult("Result text",
-                                               /*is_complete=*/true));
-          }))
-      .WillOnce(testing::Invoke(
-          [](const google::protobuf::MessageLite& request,
-             optimization_guide::
-                 OptimizationGuideModelExecutionResultStreamingCallback
-                     callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest(
-                                     "test context 2", "input string 2")));
-            callback.Run(CreateExecutionResult("Result text 2",
-                                               /*is_complete=*/true));
-          }));
+      .WillOnce([](const google::protobuf::MessageLite& request,
+                   optimization_guide::
+                       OptimizationGuideModelExecutionResultStreamingCallback
+                           callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
+        callback.Run(CreateExecutionResult("Result text",
+                                           /*is_complete=*/true));
+      })
+      .WillOnce([](const google::protobuf::MessageLite& request,
+                   optimization_guide::
+                       OptimizationGuideModelExecutionResultStreamingCallback
+                           callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest("test context 2",
+                                                           "input string 2")));
+        callback.Run(CreateExecutionResult("Result text 2",
+                                           /*is_complete=*/true));
+      });
 
   auto writer_remote = GetAIWriterRemote();
   {
     AITestUtils::MockModelStreamingResponder mock_responder;
     base::RunLoop run_loop;
     EXPECT_CALL(mock_responder, OnStreaming(_))
-        .WillOnce(testing::Invoke([&](const std::string& text) {
-          EXPECT_THAT(text, "Result text");
-        }));
+        .WillOnce(
+            [&](const std::string& text) { EXPECT_THAT(text, "Result text"); });
 
     EXPECT_CALL(mock_responder, OnCompletion(_))
-        .WillOnce(testing::Invoke(
-            [&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
-              run_loop.Quit();
-            }));
+        .WillOnce([&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
+          run_loop.Quit();
+        });
 
     writer_remote->Write(kInputString, kContextString,
                          mock_responder.BindNewPipeAndPassRemote());
@@ -660,15 +648,14 @@ TEST_F(AIWriterTest, MultipleWrite) {
     AITestUtils::MockModelStreamingResponder mock_responder;
     base::RunLoop run_loop;
     EXPECT_CALL(mock_responder, OnStreaming(_))
-        .WillOnce(testing::Invoke([&](const std::string& text) {
+        .WillOnce([&](const std::string& text) {
           EXPECT_THAT(text, "Result text 2");
-        }));
+        });
 
     EXPECT_CALL(mock_responder, OnCompletion(_))
-        .WillOnce(testing::Invoke(
-            [&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
-              run_loop.Quit();
-            }));
+        .WillOnce([&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
+          run_loop.Quit();
+        });
 
     writer_remote->Write("input string 2", "test context 2",
                          mock_responder.BindNewPipeAndPassRemote());
@@ -683,15 +670,14 @@ TEST_F(AIWriterTest, ResponderDisconnected) {
   optimization_guide::OptimizationGuideModelExecutionResultStreamingCallback
       streaming_callback;
   EXPECT_CALL(session_, ExecuteModel(_, _))
-      .WillOnce(testing::Invoke(
-          [&](const google::protobuf::MessageLite& request,
-              optimization_guide::
-                  OptimizationGuideModelExecutionResultStreamingCallback
-                      callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
-            streaming_callback = std::move(callback);
-            run_loop_for_callback.Quit();
-          }));
+      .WillOnce([&](const google::protobuf::MessageLite& request,
+                    optimization_guide::
+                        OptimizationGuideModelExecutionResultStreamingCallback
+                            callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
+        streaming_callback = std::move(callback);
+        run_loop_for_callback.Quit();
+      });
 
   auto writer_remote = GetAIWriterRemote();
   std::unique_ptr<AITestUtils::MockModelStreamingResponder> mock_responder =
@@ -717,29 +703,26 @@ TEST_F(AIWriterTest, WriterDisconnected) {
   optimization_guide::OptimizationGuideModelExecutionResultStreamingCallback
       streaming_callback;
   EXPECT_CALL(session_, ExecuteModel(_, _))
-      .WillOnce(testing::Invoke(
-          [&](const google::protobuf::MessageLite& request,
-              optimization_guide::
-                  OptimizationGuideModelExecutionResultStreamingCallback
-                      callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
-            streaming_callback = std::move(callback);
-            run_loop_for_callback.Quit();
-          }));
+      .WillOnce([&](const google::protobuf::MessageLite& request,
+                    optimization_guide::
+                        OptimizationGuideModelExecutionResultStreamingCallback
+                            callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
+        streaming_callback = std::move(callback);
+        run_loop_for_callback.Quit();
+      });
 
   auto writer_remote = GetAIWriterRemote();
   AITestUtils::MockModelStreamingResponder mock_responder;
   base::RunLoop run_loop_for_response;
   EXPECT_CALL(mock_responder, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::ModelStreamingResponseStatus
-                                        status,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::ModelStreamingResponseStatus status,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         EXPECT_EQ(
             status,
             blink::mojom::ModelStreamingResponseStatus::kErrorSessionDestroyed);
         run_loop_for_response.Quit();
-      }));
+      });
 
   writer_remote->Write(kInputString, kContextString,
                        mock_responder.BindNewPipeAndPassRemote());
@@ -765,10 +748,10 @@ TEST_F(AIWriterTest, MeasureUsage) {
   auto writer_remote = GetAIWriterRemote();
 
   EXPECT_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::MultimodalMessageReadView request_metadata,
               optimization_guide::OptimizationGuideModelSizeInTokenCallback
-                  callback) { std::move(callback).Run(expected_usage); }));
+                  callback) { std::move(callback).Run(expected_usage); });
   base::test::TestFuture<std::optional<uint32_t>> future;
   writer_remote->MeasureUsage(kInputString, kContextString,
                               future.GetCallback());
@@ -781,10 +764,10 @@ TEST_F(AIWriterTest, MeasureUsageFails) {
   auto writer_remote = GetAIWriterRemote();
 
   EXPECT_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::MultimodalMessageReadView request_metadata,
               optimization_guide::OptimizationGuideModelSizeInTokenCallback
-                  callback) { std::move(callback).Run(std::nullopt); }));
+                  callback) { std::move(callback).Run(std::nullopt); });
   base::test::TestFuture<std::optional<uint32_t>> future;
   writer_remote->MeasureUsage(kInputString, kContextString,
                               future.GetCallback());

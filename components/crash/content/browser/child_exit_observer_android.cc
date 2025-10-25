@@ -32,6 +32,9 @@ void PopulateTerminationInfo(
   info->renderer_was_subframe = content_info.renderer_was_subframe;
   info->is_spare_renderer = content_info.is_spare_renderer;
   info->has_spare_renderer = content_info.has_spare_renderer;
+  info->last_spare_renderer_creation_info =
+      content_info.last_spare_renderer_creation_info;
+  info->memory_pressure_metrics = content_info.memory_pressure_metrics;
 }
 
 }  // namespace
@@ -68,7 +71,7 @@ void ChildExitObserver::ChildReceivedCrashSignal(base::ProcessId pid,
   DCHECK(result);
 }
 
-void ChildExitObserver::OnRenderProcessHostCreated(
+void ChildExitObserver::OnRenderProcessLaunched(
     content::RenderProcessHost* host) {
   // The child process pid isn't available when process is gone, keep a mapping
   // between process_host_id and pid, so we can find it later.
@@ -172,9 +175,13 @@ void ChildExitObserver::ProcessRenderProcessHostLifetimeEndEvent(
   }
 
   if (content_info) {
-    // We do not care about android fast shutdowns as it is a known case where
-    // the renderer is intentionally killed when we are done with it.
-    info.normal_termination = rph->FastShutdownStarted();
+    // RenderProcessHost is normally terminated by
+    // RenderProcessHost::FastShutdownIfPossible() or
+    // RenderProcessHost::Cleanup(). RenderProcessHost terminating by
+    // FastShutdownIfPossible() is marked as FastShutdownStarted() and
+    // RenderProcessHost terminating by Cleanup() is marked as IsDeletingSoon().
+    info.normal_termination =
+        rph->FastShutdownStarted() || rph->IsDeletingSoon();
     info.renderer_shutdown_requested = rph->ShutdownRequested();
     info.app_state = base::android::ApplicationStatusListener::GetState();
     PopulateTerminationInfo(*content_info, &info);

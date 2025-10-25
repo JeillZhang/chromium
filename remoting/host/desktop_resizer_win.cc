@@ -12,7 +12,7 @@
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 
 namespace {
 // TODO(jamiewalch): Use the correct DPI for the mode: http://crbug.com/172405.
@@ -256,12 +256,10 @@ bool DesktopResizerWin::IsResizeSupported() {
 bool DesktopResizerWin::GetPrimaryDisplayMode(DWORD mode_number,
                                               DWORD flags,
                                               DEVMODE* mode) {
-  UNSAFE_TODO(memset(mode, 0, sizeof(DEVMODE)));
-  mode->dmSize = sizeof(DEVMODE);
-  if (!EnumDisplaySettingsEx(nullptr, mode_number, mode, flags)) {
-    return false;
-  }
-  return true;
+  *mode = {
+      .dmSize = sizeof(DEVMODE),
+  };
+  return EnumDisplaySettingsEx(nullptr, mode_number, mode, flags);
 }
 
 // static

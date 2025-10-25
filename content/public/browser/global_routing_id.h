@@ -9,10 +9,9 @@
 #include <ostream>
 
 #include "base/hash/hash.h"
-#include "base/i18n/number_formatting.h"
 #include "content/common/content_export.h"
 #include "content/public/common/content_constants.h"
-#include "ipc/ipc_message.h"
+#include "ipc/constants.mojom.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 
@@ -73,7 +72,7 @@ struct CONTENT_EXPORT GlobalRenderFrameHostId {
 
   // The route ID of a RenderFrame - should come from
   // RenderFrameHost::GetRoutingID().
-  int frame_routing_id = MSG_ROUTING_NONE;
+  int frame_routing_id = IPC::mojom::kRoutingIdNone;
 
   constexpr friend auto operator<=>(const GlobalRenderFrameHostId&,
                                     const GlobalRenderFrameHostId&) = default;
@@ -86,12 +85,25 @@ struct CONTENT_EXPORT GlobalRenderFrameHostId {
   }
 
   explicit operator bool() const {
-    return frame_routing_id != MSG_ROUTING_NONE;
+    return frame_routing_id != IPC::mojom::kRoutingIdNone;
   }
 
   using TraceProto = perfetto::protos::pbzero::GlobalRenderFrameHostId;
   // Write a representation of this object into proto.
   void WriteIntoTrace(perfetto::TracedProto<TraceProto> proto) const;
+};
+
+inline std::ostream& operator<<(std::ostream& os,
+                                const GlobalRenderFrameHostId& id) {
+  os << "GlobalRenderFrameHostId(" << id.child_id << ", " << id.frame_routing_id
+     << ")";
+  return os;
+}
+
+struct GlobalRenderFrameHostIdHasher {
+  std::size_t operator()(const GlobalRenderFrameHostId& id) const {
+    return base::HashInts(id.child_id, id.frame_routing_id);
+  }
 };
 
 // Similar to GlobalRenderFrameHostId except that it uses FrameTokens instead
@@ -132,17 +144,11 @@ struct CONTENT_EXPORT GlobalRenderFrameHostToken {
 };
 
 inline std::ostream& operator<<(std::ostream& os,
-                                const GlobalRenderFrameHostId& id) {
-  os << "GlobalRenderFrameHostId(" << id.child_id << ", " << id.frame_routing_id
+                                const GlobalRenderFrameHostToken& id) {
+  os << "GlobalRenderFrameHostToken(" << id.child_id << ", " << id.frame_token
      << ")";
   return os;
 }
-
-struct GlobalRenderFrameHostIdHasher {
-  std::size_t operator()(const GlobalRenderFrameHostId& id) const {
-    return base::HashInts(id.child_id, id.frame_routing_id);
-  }
-};
 
 }  // namespace content
 

@@ -13,6 +13,7 @@ dictionary GPUTextureViewDescriptor : GPUObjectDescriptorBase {
     GPUIntegerCoordinate baseArrayLayer = 0;
     GPUIntegerCoordinate arrayLayerCount;
     GPUTextureUsageFlags usage = 0;
+    [RuntimeEnabled=WebGPUTextureComponentSwizzle] DOMString swizzle = "rgba";
 };
 
 enum GPUTextureViewDimension {

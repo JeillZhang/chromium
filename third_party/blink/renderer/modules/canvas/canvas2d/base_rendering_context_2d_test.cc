@@ -41,7 +41,6 @@
 #include "third_party/blink/renderer/platform/graphics/draw_looper_builder.h"
 #include "third_party/blink/renderer/platform/graphics/flush_reason.h"
 #include "third_party/blink/renderer/platform/graphics/image_orientation.h"
-#include "third_party/blink/renderer/platform/graphics/memory_managed_paint_canvas.h"  // IWYU pragma: keep (https://github.com/clangd/clangd/issues/2044)
 #include "third_party/blink/renderer/platform/graphics/memory_managed_paint_recorder.h"
 #include "third_party/blink/renderer/platform/graphics/paint/paint_filter.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -55,6 +54,9 @@
 #include "ui/gfx/geometry/size.h"
 
 namespace blink {
+
+class MemoryManagedPaintCanvas;
+
 namespace {
 
 using ::blink_testing::ParseFilter;
@@ -91,7 +93,7 @@ class TestRenderingContext2D final
   int Width() const override { return 300; }
   int Height() const override { return 300; }
 
-  bool CanCreateCanvas2dResourceProvider() const override { return false; }
+  bool CanCreateResourceProvider() override { return false; }
 
   RespectImageOrientationEnum RespectImageOrientation() const override {
     return kRespectImageOrientation;
@@ -99,7 +101,7 @@ class TestRenderingContext2D final
 
   Color GetCurrentColor() const override { return Color::kBlack; }
 
-  cc::PaintCanvas* GetOrCreatePaintCanvas() override {
+  MemoryManagedPaintCanvas* GetOrCreatePaintCanvas() override {
     // Context child classes uses `GetOrCreatePaintCanvas` to check for context
     // loss.
     if (isContextLost()) [[unlikely]] {
@@ -109,7 +111,7 @@ class TestRenderingContext2D final
     return &recorder_.getRecordingCanvas();
   }
   using BaseRenderingContext2D::GetPaintCanvas;  // Pull the non-const overload.
-  const cc::PaintCanvas* GetPaintCanvas() const override {
+  const MemoryManagedPaintCanvas* GetPaintCanvas() const override {
     return &recorder_.getRecordingCanvas();
   }
   void WillDraw(const SkIRect& dirty_rect,
@@ -169,12 +171,20 @@ class TestRenderingContext2D final
     return true;
   }
 
-  CanvasResourceProvider* GetOrCreateCanvas2DResourceProvider() override {
+  CanvasResourceProvider* GetResourceProvider() const override {
+    return nullptr;
+  }
+
+  CanvasResourceProvider* GetOrCreateResourceProvider() override {
     return nullptr;
   }
 
   // Implementing pure virtual functions from CanvasRenderingContext.
   scoped_refptr<StaticBitmapImage> GetImage(FlushReason) override {
+    return nullptr;
+  }
+  std::unique_ptr<CanvasResourceProvider> ReplaceResourceProvider(
+      std::unique_ptr<CanvasResourceProvider>) override {
     return nullptr;
   }
 
@@ -192,6 +202,21 @@ BeginLayerOptions* FilterOption(blink::V8TestingScope& scope,
   BeginLayerOptions* options = BeginLayerOptions::Create();
   options->setFilter(ParseFilter(scope, filter));
   return options;
+}
+
+TEST(BaseRenderingContextTests, BlockCanvasReadback) {
+  test::TaskEnvironment task_environment;
+  V8TestingScope scope;
+  auto* context = MakeGarbageCollected<TestRenderingContext2D>(scope);
+
+  // When the BlockCanvasReadback feature is enabled, reading back should
+  // throw a DOM exception.
+  DummyExceptionStateForTesting exception_state;
+  ScopedBlockCanvasReadbackForTest scoped_feature(true);
+  context->getImageData(0, 0, 10, 10, exception_state);
+  EXPECT_TRUE(exception_state.HadException());
+  EXPECT_EQ(exception_state.CodeAs<DOMExceptionCode>(),
+            DOMExceptionCode::kNotAllowedError);
 }
 
 TEST(BaseRenderingContextLayerTests, ContextLost) {

@@ -86,6 +86,8 @@ class BLINK_EXPORT WebElement : public WebNode {
 
   void Focus();
 
+  void Blur();
+
   // Returns true if the element's computed writing suggestions value is true.
   // https://html.spec.whatwg.org/#writing-suggestions:computed-writing-suggestions-value
   bool WritingSuggestions() const;
@@ -145,6 +147,12 @@ class BLINK_EXPORT WebElement : public WebNode {
   // element's ancestor overflow or frame boxes.
   gfx::Rect VisibleBoundsInWidget() const;
 
+  // Returns the client rects of this Element relative to the RenderWidget
+  // (local root frame + viewport transform in the main frame). The bounds have
+  // been adjusted to include any transformations, including page scale. This
+  // function will update the layout if required.
+  std::vector<gfx::Rect> ClientRectsInWidget();
+
   // Returns the image contents of this element or a null SkBitmap
   // if there isn't any.
   SkBitmap ImageContents();
@@ -168,8 +176,19 @@ class BLINK_EXPORT WebElement : public WebNode {
   // Returns {scrollLeft, scrollTop}.
   gfx::Vector2dF GetScrollOffset() const;
 
-  // Sets {scrollLeft, scrollTop}.
-  void SetScrollOffset(const gfx::Vector2dF& offset);
+  // Sets {scrollLeft, scrollTop} and forces instant scroll, returns true if the
+  // scroll was completed (or will be completed via a smooth scroll animation),
+  // false if the element cannot scroll (e.g. it's not rendered, no scroll
+  // extent).
+  bool SetScrollOffset(const gfx::Vector2dF& offset);
+
+  // Scrolls the element into view if it isn't already visible.
+  void ScrollIntoViewIfNeeded();
+
+  // Returns true if this element has scroll-behavior: smooth style, meaning
+  // that programmatic scrolls will animate rather than instantly jumping to the
+  // specified scroll offset.
+  bool HasScrollBehaviorSmooth() const;
 
   // Returns whether the element has scrollable overflow and can be scrolled by
   // the user (i.e. true for `overflow: scroll|auto` with overflow but false for

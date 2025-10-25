@@ -7,12 +7,12 @@
 #import <string>
 #import <variant>
 
-#import "base/functional/overloaded.h"
 #import "base/json/json_reader.h"
 #import "base/strings/utf_string_conversions.h"
 #import "components/js_injection/browser/js_communication_host.h"
 #import "components/js_injection/browser/web_message.h"
 #import "components/js_injection/browser/web_message_host.h"
+#import "third_party/abseil-cpp/absl/functional/overload.h"
 
 namespace web {
 namespace {
@@ -35,7 +35,7 @@ class IOSWebMessageHost : public js_injection::WebMessageHost {
       std::unique_ptr<js_injection::WebMessage> web_message) override {
     std::optional<std::u16string> received_message;
     std::visit(
-        base::Overloaded{
+        absl::Overload{
             [&received_message](const std::u16string& str) {
               received_message = str;
             },
@@ -50,7 +50,8 @@ class IOSWebMessageHost : public js_injection::WebMessageHost {
 
     // TODO(crbug.com/40260088): Move this parsing to the renderer process.
     std::optional<base::Value> message_value =
-        base::JSONReader::Read(base::UTF16ToUTF8(*received_message));
+        base::JSONReader::Read(base::UTF16ToUTF8(*received_message),
+                               base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     if (!message_value) {
       return;
     }

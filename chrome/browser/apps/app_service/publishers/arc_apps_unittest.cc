@@ -37,7 +37,6 @@
 #include "chrome/browser/web_applications/policy/web_app_policy_manager.h"
 #include "chrome/browser/web_applications/test/fake_web_app_provider.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
-#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/ash/experiences/arc/app/arc_app_constants.h"
@@ -163,23 +162,24 @@ std::vector<arc::mojom::AppInfoPtr> GetArcSettingsAppInfo() {
 
 class ArcAppsPublisherTest : public testing::Test {
  public:
-  ArcAppsPublisherTest()
-      : local_state_(std::make_unique<ScopedTestingLocalState>(
-            TestingBrowserProcess::GetGlobal())) {}
+  ArcAppsPublisherTest() = default;
   void SetUp() override {
     testing::Test::SetUp();
-
-    profile_ = MakeProfile();
 
     // Do not destroy the ArcServiceManager during TearDown, so that Arc
     // KeyedServices can be correctly destroyed during profile shutdown.
     arc_test_.set_persist_service_manager(true);
-    // We will manually start ArcApps after setting up IntentHelper, this allows
-    // ArcApps to observe the correct IntentHelper during initialization.
-    arc_test_.set_start_app_service_publisher(false);
     // We want to use the real ArcIntentHelper KeyedService so that it's the
     // same object that ArcApps uses.
     arc_test_.set_initialize_real_intent_helper_bridge(true);
+    arc_test_.PreProfileSetUp();
+
+    profile_ = MakeProfile();
+
+    // Initialize AppServiceProxy.
+    app_service_test_.SetUp(profile());
+
+    // Initialize ARC.
     arc_test_.SetUp(profile());
 
     auto* arc_bridge_service =
@@ -197,8 +197,6 @@ class ArcAppsPublisherTest : public testing::Test {
     provider->SetWebAppPolicyManager(std::move(web_app_policy_manager));
     web_app::test::AwaitStartWebAppProviderAndSubsystems(profile());
 
-    app_service_test_.SetUp(profile_.get());
-    apps::ArcAppsFactory::GetForProfile(profile());
     // Ensure that the PreferredAppsList is fully initialized before running the
     // test.
     task_environment_.RunUntilIdle();
@@ -206,7 +204,6 @@ class ArcAppsPublisherTest : public testing::Test {
 
   void TearDown() override {
     arc_test_.StopArcInstance();
-    apps::ArcAppsFactory::GetInstance()->ShutDownForTesting(profile());
     arc_test_.TearDown();
   }
 
@@ -271,9 +268,6 @@ class ArcAppsPublisherTest : public testing::Test {
 
     return result;
   }
-
- protected:
-  std::unique_ptr<ScopedTestingLocalState> local_state_;
 
  private:
   content::BrowserTaskEnvironment task_environment_;
@@ -416,7 +410,8 @@ TEST_F(ArcAppsPublisherTest, DisableOSSettingArcSettings) {
   // Change SystemFeaturesDisableList policy to disable OS Setting.
   {
     ScopedListPrefUpdate update(
-        local_state_->Get(), policy::policy_prefs::kSystemFeaturesDisableList);
+        TestingBrowserProcess::GetGlobal()->local_state(),
+        policy::policy_prefs::kSystemFeaturesDisableList);
     update->Append(static_cast<int>(policy::SystemFeature::kOsSettings));
   }
 
@@ -430,7 +425,8 @@ TEST_F(ArcAppsPublisherTest, DisableOSSettingArcSettings) {
   // Clear SystemFeaturesDisableList policy.
   {
     ScopedListPrefUpdate update(
-        local_state_->Get(), policy::policy_prefs::kSystemFeaturesDisableList);
+        TestingBrowserProcess::GetGlobal()->local_state(),
+        policy::policy_prefs::kSystemFeaturesDisableList);
     update->clear();
   }
 
@@ -451,7 +447,8 @@ TEST_F(ArcAppsPublisherTest, DisableAndBlockOSSettingArcSettings) {
   // Change SystemFeaturesDisableList policy to disable OS Setting.
   {
     ScopedListPrefUpdate update(
-        local_state_->Get(), policy::policy_prefs::kSystemFeaturesDisableList);
+        TestingBrowserProcess::GetGlobal()->local_state(),
+        policy::policy_prefs::kSystemFeaturesDisableList);
     update->Append(static_cast<int>(policy::SystemFeature::kOsSettings));
   }
 
@@ -473,7 +470,8 @@ TEST_F(ArcAppsPublisherTest, DisableAndBlockOSSettingArcSettings) {
   // Clear SystemFeaturesDisableList policy.
   {
     ScopedListPrefUpdate update(
-        local_state_->Get(), policy::policy_prefs::kSystemFeaturesDisableList);
+        TestingBrowserProcess::GetGlobal()->local_state(),
+        policy::policy_prefs::kSystemFeaturesDisableList);
     update->clear();
   }
 
@@ -911,8 +909,6 @@ class ArcAppsPublisherPromiseAppTest : public ArcAppsPublisherTest {
  public:
   void SetUp() override {
     ArcAppsPublisherTest::SetUp();
-    feature_list_.InitAndEnableFeature(ash::features::kPromiseIcons);
-    app_service_proxy()->ReinitializeForTesting(profile());
     service()->SetSkipAlmanacForTesting(true);
   }
 
@@ -923,9 +919,6 @@ class ArcAppsPublisherPromiseAppTest : public ArcAppsPublisherTest {
   apps::PromiseAppRegistryCache* cache() {
     return app_service_proxy()->PromiseAppRegistryCache();
   }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
 };
 
 TEST_F(ArcAppsPublisherPromiseAppTest,
@@ -1084,23 +1077,23 @@ TEST_F(ArcAppsPublisherTest, OnlyValidFilterIsPublished) {
   arc_test()->app_instance()->SendRefreshAppList(fake_apps);
 
   std::vector<arc::IntentFilter::AuthorityEntry> filter_authorities1;
-  filter_authorities1.emplace_back(kTestUrl.host(), 0);
+  filter_authorities1.emplace_back(kTestUrl.GetHost(), 0);
   std::vector<arc::IntentFilter::PatternMatcher> patterns;
-  patterns.emplace_back(kTestUrl.path(), arc::PatternType::kPrefix);
+  patterns.emplace_back(kTestUrl.GetPath(), arc::PatternType::kPrefix);
 
-  auto filter = arc::IntentFilter(package_name, {arc::kIntentActionView},
-                                  std::move(filter_authorities1),
-                                  std::move(patterns), {kTestUrl.scheme()}, {});
+  auto filter = arc::IntentFilter(
+      package_name, {arc::kIntentActionView}, std::move(filter_authorities1),
+      std::move(patterns), {kTestUrl.GetScheme()}, {});
   std::vector<arc::IntentFilter> filters;
   filters.push_back(std::move(filter));
 
   std::vector<arc::IntentFilter::AuthorityEntry> filter_authorities2;
-  filter_authorities2.emplace_back(kTestUrl.host(), 0);
+  filter_authorities2.emplace_back(kTestUrl.GetHost(), 0);
   constexpr arc::PatternType kInvalidPatternType =
       static_cast<arc::PatternType>(5);
   ASSERT_FALSE(arc::IsKnownPatternType(kInvalidPatternType));
   std::vector<arc::IntentFilter::PatternMatcher> invalid_pattern;
-  invalid_pattern.emplace_back(kTestUrl.path(), kInvalidPatternType);
+  invalid_pattern.emplace_back(kTestUrl.GetPath(), kInvalidPatternType);
 
   auto invalid_filter = arc::IntentFilter(
       package_name, {arc::kIntentActionView}, std::move(filter_authorities2),

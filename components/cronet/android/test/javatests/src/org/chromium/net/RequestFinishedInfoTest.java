@@ -22,7 +22,7 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.test.util.DoNotBatch;
 import org.chromium.build.BuildConfig;
-import org.chromium.net.CronetTestRule.CronetImplementation;
+import org.chromium.net.CronetTestFramework.CronetImplementation;
 import org.chromium.net.CronetTestRule.IgnoreFor;
 import org.chromium.net.CronetTestRule.RequiresMinApi;
 import org.chromium.net.MetricsTestUtil.TestExecutor;
@@ -46,6 +46,7 @@ public class RequestFinishedInfoTest {
 
     private String mUrl;
     private CronetImplementation mImplementationUnderTest;
+    private NativeTestServer mNativeTestServer;
 
     // A subclass of TestRequestFinishedListener to additionally assert that UrlRequest.Callback's
     // terminal callbacks have been invoked at the time of onRequestFinished().
@@ -69,14 +70,16 @@ public class RequestFinishedInfoTest {
 
     @Before
     public void setUp() throws Exception {
-        NativeTestServer.startNativeTestServer(mTestRule.getTestFramework().getContext());
-        mUrl = NativeTestServer.getFileURL("/echo?status=200");
+        mNativeTestServer =
+                NativeTestServer.createNativeTestServer(mTestRule.getTestFramework().getContext());
+        mNativeTestServer.start();
+        mUrl = mNativeTestServer.getFileURL("/echo?status=200");
         mImplementationUnderTest = mTestRule.implementationUnderTest();
     }
 
     @After
     public void tearDown() throws Exception {
-        NativeTestServer.shutdownNativeTestServer();
+        mNativeTestServer.close();
     }
 
     static class DirectExecutor implements Executor {
@@ -94,7 +97,7 @@ public class RequestFinishedInfoTest {
     }
 
     static class ThreadExecutor implements Executor {
-        private final List<Thread> mThreads = new ArrayList<Thread>();
+        private final List<Thread> mThreads = new ArrayList<>();
 
         @Override
         public void execute(Runnable task) {

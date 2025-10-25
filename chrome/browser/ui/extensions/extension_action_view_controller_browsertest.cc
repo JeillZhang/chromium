@@ -315,8 +315,7 @@ IN_PROC_BROWSER_TEST_P(ExtensionActionViewControllerFeatureRolloutBrowserTest,
   // Simulate NativeTheme update after `image_source` is created.
   // `image_source` should paint fine without hitting use-after-free in such
   // case.  See http://crbug.com/1315967
-  ui::NativeTheme* theme = ui::NativeTheme::GetInstanceForNativeUi();
-  theme->NotifyOnNativeThemeUpdated();
+  ui::NativeTheme::GetInstanceForNativeUi()->NotifyOnNativeThemeUpdated();
   image_source->GetImageForScale(1.0f);
 }
 
@@ -1216,7 +1215,6 @@ IN_PROC_BROWSER_TEST_P(ExtensionActionViewControllerFeatureRolloutBrowserTest,
   scoped_refptr<const extensions::Extension> extension =
       extensions::ExtensionBuilder("just side panel")
           .SetLocation(ManifestLocation::kInternal)
-          .SetManifestVersion(3)
           .AddAPIPermission("sidePanel")
           .Build();
 

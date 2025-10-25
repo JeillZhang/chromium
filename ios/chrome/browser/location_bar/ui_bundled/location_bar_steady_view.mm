@@ -359,17 +359,15 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
 }
 
 - (void)setUpTraitChangeHandler {
-  if (@available(iOS 17, *)) {
-    __weak __typeof(self) weakSelf = self;
-    NSArray<UITrait>* traits = TraitCollectionSetForTraits(
-        @[ UITraitPreferredContentSizeCategory.class ]);
-    UITraitChangeHandler traitChangeHandler =
-        ^(id<UITraitEnvironment> traitEnvironment,
-          UITraitCollection* previousCollection) {
-          [weakSelf updateFontOnTraitChange:previousCollection];
-        };
-    [self registerForTraitChanges:traits withHandler:traitChangeHandler];
-  }
+  __weak __typeof(self) weakSelf = self;
+  NSArray<UITrait>* traits = TraitCollectionSetForTraits(
+      @[ UITraitPreferredContentSizeCategory.class ]);
+  UITraitChangeHandler traitChangeHandler =
+      ^(id<UITraitEnvironment> traitEnvironment,
+        UITraitCollection* previousCollection) {
+        [weakSelf updateFontOnTraitChange:previousCollection];
+      };
+  [self registerForTraitChanges:traits withHandler:traitChangeHandler];
 }
 
 - (void)setUpAccessibility {
@@ -456,6 +454,14 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
   [self updateAccessibility];
 }
 
+- (void)setIncognitoBadgeView:(UIView*)incognitoBadgeView {
+  BOOL hadBadgeView = _badgesContainerView.incognitoBadgeView != nil;
+  if (!hadBadgeView && incognitoBadgeView) {
+    _badgesContainerView.incognitoBadgeView = incognitoBadgeView;
+  }
+  [self updateAccessibility];
+}
+
 - (void)setBadgeView:(UIView*)badgeView {
   BOOL hadBadgeView = _badgesContainerView.badgeView != nil;
   if (!hadBadgeView && badgeView) {
@@ -471,6 +477,13 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
   if (!hadEntrypointView && contextualPanelEntrypointView) {
     _badgesContainerView.contextualPanelEntrypointView =
         contextualPanelEntrypointView;
+  }
+  [self updateAccessibility];
+}
+
+- (void)setReaderModeChipView:(UIView*)readerModeChipView {
+  if (!_badgesContainerView.readerModeChipView && readerModeChipView) {
+    _badgesContainerView.readerModeChipView = readerModeChipView;
   }
   [self updateAccessibility];
 }
@@ -558,7 +571,16 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
   return self.badgesContainerView;
 }
 
+- (id<ReaderModeChipVisibilityDelegate>)readerModeChipVisibilityDelegate {
+  return self.badgesContainerView;
+}
+
 - (id<BadgeViewVisibilityDelegate>)badgeViewVisibilityDelegate {
+  return self.badgesContainerView;
+}
+
+- (id<IncognitoBadgeViewVisibilityDelegate>)
+    incognitoBadgeViewVisibilityDelegate {
   return self.badgesContainerView;
 }
 
@@ -568,19 +590,6 @@ const CGFloat kSmallerLocationLabelFontMultiplier = 0.75;
 - (BOOL)canBecomeFirstResponder {
   return true;
 }
-
-#pragma mark - UIView
-
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (@available(iOS 17, *)) {
-    return;
-  }
-
-  [self updateFontOnTraitChange:previousTraitCollection];
-}
-#endif
 
 #pragma mark - UIAccessibilityContainer
 

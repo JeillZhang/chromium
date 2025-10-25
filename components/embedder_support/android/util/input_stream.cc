@@ -39,7 +39,6 @@ const int kExceptionThrownStatusCode = -2;
 // Experiment to control the size of the intermediate buffer used to copy from
 // Java's InputStream into C++'s net::IOBuffer.
 BASE_FEATURE(kEnableCustomInputStreamBufferSize,
-             "EnableCustomInputStreamBufferSize",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Effectively the maximum number of bytes that will be copied during a JNI call
@@ -94,7 +93,7 @@ bool InputStream::Read(net::IOBuffer* dest, int length, int* bytes_read) {
   JNIEnv* env = AttachCurrentThread();
   if (!buffer_.obj()) {
     // Allocate transfer buffer.
-    base::android::ScopedJavaLocalRef<jbyteArray> temp(
+    auto temp = base::android::ScopedJavaLocalRef<jbyteArray>::Adopt(
         env, env->NewByteArray(GetIntermediateBufferSize()));
     buffer_.Reset(temp);
     if (ClearException(env))

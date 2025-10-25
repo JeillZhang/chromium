@@ -4,8 +4,10 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
+
 import org.chromium.base.ContextUtils;
 import org.chromium.base.supplier.OneshotSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -14,6 +16,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabSelectionType;
 
 /** {@link TabModelSelector} for interacting with tabs without an activity. */
+@NullMarked
 public class HeadlessTabModelSelectorImpl extends TabModelSelectorImpl {
 
     private static OneshotSupplierImpl<ProfileProvider> wrapProfile(Profile profile) {
@@ -27,11 +30,6 @@ public class HeadlessTabModelSelectorImpl extends TabModelSelectorImpl {
                     @Override
                     public @Nullable Profile getOffTheRecordProfile(boolean createIfNeeded) {
                         return profile.getPrimaryOtrProfile(createIfNeeded);
-                    }
-
-                    @Override
-                    public boolean hasOffTheRecordProfile() {
-                        return profile.hasPrimaryOtrProfile();
                     }
                 };
         OneshotSupplierImpl<ProfileProvider> ourProfileProviderSupplier =
@@ -47,6 +45,7 @@ public class HeadlessTabModelSelectorImpl extends TabModelSelectorImpl {
                 wrapProfile(profile),
                 tabCreatorManager,
                 () -> NextTabPolicy.LOCATIONAL,
+                /* multiInstanceManager= */ null,
                 AsyncTabParamsManagerFactory.createAsyncTabParamsManager(),
                 /* supportUndo= */ false,
                 ActivityType.TABBED,
@@ -54,7 +53,7 @@ public class HeadlessTabModelSelectorImpl extends TabModelSelectorImpl {
     }
 
     @Override
-    public void requestToShowTab(Tab tab, @TabSelectionType int type) {
+    public void requestToShowTab(@Nullable Tab tab, @TabSelectionType int type) {
         // Intentional noop.
     }
 }

@@ -85,7 +85,8 @@ class AdaptPerfettoConfigForChromeTest : public ::testing::Test {
 
 base::trace_event::TraceConfig ParseTraceConfigFromJson(
     const std::string& json_config) {
-  auto dict = base::JSONReader::Read(json_config);
+  auto dict =
+      base::JSONReader::Read(json_config, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   return base::trace_event::TraceConfig(std::move(*dict).TakeDict());
 }
 
@@ -93,6 +94,8 @@ base::trace_event::TraceConfig ParseTraceConfigFromJson(
 
 TEST_F(AdaptPerfettoConfigForChromeTest, Simple) {
   auto perfetto_config = ParsePerfettoConfigFromText(R"pb(
+    buffers { size_kb: 204800 fill_policy: RING_BUFFER }
+    buffers { size_kb: 256 fill_policy: DISCARD }
     data_sources: {
       config: {
         name: "track_event"
@@ -102,7 +105,9 @@ TEST_F(AdaptPerfettoConfigForChromeTest, Simple) {
         }
       }
     }
-    data_sources: { config: { name: "org.chromium.trace_metadata" } }
+    data_sources: {
+      config: { name: "org.chromium.trace_metadata2" target_buffer: 1 }
+    }
   )pb");
   auto trace_config = GetDefaultPerfettoConfig(ParseTraceConfigFromJson(R"json({
       "record_mode": "record-continuously",
@@ -115,6 +120,8 @@ TEST_F(AdaptPerfettoConfigForChromeTest, Simple) {
 
 TEST_F(AdaptPerfettoConfigForChromeTest, LegacyTraceEvent) {
   auto perfetto_config = ParsePerfettoConfigFromText(R"pb(
+    buffers { size_kb: 204800 fill_policy: RING_BUFFER }
+    buffers { size_kb: 256 fill_policy: DISCARD }
     data_sources: {
       config: {
         name: "org.chromium.trace_event"
@@ -124,7 +131,9 @@ TEST_F(AdaptPerfettoConfigForChromeTest, LegacyTraceEvent) {
         }
       }
     }
-    data_sources: { config: { name: "org.chromium.trace_metadata" } }
+    data_sources: {
+      config: { name: "org.chromium.trace_metadata2" target_buffer: 1 }
+    }
   )pb");
   auto trace_config = GetDefaultPerfettoConfig(ParseTraceConfigFromJson(R"json({
       "record_mode": "record-continuously",
@@ -137,6 +146,8 @@ TEST_F(AdaptPerfettoConfigForChromeTest, LegacyTraceEvent) {
 
 TEST_F(AdaptPerfettoConfigForChromeTest, DisabledCategories) {
   auto perfetto_config = ParsePerfettoConfigFromText(R"pb(
+    buffers { size_kb: 204800 fill_policy: RING_BUFFER }
+    buffers { size_kb: 256 fill_policy: DISCARD }
     data_sources: {
       config: {
         name: "track_event"
@@ -146,7 +157,9 @@ TEST_F(AdaptPerfettoConfigForChromeTest, DisabledCategories) {
         }
       }
     }
-    data_sources: { config: { name: "org.chromium.trace_metadata" } }
+    data_sources: {
+      config: { name: "org.chromium.trace_metadata2" target_buffer: 1 }
+    }
   )pb");
   auto trace_config = GetDefaultPerfettoConfig(ParseTraceConfigFromJson(R"json({
       "record_mode": "record-continuously",
@@ -159,7 +172,9 @@ TEST_F(AdaptPerfettoConfigForChromeTest, DisabledCategories) {
 
 TEST_F(AdaptPerfettoConfigForChromeTest, PrivacyFiltering) {
   auto perfetto_config = ParsePerfettoConfigFromText(R"pb(
-    data_sources: { config: { name: "org.chromium.trace_metadata" } }
+    data_sources: {
+      config: { name: "org.chromium.trace_metadata2" target_buffer: 1 }
+    }
   )pb");
   EXPECT_TRUE(AdaptPerfettoConfigForChrome(&perfetto_config,
                                            /*privacy_filtering_enabled*/ true));
@@ -169,15 +184,15 @@ TEST_F(AdaptPerfettoConfigForChromeTest, PrivacyFiltering) {
     })json"),
                                /*privacy_filtering_enabled*/ true);
   EXPECT_EQ(PrintConfigToText(GetDataSourceConfig(
-                trace_config, "org.chromium.trace_metadata")),
+                trace_config, "org.chromium.trace_metadata2")),
             PrintConfigToText(GetDataSourceConfig(
-                perfetto_config, "org.chromium.trace_metadata")));
+                perfetto_config, "org.chromium.trace_metadata2")));
 }
 
 TEST_F(AdaptPerfettoConfigForChromeTest, DiscardBuffer) {
   auto perfetto_config = ParsePerfettoConfigFromText(R"pb(
     buffers: { fill_policy: DISCARD size_kb: 42 }
-    data_sources: { config: { name: "org.chromium.trace_metadata" } }
+    data_sources: { config: { name: "org.chromium.trace_metadata2" } }
   )pb");
   EXPECT_TRUE(AdaptPerfettoConfigForChrome(&perfetto_config));
 }
@@ -186,13 +201,15 @@ TEST_F(AdaptPerfettoConfigForChromeTest, MultipleBuffers) {
   auto perfetto_config = ParsePerfettoConfigFromText(R"pb(
     buffers: { fill_policy: RING_BUFFER size_kb: 42 }
     buffers: { fill_policy: DISCARD size_kb: 42 }
-    data_sources: { config: { name: "org.chromium.trace_metadata" } }
+    data_sources: { config: { name: "org.chromium.trace_metadata2" } }
   )pb");
   EXPECT_TRUE(AdaptPerfettoConfigForChrome(&perfetto_config));
 }
 
 TEST_F(AdaptPerfettoConfigForChromeTest, ProcessFilter) {
   auto perfetto_config = ParsePerfettoConfigFromText(R"pb(
+    buffers { size_kb: 204800 fill_policy: RING_BUFFER }
+    buffers { size_kb: 256 fill_policy: DISCARD }
     data_sources: {
       config: {
         name: "track_event"
@@ -203,7 +220,9 @@ TEST_F(AdaptPerfettoConfigForChromeTest, ProcessFilter) {
       }
       producer_name_filter: "org.chromium-3"
     }
-    data_sources: { config: { name: "org.chromium.trace_metadata" } }
+    data_sources: {
+      config: { name: "org.chromium.trace_metadata2" target_buffer: 1 }
+    }
   )pb");
   auto trace_config = GetDefaultPerfettoConfig(ParseTraceConfigFromJson(R"json({
       "record_mode": "record-continuously",
@@ -238,9 +257,8 @@ TEST_F(AdaptPerfettoConfigForChromeTest, EnableSystemBackend_NonChrome) {
     data_sources: { config: { name: "linux.ftrace" } }
   )pb");
 
-  EXPECT_TRUE(AdaptPerfettoConfigForChrome(
-      &perfetto_config, false, false,
-      perfetto::protos::gen::ChromeConfig::USER_INITIATED, true));
+  EXPECT_TRUE(
+      AdaptPerfettoConfigForChrome(&perfetto_config, false, false, true));
 
   // System data sources are not adapted.
   for (auto& ds : perfetto_config.data_sources()) {
@@ -268,12 +286,11 @@ TEST_F(AdaptPerfettoConfigForChromeTest, EnableSystemBackend_Chrome) {
         }
       }
     }
-    data_sources: { config: { name: "org.chromium.trace_metadata" } }
+    data_sources: { config: { name: "org.chromium.trace_metadata2" } }
   )pb");
 
-  EXPECT_TRUE(AdaptPerfettoConfigForChrome(
-      &perfetto_config, false, false,
-      perfetto::protos::gen::ChromeConfig::USER_INITIATED, true));
+  EXPECT_TRUE(
+      AdaptPerfettoConfigForChrome(&perfetto_config, false, false, true));
 
   for (auto& ds : perfetto_config.data_sources()) {
     EXPECT_TRUE(ds.config().has_chrome_config());

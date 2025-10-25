@@ -16,6 +16,7 @@
 #include <string_view>
 #include <utility>
 
+#include "base/byte_count.h"
 #include "base/format_macros.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -27,10 +28,10 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "net/base/features.h"
 #include "net/base/parse_number.h"
-#include "net/base/tracing.h"
 #include "net/http/http_byte_range.h"
 #include "net/http/http_log_util.h"
 #include "net/http/http_status_code.h"
@@ -166,7 +167,7 @@ int ParseStatus(std::string_view status, std::string& append_to) {
   int response_code = -1;
   // For backwards compatibility, overlarge response codes are permitted.
   // base::StringToInt will clamp the value to INT_MAX.
-  base::StringToInt(base::MakeStringPiece(status.begin(), first_non_digit),
+  base::StringToInt(std::string_view(status.begin(), first_non_digit),
                     &response_code);
   CHECK_GE(response_code, 0);
 
@@ -1150,9 +1151,9 @@ bool HttpResponseHeaders::IsRedirectResponseCode(int response_code) {
 //   freshness_lifetime + stale_while_revalidate > current_age
 //
 ValidationType HttpResponseHeaders::RequiresValidation(
-    const Time& request_time,
-    const Time& response_time,
-    const Time& current_time) const {
+    Time request_time,
+    Time response_time,
+    Time current_time) const {
   FreshnessLifetimes lifetimes = GetFreshnessLifetimes(response_time);
   if (lifetimes.freshness.is_zero() && lifetimes.staleness.is_zero())
     return VALIDATION_SYNCHRONOUS;
@@ -1224,7 +1225,7 @@ HttpResponseHeaders::ParseCacheControlDirectivesForFreshness() const {
 // the |staleness| time, unless it overridden by another directive.
 //
 HttpResponseHeaders::FreshnessLifetimes
-HttpResponseHeaders::GetFreshnessLifetimes(const Time& response_time) const {
+HttpResponseHeaders::GetFreshnessLifetimes(Time response_time) const {
   FreshnessLifetimes lifetimes;
   // Check for headers that force a response to never be fresh.  For backwards
   // compat, we treat "Pragma: no-cache" as a synonym for "Cache-Control:
@@ -1365,10 +1366,9 @@ HttpResponseHeaders::GetFreshnessLifetimes(const Time& response_time) const {
 //     resident_time = now - response_time;
 //     current_age = corrected_initial_age + resident_time;
 //
-base::TimeDelta HttpResponseHeaders::GetCurrentAge(
-    const Time& request_time,
-    const Time& response_time,
-    const Time& current_time) const {
+base::TimeDelta HttpResponseHeaders::GetCurrentAge(Time request_time,
+                                                   Time response_time,
+                                                   Time current_time) const {
   // If there is no Date header, then assume that the server response was
   // generated at the time when we received the response.
   Time date_value = GetDateValue().value_or(response_time);
@@ -1518,27 +1518,31 @@ bool HttpResponseHeaders::HasValidators() const {
 
 // From RFC 2616:
 // Content-Length = "Content-Length" ":" 1*DIGIT
-int64_t HttpResponseHeaders::GetContentLength() const {
-  return GetInt64HeaderValue("content-length");
+std::optional<base::ByteCount> HttpResponseHeaders::GetContentLength() const {
+  std::optional<int64_t> result = GetInt64HeaderValue("content-length");
+  if (result.has_value()) {
+    return base::ByteCount(result.value());
+  }
+  return std::nullopt;
 }
 
-int64_t HttpResponseHeaders::GetInt64HeaderValue(
-    const std::string& header) const {
+std::optional<int64_t> HttpResponseHeaders::GetInt64HeaderValue(
+    std::string_view header) const {
   size_t iter = 0;
   std::optional<std::string_view> content_length =
       EnumerateHeader(&iter, header);
   if (!content_length || content_length->empty()) {
-    return -1;
+    return std::nullopt;
   }
 
   if ((*content_length)[0] == '+') {
-    return -1;
+    return std::nullopt;
   }
 
   int64_t result;
   bool ok = base::StringToInt64(*content_length, &result);
   if (!ok || result < 0) {
-    return -1;
+    return std::nullopt;
   }
 
   return result;

@@ -73,16 +73,16 @@ void SetDemoConfigPref(DemoSession::DemoModeConfig demo_config) {
 }
 
 void CheckDemoMode() {
-  EXPECT_TRUE(DemoSession::IsDeviceInDemoMode());
+  EXPECT_TRUE(ash::demo_mode::IsDeviceInDemoMode());
   EXPECT_EQ(DemoSession::DemoModeConfig::kOnline, DemoSession::GetDemoConfig());
 }
 
 void CheckNoDemoMode() {
-  EXPECT_FALSE(DemoSession::IsDeviceInDemoMode());
+  EXPECT_FALSE(ash::demo_mode::IsDeviceInDemoMode());
   EXPECT_EQ(DemoSession::DemoModeConfig::kNone, DemoSession::GetDemoConfig());
 
   SetDemoConfigPref(DemoSession::DemoModeConfig::kOnline);
-  EXPECT_FALSE(DemoSession::IsDeviceInDemoMode());
+  EXPECT_FALSE(ash::demo_mode::IsDeviceInDemoMode());
   EXPECT_EQ(DemoSession::DemoModeConfig::kNone, DemoSession::GetDemoConfig());
 }
 
@@ -374,9 +374,8 @@ class DemoSessionLoginTest : public LoginManagerTest,
     login_manager_mixin_.WaitForActiveSession();
     SystemWebAppManager::GetForTest(ProfileManager::GetActiveUserProfile())
         ->InstallSystemAppsForTesting();
-    ui_test_utils::BrowserChangeObserver browser_opened(
-        nullptr, ui_test_utils::BrowserChangeObserver::ChangeType::kAdded);
-    browser_opened.Wait();
+    ui_test_utils::BrowserCreatedObserver browser_created_observer;
+    browser_created_observer.Wait();
   }
 
   base::FilePath growth_campaigns_mounted_path() {

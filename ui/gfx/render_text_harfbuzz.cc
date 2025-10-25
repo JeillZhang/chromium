@@ -80,6 +80,24 @@ const size_t kMaxTextLength = 10000;
 // character to belong to more scripts.
 const size_t kMaxScripts = 32;
 
+// A kill switch to ignore (copy the previous value) of the script extension
+// property, in case problems occur by changes in ICU/CLDR.
+// Be aware that this feature is off-by-default, unlike other kill switches.
+BASE_FEATURE(kCombiningMarkScript, base::FEATURE_DISABLED_BY_DEFAULT);
+
+bool IsCombiningMarkScriptEnabled() {
+  static bool is_enabled = false;
+  static std::once_flag once_flag;
+  std::call_once(once_flag, [] {
+    is_enabled = base::FeatureList::IsEnabled(kCombiningMarkScript);
+  });
+  return is_enabled;
+}
+
+bool IsCombiningMarkCodepoint(UChar32 codepoint) {
+  return U_GET_GC_MASK(codepoint) & U_GC_M_MASK;
+}
+
 // Returns whether the codepoint has the 'extended pictographic' property.
 bool IsExtendedPictographicCodepoint(UChar32 codepoint) {
   return u_hasBinaryProperty(codepoint, UCHAR_EXTENDED_PICTOGRAPHIC);
@@ -117,6 +135,14 @@ std::vector<UScriptCode> GetScriptExtensions(UChar32 codepoint) {
 // Intersects the script extensions set of |codepoint| with |result| and writes
 // to |result|.
 void ScriptSetIntersect(UChar32 codepoint, std::vector<UScriptCode>& result) {
+  // The recommended implementation strategy is to treat all the characters of a
+  // combining character sequence, including spacing combining marks, as having
+  // the Script property value of the first character in the sequence.
+  // https://www.unicode.org/reports/tr24/#Nonspacing_Marks
+  if (IsCombiningMarkScriptEnabled() && IsCombiningMarkCodepoint(codepoint)) {
+    return;
+  }
+
   // Each codepoint has a Script property and a Script Extensions (Scx)
   // property.
   //
@@ -787,16 +813,13 @@ internal::TextRunHarfBuzz::FontParams CreateFontParams(
   return font_params;
 }
 
-BASE_FEATURE(kRemoveFontLinkFallbacks,
-             "RemoveFontLinkFallbacks",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kRemoveFontLinkFallbacks, base::FEATURE_DISABLED_BY_DEFAULT);
 
 bool IsRemoveFontLinkFallbacks() {
   return base::FeatureList::IsEnabled(kRemoveFontLinkFallbacks);
 }
 
 BASE_FEATURE(kEnableFallbackFontsCrashReporting,
-             "EnableFallbackFontsCrashReporting",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 bool IsEnableFallbackFontsCrashReporting() {
@@ -1967,10 +1990,6 @@ void RenderTextHarfBuzz::ItemizeAndShapeText(std::u16string_view text,
     if (BuildResolvedTypefaceBreakList(run_list)) {
       ItemizeAndShapeTextImpl(&commonized_run_map, text, run_list);
     }
-
-    // Resolved typefaces are no longer used and can be cleared.
-    layout_resolved_typefaces().Reset();
-    resolved_typefaces().Reset();
   }
 
   // Now that potentially two passes to ItemizeAndShapeTextImpl have occurred,

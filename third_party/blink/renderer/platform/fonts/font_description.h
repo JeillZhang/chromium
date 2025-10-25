@@ -47,6 +47,7 @@
 #include "third_party/blink/renderer/platform/fonts/shaping/text_spacing_trim.h"
 #include "third_party/blink/renderer/platform/fonts/text_rendering_mode.h"
 #include "third_party/blink/renderer/platform/fonts/typesetting_features.h"
+#include "third_party/blink/renderer/platform/geometry/length.h"
 #include "third_party/blink/renderer/platform/text/layout_locale.h"
 #include "third_party/blink/renderer/platform/wtf/allocator/allocator.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -55,7 +56,9 @@
 
 namespace blink {
 
-typedef struct { uint32_t parts[2]; } FieldsAsUnsignedType;
+struct FieldsAsUnsignedType {
+  uint32_t parts[3] = {0, 0, 0};
+};
 
 class PLATFORM_EXPORT FontDescription {
   USING_FAST_MALLOC(FontDescription);
@@ -129,14 +132,11 @@ class PLATFORM_EXPORT FontDescription {
   FontDescription(const FontDescription&);
 
   static FontDescription CreateHashTableEmptyValue();
-  explicit FontDescription(WTF::HashTableDeletedValueType);
+  explicit FontDescription(HashTableDeletedValueType);
 
   FontDescription& operator=(const FontDescription&);
 
   bool operator==(const FontDescription&) const;
-  bool operator!=(const FontDescription& other) const {
-    return !(*this == other);
-  }
 
   struct VariantLigatures {
     STACK_ALLOCATED();
@@ -313,8 +313,13 @@ class PLATFORM_EXPORT FontDescription {
   }
 
   FontSelectionRequest GetFontSelectionRequest() const;
-  float WordSpacing() const { return word_spacing_; }
-  float LetterSpacing() const { return letter_spacing_; }
+
+  float WordSpacing() const;
+  const Length& ComputedWordSpacing() const { return word_spacing_; }
+
+  float LetterSpacing() const;
+  const Length& ComputedLetterSpacing() const { return letter_spacing_; }
+
   FontOrientation Orientation() const {
     return static_cast<FontOrientation>(fields_.orientation_);
   }
@@ -339,12 +344,13 @@ class PLATFORM_EXPORT FontDescription {
   const FontVariationSettings* VariationSettings() const {
     return variation_settings_.get();
   }
+  const AtomicString& FontLanguageOverride() const {
+    return language_override_;
+  }
   FontVariantPosition VariantPosition() const {
     return static_cast<FontVariantPosition>(fields_.variant_position_);
   }
-  FontVariantEmoji VariantEmoji() const {
-    return static_cast<FontVariantEmoji>(fields_.variant_emoji_);
-  }
+  FontVariantEmoji VariantEmoji() const;
 
   float EffectiveFontSize()
       const;  // Returns either the computedSize or the computedPixelSize
@@ -357,6 +363,11 @@ class PLATFORM_EXPORT FontDescription {
   void SetAdjustedSize(float s) { adjusted_size_ = ClampTo<float>(s); }
   void SetSizeAdjust(const FontSizeAdjust& size_adjust) {
     size_adjust_ = size_adjust;
+  }
+
+  void SetResolvedFontFeatures(
+      const ResolvedFontFeatures&& resolved_font_features) {
+    resolved_font_features_ = std::move(resolved_font_features);
   }
 
   void SetStyle(FontSelectionValue i);
@@ -427,14 +438,20 @@ class PLATFORM_EXPORT FontDescription {
       scoped_refptr<const FontVariationSettings> settings) {
     variation_settings_ = std::move(settings);
   }
+  void SetFontLanguageOverride(const AtomicString& value) {
+    language_override_ = value;
+  }
   void SetVariantPosition(FontVariantPosition variant_position) {
     fields_.variant_position_ = variant_position;
   }
   void SetVariantEmoji(FontVariantEmoji variant_emoji) {
     fields_.variant_emoji_ = variant_emoji;
   }
-  void SetWordSpacing(float s) { word_spacing_ = s; }
-  void SetLetterSpacing(float s) {
+  void SetIsForcedColorsMode(bool is_forced_colors_mode) {
+    fields_.is_forced_colors_mode_ = is_forced_colors_mode;
+  }
+  void SetWordSpacing(const Length& s) { word_spacing_ = s; }
+  void SetLetterSpacing(const Length& s) {
     letter_spacing_ = s;
     UpdateTypesettingFeatures();
   }
@@ -456,6 +473,8 @@ class PLATFORM_EXPORT FontDescription {
     return fields_.subpixel_ascent_descent_;
   }
 
+  bool IsForcedColorsMode() const { return fields_.is_forced_colors_mode_; }
+
   HashCategory GetHashCategory() const {
     return static_cast<HashCategory>(fields_.hash_category_);
   }
@@ -468,6 +487,8 @@ class PLATFORM_EXPORT FontDescription {
     return GetHashCategory() == kHashDeletedValue;
   }
 
+  bool HasLanguageOverride() const { return !language_override_.empty(); }
+
   unsigned StyleHashWithoutFamilyList() const;
   unsigned GetHash() const;
 
@@ -477,6 +498,7 @@ class PLATFORM_EXPORT FontDescription {
   unsigned AuxiliaryBitmapFields() const {
     return fields_as_unsigned_.parts[1];
   }
+  unsigned ExtendedBitmapFields() const { return fields_as_unsigned_.parts[2]; }
 
   SkFontStyle SkiaFontStyle() const;
 
@@ -485,6 +507,8 @@ class PLATFORM_EXPORT FontDescription {
   int MinimumPrefixWidthToHyphenate() const;
 
   ResolvedFontFeatures ResolveFontFeatures() const;
+  void MergeFontFeatureSettingsWithDescriptor(const FontFeatureSettings*);
+  void MergeFontVariationSettingsWithDescriptor(const FontVariationSettings*);
 
   String ToString() const;
 
@@ -511,10 +535,11 @@ class PLATFORM_EXPORT FontDescription {
   // as well as a computed size is.
   float adjusted_size_;
 
-  float letter_spacing_;
-  float word_spacing_;
+  Length letter_spacing_;
+  Length word_spacing_;
 
   FontSizeAdjust size_adjust_;
+  ResolvedFontFeatures resolved_font_features_;
 
   // Covers stretch, style, weight.
   FontSelectionRequest font_selection_request_;
@@ -569,6 +594,7 @@ class PLATFORM_EXPORT FontDescription {
     unsigned text_spacing_trim_ : kTextSpacingTrimBitCount;
 
     unsigned hash_category_ : 2;  // HashCategory
+    unsigned is_forced_colors_mode_ : 1;
   };
 
   static_assert(sizeof(BitFields) == sizeof(FieldsAsUnsignedType),
@@ -579,22 +605,19 @@ class PLATFORM_EXPORT FontDescription {
   };
 
   static bool use_subpixel_text_positioning_;
+  AtomicString language_override_;
 };
 
-}  // namespace blink
-
-namespace WTF {
-
 template <>
-struct HashTraits<blink::FontDescription>
+struct HashTraits<FontDescription>
     : SimpleClassHashTraits<blink::FontDescription> {
   // FontDescription default constructor creates a regular value instead of the
   // empty value.
-  static blink::FontDescription EmptyValue() {
-    return blink::FontDescription::CreateHashTableEmptyValue();
+  static FontDescription EmptyValue() {
+    return FontDescription::CreateHashTableEmptyValue();
   }
 };
 
-}  // namespace WTF
+}  // namespace blink
 
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_FONTS_FONT_DESCRIPTION_H_

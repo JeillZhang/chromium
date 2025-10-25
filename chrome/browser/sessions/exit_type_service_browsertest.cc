@@ -18,6 +18,8 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/session_crashed_bubble_view.h"
 #include "chrome/common/chrome_constants.h"
@@ -26,6 +28,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "components/prefs/pref_value_map.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/web_contents.h"
@@ -71,13 +74,20 @@ GURL GetUrl3() {
       base::FilePath().AppendASCII("bot3.html"));
 }
 
-void WaitForBrowserToFinishLoading(Browser* browser) {
-  TabStripModel* tab_strip_model = browser->tab_strip_model();
-  for (int i = 0; i < tab_strip_model->count(); ++i) {
-    content::WebContents* contents = tab_strip_model->GetWebContentsAt(i);
-    contents->GetController().LoadIfNecessary();
-    content::WaitForLoadStop(contents);
-  }
+// Returns a single browser matching `url`.
+BrowserWindowInterface* FindBrowserWithUrl(const GURL& url) {
+  auto browsers = ui_test_utils::FindMatchingBrowsers(
+      [&url](BrowserWindowInterface* browser) {
+        TabStripModel* const tab_strip_model = browser->GetTabStripModel();
+        for (int i = 0; i < tab_strip_model->count(); ++i) {
+          if (tab_strip_model->GetWebContentsAt(i)->GetLastCommittedURL() ==
+              url) {
+            return true;
+          }
+        }
+        return false;
+      });
+  return browsers.empty() ? nullptr : browsers.front();
 }
 
 }  // namespace
@@ -174,28 +184,26 @@ IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest, RestoreFromCrashBubble) {
 #endif
   ASSERT_EQ(2u + (restores_to_initial_browser ? 0u : 1u),
             BrowserList::GetInstance()->size());
-  Browser* browser1 =
-      BrowserList::GetInstance()->get(restores_to_initial_browser ? 0 : 1);
-  Browser* browser2 =
-      BrowserList::GetInstance()->get(restores_to_initial_browser ? 1 : 2);
+  BrowserWindowInterface* const browser1 = FindBrowserWithUrl(GetUrl1());
+  BrowserWindowInterface* const browser2 = FindBrowserWithUrl(GetUrl2());
+
   ASSERT_EQ((restores_to_initial_browser ? 2 : 1),
-            browser1->tab_strip_model()->count());
-  WaitForBrowserToFinishLoading(browser1);
+            browser1->GetTabStripModel()->count());
   // The first tab is created during startup.
   if (restores_to_initial_browser) {
-    EXPECT_EQ(GURL("about:blank"),
-              browser1->tab_strip_model()->GetWebContentsAt(0)->GetURL());
+    EXPECT_EQ(
+        GURL("about:blank"),
+        browser1->GetTabStripModel()->GetWebContentsAt(0)->GetVisibleURL());
   }
   EXPECT_EQ(GetUrl1(),
-            browser1->tab_strip_model()
+            browser1->GetTabStripModel()
                 ->GetWebContentsAt(restores_to_initial_browser ? 1 : 0)
-                ->GetURL());
-  ASSERT_EQ(2, browser2->tab_strip_model()->count());
-  WaitForBrowserToFinishLoading(browser2);
+                ->GetVisibleURL());
+  ASSERT_EQ(2, browser2->GetTabStripModel()->count());
   EXPECT_EQ(GetUrl2(),
-            browser2->tab_strip_model()->GetWebContentsAt(0)->GetURL());
+            browser2->GetTabStripModel()->GetWebContentsAt(0)->GetVisibleURL());
   EXPECT_EQ(GetUrl3(),
-            browser2->tab_strip_model()->GetWebContentsAt(1)->GetURL());
+            browser2->GetTabStripModel()->GetWebContentsAt(1)->GetVisibleURL());
 }
 
 // Marks the profile as crashing.
@@ -227,4 +235,28 @@ IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest,
   run_loop.Run();
   EXPECT_FALSE(GetExitTypeService()->waiting_for_user_to_ack_crash());
   EXPECT_TRUE(IsSessionServiceSavingEnabled());
+}
+
+IN_PROC_BROWSER_TEST_F(ExitTypeServiceTest, Defaults) {
+  ExitTypeService* service =
+      ExitTypeService::GetInstanceForProfile(browser()->profile());
+  ASSERT_TRUE(service);
+  PrefService* prefs = browser()->profile()->GetPrefs();
+  // The initial state is crashed; store for later reference.
+  std::string crash_value(prefs->GetString(prefs::kSessionExitType));
+
+  // The first call to a type other than crashed should change the value.
+  service->SetCurrentSessionExitType(ExitType::kForcedShutdown);
+  std::string first_call_value(prefs->GetString(prefs::kSessionExitType));
+  EXPECT_NE(crash_value, first_call_value);
+
+  // Subsequent calls to a non-crash value should be ignored.
+  service->SetCurrentSessionExitType(ExitType::kClean);
+  std::string second_call_value(prefs->GetString(prefs::kSessionExitType));
+  EXPECT_EQ(first_call_value, second_call_value);
+
+  // Setting back to a crashed value should work.
+  service->SetCurrentSessionExitType(ExitType::kCrashed);
+  std::string final_value(prefs->GetString(prefs::kSessionExitType));
+  EXPECT_EQ(crash_value, final_value);
 }

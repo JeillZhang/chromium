@@ -16,6 +16,7 @@
 
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/time/time.h"
 #include "components/google/core/common/google_util.h"
 #include "components/history/core/browser/history_backend.h"
@@ -117,6 +118,8 @@ VisitSource VisitSourceFromInt(int value) {
     case SOURCE_FIREFOX_IMPORTED:
     case SOURCE_IE_IMPORTED:
     case SOURCE_SAFARI_IMPORTED:
+    case SOURCE_ACTOR:
+    case SOURCE_OS_MIGRATION_IMPORTED:
       return converted;
   }
   // In cases of database corruption, SOURCE_BROWSED is a safe default value.
@@ -542,48 +545,75 @@ bool VisitDatabase::GetVisitsForURL(URLID url_id, VisitVector* visits) {
   return FillVisitVector(statement, visits);
 }
 
+bool VisitDatabase::GetNon404VisitsForURL(URLID url_id, VisitVector* visits) {
+  visits->clear();
+
+  sql::Statement statement(GetDB().GetCachedStatement(
+      SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
+                     "LEFT OUTER JOIN context_annotations "
+                     "ON visits.id = context_annotations.visit_id "
+                     "WHERE visits.url=? AND "
+                     "(context_annotations.response_code IS NULL "
+                     "OR context_annotations.response_code != 404) "
+                     "ORDER BY visits.visit_time ASC"));
+  statement.BindInt64(0, url_id);
+  return FillVisitVector(statement, visits);
+}
+
 bool VisitDatabase::GetVisibleVisitsForURL(URLID url_id,
                                            const QueryOptions& options,
                                            VisitVector* visits) {
   visits->clear();
 
-  sql::Statement statement;
-  if (options.visit_order == QueryOptions::RECENT_FIRST) {
-    if (options.app_id) {
-      statement.Assign(GetDB().GetCachedStatement(
-          SQL_FROM_HERE,
-          "SELECT" HISTORY_VISIT_ROW_FIELDS
-          "FROM visits "
-          "WHERE url=? AND visit_time>=? AND visit_time<? AND app_id=? "
-          "ORDER BY visit_time DESC"));
-    } else {
-      statement.Assign(GetDB().GetCachedStatement(
-          SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
-                         "WHERE url=? AND visit_time>=? AND visit_time<? "
-                         "ORDER BY visit_time DESC"));
-    }
-  } else {
-    if (options.app_id) {
-      statement.Assign(GetDB().GetCachedStatement(
-          SQL_FROM_HERE,
-          "SELECT" HISTORY_VISIT_ROW_FIELDS
-          "FROM visits "
-          "WHERE url=? AND visit_time>? AND visit_time<=? AND app_id=? "
-          "ORDER BY visit_time ASC"));
-    } else {
-      statement.Assign(GetDB().GetCachedStatement(
-          SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
-                         "WHERE url=? AND visit_time>? AND visit_time<=? "
-                         "ORDER BY visit_time ASC"));
-    }
+  std::string sql = "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits ";
+  std::vector<std::string> where_clauses;
+
+  if (options.policy_for_404_visits == VisitQuery404sPolicy::kExclude404s) {
+    sql +=
+        "LEFT OUTER JOIN context_annotations "
+        "ON visits.id = context_annotations.visit_id ";
+    where_clauses.push_back(
+        "(context_annotations.response_code IS NULL "
+        "OR context_annotations.response_code != 404)");
   }
 
-  statement.BindInt64(0, url_id);
-  statement.BindInt64(1, options.EffectiveBeginTime());
-  statement.BindInt64(2, options.EffectiveEndTime());
-  if (options.app_id) {
-    statement.BindString(3, *options.app_id);
+  where_clauses.push_back("visits.url = ?");
+
+  if (options.visit_order == QueryOptions::RECENT_FIRST) {
+    where_clauses.push_back("visits.visit_time >= ?");
+    where_clauses.push_back("visits.visit_time < ?");
+  } else {
+    where_clauses.push_back("visits.visit_time > ?");
+    where_clauses.push_back("visits.visit_time <= ?");
   }
+
+  if (options.app_id) {
+    where_clauses.push_back("visits.app_id = ?");
+  }
+
+  CHECK(!where_clauses.empty());
+
+  sql += "WHERE " + base::JoinString(where_clauses, " AND ") + " ";
+
+  if (options.visit_order == QueryOptions::RECENT_FIRST) {
+    sql += "ORDER BY visits.visit_time DESC ";
+  } else {
+    sql += "ORDER BY visits.visit_time ASC ";
+  }
+
+  sql::Statement statement(GetDB().GetUniqueStatement(base::cstring_view(sql)));
+  CHECK(statement.is_valid());
+
+  int bind_index = 0;
+
+  statement.BindInt64(bind_index++, url_id);
+  statement.BindInt64(bind_index++, options.EffectiveBeginTime());
+  statement.BindInt64(bind_index++, options.EffectiveEndTime());
+  if (options.app_id) {
+    statement.BindString(bind_index++, *options.app_id);
+  }
+  CHECK_EQ(static_cast<size_t>(bind_index),
+           static_cast<size_t>(std::count(sql.begin(), sql.end(), '?')));
 
   return FillVisitVectorWithOptions(statement, options, visits);
 }
@@ -689,22 +719,6 @@ bool VisitDatabase::GetSomeForeignVisits(VisitID max_visit_id,
   return FillVisitVector(statement, visits);
 }
 
-bool VisitDatabase::GetAllURLIDsForTransition(ui::PageTransition transition,
-                                              std::vector<URLID>* urls) {
-  DCHECK(urls);
-  urls->clear();
-  sql::Statement statement(
-      GetDB().GetUniqueStatement("SELECT DISTINCT url FROM visits "
-                                 "WHERE (transition & ?) == ?"));
-  statement.BindInt64(0, ui::PAGE_TRANSITION_CORE_MASK);
-  statement.BindInt64(1, transition);
-
-  while (statement.Step()) {
-    urls->push_back(statement.ColumnInt64(0));
-  }
-  return statement.Succeeded();
-}
-
 GetAllAppIdsResult VisitDatabase::GetAllAppIds() {
   sql::Statement statement(GetDB().GetUniqueStatement(
       "SELECT DISTINCT app_id FROM visits "
@@ -724,51 +738,85 @@ bool VisitDatabase::GetVisibleVisitsInRange(const QueryOptions& options,
   // The visit_time values can be duplicated in a redirect chain, so we sort
   // by id too, to ensure a consistent ordering just in case.
 
-  sql::Statement statement;
-  if (options.visit_order == QueryOptions::RECENT_FIRST) {
-    if (options.app_id) {
-      statement.Assign(GetDB().GetCachedStatement(
-          SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
-                         "WHERE visit_time>=? AND visit_time<? AND app_id=? "
-                         "ORDER BY visit_time DESC, id DESC"));
-    } else {
-      statement.Assign(GetDB().GetCachedStatement(
-          SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
-                         "WHERE visit_time>=? AND visit_time<? "
-                         "ORDER BY visit_time DESC, id DESC"));
-    }
-  } else {
-    if (options.app_id) {
-      statement.Assign(GetDB().GetCachedStatement(
-          SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
-                         "WHERE visit_time>? AND visit_time<=? AND app_id=? "
-                         "ORDER BY visit_time ASC, id DESC"));
-    } else {
-      statement.Assign(GetDB().GetCachedStatement(
-          SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
-                         "WHERE visit_time>? AND visit_time<=? "
-                         "ORDER BY visit_time ASC, id DESC"));
-    }
+  std::string sql = "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits ";
+  std::vector<std::string> where_clauses;
+
+  if (options.policy_for_404_visits == VisitQuery404sPolicy::kExclude404s) {
+    sql +=
+        "LEFT OUTER JOIN context_annotations "
+        "ON visits.id = context_annotations.visit_id ";
+    where_clauses.push_back(
+        "(context_annotations.response_code IS NULL "
+        "OR context_annotations.response_code != 404)");
   }
 
-  statement.BindInt64(0, options.EffectiveBeginTime());
-  statement.BindInt64(1, options.EffectiveEndTime());
-  if (options.app_id) {
-    statement.BindString(2, *options.app_id);
+  if (options.visit_order == QueryOptions::RECENT_FIRST) {
+    where_clauses.push_back("visits.visit_time >= ?");
+    where_clauses.push_back("visits.visit_time < ?");
+  } else {
+    where_clauses.push_back("visits.visit_time > ?");
+    where_clauses.push_back("visits.visit_time <= ?");
   }
+
+  if (options.app_id) {
+    where_clauses.push_back("visits.app_id = ?");
+  }
+
+  CHECK(!where_clauses.empty());
+
+  sql += "WHERE " + base::JoinString(where_clauses, " AND ") + " ";
+
+  if (options.visit_order == QueryOptions::RECENT_FIRST) {
+    sql += "ORDER BY visits.visit_time DESC, visits.id DESC ";
+  } else {
+    sql += "ORDER BY visits.visit_time ASC, visits.id DESC ";
+  }
+
+  sql::Statement statement(GetDB().GetUniqueStatement(base::cstring_view(sql)));
+  CHECK(statement.is_valid());
+  int bind_index = 0;
+
+  statement.BindInt64(bind_index++, options.EffectiveBeginTime());
+  statement.BindInt64(bind_index++, options.EffectiveEndTime());
+  if (options.app_id) {
+    statement.BindString(bind_index++, *options.app_id);
+  }
+
+  CHECK_EQ(static_cast<size_t>(bind_index),
+           static_cast<size_t>(std::count(sql.begin(), sql.end(), '?')));
 
   return FillVisitVectorWithOptions(statement, options, visits);
 }
 
-VisitID VisitDatabase::GetMostRecentVisitForURL(URLID url_id,
-                                                VisitRow* visit_row) {
+VisitID VisitDatabase::GetMostRecentVisitForURL(
+    URLID url_id,
+    VisitRow* visit_row,
+    VisitQuery404sPolicy policy_for_404_visits) {
   // The visit_time values can be duplicated in a redirect chain, so we sort
   // by id too, to ensure a consistent ordering just in case.
-  sql::Statement statement(GetDB().GetCachedStatement(
-      SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
-                     "WHERE url=? "
-                     "ORDER BY visit_time DESC, id DESC "
-                     "LIMIT 1"));
+  sql::Statement statement;
+
+  switch (policy_for_404_visits) {
+    case VisitQuery404sPolicy::kInclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
+                         "WHERE url=? "
+                         "ORDER BY visit_time DESC,id DESC "
+                         "LIMIT 1"));
+      break;
+    case VisitQuery404sPolicy::kExclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
+                         "LEFT OUTER JOIN context_annotations "
+                         "ON visits.id=context_annotations.visit_id "
+                         "WHERE visits.url=?"
+                         "AND(context_annotations.response_code IS NULL "
+                         "OR context_annotations.response_code!=404) "
+                         "ORDER BY visits.visit_time DESC,visits.id DESC "
+                         "LIMIT 1"));
+      break;
+  }
+
   statement.BindInt64(0, url_id);
   if (!statement.Step())
     return 0;  // No visits for this URL.
@@ -780,33 +828,70 @@ VisitID VisitDatabase::GetMostRecentVisitForURL(URLID url_id,
   return statement.ColumnInt64(0);
 }
 
-bool VisitDatabase::GetMostRecentVisitsForURL(URLID url_id,
-                                              int max_results,
-                                              VisitVector* visits) {
+bool VisitDatabase::GetMostRecentVisitsForURL(
+    URLID url_id,
+    int max_results,
+    VisitQuery404sPolicy policy_for_404_visits,
+    VisitVector* visits) {
   visits->clear();
 
-  // The visit_time values can be duplicated in a redirect chain, so we sort
-  // by id too, to ensure a consistent ordering just in case.
-  sql::Statement statement(GetDB().GetCachedStatement(
-      SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
-                     "WHERE url=? "
-                     "ORDER BY visit_time DESC, id DESC "
-                     "LIMIT ?"));
+  sql::Statement statement;
+  switch (policy_for_404_visits) {
+    case VisitQuery404sPolicy::kInclude404s:
+      // The visit_time values can be duplicated in a redirect chain, so we sort
+      // by id too, to ensure a consistent ordering just in case.
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE, "SELECT" HISTORY_VISIT_ROW_FIELDS "FROM visits "
+                         "WHERE url=? "
+                         "ORDER BY visit_time DESC, id DESC "
+                         "LIMIT ?"));
+      break;
+    case VisitQuery404sPolicy::kExclude404s:
+      // The visit_time values can be duplicated in a redirect chain, so we sort
+      // by id too, to ensure a consistent ordering just in case.
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE,
+          "SELECT" HISTORY_VISIT_ROW_FIELDS
+          "FROM visits v "
+          "LEFT OUTER JOIN context_annotations ca ON v.id=ca.visit_id "
+          "WHERE v.url=? "
+          "AND (ca.response_code IS NULL OR ca.response_code!=404) "
+          "ORDER BY v.visit_time DESC, v.id DESC "
+          "LIMIT ?"));
+      break;
+  }
   statement.BindInt64(0, url_id);
   statement.BindInt(1, max_results);
 
   return FillVisitVector(statement, visits);
 }
 
-bool VisitDatabase::GetRedirectFromVisit(VisitID from_visit,
-                                         VisitID* to_visit,
-                                         GURL* to_url) {
-  sql::Statement statement(GetDB().GetCachedStatement(
-      SQL_FROM_HERE,
-      "SELECT v.id,u.url "
-      "FROM visits v JOIN urls u ON v.url = u.id "
-      "WHERE v.from_visit = ? "
-      "AND (v.transition & ?) != 0"));  // IS_REDIRECT_MASK
+bool VisitDatabase::GetRedirectFromVisit(
+    VisitID from_visit,
+    VisitID* to_visit,
+    GURL* to_url,
+    VisitQuery404sPolicy policy_for_404_visits) {
+  sql::Statement statement;
+  switch (policy_for_404_visits) {
+    case VisitQuery404sPolicy::kInclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE,
+          "SELECT v.id,u.url "
+          "FROM visits v JOIN urls u ON v.url=u.id "
+          "WHERE v.from_visit=? "
+          "AND (v.transition & ?)!=0"));  // IS_REDIRECT_MASK
+      break;
+    case VisitQuery404sPolicy::kExclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE,
+          "SELECT v.id,u.url "
+          "FROM visits v JOIN urls u ON v.url=u.id "
+          "LEFT OUTER JOIN context_annotations ca ON v.id=ca.visit_id "
+          "WHERE v.from_visit=? "
+          "AND (ca.response_code IS NULL OR ca.response_code!=404)"
+          "AND (v.transition & ?)!=0"));  // IS_REDIRECT_MASK
+      break;
+  }
   statement.BindInt64(0, from_visit);
   statement.BindInt64(1, ui::PAGE_TRANSITION_IS_REDIRECT_MASK);
 
@@ -869,8 +954,11 @@ bool VisitDatabase::GetVisibleVisitCountToHost(const GURL& url,
   sql::Statement statement(GetDB().GetCachedStatement(
       SQL_FROM_HERE,
       "SELECT v.visit_time,transition "
-      "FROM visits v INNER JOIN urls u ON v.url = u.id "
-      "WHERE u.url >= ? AND u.url < ?"));
+      "FROM visits v "
+      "INNER JOIN urls u ON v.url=u.id "
+      "LEFT OUTER JOIN context_annotations c ON v.id=c.visit_id "
+      "WHERE u.url>=? AND u.url<? "
+      "AND (c.response_code IS NULL OR c.response_code!=404)"));
   statement.BindString(0, host_query_min);
   statement.BindString(
       1, host_query_min.substr(0, host_query_min.size() - 1) + '0');
@@ -896,14 +984,28 @@ bool VisitDatabase::GetVisibleVisitCountToHost(const GURL& url,
 
 bool VisitDatabase::GetHistoryCount(const base::Time& begin_time,
                                     const base::Time& end_time,
+                                    VisitQuery404sPolicy policy_for_404_visits,
                                     int* count) {
-  sql::Statement statement(
-      GetDB().GetCachedStatement(SQL_FROM_HERE,
-                                 "SELECT url,"
-                                 "visit_time,"
-                                 "transition "
-                                 "FROM visits "
-                                 "WHERE visit_time >= ? AND visit_time < ?"));
+  sql::Statement statement;
+  switch (policy_for_404_visits) {
+    case VisitQuery404sPolicy::kInclude404s:
+      statement.Assign(
+          GetDB().GetCachedStatement(SQL_FROM_HERE,
+                                     "SELECT url,"
+                                     "visit_time,"
+                                     "transition "
+                                     "FROM visits "
+                                     "WHERE visit_time>=? AND visit_time<?"));
+      break;
+    case VisitQuery404sPolicy::kExclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE,
+          "SELECT v.url,v.visit_time,v.transition "
+          "FROM visits v "
+          "LEFT OUTER JOIN context_annotations c ON v.id=c.visit_id "
+          "WHERE v.visit_time>=? AND v.visit_time<? "
+          "AND (c.response_code IS NULL OR c.response_code!=404)"));
+  }
 
   statement.BindTime(0, begin_time);
   statement.BindTime(1, end_time);
@@ -911,8 +1013,9 @@ bool VisitDatabase::GetHistoryCount(const base::Time& begin_time,
   // Set of (date, url) pairs.
   std::set<std::pair<base::Time, std::string>> url_days;
   while (statement.Step()) {
-    if (!TransitionIsVisible(statement.ColumnInt(2)))
+    if (!TransitionIsVisible(statement.ColumnInt(2))) {
       continue;
+    }
     url_days.emplace(statement.ColumnTime(1).LocalMidnight(),
                      statement.ColumnString(0));
   }
@@ -921,33 +1024,54 @@ bool VisitDatabase::GetHistoryCount(const base::Time& begin_time,
   return true;
 }
 
-bool VisitDatabase::GetLastVisitToHost(const std::string& host,
-                                       base::Time begin_time,
-                                       base::Time end_time,
-                                       base::Time* last_visit) {
+bool VisitDatabase::GetLastVisitToHost(
+    const std::string& host,
+    base::Time begin_time,
+    base::Time end_time,
+    VisitQuery404sPolicy policy_for_404_visits,
+    base::Time* last_visit) {
   const GURL http("http://" + host);
   const GURL https("https://" + host);
-  if (!http.is_valid() || !https.is_valid())
+  if (!http.is_valid() || !https.is_valid()) {
     return false;
+  }
 
   // GetOriginSearchBounds only handles origin, so we need to query both http
   // and https versions.
   std::array<std::pair<std::string, std::string>, 4> bounds =
       GetHostSearchBounds(host);
 
-  sql::Statement statement(GetDB().GetCachedStatement(
-      SQL_FROM_HERE,
-      "SELECT "
-      "  v.visit_time, v.transition "
-      "FROM visits v INNER JOIN urls u ON v.url = u.id "
-      "WHERE "
-      "  ( (u.url >= ? AND u.url < ?) OR "
-      "    (u.url >= ? AND u.url < ?) OR "
-      "    (u.url >= ? AND u.url < ?) OR "
-      "    (u.url >= ? AND u.url < ?) ) AND "
-      "  v.visit_time >= ? AND "
-      "  v.visit_time < ? "
-      "ORDER BY v.visit_time DESC "));
+  sql::Statement statement;
+  switch (policy_for_404_visits) {
+    case VisitQuery404sPolicy::kInclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE,
+          "SELECT v.visit_time,v.transition "
+          "FROM visits v INNER JOIN urls u ON v.url=u.id "
+          "WHERE "
+          "  ( (u.url>=? AND u.url<?) OR "
+          "    (u.url>=? AND u.url<?) OR "
+          "    (u.url>=? AND u.url<?) OR "
+          "    (u.url>=? AND u.url<?) ) AND "
+          "  v.visit_time>=? AND v.visit_time<? "
+          "ORDER BY v.visit_time DESC"));
+      break;
+    case VisitQuery404sPolicy::kExclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE,
+          "SELECT v.visit_time,v.transition "
+          "FROM visits v INNER JOIN urls u ON v.url=u.id "
+          "LEFT OUTER JOIN context_annotations ca ON v.id=ca.visit_id "
+          "WHERE "
+          "  ( (u.url>=? AND u.url<?) OR "
+          "    (u.url>=? AND u.url<?) OR "
+          "    (u.url>=? AND u.url<?) OR "
+          "    (u.url>=? AND u.url<?) ) AND "
+          "  v.visit_time>=? AND v.visit_time<? AND "
+          "  (ca.response_code IS NULL OR ca.response_code!=404) "
+          "ORDER BY v.visit_time DESC"));
+      break;
+  }
   statement.BindString(0, bounds.at(0).first);
   statement.BindString(1, bounds.at(0).second);
   statement.BindString(2, bounds.at(1).first);
@@ -973,29 +1097,47 @@ bool VisitDatabase::GetLastVisitToHost(const std::string& host,
   return statement.Succeeded();
 }
 
-bool VisitDatabase::GetLastVisitToOrigin(const url::Origin& origin,
-                                         base::Time begin_time,
-                                         base::Time end_time,
-                                         base::Time* last_visit) {
+bool VisitDatabase::GetLastVisitToOrigin(
+    const url::Origin& origin,
+    base::Time begin_time,
+    base::Time end_time,
+    VisitQuery404sPolicy policy_for_404_visits,
+    base::Time* last_visit) {
   if (origin.opaque() || !(origin.scheme() == url::kHttpScheme ||
-                           origin.scheme() == url::kHttpsScheme))
+                           origin.scheme() == url::kHttpsScheme)) {
     return false;
+  }
 
   std::pair<std::string, std::string> origin_bounds =
       GetOriginSearchBounds(origin.GetURL());
 
-  sql::Statement statement(GetDB().GetCachedStatement(
-      SQL_FROM_HERE,
-      "SELECT "
-      "  v.visit_time "
-      "FROM visits v INNER JOIN urls u ON v.url = u.id "
-      "WHERE "
-      "  u.url >= ? AND "
-      "  u.url < ? AND "
-      "  v.visit_time >= ? AND "
-      "  v.visit_time < ? "
-      "ORDER BY v.visit_time DESC "
-      "LIMIT 1"));
+  sql::Statement statement;
+  switch (policy_for_404_visits) {
+    case VisitQuery404sPolicy::kInclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE,
+          "SELECT v.visit_time "
+          "FROM visits v INNER JOIN urls u ON v.url=u.id "
+          "WHERE "
+          "  u.url>=? AND u.url<? AND "
+          "  v.visit_time>=? AND v.visit_time<? "
+          "ORDER BY v.visit_time DESC "
+          "LIMIT 1"));
+      break;
+    case VisitQuery404sPolicy::kExclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          SQL_FROM_HERE,
+          "SELECT v.visit_time "
+          "FROM visits v INNER JOIN urls u ON v.url=u.id "
+          "LEFT OUTER JOIN context_annotations ca ON v.id=ca.visit_id "
+          "WHERE "
+          "  u.url>=? AND u.url<? AND "
+          "  v.visit_time>=? AND v.visit_time<? AND "
+          "  (ca.response_code IS NULL OR ca.response_code!=404) "
+          "ORDER BY v.visit_time DESC "
+          "LIMIT 1"));
+      break;
+  }
   statement.BindString(0, origin_bounds.first);
   statement.BindString(1, origin_bounds.second);
   statement.BindTime(2, begin_time);
@@ -1013,29 +1155,60 @@ bool VisitDatabase::GetLastVisitToOrigin(const url::Origin& origin,
   return true;
 }
 
-DailyVisitsResult VisitDatabase::GetDailyVisitsToHost(const GURL& host,
-                                                      base::Time begin_time,
-                                                      base::Time end_time) {
+DailyVisitsResult VisitDatabase::GetDailyVisitsToOrigin(
+    const url::Origin& origin,
+    base::Time begin_time,
+    base::Time end_time,
+    VisitQuery404sPolicy policy_for_404_visits) {
   DailyVisitsResult result;
-  if (!host.is_valid() || !host.SchemeIsHTTPOrHTTPS())
+  if (origin.opaque() || !(origin.scheme() == url::kHttpScheme ||
+                           origin.scheme() == url::kHttpsScheme)) {
     return result;
+  }
 
-  std::pair<std::string, std::string> host_bounds = GetOriginSearchBounds(host);
+  std::pair<std::string, std::string> host_bounds =
+      GetOriginSearchBounds(origin.GetURL());
 
-  sql::Statement statement(GetDB().GetCachedStatement(
-      // clang-format off
-      SQL_FROM_HERE,
-        "SELECT "
-        "visit_time,"
-        "transition "
-        "FROM visits v INNER JOIN urls u ON v.url=u.id "
-        "WHERE "
-          "u.url>=? AND "
-          "u.url<? AND "
-          "v.visit_time>=? AND "
-          "v.visit_time<?"
-      // clang-format on
-      ));
+  sql::Statement statement;
+  switch (policy_for_404_visits) {
+    case VisitQuery404sPolicy::kInclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          // clang-format off
+          SQL_FROM_HERE,
+            "SELECT "
+            "visit_time,"
+            "transition "
+            "FROM visits v INNER JOIN urls u ON v.url=u.id "
+            "WHERE "
+              "u.url>=? AND "
+              "u.url<? AND "
+              "v.visit_time>=? AND "
+              "v.visit_time<?"
+          // clang-format on
+          ));
+      break;
+    case VisitQuery404sPolicy::kExclude404s:
+      statement.Assign(GetDB().GetCachedStatement(
+          // clang-format off
+          SQL_FROM_HERE,
+            "SELECT "
+            "visit_time,"
+            "transition "
+            "FROM visits v INNER JOIN urls u ON v.url=u.id "
+            "LEFT OUTER JOIN context_annotations ca ON v.id=ca.visit_id "
+            "WHERE "
+              "u.url>=? AND "
+              "u.url<? AND "
+              "v.visit_time>=? AND "
+              "v.visit_time<? AND "
+              "("
+                "ca.response_code IS NULL OR "
+                "ca.response_code!=404"
+              ")"
+          // clang-format on
+          ));
+      break;
+  }
 
   statement.BindString(0, host_bounds.first);
   statement.BindString(1, host_bounds.second);
@@ -1044,8 +1217,9 @@ DailyVisitsResult VisitDatabase::GetDailyVisitsToHost(const GURL& host,
 
   std::vector<base::Time> dates;
   while (statement.Step()) {
-    if (!TransitionIsVisible(statement.ColumnInt(1)))
+    if (!TransitionIsVisible(statement.ColumnInt(1))) {
       continue;
+    }
     ++result.total_visits;
     dates.push_back(statement.ColumnTime(0).LocalMidnight());
   }
@@ -1099,8 +1273,9 @@ void VisitDatabase::GetVisitsSource(const VisitVector& visits,
     sql.append("WHERE id IN (");
     // Append all the ids in the statement.
     for (size_t j = start_index; j < end_index; j++) {
-      if (j != start_index)
+      if (j != start_index) {
         sql.push_back(',');
+      }
       sql.append(base::NumberToString(visits[j].visit_id));
     }
     sql.append(") ORDER BY id");
@@ -1119,8 +1294,9 @@ VisitSource VisitDatabase::GetVisitSource(const VisitID visit_id) {
   sql::Statement statement(GetDB().GetCachedStatement(
       SQL_FROM_HERE, "SELECT source FROM visit_source WHERE id=?"));
   statement.BindInt64(0, visit_id);
-  if (!statement.Step())
+  if (!statement.Step()) {
     return VisitSource::SOURCE_BROWSED;
+  }
   return VisitSourceFromInt(statement.ColumnInt(0));
 }
 
@@ -1156,7 +1332,7 @@ VisitDatabase::GetGoogleDomainVisitsFromSearchesInRange(base::Time begin_time,
   while (statement.Step()) {
     const GURL url(statement.ColumnStringView(1));
     if (google_util::IsGoogleSearchUrl(url)) {
-      domain_visits.emplace_back(url.host(), statement.ColumnTime(0));
+      domain_visits.emplace_back(url.GetHost(), statement.ColumnTime(0));
     }
   }
   return domain_visits;
@@ -1169,6 +1345,285 @@ bool VisitDatabase::GetIsUrlKnownToSync(URLID url_id, bool* is_known_to_sync) {
                                  "WHERE url=? AND is_known_to_sync"));
   statement.BindInt64(0, url_id);
   *is_known_to_sync = statement.Step();
+  return true;
+}
+
+bool VisitDatabase::MigrateVisitsWithoutDuration() {
+  if (!GetDB().DoesTableExist("visits")) {
+    NOTREACHED() << " Visits table should exist before migration";
+  }
+
+  if (!GetDB().DoesColumnExist("visits", "visit_duration")) {
+    // Old versions don't have the visit_duration column, we modify the table
+    // to add that field.
+    if (!GetDB().Execute(
+            "ALTER TABLE visits "
+            "ADD COLUMN visit_duration INTEGER DEFAULT 0 NOT NULL")) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool VisitDatabase::MigrateVisitsWithoutIncrementedOmniboxTypedScore() {
+  if (!GetDB().DoesTableExist("visits")) {
+    NOTREACHED() << " Visits table should exist before migration";
+  }
+
+  if (!GetDB().DoesColumnExist("visits", "incremented_omnibox_typed_score")) {
+    // Wrap the creation and initialization of the new column in a transaction
+    // since the value must be computed outside of SQL and iteratively
+    // updated.
+    sql::Transaction committer(&GetDB());
+    if (!committer.Begin()) {
+      return false;
+    }
+
+    // Old versions don't have the incremented_omnibox_typed_score column, we
+    // modify the table to add that field. We iterate through the table and
+    // compute the result for each row.
+    if (!GetDB().Execute("ALTER TABLE visits "
+                         "ADD COLUMN incremented_omnibox_typed_score BOOLEAN "
+                         "DEFAULT FALSE NOT NULL")) {
+      return false;
+    }
+
+    // Iterate through rows in the visits table and update each with the
+    // appropriate increment_omnibox_typed_score value. Because this column
+    // was newly added, the existing (default) value is not valid/correct.
+    sql::Statement read(GetDB().GetUniqueStatement(
+        "SELECT "
+        "id,url,visit_time,from_visit,transition,segment_id,visit_duration,"
+        "incremented_omnibox_typed_score FROM visits"));
+    while (read.is_valid() && read.Step()) {
+      VisitRow row;
+      row.visit_id = read.ColumnInt64(0);
+      row.url_id = read.ColumnInt64(1);
+      row.visit_time = read.ColumnTime(2);
+      row.referring_visit = read.ColumnInt64(3);
+      row.transition = PageTransitionFromIntWithFallback(read.ColumnInt(4));
+      row.segment_id = read.ColumnInt64(5);
+      row.visit_duration = read.ColumnTimeDelta(6);
+      // Check if the visit row is in an invalid state and if it is then
+      // leave the new field as the default value.
+      if (row.visit_id == row.referring_visit) {
+        continue;
+      }
+      row.incremented_omnibox_typed_score =
+          HistoryBackend::IsTypedIncrement(row.transition);
+
+      sql::Statement statement(GetDB().GetCachedStatement(
+          SQL_FROM_HERE,
+          "UPDATE visits SET "
+          "url=?,visit_time=?,from_visit=?,transition=?,segment_id=?,"
+          "visit_duration=?,incremented_omnibox_typed_score=? "
+          "WHERE id=?"));
+      statement.BindInt64(0, row.url_id);
+      statement.BindTime(1, row.visit_time);
+      statement.BindInt64(2, row.referring_visit);
+      statement.BindInt64(3, row.transition);
+      statement.BindInt64(4, row.segment_id);
+      statement.BindTimeDelta(5, row.visit_duration);
+      statement.BindBool(6, row.incremented_omnibox_typed_score);
+      statement.BindInt64(7, row.visit_id);
+
+      if (!statement.Run()) {
+        return false;
+      }
+    }
+    if (!read.Succeeded() || !committer.Commit()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool VisitDatabase::MigrateVisitsWithoutPubliclyRoutableColumn() {
+  if (!GetDB().DoesTableExist("visits")) {
+    NOTREACHED() << " Visits table should exist before migration";
+  }
+
+  if (GetDB().DoesColumnExist("visits", "publicly_routable")) {
+    return true;
+  }
+
+  // Old versions don't have the publicly_routable column, we modify the table
+  // to add that field.
+  return GetDB().Execute(
+      "ALTER TABLE visits "
+      "ADD COLUMN publicly_routable BOOLEAN "
+      "DEFAULT FALSE NOT NULL");
+}
+
+bool VisitDatabase::
+    MigrateVisitsWithoutOpenerVisitColumnAndDropPubliclyRoutableColumn() {
+  if (!GetDB().DoesTableExist("visits")) {
+    NOTREACHED() << " Visits table should exist before migration";
+  }
+
+  if (GetDB().DoesColumnExist("visits", "opener_visit")) {
+    return true;
+  }
+
+  sql::Transaction transaction(&GetDB());
+  return transaction.Begin() &&
+         GetDB().Execute(
+             "CREATE TABLE visits_tmp("
+             "id INTEGER PRIMARY KEY,"
+             "url INTEGER NOT NULL,"  // key of the URL this corresponds to
+             "visit_time INTEGER NOT NULL,"
+             "from_visit INTEGER,"
+             "transition INTEGER DEFAULT 0 NOT NULL,"
+             "segment_id INTEGER,"
+             "visit_duration INTEGER DEFAULT 0 NOT NULL,"
+             "incremented_omnibox_typed_score BOOLEAN DEFAULT FALSE NOT "
+             "NULL)") &&
+         GetDB().Execute(
+             "INSERT INTO visits_tmp SELECT "
+             "id, url, visit_time, from_visit, transition, segment_id, "
+             "visit_duration, incremented_omnibox_typed_score FROM visits") &&
+         GetDB().Execute(
+             "ALTER TABLE visits_tmp ADD COLUMN opener_visit INTEGER") &&
+         GetDB().Execute("DROP TABLE visits") &&
+         GetDB().Execute("ALTER TABLE visits_tmp RENAME TO visits") &&
+         transaction.Commit();
+}
+
+bool VisitDatabase::MigrateVisitsAutoincrementIdAndAddOriginatorColumns() {
+  if (!GetDB().DoesTableExist("visits")) {
+    NOTREACHED() << " Visits table should exist before migration";
+  }
+
+  if (GetDB().DoesColumnExist("visits", "originator_cache_guid") &&
+      GetDB().DoesColumnExist("visits", "originator_visit_id") &&
+      VisitTableContainsAutoincrement()) {
+    return true;
+  }
+
+  sql::Transaction transaction(&GetDB());
+  return transaction.Begin() &&
+         GetDB().Execute(
+             "CREATE TABLE visits_tmp("
+             "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+             "url INTEGER NOT NULL,"  // key of the URL this corresponds to
+             "visit_time INTEGER NOT NULL,"
+             "from_visit INTEGER,"
+             "transition INTEGER DEFAULT 0 NOT NULL,"
+             "segment_id INTEGER,"
+             "visit_duration INTEGER DEFAULT 0 NOT NULL,"
+             "incremented_omnibox_typed_score BOOLEAN DEFAULT FALSE NOT NULL,"
+             "opener_visit INTEGER)") &&
+         GetDB().Execute(
+             "INSERT INTO visits_tmp SELECT "
+             "id, url, visit_time, from_visit, transition, segment_id, "
+             "visit_duration, incremented_omnibox_typed_score, opener_visit "
+             "FROM visits") &&
+         GetDB().Execute(
+             "ALTER TABLE visits_tmp ADD COLUMN originator_cache_guid "
+             "TEXT") &&
+         GetDB().Execute(
+             "ALTER TABLE visits_tmp ADD COLUMN originator_visit_id "
+             "INTEGER") &&
+         GetDB().Execute("DROP TABLE visits") &&
+         GetDB().Execute("ALTER TABLE visits_tmp RENAME TO visits") &&
+         transaction.Commit();
+}
+
+bool VisitDatabase::MigrateVisitsAddOriginatorFromVisitAndOpenerVisitColumns() {
+  if (!GetDB().DoesTableExist("visits")) {
+    NOTREACHED() << " Visits table should exist before migration";
+  }
+
+  // Old versions don't have the originator_from_visit or
+  // originator_opener_visit columns; modify the table to add those.
+  if (!GetDB().DoesColumnExist("visits", "originator_from_visit")) {
+    if (!GetDB().Execute("ALTER TABLE visits "
+                         "ADD COLUMN originator_from_visit INTEGER")) {
+      return false;
+    }
+  }
+  if (!GetDB().DoesColumnExist("visits", "originator_opener_visit")) {
+    if (!GetDB().Execute("ALTER TABLE visits "
+                         "ADD COLUMN originator_opener_visit INTEGER")) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool VisitDatabase::VisitTableContainsAutoincrement() {
+  // sqlite_schema has columns:
+  //   type - "index" or "table".
+  //   name - name of created element.
+  //   tbl_name - name of element, or target table in case of index.
+  //   rootpage - root page of the element in database file.
+  //   sql - SQL to create the element.
+  sql::Statement statement(
+      GetDB().GetUniqueStatement("SELECT sql FROM sqlite_schema WHERE type = "
+                                 "'table' AND name = 'visits'"));
+
+  // visits table does not exist.
+  if (!statement.Step()) {
+    return false;
+  }
+
+  std::string_view urls_schema = statement.ColumnStringView(0);
+  // We check if the whole schema contains "AUTOINCREMENT", since
+  // "AUTOINCREMENT" only can be used for "INTEGER PRIMARY KEY", so we assume
+  // no other columns could contain "AUTOINCREMENT".
+  return urls_schema.find("AUTOINCREMENT") != std::string::npos;
+}
+
+bool VisitDatabase::GetAllVisitedURLRowidsForMigrationToVersion40(
+    std::vector<URLID>* visited_url_rowids_sorted) {
+  DCHECK(visited_url_rowids_sorted);
+  sql::Statement statement(GetDB().GetUniqueStatement(
+      "SELECT DISTINCT url FROM visits ORDER BY url"));
+
+  while (statement.Step()) {
+    visited_url_rowids_sorted->push_back(statement.ColumnInt64(0));
+  }
+  return statement.Succeeded();
+}
+
+bool VisitDatabase::MigrateVisitsAddIsKnownToSyncColumn() {
+  if (!GetDB().DoesTableExist("visits")) {
+    NOTREACHED() << " Visits table should exist before migration";
+  }
+
+  if (!GetDB().DoesColumnExist("visits", "is_known_to_sync")) {
+    if (!GetDB().Execute("ALTER TABLE visits "
+                         "ADD COLUMN is_known_to_sync "
+                         "BOOLEAN DEFAULT FALSE NOT NULL")) {
+      return false;
+    }
+
+    // Note we specifically DO NOT update the existing visits that have
+    // `visit_source` == `SOURCE_SYNCED` to have `is_known_to_sync` set to
+    // true.
+    //
+    // This is because we don't know if the user has subsequently turned off
+    // Sync, and we only want to flag this on for visits that are CURRENTLY
+    // known to Sync and associated with the current user.
+  }
+
+  return true;
+}
+
+bool VisitDatabase::MigrateVisitsAddConsiderForNewTabPageMostVisitedColumn() {
+  if (!GetDB().DoesTableExist("visits")) {
+    NOTREACHED() << " Visits table should exist before migration";
+  }
+
+  if (!GetDB().DoesColumnExist("visits", "consider_for_ntp_most_visited")) {
+    if (!GetDB().Execute("ALTER TABLE visits "
+                         "ADD COLUMN consider_for_ntp_most_visited "
+                         "BOOLEAN DEFAULT FALSE NOT NULL")) {
+      return false;
+    }
+  }
+
   return true;
 }
 

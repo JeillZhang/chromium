@@ -70,7 +70,7 @@ WebUIBundledCachedMetadataHandler::GetCachedMetadata(
 }
 
 String WebUIBundledCachedMetadataHandler::Encoding() const {
-  return WTF::UTF8Encoding().GetName();
+  return Utf8Encoding().GetName();
 }
 
 CachedMetadataHandler::ServingSource
@@ -84,12 +84,11 @@ void WebUIBundledCachedMetadataHandler::OnMemoryDump(
   if (!cached_metadata_) {
     return;
   }
-  const String dump_name =
-      WTF::StrCat({dump_prefix, "/webui_bundled_resource"});
+  const String dump_name = StrCat({dump_prefix, "/webui_bundled_resource"});
   auto* dump = pmd->CreateMemoryAllocatorDump(dump_name);
   dump->AddScalar("size", "bytes", GetCodeCacheSize());
   pmd->AddSuballocation(dump->Guid(),
-                        String(WTF::Partitions::kAllocatedObjectPoolName));
+                        String(Partitions::kAllocatedObjectPoolName));
 }
 
 size_t WebUIBundledCachedMetadataHandler::GetCodeCacheSize() const {

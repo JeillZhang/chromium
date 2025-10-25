@@ -7,6 +7,8 @@ package org.chromium.chrome.browser.tasks.tab_management;
 import static androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.UNSET;
 
 import android.content.Context;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.util.AttributeSet;
@@ -37,6 +39,9 @@ public class TabGroupFaviconQuarter extends FrameLayout {
     private float mInnerRadius;
     private float mOuterRadius;
 
+    private boolean mHasImageOnBackground;
+    private boolean mContaimentEnabled;
+
     /** Constructor for inflation. */
     public TabGroupFaviconQuarter(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
@@ -60,27 +65,36 @@ public class TabGroupFaviconQuarter extends FrameLayout {
         setLayoutParams(params);
     }
 
+    /** Set whether the quarter is displayed on a containment row. */
+    void setContainmentEnabled(boolean isEnabled) {
+        mContaimentEnabled = isEnabled;
+        updateBackgroundColor();
+    }
+
     /** The displayed image is exclusive with the plus count. */
     void setImage(Drawable image) {
+        mHasImageOnBackground = true;
         mImageView.setVisibility(View.VISIBLE);
         mImageView.setImageDrawable(image);
         hideText();
-        updateBackgroundColor(/* hasImage= */ true);
+        updateBackgroundColor();
     }
 
     /** The displayed plus count is exclusive with the image. */
     void setPlusCount(int plusCount) {
+        mHasImageOnBackground = false;
         hideImage();
         mTextView.setVisibility(View.VISIBLE);
         String text = getResources().getString(R.string.plus_hidden_tab_count, plusCount);
         mTextView.setText(text);
-        updateBackgroundColor(/* hasImage= */ false);
+        updateBackgroundColor();
     }
 
     void clear() {
+        mHasImageOnBackground = false;
         hideImage();
         hideText();
-        updateBackgroundColor(/* hasImage= */ false);
+        updateBackgroundColor();
     }
 
     private void hideImage() {
@@ -133,9 +147,11 @@ public class TabGroupFaviconQuarter extends FrameLayout {
         return radii;
     }
 
-    private void updateBackgroundColor(boolean hasImage) {
+    private void updateBackgroundColor() {
         @ColorInt
-        int color = TabUiThemeProvider.getTabGroupFaviconQuarterFillColor(getContext(), hasImage);
-        mBackground.setColor(color);
+        int color =
+                TabUiThemeProvider.getTabGroupFaviconQuarterFillColor(
+                        getContext(), mHasImageOnBackground, mContaimentEnabled);
+        mBackground.setColorFilter(new PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN));
     }
 }

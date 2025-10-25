@@ -7,10 +7,13 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_bubble_type.h"
+#include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/tab_modal_confirm_dialog.h"
+#include "chrome/browser/ui/tabs/split_tab_metrics.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
@@ -106,7 +109,8 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, FullscreenClearsFocus) {
 // Test whether the top view including toolbar and tab strip shows up or hides
 // correctly in browser fullscreen mode.
 IN_PROC_BROWSER_TEST_F(BrowserViewTest, BrowserFullscreenShowTopView) {
-  BrowserView* browser_view = static_cast<BrowserView*>(browser()->window());
+  BrowserView* const browser_view =
+      static_cast<BrowserView*>(browser()->window());
 
   // The top view should always show up in regular mode.
   EXPECT_FALSE(browser_view->IsFullscreen());
@@ -140,7 +144,7 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, BrowserFullscreenShowTopView) {
   EXPECT_EQ(chrome::IsCommandEnabled(browser(), IDC_SHOW_BOOKMARK_BAR),
             base::FeatureList::IsEnabled(features::kImmersiveFullscreen));
 
-  if (browser_view->immersive_mode_controller()->IsEnabled()) {
+  if (ImmersiveModeController::From(browser())->IsEnabled()) {
     // Move mouse to the upper border of the browser window and the toolbar
     // should become visible.
     ASSERT_TRUE(ui_test_utils::SendMouseMoveSync(
@@ -160,7 +164,7 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, BrowserFullscreenShowTopView) {
 #else
   // In immersive fullscreen mode, the top view should show up; otherwise, it
   // always hides.
-  if (browser_view->immersive_mode_controller()->IsEnabled()) {
+  if (ImmersiveModeController::From(browser())->IsEnabled()) {
     top_view_in_browser_fullscreen = true;
   }
 #endif
@@ -170,14 +174,16 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, BrowserFullscreenShowTopView) {
             chrome::IsCommandEnabled(browser(), IDC_SHOW_BOOKMARK_BAR));
 
   // Enter into tab fullscreen mode from browser fullscreen mode.
-  FullscreenController* controller =
-      browser()->exclusive_access_manager()->fullscreen_controller();
+  FullscreenController* controller = browser()
+                                         ->GetFeatures()
+                                         .exclusive_access_manager()
+                                         ->fullscreen_controller();
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   controller->EnterFullscreenModeForTab(web_contents->GetPrimaryMainFrame());
   EXPECT_TRUE(browser_view->IsFullscreen());
   bool top_view_in_tab_fullscreen =
-      browser_view->immersive_mode_controller()->IsEnabled();
+      ImmersiveModeController::From(browser())->IsEnabled();
   EXPECT_EQ(top_view_in_tab_fullscreen, browser_view->GetTabStripVisible());
   // The 'Always Show Bookmarks Bar' should be disabled in tab fullscreen mode.
   EXPECT_EQ(top_view_in_tab_fullscreen,
@@ -188,7 +194,8 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, BrowserFullscreenShowTopView) {
       blink::WebInputEvent::Type::kKeyDown, blink::WebInputEvent::kNoModifiers,
       blink::WebInputEvent::GetStaticTimeStampForTests());
   event.windows_key_code = ui::VKEY_ESCAPE;
-  browser()->exclusive_access_manager()->HandleUserKeyEvent(event);
+  browser()->GetFeatures().exclusive_access_manager()->HandleUserKeyEvent(
+      event);
   EXPECT_TRUE(browser_view->IsFullscreen());
   EXPECT_EQ(top_view_in_browser_fullscreen, browser_view->GetTabStripVisible());
   // This makes sure that the layout was updated accordingly.
@@ -213,8 +220,10 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, TabFullscreenShowTopView) {
   EXPECT_TRUE(browser_view->GetTabStripVisible());
 
   // Enter into tab fullscreen mode.
-  FullscreenController* controller =
-      browser()->exclusive_access_manager()->fullscreen_controller();
+  FullscreenController* controller = browser()
+                                         ->GetFeatures()
+                                         .exclusive_access_manager()
+                                         ->fullscreen_controller();
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   controller->EnterFullscreenModeForTab(web_contents->GetPrimaryMainFrame());
@@ -238,8 +247,9 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, TabFullscreenHideSplitView) {
   // Add a second tab and create a split
   chrome::AddTabAt(browser(), GURL(), -1, true);
   browser()->tab_strip_model()->ActivateTabAt(0);
-  browser()->tab_strip_model()->AddToNewSplit({1},
-                                              split_tabs::SplitTabVisualData());
+  browser()->tab_strip_model()->AddToNewSplit(
+      {1}, split_tabs::SplitTabVisualData(),
+      split_tabs::SplitTabCreatedSource::kToolbarButton);
 
   BrowserView* browser_view = static_cast<BrowserView*>(browser()->window());
 
@@ -248,8 +258,10 @@ IN_PROC_BROWSER_TEST_F(BrowserViewTest, TabFullscreenHideSplitView) {
   EXPECT_TRUE(browser_view->IsInSplitView());
 
   // Enter into tab fullscreen mode.
-  FullscreenController* controller =
-      browser()->exclusive_access_manager()->fullscreen_controller();
+  FullscreenController* controller = browser()
+                                         ->GetFeatures()
+                                         .exclusive_access_manager()
+                                         ->fullscreen_controller();
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   controller->EnterFullscreenModeForTab(web_contents->GetPrimaryMainFrame());
@@ -544,49 +556,63 @@ using BrowserViewLockedFullscreenTestChromeOS = BrowserViewTest;
 
 IN_PROC_BROWSER_TEST_F(BrowserViewLockedFullscreenTestChromeOS,
                        ShowExclusiveAccessBubbleWhenNotLocked) {
-  PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/false);
-  browser()->exclusive_access_manager()->context()->UpdateExclusiveAccessBubble(
-      {
-          .origin = url::Origin::Create(GURL(
-              "http://www.example.com")),  // Should be non-empty to show bubble
-          .type = ExclusiveAccessBubbleType::
-              EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_EXIT_INSTRUCTION,
-          .force_update = true,
-      },
-      base::NullCallback());
-  EXPECT_TRUE(browser_view()->IsExclusiveAccessBubbleDisplayed());
+  ash::PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/false);
+  browser()
+      ->GetFeatures()
+      .exclusive_access_manager()
+      ->context()
+      ->UpdateExclusiveAccessBubble(
+          {
+              .origin = url::Origin::Create(
+                  GURL("http://www.example.com")),  // Should be non-empty to
+                                                    // show bubble
+              .type = ExclusiveAccessBubbleType::
+                  EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_EXIT_INSTRUCTION,
+              .force_update = true,
+          },
+          base::NullCallback());
+  EXPECT_TRUE(browser_view()
+                  ->GetExclusiveAccessContext()
+                  ->IsExclusiveAccessBubbleDisplayed());
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserViewLockedFullscreenTestChromeOS,
                        HideExclusiveAccessBubbleWhenLocked) {
-  PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
-  browser()->exclusive_access_manager()->context()->UpdateExclusiveAccessBubble(
-      {.origin = url::Origin::Create(GURL(
-           "http://www.example.com")),  // Should be non-empty to show bubble
-       .type = ExclusiveAccessBubbleType::
-           EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_EXIT_INSTRUCTION,
-       .force_update = true},
-      base::NullCallback());
-  EXPECT_FALSE(browser_view()->IsExclusiveAccessBubbleDisplayed());
+  ash::PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
+  browser()
+      ->GetFeatures()
+      .exclusive_access_manager()
+      ->context()
+      ->UpdateExclusiveAccessBubble(
+          {.origin = url::Origin::Create(
+               GURL("http://www.example.com")),  // Should be non-empty to show
+                                                 // bubble
+           .type = ExclusiveAccessBubbleType::
+               EXCLUSIVE_ACCESS_BUBBLE_TYPE_FULLSCREEN_EXIT_INSTRUCTION,
+           .force_update = true},
+          base::NullCallback());
+  EXPECT_FALSE(browser_view()
+                   ->GetExclusiveAccessContext()
+                   ->IsExclusiveAccessBubbleDisplayed());
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserViewLockedFullscreenTestChromeOS,
                        EnableImmersiveModeWhenNotTrustedPinned) {
-  PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/false);
-  EXPECT_TRUE(browser_view()->immersive_mode_controller()->IsEnabled());
+  ash::PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/false);
+  EXPECT_TRUE(ImmersiveModeController::From(browser())->IsEnabled());
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserViewLockedFullscreenTestChromeOS,
                        DisableImmersiveModeWhenNotLockedForOnTask) {
   browser()->SetLockedForOnTask(false);
-  PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
-  EXPECT_FALSE(browser_view()->immersive_mode_controller()->IsEnabled());
+  ash::PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
+  EXPECT_FALSE(ImmersiveModeController::From(browser())->IsEnabled());
 }
 
 IN_PROC_BROWSER_TEST_F(BrowserViewLockedFullscreenTestChromeOS,
                        EnableImmersiveModeWhenLockedForOnTask) {
   browser()->SetLockedForOnTask(true);
-  PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
-  EXPECT_TRUE(browser_view()->immersive_mode_controller()->IsEnabled());
+  ash::PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
+  EXPECT_TRUE(ImmersiveModeController::From(browser())->IsEnabled());
 }
 #endif  // BUILDFLAG(IS_CHROMEOS)

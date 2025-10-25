@@ -17,7 +17,8 @@
 
 namespace {
 constexpr CGFloat kPreferredCornerRadius = 20;
-constexpr CGFloat kDismissSymbolSize = 22;
+constexpr CGFloat kDismissSymbolSizeIOS18 = 22;
+constexpr CGFloat kDismissSymbolSizeIOS26 = 16;
 NSString* const kWhatsNewInstructionsLabelAccessibilityIdentifier =
     @"WhatsNewTitleAccessibilityIdentifier";
 }  // namespace
@@ -77,9 +78,20 @@ NSString* const kWhatsNewInstructionsLabelAccessibilityIdentifier =
   _alertScreen.titleView = self.titleLabel;
   _alertScreen.actionHandler = self.actionHandler;
   _alertScreen.showDismissBarButton = YES;
-  UIImage* xmarkSymbol = SymbolWithPalette(
-      DefaultSymbolWithPointSize(kXMarkCircleFillSymbol, kDismissSymbolSize),
-      @[ [UIColor colorNamed:kGrey600Color] ]);
+
+  UIImage* xmarkSymbol;
+  if (@available(iOS 26, *)) {
+    UIImageConfiguration* configuration = [UIImageSymbolConfiguration
+        configurationWithPointSize:kDismissSymbolSizeIOS26
+                            weight:UIImageSymbolWeightLight
+                             scale:UIImageSymbolScaleUnspecified];
+    xmarkSymbol = DefaultSymbolWithConfiguration(kXMarkSymbol, configuration);
+  } else {
+    xmarkSymbol =
+        SymbolWithPalette(DefaultSymbolWithPointSize(kXMarkCircleFillSymbol,
+                                                     kDismissSymbolSizeIOS18),
+                          @[ [UIColor colorNamed:kGrey600Color] ]);
+  }
   _alertScreen.customDismissBarButtonImage = xmarkSymbol;
 
   _alertScreen.topAlignedLayout = YES;
@@ -107,6 +119,17 @@ NSString* const kWhatsNewInstructionsLabelAccessibilityIdentifier =
     [UISheetPresentationControllerDetent mediumDetent],
     [UISheetPresentationControllerDetent largeDetent]
   ];
+  self.alertScreen.view.translatesAutoresizingMaskIntoConstraints = NO;
+  [NSLayoutConstraint activateConstraints:@[
+    [self.alertScreen.view.topAnchor
+        constraintEqualToAnchor:self.view.topAnchor],
+    [self.alertScreen.view.bottomAnchor
+        constraintEqualToAnchor:self.view.bottomAnchor],
+    [self.alertScreen.view.leadingAnchor
+        constraintEqualToAnchor:self.view.leadingAnchor],
+    [self.alertScreen.view.trailingAnchor
+        constraintEqualToAnchor:self.view.trailingAnchor],
+  ]];
   presentationController.preferredCornerRadius = kPreferredCornerRadius;
 }
 

@@ -23,10 +23,12 @@ import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
+import org.chromium.components.tabs.TabStripCollection;
 import org.chromium.content_public.browser.LoadUrlParams;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /** Implement methods shared across the different model implementations. */
 @NullMarked
@@ -86,37 +88,23 @@ public abstract class TabModelSelectorBase
                         mTabModelSupplier, tabModel -> tabModel.getTabCountSupplier());
     }
 
-    private static List<TabGroupModelFilterInternal> createTabGroupModelFilters(
-            List<TabModelInternal> tabModels, TabUngrouperFactory tabUngrouperFactory) {
-        List<TabGroupModelFilterInternal> filters = new ArrayList<>(tabModels.size());
-        for (TabModelInternal tabModel : tabModels) {
-            boolean isIncognitoBranded = tabModel.isIncognitoBranded();
-            TabGroupModelFilter[] filterHolder = new TabGroupModelFilter[1];
-            TabUngrouper tabUngrouper =
-                    tabUngrouperFactory.create(isIncognitoBranded, () -> filterHolder[0]);
-            TabGroupModelFilterInternal filter = new TabGroupModelFilterImpl(tabModel, tabUngrouper);
-            filterHolder[0] = filter;
-            filters.add(filter);
-        }
-        return filters;
-    }
-
     @Initializer
     protected final void initialize(
-            TabModelInternal normalModel,
-            IncognitoTabModelInternal incognitoModel,
-            TabUngrouperFactory tabUngrouperFactory) {
+            TabModelHolder normalModelHolder, IncognitoTabModelHolder incognitoModelHolder) {
         // Only normal and incognito supported for now.
         assert mTabModelInternals.isEmpty();
 
-        mTabModelInternals.add(normalModel);
-        mTabModelInternals.add(incognitoModel);
+        mTabModelInternals.add(normalModelHolder.tabModel);
+        mTabModelInternals.add(incognitoModelHolder.tabModel);
         mTabModels.addAll(mTabModelInternals);
-        mIncognitoTabModel = incognitoModel;
+        mIncognitoTabModel = incognitoModelHolder.tabModel;
         int activeModelIndex = getModelIndex(mStartIncognito);
         assert activeModelIndex != MODEL_NOT_FOUND;
         mTabGroupModelFilterProvider.init(
-                this, createTabGroupModelFilters(mTabModelInternals, tabUngrouperFactory));
+                this,
+                List.of(
+                        normalModelHolder.tabGroupModelFilter,
+                        incognitoModelHolder.tabGroupModelFilter));
 
         TabModelObserver tabModelObserver =
                 new TabModelObserver() {
@@ -148,8 +136,8 @@ public abstract class TabModelSelectorBase
         }
         mIncognitoTabModel.addIncognitoObserver(this);
 
-        incognitoModel.setActive(mStartIncognito);
-        normalModel.setActive(!mStartIncognito);
+        incognitoModelHolder.tabModel.setActive(mStartIncognito);
+        normalModelHolder.tabModel.setActive(!mStartIncognito);
         mTabModelSupplier.set(mTabModelInternals.get(activeModelIndex));
 
         notifyChanged();
@@ -161,12 +149,13 @@ public abstract class TabModelSelectorBase
     }
 
     /**
-     * Should be called once the native library is loaded so that the actual internals of this
-     * class can be initialized.
+     * Should be called once the native library is loaded so that the actual internals of this class
+     * can be initialized.
      *
      * @param tabContentProvider A {@link TabContentManager} instance.
      */
-    public void onNativeLibraryReady(TabContentManager tabContentProvider) {}
+    public void onNativeLibraryReady(
+            TabContentManager tabContentProvider, boolean wasTabCollectionsActive) {}
 
     @Override
     public void onTabsViewShown() {}
@@ -322,6 +311,13 @@ public abstract class TabModelSelectorBase
             }
         }
 
+        // In case the tab needs to be closed while a reparenting task is executing. This could be
+        // the case for navigations progressing while the tab is being moved between web clients.
+        if (tab.isDetached()) {
+            tab.setDidCloseWhileDetached();
+            return true;
+        }
+
         if (getModels().isEmpty()) {
             // Tab may be destroyed here via Tab#destroy(). It is skipped for now
             // to examine its potential side effect on crbug.com/325558929.
@@ -369,6 +365,15 @@ public abstract class TabModelSelectorBase
         int count = 0;
         for (int i = 0; i < getModels().size(); i++) {
             count += mTabModelInternals.get(i).getCount();
+        }
+        return count;
+    }
+
+    @Override
+    public int getTotalPinnedTabCount() {
+        int count = 0;
+        for (int i = 0; i < getModels().size(); i++) {
+            count += mTabModelInternals.get(i).getPinnedTabsCount();
         }
         return count;
     }
@@ -480,5 +485,16 @@ public abstract class TabModelSelectorBase
     public void setIncognitoReauthDialogDelegate(
             IncognitoReauthDialogDelegate incognitoReauthDialogDelegate) {
         mIncognitoReauthDialogDelegate = incognitoReauthDialogDelegate;
+    }
+
+    @Override
+    public @Nullable TabModel getTabModelForTabStripCollection(
+            TabStripCollection tabStripCollection) {
+        for (TabModel tabModel : getModels()) {
+            TabStripCollection modelCollection = tabModel.getTabStripCollection();
+            if (!Objects.equals(modelCollection, tabStripCollection)) continue;
+            return tabModel;
+        }
+        return null;
     }
 }

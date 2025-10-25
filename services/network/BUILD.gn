@@ -44,6 +44,11 @@ component("network_service") {
     "data_remover_util.h",
     "device_bound_session_manager.cc",
     "device_bound_session_manager.h",
+    "devtools_durable_msg.cc",
+    "devtools_durable_msg.h",
+    "devtools_durable_msg_accounting_delegate.h",
+    "devtools_durable_msg_collector.cc",
+    "devtools_durable_msg_collector.h",
     "disk_cache/mojo_backend_file_operations.cc",
     "disk_cache/mojo_backend_file_operations.h",
     "disk_cache/mojo_backend_file_operations_factory.cc",
@@ -56,8 +61,8 @@ component("network_service") {
     "host_resolver.h",
     "host_resolver_mdns_listener.cc",
     "host_resolver_mdns_listener.h",
-    "http_auth_cache_copier.cc",
-    "http_auth_cache_copier.h",
+    "http_auth_cache_proxy_copier.cc",
+    "http_auth_cache_proxy_copier.h",
     "http_cache_data_counter.cc",
     "http_cache_data_counter.h",
     "http_cache_data_remover.cc",
@@ -147,6 +152,10 @@ component("network_service") {
     "restricted_cookie_manager.h",
     "restricted_udp_socket.cc",
     "restricted_udp_socket.h",
+    "scheduler/network_service_task_queues.cc",
+    "scheduler/network_service_task_queues.h",
+    "scheduler/network_service_task_scheduler.cc",
+    "scheduler/network_service_task_scheduler.h",
     "sec_header_helpers.cc",
     "sec_header_helpers.h",
     "session_cleanup_cookie_store.cc",
@@ -182,8 +191,6 @@ component("network_service") {
     "shared_dictionary/shared_dictionary_writer_in_memory.h",
     "shared_dictionary/shared_dictionary_writer_on_disk.cc",
     "shared_dictionary/shared_dictionary_writer_on_disk.h",
-    "shared_dictionary/simple_url_pattern_matcher.cc",
-    "shared_dictionary/simple_url_pattern_matcher.h",
     "shared_resource_checker.cc",
     "shared_resource_checker.h",
     "slop_bucket.cc",
@@ -332,7 +339,6 @@ component("network_service") {
     "//components/ip_protection/common:ip_protection_telemetry_uma",
     "//components/ip_protection/common:masked_domain_list_manager",
     "//components/ip_protection/common:probabilistic_reveal_token_registry",
-    "//components/miracle_parameter/common",
     "//components/network_session_configurator/browser",
     "//components/network_session_configurator/common",
     "//components/os_crypt/async/common",
@@ -416,9 +422,9 @@ if (is_linux || is_chromeos) {
       "network_sandbox_hook_linux.h",
     ]
     deps = [
-      "//base:base",
+      "//base",
       "//sandbox/linux:sandbox_services",
-      "//sandbox/policy:policy",
+      "//sandbox/policy",
     ]
     configs += [ "//build/config/compiler:wexit_time_destructors" ]
   }
@@ -428,6 +434,7 @@ source_set("tests") {
   testonly = true
 
   sources = [
+    "accept_ch_frame_interceptor_unittest.cc",
     "chunked_data_pipe_upload_data_stream_unittest.cc",
     "connection_change_observer_unittest.cc",
     "cookie_access_delegate_impl_unittest.cc",
@@ -446,6 +453,7 @@ source_set("tests") {
     "cors/preflight_result_unittest.cc",
     "data_pipe_element_reader_unittest.cc",
     "data_remover_util_unittest.cc",
+    "devtools_durable_msg_collector_unittest.cc",
     "dns_config_change_manager_unittest.cc",
     "host_resolver_unittest.cc",
     "http_cache_data_counter_unittest.cc",
@@ -478,6 +486,8 @@ source_set("tests") {
     "resource_scheduler/resource_scheduler_params_manager_unittest.cc",
     "resource_scheduler/resource_scheduler_unittest.cc",
     "restricted_cookie_manager_unittest.cc",
+    "scheduler/network_service_task_queues_unittest.cc",
+    "scheduler/network_service_task_scheduler_unittest.cc",
     "sec_header_helpers_unittest.cc",
     "session_cleanup_cookie_store_unittest.cc",
     "shared_dictionary/shared_dictionary_data_pipe_writer_unittest.cc",
@@ -487,7 +497,6 @@ source_set("tests") {
     "shared_dictionary/shared_dictionary_on_disk_unittest.cc",
     "shared_dictionary/shared_dictionary_writer_in_memory_unittest.cc",
     "shared_dictionary/shared_dictionary_writer_on_disk_unittest.cc",
-    "shared_dictionary/simple_url_pattern_matcher_unittest.cc",
     "shared_resource_checker_unittest.cc",
     "socket_data_pump_unittest.cc",
     "ssl_config_service_mojo_unittest.cc",
@@ -622,6 +631,10 @@ source_set("tests") {
       "//third_party/blink/public/common:preloading_headers",
     ]
   }
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 source_set("test_support") {
@@ -697,18 +710,22 @@ source_set("test_support") {
     "//services/network/public/cpp",
     "//services/network/public/cpp:buildflags",
     "//services/network/public/mojom",
+    "//services/network/trust_tokens",
     "//services/network/trust_tokens:test_support",
-    "//services/network/trust_tokens:trust_tokens",
   ]
 
   deps = [
     "//base",
-    "//components/cbor:cbor",
+    "//components/cbor",
     "//mojo/public/cpp/bindings",
     "//net",
     "//net:test_support",
     "//testing/gtest",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 fuzzer_test("network_content_security_policy_fuzzer") {

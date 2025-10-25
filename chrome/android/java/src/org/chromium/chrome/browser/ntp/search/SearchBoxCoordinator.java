@@ -11,6 +11,11 @@ import android.view.View.OnClickListener;
 import android.view.View.OnDragListener;
 import android.view.ViewGroup;
 
+import androidx.annotation.StyleRes;
+
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.lens.LensEntryPoint;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
@@ -23,6 +28,7 @@ import org.chromium.ui.modelutil.PropertyModel;
  * coordinators, running most of the business logic associated with the fake search box component,
  * and updating the model accordingly.
  */
+@NullMarked
 public class SearchBoxCoordinator {
     private final PropertyModel mModel;
     private final ViewGroup mView;
@@ -37,6 +43,7 @@ public class SearchBoxCoordinator {
         mMediator = new SearchBoxMediator(context, mModel, mView);
     }
 
+    @Initializer
     public void initialize(
             ActivityLifecycleDispatcher activityLifecycleDispatcher,
             boolean isIncognito,
@@ -102,6 +109,10 @@ public class SearchBoxCoordinator {
         mMediator.setComposeplateButtonClickListener(listener);
     }
 
+    public void setComposeplateButtonIconRawResId(int iconRawResId) {
+        mMediator.setComposeplateButtonIconRawResId(iconRawResId);
+    }
+
     public boolean isLensEnabled(@LensEntryPoint int lensEntryPoint) {
         return mMediator.isLensEnabled(
                 lensEntryPoint, mIsIncognito, DeviceFormFactor.isWindowOnTablet(mWindowAndroid));
@@ -109,10 +120,6 @@ public class SearchBoxCoordinator {
 
     public void startLens(@LensEntryPoint int lensEntryPoint) {
         mMediator.startLens(lensEntryPoint, mWindowAndroid, mIsIncognito);
-    }
-
-    public void setIncognitoMode(boolean isIncognito) {
-        mIsIncognito = isIncognito;
     }
 
     public void setHeight(int height) {
@@ -127,15 +134,23 @@ public class SearchBoxCoordinator {
         mMediator.setEndPadding(endPadding);
     }
 
-    public void setTextViewTranslationX(float translationX) {
-        mMediator.setTextViewTranslationX(translationX);
+    public void setStartPadding(int startPadding) {
+        mMediator.setStartPadding(startPadding);
     }
 
-    public void setSearchTextSize(float textSize) {
-        mModel.set(SearchBoxProperties.SEARCH_BOX_TEXT_SIZE, textSize);
+    public void setSearchBoxTextAppearance(@StyleRes int resId) {
+        mMediator.setSearchBoxTextAppearance(resId);
     }
 
-    public boolean getIncognitoModeForTesting() {
-        return mIsIncognito;
+    public void enableSearchBoxEditText(boolean enabled) {
+        mMediator.enableSearchBoxEditText(enabled);
+    }
+
+    public void setSearchBoxHintText(@Nullable String hint) {
+        mMediator.setSearchBoxHintText(hint);
+    }
+
+    public void applyWhiteBackgroundWithShadow(boolean apply) {
+        mMediator.applyWhiteBackgroundWithShadow(apply);
     }
 }

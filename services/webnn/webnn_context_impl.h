@@ -37,56 +37,61 @@
 #include "services/webnn/webnn_context_provider_impl.h"
 #include "services/webnn/webnn_graph_impl.h"
 #include "services/webnn/webnn_object_impl.h"
+#include "services/webnn/webnn_tensor_impl.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 
 namespace webnn {
 
 class WebNNGraphBuilderImpl;
 class WebNNTensorImpl;
+class ScopedSequence;
 
+// A WebNNContextImpl owns a collection of graphs and tensors and may be bound
+// to a device such as a GPU or NPU. It is created and destroyed on its
+// `owning_task_runner()`. Mojo messages are dispatched on
+// `scheduler_task_runner()`, which is a distinct task runner but runs on the
+// same thread.
 class COMPONENT_EXPORT(WEBNN_SERVICE) WebNNContextImpl
-    : public mojom::WebNNContext,
-      public WebNNObjectImpl<blink::WebNNContextToken> {
+    : public WebNNObjectImpl<mojom::WebNNContext,
+                             blink::WebNNContextToken,
+                             mojo::Receiver<mojom::WebNNContext>> {
  public:
   using CreateGraphImplCallback = base::OnceCallback<void(
-      base::expected<std::unique_ptr<WebNNGraphImpl>, mojom::ErrorPtr>)>;
+      base::expected<scoped_refptr<WebNNGraphImpl>, mojom::ErrorPtr>)>;
 
-  using CreateTensorImplCallback = base::OnceCallback<void(
-      base::expected<std::unique_ptr<WebNNTensorImpl>, mojom::ErrorPtr>)>;
-
-  WebNNContextImpl(mojo::PendingReceiver<mojom::WebNNContext> receiver,
-                   WebNNContextProviderImpl* context_provider,
-                   ContextProperties properties,
-                   mojom::CreateContextOptionsPtr options);
+  WebNNContextImpl(
+      mojo::PendingReceiver<mojom::WebNNContext> receiver,
+      base::WeakPtr<WebNNContextProviderImpl> context_provider,
+      ContextProperties properties,
+      mojom::CreateContextOptionsPtr options,
+      mojo::ScopedDataPipeConsumerHandle write_tensor_consumer,
+      mojo::ScopedDataPipeProducerHandle read_tensor_producer,
+      gpu::CommandBufferId command_buffer_id,
+      std::unique_ptr<ScopedSequence> sequence,
+      scoped_refptr<gpu::MemoryTracker> memory_tracker,
+      scoped_refptr<base::SingleThreadTaskRunner> owning_task_runner,
+      gpu::SharedImageManager* shared_image_manager,
+      scoped_refptr<base::SingleThreadTaskRunner> main_task_runner);
 
   WebNNContextImpl(const WebNNContextImpl&) = delete;
   WebNNContextImpl& operator=(const WebNNContextImpl&) = delete;
 
-  ~WebNNContextImpl() override;
-
   virtual base::WeakPtr<WebNNContextImpl> AsWeakPtr()
-      VALID_CONTEXT_REQUIRED(sequence_checker_) = 0;
-
-#if DCHECK_IS_ON()
-  // Callers which obtain a WeakPtr from the method above may use this helper to
-  // assert that the WeakPtr is being used correctly.
-  void AssertCalledOnValidSequence() const;
-#endif  // DCHECK_IS_ON()
+      VALID_CONTEXT_REQUIRED(gpu_sequence_checker_) = 0;
 
   // Disassociates a `WebNNTensor` instance owned by this context by its handle.
   // Called when a `WebNNTensor` instance has a connection error. After this
   // call, it is no longer safe to use the WebNNTensorImpl.
-  void DisconnectAndDestroyWebNNTensorImpl(
-      const blink::WebNNTensorToken& handle);
+  void RemoveWebNNTensorImpl(const blink::WebNNTensorToken& handle);
 
   // Disassociates a `WebNNGraph` instance owned by this context by its handle.
   // Called when a `WebNNGraph` instance has a connection error. After this
   // call, it is no longer safe to use the WebNNGraphImpl.
-  void DisconnectAndDestroyWebNNGraphImpl(const blink::WebNNGraphToken& handle);
+  void RemoveWebNNGraphImpl(const blink::WebNNGraphToken& handle);
 
   // Retrieves a `WebNNTensorImpl` instance created from this context.
   // Emits a bad message if a tensor with the given handle does not exist.
-  base::optional_ref<WebNNTensorImpl> GetWebNNTensorImpl(
+  scoped_refptr<WebNNTensorImpl> GetWebNNTensorImpl(
       const blink::WebNNTensorToken& handle);
 
   // Report the currently dispatching Message as bad and remove the GraphBuilder
@@ -111,9 +116,8 @@ class COMPONENT_EXPORT(WEBNN_SERVICE) WebNNContextImpl
       CreateGraphImplCallback callback) = 0;
 
   // Pass ownership of a newly-created `graph_impl` to this context.
-  void TakeGraph(
-      std::unique_ptr<WebNNGraphImpl> graph_impl,
-      base::PassKey<WebNNGraphBuilderImpl> pass_key);
+  void TakeGraph(scoped_refptr<WebNNGraphImpl> graph_impl,
+                 base::PassKey<WebNNGraphBuilderImpl> pass_key);
 
   // Called by a graph builder to destroy itself.
   void RemoveGraphBuilder(mojo::ReceiverId graph_builder_id,
@@ -127,25 +131,39 @@ class COMPONENT_EXPORT(WEBNN_SERVICE) WebNNContextImpl
   const ContextProperties& properties() { return properties_; }
   const mojom::CreateContextOptions& options() const { return *options_; }
 
-  void ResetReceiverWithReason(std::string_view message);
-
   // Closes the `receiver_` pipe with the renderer process, then self destructs
   // by removing itself from the ownership of `context_provider_`.
-  void OnLost(std::string_view context_lost_info);
-
-  WebNNContextProviderImpl* context_provider() const {
-    return context_provider_.get();
-  }
+  void OnLost(const std::string& reason);
 
   // Exposes a SequencedTaskRunner which can be used to schedule tasks in
   // sequence with this WebNNContext -- that is, on the same gpu::Scheduler
   // sequence. Does not support nested loops or delayed tasks.
-  scoped_refptr<base::SequencedTaskRunner> scheduler_task_runner() const {
-    return scheduler_task_runner_;
-  }
+  const scoped_refptr<gpu::SchedulerTaskRunner>& scheduler_task_runner() const;
+
+  // Waits for the given SyncToken to release before executing WebNN operations.
+  void WaitSyncToken(const gpu::SyncToken& fence);
+
+  // Generates a verified SyncToken that will be released once pending WebNN
+  // operations complete execution.
+  gpu::SyncToken GenVerifiedSyncToken();
+
+  // Returns true if the data pipe consumer handle for WriteTensor() is valid.
+  bool HasValidWriteTensorConsumer() const;
+
+  // Returns true if the data pipe producer handle for ReadTensor() is valid.
+  bool HasValidReadTensorProducer() const;
+
+  // Reads data from either a BigBuffer or the data pipe into the provided span.
+  void ReadDataFromBigBufferOrDataPipe(mojo_base::BigBuffer src_buffer,
+                                       base::span<uint8_t> dst_span);
+
+  // Writes data from the given span into the data pipe producer if it is valid
+  // and return an empty BigBuffer, or into a new BigBuffer otherwise.
+  mojo_base::BigBuffer WriteDataToDataPipeOrBigBuffer(
+      base::span<const uint8_t> src_span);
 
  protected:
-  void OnConnectionError();
+  ~WebNNContextImpl() override;
 
   // mojom::WebNNContext
   void CreateGraphBuilder(
@@ -154,27 +172,36 @@ class COMPONENT_EXPORT(WEBNN_SERVICE) WebNNContextImpl
   void CreateTensor(mojom::TensorInfoPtr tensor_info,
                     mojo_base::BigBuffer tensor_data,
                     CreateTensorCallback callback) override;
-  void WaitSyncToken(const gpu::SyncToken& fence) override;
-  void GenVerifiedSyncToken(GenVerifiedSyncTokenCallback callback) override;
+  void CreateTensorFromMailbox(mojom::TensorInfoPtr tensor_info,
+                               const gpu::Mailbox& mailbox,
+                               const gpu::SyncToken& fence,
+                               CreateTensorCallback callback) override;
 
   // This method will be called by `CreateTensor()` after the tensor info is
   // validated. A backend subclass should implement this method to create and
-  // initialize a platform specific tensor asynchronously.
-  virtual void CreateTensorImpl(
+  // initialize a platform specific tensor.
+  virtual base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr>
+  CreateTensorImpl(mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
+                   mojom::TensorInfoPtr tensor_info) = 0;
+
+  // Similar to `CreateTensorImpl()`, but creates a tensor from a shared image
+  // for WebGPU interop. Backend subclasses should implement this to
+  // asynchronously create a platform-specific tensor from a shared image.
+  virtual base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr>
+  CreateTensorFromSharedImageImpl(
       mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
       mojom::TensorInfoPtr tensor_info,
-      CreateTensorImplCallback callback) = 0;
+      std::unique_ptr<gpu::WebNNTensorRepresentation> representation) = 0;
 
-  void DidCreateWebNNTensorImpl(
-      CreateTensorCallback callback,
-      mojo::PendingAssociatedRemote<mojom::WebNNTensor> remote,
-      mojo_base::BigBuffer tensor_data,
-      base::expected<std::unique_ptr<WebNNTensorImpl>, mojom::ErrorPtr> result);
+#if BUILDFLAG(IS_WIN)
+  // Inform the provider that this context is lost so it can inform the renderer
+  // process and kill the GPU process to destroy all contexts.
+  void DestroyAllContextsAndKillGpuProcess(const std::string& reason);
+#endif  // BUILDFLAG(IS_WIN)
 
-  SEQUENCE_CHECKER(sequence_checker_);
-
-  // Owns this object.
-  raw_ptr<WebNNContextProviderImpl> context_provider_;
+  // This weak pointer can only be dereferenced on the sequence where
+  // `context_provider_->main_thread_task_runner()` runs tasks.
+  base::WeakPtr<WebNNContextProviderImpl> context_provider_;
 
   // Context properties reported to the renderer process.
   const ContextProperties properties_;
@@ -183,25 +210,31 @@ class COMPONENT_EXPORT(WEBNN_SERVICE) WebNNContextImpl
   // context.
   mojom::CreateContextOptionsPtr options_;
 
-  // TensorImpls must be stored on the context to allow the WebNN service to
-  // identify and use them from the renderer process in MLContext operations.
-  // This cache only contains valid TensorImpls whose size is managed by the
-  // lifetime of the tensors it contains.
+  // TensorImpls owned by the context so the WebNN service can look them up
+  // by token and use them during MLContext operations from the renderer
+  // process. This cache only contains valid TensorImpls whose size is managed
+  // by the lifetime of the tensors it contains.
   base::flat_set<
-      std::unique_ptr<WebNNTensorImpl>,
-      WebNNObjectImpl<blink::WebNNTensorToken>::Comparator<WebNNTensorImpl>>
+      scoped_refptr<WebNNTensorImpl>,
+      WebNNObjectImpl<mojom::WebNNTensor,
+                      blink::WebNNTensorToken,
+                      mojo::AssociatedReceiver<mojom::WebNNTensor>>::Comparator>
       tensor_impls_;
 
  private:
+  void OnDisconnect() override;
+
   // Graph builders owned by this context.
   mojo::UniqueAssociatedReceiverSet<mojom::WebNNGraphBuilder>
       graph_builder_impls_;
 
-  // GraphsImpls which are stored on the context to allow graph
-  // operations to use this context safely via a raw_ptr.
+  // GraphImpls owned by the context. Graphs use a WeakPtr to safely access the
+  // context during operations.
   base::flat_set<
-      std::unique_ptr<WebNNGraphImpl>,
-      WebNNObjectImpl<blink::WebNNGraphToken>::Comparator<WebNNGraphImpl>>
+      scoped_refptr<WebNNGraphImpl>,
+      WebNNObjectImpl<mojom::WebNNGraph,
+                      blink::WebNNGraphToken,
+                      mojo::AssociatedReceiver<mojom::WebNNGraph>>::Comparator>
       graph_impls_;
 
   const gpu::CommandBufferId command_buffer_id_;
@@ -209,19 +242,34 @@ class COMPONENT_EXPORT(WEBNN_SERVICE) WebNNContextImpl
   // WebNN context API operations execute tasks in a sequence.
   // Within a WebNN context, tasks are orderered, but remain async with respect
   // to tasks in other WebNN contexts or sequences.
-  const gpu::SequenceId sequence_id_;
-
-  // WebNN IPC operations without a SyncToken are re-posted to the scheduled
-  // task runner to ensure they execute in the same sequence and order as those
-  // with a SyncToken.
-  const scoped_refptr<gpu::SchedulerTaskRunner> scheduler_task_runner_;
-
-  mojo::Receiver<mojom::WebNNContext> receiver_;
+  std::unique_ptr<ScopedSequence> sequence_;
 
   // Marks the completion of previously scheduled tasks.
   // Used to generate a SyncToken for the renderer which can be passed
   // to another message pipe to wait on WebNN work.
   uint64_t last_sync_token_release_id_ = 0;
+
+  // Data pipe handles for transferring tensor data across processes.
+  mojo::ScopedDataPipeConsumerHandle write_tensor_consumer_;
+  mojo::ScopedDataPipeProducerHandle read_tensor_producer_;
+
+  // The MemoryTypeTracker is used for creating tensors from shared images.
+  // It is stored on the context because only the tracker it was created with
+  // is thread safe.
+  gpu::MemoryTypeTracker memory_type_tracker_;
+
+  // The SharedImageManager is used for creating tensors from shared images.
+  // It is provided by the provider but stored per context, because only the
+  // SharedImageManager is thread-safe.
+  //
+  // Storing a raw pointer is safe because WebNNContextImpl is owned by its
+  // provider and cannot outlive it, while the SharedImageManager is managed by
+  // the GPU service and destroyed after the provider, ensuring the raw pointer
+  // remains valid.
+  const raw_ptr<gpu::SharedImageManager> shared_image_manager_;
+
+  // Task runner used to remove this context from its provider.
+  const scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
 };
 
 }  // namespace webnn

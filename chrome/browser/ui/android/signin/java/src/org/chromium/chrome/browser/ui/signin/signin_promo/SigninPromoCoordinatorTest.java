@@ -280,14 +280,26 @@ public class SigninPromoCoordinatorTest {
         if (accessPoint == SigninAccessPoint.HISTORY_PAGE) {
             expectedStrings =
                     new AccountPickerBottomSheetStrings.Builder(
-                                    R.string.signin_account_picker_bottom_sheet_title)
-                            .setSubtitleStringId(
-                                    R.string.signin_account_picker_bottom_sheet_benefits_subtitle)
+                                    mActivityTestRule
+                                            .getActivity()
+                                            .getString(
+                                                    R.string
+                                                            .signin_account_picker_bottom_sheet_title))
+                            .setSubtitleString(
+                                    mActivityTestRule
+                                            .getActivity()
+                                            .getString(
+                                                    R.string
+                                                            .signin_account_picker_bottom_sheet_benefits_subtitle))
                             .build();
         } else {
             expectedStrings =
                     new AccountPickerBottomSheetStrings.Builder(
-                                    R.string.signin_account_picker_bottom_sheet_title)
+                                    mActivityTestRule
+                                            .getActivity()
+                                            .getString(
+                                                    R.string
+                                                            .signin_account_picker_bottom_sheet_title))
                             .build();
         }
         assertEquals(expectedStrings, config.bottomSheetStrings);
@@ -348,6 +360,7 @@ public class SigninPromoCoordinatorTest {
         mSigninTestRule.addAccount(TestAccounts.ACCOUNT1);
         setUpSignInPromo(accessPoint);
 
+        // TODO(crbug.com/448227402): remove this check once Seamless Sign-in is launched
         if (accessPoint == SigninAccessPoint.RECENT_TABS) {
             onView(withId(R.id.sync_promo_choose_account_button))
                     .check(ViewAssertions.matches(not(isDisplayed())));
@@ -413,6 +426,7 @@ public class SigninPromoCoordinatorTest {
         signinAndOptOutHistorySyncIfNeeded(accessPoint);
         setUpSignInPromo(accessPoint);
 
+        // TODO(crbug.com/448227402): remove this check once Seamless Sign-in is launched
         if (accessPoint == SigninAccessPoint.RECENT_TABS) {
             onView(withId(R.id.sync_promo_close_button))
                     .check(ViewAssertions.matches(not(isDisplayed())));

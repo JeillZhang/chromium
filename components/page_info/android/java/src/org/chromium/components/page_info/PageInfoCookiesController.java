@@ -10,8 +10,6 @@ import static org.chromium.components.content_settings.PrefNames.IN_CONTEXT_COOK
 import android.view.View;
 import android.view.ViewGroup;
 
-import androidx.annotation.VisibleForTesting;
-
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -51,8 +49,7 @@ public class PageInfoCookiesController extends PageInfoPreferenceSubpageControll
     private boolean mIsIncognito;
     private boolean mIsModeBUi;
     private final boolean mIsSiteSettingsAvailable;
-    private int mDaysUntilExpirationForTesting;
-    private boolean mFixedExpirationForTesting;
+    private @Nullable Integer mDaysUntilExpirationForTesting;
     private @Nullable Collection<Website> mRwsInfoForTesting;
 
     public PageInfoCookiesController(
@@ -116,7 +113,6 @@ public class PageInfoCookiesController extends PageInfoPreferenceSubpageControll
                         /* blockAll3pc= */ mBlockAll3pc,
                         /* isIncognito= */ mIsIncognito,
                         /* isModeBUi= */ mIsModeBUi,
-                        /* fixedExpirationForTesting= */ mFixedExpirationForTesting,
                         /* daysUntilExpirationForTesting= */ mDaysUntilExpirationForTesting);
         mSubPage.setParams(params, delegate);
         mSubPage.updateState(mControlsState, mEnforcement, mExpiration);
@@ -165,7 +161,12 @@ public class PageInfoCookiesController extends PageInfoPreferenceSubpageControll
 
     private void onTrackingProtectionsButtonPressed() {
         if (mBridge != null) {
-            // TODO(crbug.com/388294499): Add metrics for toggling protections.
+            // Check current controls state to record metrics before updates are made via
+            // `onTrackingProtectionsChangedForSite`.
+            mMainController.recordAction(
+                    mControlsState == CookieControlsState.ACTIVE_TP
+                            ? PageInfoAction.PAGE_INFO_PRIVACY_PAGE_TRACKING_PROTECTIONS_PAUSED
+                            : PageInfoAction.PAGE_INFO_PRIVACY_PAGE_TRACKING_PROTECTIONS_REENABLED);
             mBridge.onTrackingProtectionsChangedForSite();
         }
     }
@@ -191,6 +192,9 @@ public class PageInfoCookiesController extends PageInfoPreferenceSubpageControll
 
     @Override
     public void updateRowIfNeeded() {}
+
+    @Override
+    public void updateSubpageIfNeeded() {}
 
     @Override
     public void onSubpageRemoved() {
@@ -264,12 +268,8 @@ public class PageInfoCookiesController extends PageInfoPreferenceSubpageControll
         return null;
     }
 
-    public void setDaysUntilExpirationForTesting(int days) {
+    public void setDaysUntilExpirationForTesting(Integer days) {
         mDaysUntilExpirationForTesting = days;
-    }
-
-    public void setFixedExceptionExpirationForTesting(boolean fixed) {
-        mFixedExpirationForTesting = fixed;
     }
 
     public void setEnforcementForTesting(@CookieControlsEnforcement int enforcement) {
@@ -288,7 +288,6 @@ public class PageInfoCookiesController extends PageInfoPreferenceSubpageControll
         mControlsState = controlsState;
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     public void setRwsInfoForTesting(Collection<Website> rwsInfoForTesting) {
         mRwsInfoForTesting = rwsInfoForTesting;
     }

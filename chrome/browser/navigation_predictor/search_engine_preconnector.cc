@@ -15,6 +15,7 @@
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "chrome/browser/battery/battery_saver.h"
 #include "chrome/browser/navigation_predictor/navigation_predictor_features.h"
 #include "chrome/browser/navigation_predictor/navigation_predictor_keyed_service.h"
 #include "chrome/browser/navigation_predictor/navigation_predictor_keyed_service_factory.h"
@@ -42,18 +43,15 @@ const bool kDefaultSkipInBackground = true;
 
 constexpr int kPreconnectIntervalSec = 60;
 constexpr int kPreconnectRetryDelayMs = 50;
+constexpr int kPreconnectIntervalForLowPowerSec = 30;
 
 }  // namespace
 
 namespace features {
 // Feature to control preconnect to search.
 
-BASE_FEATURE(kPreconnectFromKeyedService,
-             "PreconnectFromKeyedService",
-             base::FEATURE_DISABLED_BY_DEFAULT);
-BASE_FEATURE(kPreconnectToSearch,
-             "PreconnectToSearch",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kPreconnectFromKeyedService, base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kPreconnectToSearch, base::FEATURE_ENABLED_BY_DEFAULT);
 }  // namespace features
 
 WebContentVisibilityManager::WebContentVisibilityManager()
@@ -158,8 +156,8 @@ void SearchEnginePreconnector::PreconnectDSE() {
     return;
 
   GURL preconnect_url = GetDefaultSearchEngineOriginURL();
-  if (preconnect_url.scheme() != url::kHttpScheme &&
-      preconnect_url.scheme() != url::kHttpsScheme) {
+  if (preconnect_url.GetScheme() != url::kHttpScheme &&
+      preconnect_url.GetScheme() != url::kHttpsScheme) {
     return;
   }
 
@@ -167,8 +165,7 @@ void SearchEnginePreconnector::PreconnectDSE() {
     return;
   }
 
-  if (!predictors::IsPreconnectAllowed(
-          Profile::FromBrowserContext(browser_context_))) {
+  if (!IsPreconnectEnabled()) {
     return;
   }
 
@@ -182,12 +179,7 @@ void SearchEnginePreconnector::PreconnectDSE() {
   std::optional<net::ConnectionKeepAliveConfig> keepalive_config;
   mojo::PendingRemote<network::mojom::ConnectionChangeObserverClient> observer;
   if (SearchEnginePreconnect2Enabled()) {
-    keepalive_config = net::ConnectionKeepAliveConfig();
-    keepalive_config->idle_timeout_in_seconds =
-        net::features::kIdleTimeoutInSeconds.Get();
-    keepalive_config->ping_interval_in_seconds =
-        net::features::kPingIntervalInSeconds.Get();
-    keepalive_config->enable_connection_keep_alive = true;
+    keepalive_config = GetConnectionKeepAliveConfig();
 
     if (!receiver_.is_bound()) {
       observer = receiver_.BindNewPipeAndPassRemote();
@@ -233,6 +225,8 @@ GURL SearchEnginePreconnector::GetDefaultSearchEngineOriginURL() const {
 }
 
 base::TimeDelta SearchEnginePreconnector::GetPreconnectInterval() const {
+  // If the feature is not enabled or the device is in low power mode, we will
+  // use the old preconnect interval.
   if (!SearchEnginePreconnect2Enabled()) {
     int preconnect_interval = base::GetFieldTrialParamByFeatureAsInt(
         net::features::kSearchEnginePreconnectInterval, "preconnect_interval",
@@ -244,11 +238,19 @@ base::TimeDelta SearchEnginePreconnector::GetPreconnectInterval() const {
            base::Milliseconds(kPreconnectRetryDelayMs);
   }
 
+  // If the device is in low power mode, we will use a longer preconnect
+  // interval. We do not add an extra delay which is added for the old
+  // preconnect interval since the connection keepalive will handle the
+  // expiration, and we already know that the connection is closed.
+  if (ShouldSavePower()) {
+    return base::Seconds(kPreconnectIntervalForLowPowerSec);
+  }
+
   // If this is the first time failing, we should instantly retry, but we wait
   // a very small amount of time since a closed connection would likely mean
   // that there were something wrong in the connection.
-  // Otherwise, we backoff `kPreconnectRetryDelayMs` (currently 50 ms) * 2^n for
-  // the next preconnect attempt.
+  // Otherwise, we backoff `kPreconnectRetryDelayMs` (currently 50 ms for normal
+  // mode) * 2^n for the next preconnect attempt.
   return std::min(
       base::Milliseconds(kPreconnectRetryDelayMs) *
           CalculateBackoffMultiplier(),
@@ -274,6 +276,11 @@ bool SearchEnginePreconnector::IsShortSession() const {
   return session_time < net::features::kShortSessionThreshold.Get();
 }
 
+bool SearchEnginePreconnector::ShouldSavePower() const {
+  return net::features::kFallbackInLowPowerMode.Get() &&
+         battery::IsBatterySaverEnabled();
+}
+
 void SearchEnginePreconnector::StartPreconnectWithDelay(
     base::TimeDelta delay,
     PreconnectTriggerEvent event) {
@@ -284,10 +291,9 @@ void SearchEnginePreconnector::StartPreconnectWithDelay(
                               base::Unretained(this)));
 }
 
-predictors::PreconnectManager&
-SearchEnginePreconnector::GetPreconnectManager() {
+content::PreconnectManager& SearchEnginePreconnector::GetPreconnectManager() {
   if (!preconnect_manager_) {
-    preconnect_manager_ = std::make_unique<predictors::PreconnectManager>(
+    preconnect_manager_ = content::PreconnectManager::Create(
         GetWeakPtr(), Profile::FromBrowserContext(browser_context_));
   }
 
@@ -317,6 +323,11 @@ void SearchEnginePreconnector::OnWebContentsVisibilityChanged(
   // Attempt reconnect again in case the visibility has changed after the last
   // preconnect attempt so that we will preconnect sooner.
   PreconnectDSE();
+}
+
+bool SearchEnginePreconnector::IsPreconnectEnabled() {
+  return predictors::IsPreconnectAllowed(
+      Profile::FromBrowserContext(browser_context_));
 }
 
 void SearchEnginePreconnector::OnSessionClosed() {
@@ -373,4 +384,26 @@ void SearchEnginePreconnector::RecordPreconnectAttemptHistogram(
         "PreconnectAttemptInterval",
         base::TimeTicks::Now() - last_preconnect_attempt_time_.value());
   }
+}
+
+net::ConnectionKeepAliveConfig
+SearchEnginePreconnector::GetConnectionKeepAliveConfig() {
+  CHECK(SearchEnginePreconnect2Enabled());
+  net::ConnectionKeepAliveConfig config;
+  config.quic_connection_options = net::features::kQuicConnectionOptions.Get();
+
+  // If the device is in low power mode, we will fallback to the old preconnect
+  // interval and disable connection keepalive. This is to avoid the battery
+  // drain when the device is in low power mode.
+  if (ShouldSavePower()) {
+    config.idle_timeout_in_seconds = kPreconnectIntervalSec;
+    config.ping_interval_in_seconds = 0;
+    config.enable_connection_keep_alive = false;
+    return config;
+  }
+
+  config.idle_timeout_in_seconds = net::features::kIdleTimeoutInSeconds.Get();
+  config.ping_interval_in_seconds = net::features::kPingIntervalInSeconds.Get();
+  config.enable_connection_keep_alive = true;
+  return config;
 }

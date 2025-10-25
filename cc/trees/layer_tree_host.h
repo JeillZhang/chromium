@@ -23,7 +23,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/read_only_shared_memory_region.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -379,10 +379,6 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
     return defer_main_frame_update_count_;
   }
 
-  // Synchronously performs a main frame update and layer updates. Used only in
-  // single threaded mode when the compositor's internal scheduling is disabled.
-  void LayoutAndUpdateLayers();
-
   // Synchronously performs a complete main frame update, commit and compositor
   // frame. Used only in single threaded mode when the compositor's internal
   // scheduling is disabled.
@@ -397,6 +393,11 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   // frame results in a redraw for the complete viewport when producing the
   // CompositorFrame.
   void SetNeedsCommitWithForcedRedraw();
+
+  // Requests a main frame if a composited animation changes a draw property.
+  void RequestMainFrameOnCompositorAnimation(
+      PropertyChangeForcesCommitCriteria
+          property_change_forces_commit_criteria);
 
   // Input Handling ---------------------------------------------
 
@@ -557,6 +558,7 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
 
   void SetBrowserControlsParams(const BrowserControlsParams& params);
   void SetBrowserControlsShownRatio(float top_ratio, float bottom_ratio);
+  void SetLoadProgress(float progress);
 
   void SetOverscrollBehavior(const OverscrollBehavior& overscroll_behavior);
   const OverscrollBehavior& overscroll_behavior() const {
@@ -747,9 +749,8 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   Layer* LayerByElementId(ElementId element_id);
   const Layer* LayerByElementId(ElementId element_id) const;
 
-  void RegisterElement(ElementId element_id,
-                       Layer* layer);
-  void UnregisterElement(ElementId element_id);
+  void RegisterElement(ElementId element_id, Layer* layer);
+  void UnregisterElement(ElementId element_id, const Layer* layer);
 
   void SetElementIdsForTesting();
   void BuildPropertyTreesForTesting();
@@ -899,7 +900,6 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   void QueueImageDecode(const DrawImage& image,
                         base::OnceCallback<void(bool)> callback,
                         bool speculative);
-  bool SpeculativeDecodeRequestInFlight() const;
   void ImageDecodesFinished(const std::vector<std::pair<int, bool>>& results);
 
   void RequestBeginMainFrameNotExpected(bool new_state);
@@ -914,7 +914,6 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   }
 
   void SetSourceURL(ukm::SourceId source_id, const GURL& url);
-  base::ReadOnlySharedMemoryRegion CreateSharedMemoryForSmoothnessUkm();
   base::ReadOnlySharedMemoryRegion CreateSharedMemoryForDroppedFramesUkm();
 
   void SetRenderFrameObserver(
@@ -941,8 +940,8 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   std::vector<ViewTransitionRequest::ViewTransitionCaptureCallback>
   TakeViewTransitionCallbacksForTesting();
 
-  // Returns a percentage of dropped frames of the last second.
-  double GetPercentDroppedFrames() const;
+  // Returns a percentage of dropped frames as measured by the FrameSorter.
+  double GetAverageThroughput() const;
 
   // TODO(szager): Remove these once threaded compositing is enabled for all
   // web_tests.
@@ -1052,6 +1051,7 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   void UpdateScrollOffsetFromImpl(
       const ElementId&,
       const gfx::Vector2dF& delta,
+      ScrollSourceType type,
       const std::optional<TargetSnapAreaElementIds>&);
 
   const CompositorMode compositor_mode_;
@@ -1142,6 +1142,14 @@ class CC_EXPORT LayerTreeHost : public MutatorHostClient {
   mutable std::unique_ptr<CompletionEvent> commit_completion_event_;
 
   EventsMetricsManager events_metrics_manager_;
+
+  // A map from ViewTransition tokens to whether a new LocalSurfaceId is
+  // needed for this ViewTransitionRequest.
+  base::flat_map<blink::ViewTransitionToken, bool>
+      view_transition_needs_new_lsid_;
+  // Make sure there's no unbounded growth of above map, if Animate never
+  // happens after Save.
+  const uint32_t view_transition_needs_new_lsid_max_size_ = 100;
 
   // A list of callbacks that need to be invoked when they are processed.
   base::flat_map<uint32_t, ViewTransitionRequest::ViewTransitionCaptureCallback>

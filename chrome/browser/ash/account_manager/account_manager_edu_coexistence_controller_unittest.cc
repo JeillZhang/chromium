@@ -23,7 +23,6 @@
 #include "components/account_manager_core/account.h"
 #include "components/account_manager_core/account_manager_facade.h"
 #include "components/account_manager_core/chromeos/account_manager.h"
-#include "components/account_manager_core/chromeos/account_manager_facade_factory.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/test/browser_task_environment.h"
 #include "google_apis/gaia/gaia_id.h"
@@ -117,7 +116,8 @@ void AccountManagerEducoexistenceControllerTest::SetUp() {
                          ->GetAccountManagerFactory()
                          ->GetAccountManager(profile()->GetPath().value());
   account_manager_facade_ =
-      ::GetAccountManagerFacade(profile()->GetPath().value());
+      AccountManagerFactory::Get()->GetAccountManagerFacade(
+          profile()->GetPath().value());
 
   AddAccount(account_manager(), kPrimaryAccount, kPrimaryAccountGaiaId);
 }

@@ -16,7 +16,10 @@ import org.chromium.base.test.transit.Station;
 import org.chromium.base.test.transit.TransitAsserts;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DoNotBatch;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.Restriction;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.transit.ChromeTransitTestRules;
@@ -34,6 +37,7 @@ import org.chromium.ui.test.util.DeviceRestriction;
 // In phones, the New Window option in the app menu is only enabled when already in multi-window or
 // multi-display mode with Chrome not running in an adjacent window.
 @Restriction({DeviceFormFactor.TABLET_OR_DESKTOP, DeviceRestriction.RESTRICTION_TYPE_NON_AUTO})
+@EnableFeatures(ChromeFeatureList.TOOLBAR_TABLET_RESIZE_REFACTOR)
 public class MultiWindowAppMenuTest {
     @Rule
     public FreshCtaTransitTestRule mCtaTestRule =
@@ -52,6 +56,8 @@ public class MultiWindowAppMenuTest {
 
     @Test
     @LargeTest
+    // TODO(crbug.com/439491767): Fix broken tests caused by desktop-like incognito window.
+    @DisableFeatures(ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW)
     public void testOpenNewWindow_fromIncognitoNtp() {
         IncognitoNewTabPageStation pageInFirstWindow =
                 mCtaTestRule.startOnBlankPage().openNewIncognitoTabFast();

@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_PERSISTENT_CACHE_BACKEND_H_
 #define COMPONENTS_PERSISTENT_CACHE_BACKEND_H_
 
+#include <optional>
+
 #include "base/component_export.h"
 #include "base/containers/span.h"
 #include "components/persistent_cache/backend_params.h"
@@ -51,6 +53,25 @@ class COMPONENT_EXPORT(PERSISTENT_CACHE) Backend {
   virtual void Insert(std::string_view key,
                       base::span<const uint8_t> content,
                       EntryMetadata metadata) = 0;
+
+  // Used to get type of instance. Intended for things like metrics recording.
+  // Externally behavior of all backend types should be equivalent and control
+  // flow should not be tailored to the type.
+  virtual BackendType GetType() const = 0;
+
+  // Used to understand if the instance has read only access. Intended for
+  // things like metrics recording. Externally behavior of all backend types
+  // should be equivalent for reads. Writes should probably not be attempted if
+  // not permitted.
+  virtual bool IsReadOnly() const = 0;
+
+  // Returns params for an independent read-only connection to the instance, or
+  // nothing in case of error.
+  virtual std::optional<BackendParams> ExportReadOnlyParams() = 0;
+
+  // Returns params for an independent read-write connection to the instance, or
+  // nothing in case of error.
+  virtual std::optional<BackendParams> ExportReadWriteParams() = 0;
 
  protected:
   Backend();

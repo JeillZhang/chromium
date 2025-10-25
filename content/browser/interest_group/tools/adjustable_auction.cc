@@ -26,6 +26,7 @@
 #include "content/browser/interest_group/ad_auction_service_impl.h"
 #include "content/browser/interest_group/interest_group_manager_impl.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test.h"
@@ -188,7 +189,7 @@ function generateBid(
 
   bool RequestHandler(URLLoaderInterceptor::RequestParams* params) {
     base::AutoLock auto_lock(response_map_lock_);
-    const auto it = response_map_.find(params->url_request.url.path());
+    const auto it = response_map_.find(params->url_request.url.GetPath());
     if (it == response_map_.end()) {
       return false;
     }

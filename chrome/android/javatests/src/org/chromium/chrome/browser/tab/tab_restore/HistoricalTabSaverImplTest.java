@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.tab.tab_restore;
 
+import static com.google.common.truth.Truth.assertThat;
+
 import static org.chromium.base.ThreadUtils.runOnUiThreadBlocking;
 
 import androidx.test.filters.MediumTest;
@@ -16,7 +18,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.Token;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
@@ -50,6 +51,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * End to end tests for {@link HistoricalTabSaverImpl} and its interactions with TabRestoreService.
@@ -81,10 +83,10 @@ public class HistoricalTabSaverImplTest {
     public void setUp() {
         mInitialPage = mActivityTestRule.startOnBlankPage();
         mActivity = mInitialPage.getActivity();
-        mTabModelSelector = mActivity.getTabModelSelector();
-        mTabModel = mTabModelSelector.getModel(false);
+        mTabModelSelector = mInitialPage.getTabModelSelector();
+        mTabModel = mInitialPage.getTabModel();
         TabRestoreServiceUtils.clearEntries(mTabModelSelector);
-        mTab = mInitialPage.loadedTabElement.get();
+        mTab = mInitialPage.loadedTabElement.value();
         mHistoricalTabSaver = new HistoricalTabSaverImpl(mTabModel);
     }
 
@@ -146,7 +148,7 @@ public class HistoricalTabSaverImplTest {
 
         TabRestoreServiceUtils.createTabEntry(mTabModel, frozenTab);
 
-        List<List<HistoricalEntry>> empty = new ArrayList<List<HistoricalEntry>>();
+        List<List<HistoricalEntry>> empty = new ArrayList<>();
         assertEntriesAre(empty);
     }
 
@@ -233,7 +235,7 @@ public class HistoricalTabSaverImplTest {
                         Arrays.asList(new Tab[] {frozenTab0, frozenTab1}));
         TabRestoreServiceUtils.createTabOrGroupEntry(mTabModel, group);
 
-        List<List<HistoricalEntry>> empty = new ArrayList<List<HistoricalEntry>>();
+        List<List<HistoricalEntry>> empty = new ArrayList<>();
         assertEntriesAre(empty);
     }
 
@@ -345,7 +347,7 @@ public class HistoricalTabSaverImplTest {
         expectedEntries.add(new HistoricalEntry(frozenTab1));
         TabRestoreServiceUtils.createWindowEntry(mTabModel, expectedEntries);
 
-        List<List<HistoricalEntry>> empty = new ArrayList<List<HistoricalEntry>>();
+        List<List<HistoricalEntry>> empty = new ArrayList<>();
         assertEntriesAre(empty);
     }
 
@@ -395,7 +397,7 @@ public class HistoricalTabSaverImplTest {
     @Test
     @MediumTest
     public void testCreateHistoricalTab_InvalidUrls() {
-        List<List<HistoricalEntry>> empty = new ArrayList<List<HistoricalEntry>>();
+        List<List<HistoricalEntry>> empty = new ArrayList<>();
         final Tab tab0 = mActivityTestRule.loadUrlInNewTab("about:blank", /* incognito= */ false);
         TabRestoreServiceUtils.createTabEntry(mTabModel, tab0);
         assertEntriesAre(empty);
@@ -454,7 +456,7 @@ public class HistoricalTabSaverImplTest {
                                             .getTabGroupModelFilter(false),
                                     Arrays.asList(newTab));
                 });
-        List<List<HistoricalEntry>> empty = new ArrayList<List<HistoricalEntry>>();
+        List<List<HistoricalEntry>> empty = new ArrayList<>();
         assertEntriesAre(empty);
 
         runOnUiThreadBlocking(
@@ -483,7 +485,7 @@ public class HistoricalTabSaverImplTest {
 
         Assert.assertEquals("Entry count mismatch.", expectedEntries.size(), actualEntries.size());
         for (int i = 0; i < expectedEntries.size(); ++i) {
-            assert expectedEntries.get(i).size() != 0;
+            assertThat(expectedEntries.get(i)).isNotEmpty();
 
             if (expectedEntries.get(i).size() != 1) {
                 assertBulkClosureEquals(i, expectedEntries.get(i), actualEntries.get(i));

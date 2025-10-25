@@ -3,25 +3,34 @@
 # found in the LICENSE file.
 """Definitions of builders in the tryserver.chromium.swangle builder group."""
 
-load("//lib/branches.star", "branches")
-load("//lib/builder_config.star", "builder_config")
-load("//lib/builders.star", "cpu", "os", "siso")
-load("//lib/consoles.star", "consoles")
-load("//lib/try.star", "try_")
+load("@chromium-luci//branches.star", "branches")
+load("@chromium-luci//builder_config.star", "builder_config")
+load("@chromium-luci//builders.star", "builders", "cpu", "os")
+load("@chromium-luci//consoles.star", "consoles")
+load("@chromium-luci//try.star", "try_")
+load("//lib/gpu.star", "gpu")
+load("//lib/siso.star", "siso")
+load("//lib/try_constants.star", "try_constants")
 
 try_.defaults.set(
-    executable = try_.DEFAULT_EXECUTABLE,
+    executable = try_constants.DEFAULT_EXECUTABLE,
     builder_group = "tryserver.chromium.dawn",
-    pool = try_.DEFAULT_POOL,
+    pool = try_constants.DEFAULT_POOL,
     builderless = False,
     os = os.LINUX_DEFAULT,
+    # These builders test GPU configurations. These configurations have very
+    # limited hardware, due to the hardware needing specific GPUs. The pool of
+    # machines to run builds for these builders is intentionally limited to
+    # avoid concurrent builds from oversubscribing the test capacity. As a
+    # consequence, pending times are expected for these builders. These builder
+    # haven't been long poles in the CQ, and developers haven't complained about
+    # them, so there's no need to page for them.
+    alerts_enabled = False,
     check_for_flakiness = False,
     check_for_flakiness_with_resultdb = False,
     contact_team_email = "chrome-gpu-infra@google.com",
-    execution_timeout = try_.DEFAULT_EXECUTION_TIMEOUT,
-    reclient_enabled = False,
-    service_account = try_.gpu.SERVICE_ACCOUNT,
-    siso_enabled = True,
+    execution_timeout = try_constants.DEFAULT_EXECUTION_TIMEOUT,
+    service_account = gpu.try_.SERVICE_ACCOUNT,
     siso_project = siso.project.DEFAULT_UNTRUSTED,
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CQ,
 )
@@ -33,6 +42,35 @@ consoles.list_view(
         branches.selector.DESKTOP_BRANCHES,
     ],
 )
+
+def dawn_mac_builder(*, name, **kwargs):
+    kwargs.setdefault("cpu", None)
+    return try_.builder(
+        name = name,
+        builderless = True,
+        cores = None,
+        free_space = None,
+        os = os.MAC_ANY,
+        ssd = None,
+        pool = "luci.chromium.gpu.try",
+        max_concurrent_builds = 1,
+        **kwargs
+    )
+
+def dawn_win_builderless_builder(*, name, **kwargs):
+    kwargs.setdefault(
+        "ssd",
+        builders.with_expiration(True, expiration = 5 * time.minute),
+    )
+    kwargs.setdefault("max_concurrent_builds", 1)
+    kwargs.setdefault("free_space", None)
+    return try_.builder(
+        name = name,
+        builderless = True,
+        os = os.WINDOWS_ANY,
+        pool = "luci.chromium.gpu.try",
+        **kwargs
+    )
 
 try_.builder(
     name = "dawn-chromium-presubmit",
@@ -66,7 +104,6 @@ try_.builder(
     name = "dawn-android-arm-deps-rel",
     mirrors = [
         "ci/Dawn Android arm DEPS Builder",
-        "ci/Dawn Android arm DEPS Release (Nexus 5X)",
         "ci/Dawn Android arm DEPS Release (Pixel 4)",
     ],
     gn_args = "ci/Dawn Android arm DEPS Builder",
@@ -86,6 +123,7 @@ try_.builder(
             cq.location_filter(path_regexp = "gpu/.+"),
             cq.location_filter(path_regexp = "testing/buildbot/chromium.dawn.json"),
             cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webgpu/.+"),
+            cq.location_filter(path_regexp = "third_party/blink/renderer/platform/graphics/gpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/external/wpt/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/wpt_internal/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/WebGPUExpectations"),
@@ -121,6 +159,7 @@ try_.builder(
             cq.location_filter(path_regexp = "gpu/.+"),
             cq.location_filter(path_regexp = "testing/buildbot/chromium.dawn.json"),
             cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webgpu/.+"),
+            cq.location_filter(path_regexp = "third_party/blink/renderer/platform/graphics/gpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/external/wpt/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/wpt_internal/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/WebGPUExpectations"),
@@ -157,6 +196,7 @@ try_.builder(
             cq.location_filter(path_regexp = "gpu/.+"),
             cq.location_filter(path_regexp = "testing/buildbot/chromium.dawn.json"),
             cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webgpu/.+"),
+            cq.location_filter(path_regexp = "third_party/blink/renderer/platform/graphics/gpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/external/wpt/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/wpt_internal/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/WebGPUExpectations"),
@@ -177,9 +217,13 @@ try_.builder(
         "ci/Dawn Mac arm64 DEPS Release (Apple M2)",
     ],
     gn_args = "ci/Dawn Mac arm64 DEPS Builder",
+    pool = "luci.chromium.gpu.try",
+    builderless = True,
     os = os.MAC_ANY,
     cpu = cpu.ARM64,
+    free_space = None,
     main_list_view = "try",
+    max_concurrent_builds = 3,
     test_presentation = resultdb.test_presentation(
         grouping_keys = ["status", "v.test_suite", "v.gpu"],
     ),
@@ -189,6 +233,7 @@ try_.builder(
             cq.location_filter(path_regexp = "gpu/.+"),
             cq.location_filter(path_regexp = "testing/buildbot/chromium.dawn.json"),
             cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webgpu/.+"),
+            cq.location_filter(path_regexp = "third_party/blink/renderer/platform/graphics/gpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/external/wpt/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/wpt_internal/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/WebGPUExpectations"),
@@ -209,9 +254,13 @@ try_.builder(
         "ci/Dawn Mac x64 DEPS Release (Intel)",
     ],
     gn_args = "ci/Dawn Mac x64 DEPS Builder",
+    pool = "luci.chromium.gpu.try",
+    builderless = True,
     os = os.MAC_ANY,
-    cpu = cpu.ARM64,
+    cpu = None,
+    free_space = None,
     main_list_view = "try",
+    max_concurrent_builds = 5,
     test_presentation = resultdb.test_presentation(
         grouping_keys = ["status", "v.test_suite", "v.gpu"],
     ),
@@ -221,6 +270,7 @@ try_.builder(
             cq.location_filter(path_regexp = "gpu/.+"),
             cq.location_filter(path_regexp = "testing/buildbot/chromium.dawn.json"),
             cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webgpu/.+"),
+            cq.location_filter(path_regexp = "third_party/blink/renderer/platform/graphics/gpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/external/wpt/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/wpt_internal/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/WebGPUExpectations"),
@@ -232,7 +282,7 @@ try_.builder(
     ),
 )
 
-try_.builder(
+dawn_win_builderless_builder(
     name = "dawn-win10-x64-deps-rel",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     mirrors = [
@@ -241,8 +291,8 @@ try_.builder(
         "ci/Dawn Win10 x64 DEPS Release (NVIDIA)",
     ],
     gn_args = "ci/Dawn Win10 x64 DEPS Builder",
-    os = os.WINDOWS_ANY,
     main_list_view = "try",
+    max_concurrent_builds = 5,
     test_presentation = resultdb.test_presentation(
         grouping_keys = ["status", "v.test_suite", "v.gpu"],
     ),
@@ -252,6 +302,7 @@ try_.builder(
             cq.location_filter(path_regexp = "gpu/.+"),
             cq.location_filter(path_regexp = "testing/buildbot/chromium.dawn.json"),
             cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webgpu/.+"),
+            cq.location_filter(path_regexp = "third_party/blink/renderer/platform/graphics/gpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/external/wpt/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/wpt_internal/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/WebGPUExpectations"),
@@ -263,7 +314,7 @@ try_.builder(
     ),
 )
 
-try_.builder(
+dawn_win_builderless_builder(
     name = "dawn-win10-x86-deps-rel",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     mirrors = [
@@ -272,10 +323,10 @@ try_.builder(
         "ci/Dawn Win10 x86 DEPS Release (NVIDIA)",
     ],
     gn_args = "ci/Dawn Win10 x86 DEPS Builder",
-    os = os.WINDOWS_ANY,
     check_for_flakiness = False,
     check_for_flakiness_with_resultdb = False,
     main_list_view = "try",
+    max_concurrent_builds = 5,
     test_presentation = resultdb.test_presentation(
         grouping_keys = ["status", "v.test_suite", "v.gpu"],
     ),
@@ -285,6 +336,7 @@ try_.builder(
             cq.location_filter(path_regexp = "gpu/.+"),
             cq.location_filter(path_regexp = "testing/buildbot/chromium.dawn.json"),
             cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webgpu/.+"),
+            cq.location_filter(path_regexp = "third_party/blink/renderer/platform/graphics/gpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/external/wpt/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/wpt_internal/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/WebGPUExpectations"),
@@ -296,15 +348,15 @@ try_.builder(
     ),
 )
 
-try_.builder(
+dawn_win_builderless_builder(
     name = "dawn-win11-arm64-deps-rel",
     branch_selector = branches.selector.WINDOWS_BRANCHES,
     mirrors = [
         "ci/Dawn Win11 arm64 DEPS Builder",
     ],
     gn_args = "ci/Dawn Win11 arm64 DEPS Builder",
-    os = os.WINDOWS_ANY,
     main_list_view = "try",
+    max_concurrent_builds = 5,
     test_presentation = resultdb.test_presentation(
         grouping_keys = ["status", "v.test_suite", "v.gpu"],
     ),
@@ -314,6 +366,7 @@ try_.builder(
             cq.location_filter(path_regexp = "gpu/.+"),
             cq.location_filter(path_regexp = "testing/buildbot/chromium.dawn.json"),
             cq.location_filter(path_regexp = "third_party/blink/renderer/modules/webgpu/.+"),
+            cq.location_filter(path_regexp = "third_party/blink/renderer/platform/graphics/gpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/external/wpt/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/wpt_internal/webgpu/.+"),
             cq.location_filter(path_regexp = "third_party/blink/web_tests/WebGPUExpectations"),
@@ -329,7 +382,6 @@ try_.builder(
     name = "android-dawn-arm-rel",
     mirrors = [
         "ci/Dawn Android arm Builder",
-        "ci/Dawn Android arm Release (Nexus 5X)",
         "ci/Dawn Android arm Release (Pixel 4)",
     ],
     gn_args = "ci/Dawn Android arm Builder",
@@ -368,6 +420,23 @@ try_.builder(
     mirrors = [
         "ci/Dawn Android arm64 Builder",
         "ci/Dawn Android arm64 Experimental Release (Pixel 6)",
+    ],
+    gn_args = "ci/Dawn Android arm64 Builder",
+    pool = "luci.chromium.gpu.try",
+    builderless = True,
+    os = os.LINUX_DEFAULT,
+    max_concurrent_builds = 1,
+    test_presentation = resultdb.test_presentation(
+        grouping_keys = ["status", "v.test_suite", "v.gpu"],
+    ),
+)
+
+try_.builder(
+    name = "android-dawn-arm64-p10-rel",
+    description_html = "Runs ToT Dawn tests on Pixel 10 devices",
+    mirrors = [
+        "ci/Dawn Android arm64 Builder",
+        "ci/Dawn Android arm64 Release (Pixel 10)",
     ],
     gn_args = "ci/Dawn Android arm64 Builder",
     pool = "luci.chromium.gpu.try",
@@ -459,8 +528,12 @@ try_.builder(
         "ci/Dawn Mac arm64 Release (Apple M2)",
     ],
     gn_args = "ci/Dawn Mac arm64 Builder",
+    pool = "luci.chromium.gpu.try",
+    builderless = True,
     os = os.MAC_ANY,
     cpu = None,
+    free_space = None,
+    max_concurrent_builds = 5,
     test_presentation = resultdb.test_presentation(
         grouping_keys = ["status", "v.test_suite", "v.gpu"],
     ),
@@ -474,22 +547,12 @@ try_.builder(
         "ci/Dawn Mac x64 Release (Intel)",
     ],
     gn_args = "ci/Dawn Mac x64 Builder",
-    os = os.MAC_ANY,
-    cpu = cpu.ARM64,
-    test_presentation = resultdb.test_presentation(
-        grouping_keys = ["status", "v.test_suite", "v.gpu"],
-    ),
-)
-
-try_.builder(
-    name = "dawn-try-chromeos-volteer-rel",
-    mirrors = [
-        "ci/Dawn ChromeOS Skylab Release (volteer)",
-    ],
-    gn_args = "ci/Dawn ChromeOS Skylab Release (volteer)",
     pool = "luci.chromium.gpu.try",
     builderless = True,
-    max_concurrent_builds = 1,
+    os = os.MAC_ANY,
+    cpu = cpu.ARM64,
+    free_space = None,
+    max_concurrent_builds = 3,
     test_presentation = resultdb.test_presentation(
         grouping_keys = ["status", "v.test_suite", "v.gpu"],
     ),
@@ -524,20 +587,6 @@ try_.builder(
         grouping_keys = ["status", "v.test_suite", "v.gpu"],
     ),
 )
-
-def dawn_mac_builder(*, name, **kwargs):
-    kwargs.setdefault("cpu", None)
-    return try_.builder(
-        name = name,
-        builderless = True,
-        cores = None,
-        free_space = None,
-        os = os.MAC_ANY,
-        ssd = None,
-        pool = "luci.chromium.gpu.try",
-        max_concurrent_builds = 1,
-        **kwargs
-    )
 
 dawn_mac_builder(
     name = "dawn-try-mac-amd-exp",
@@ -600,24 +649,19 @@ dawn_mac_builder(
     ),
 )
 
-def dawn_win_builderless_builder(*, name, **kwargs):
-    kwargs.setdefault("ssd", None)
-    kwargs.setdefault("max_concurrent_builds", 1)
-    return try_.builder(
-        name = name,
-        builderless = True,
-        os = os.WINDOWS_ANY,
-        pool = "luci.chromium.gpu.try",
-        **kwargs
-    )
-
-def dawn_win_builderful_builder(*, name, **kwargs):
-    return try_.builder(
-        name = name,
-        builderless = False,
-        os = os.WINDOWS_ANY,
-        **kwargs
-    )
+# This will be moved into dawn-win11-arm64-deps-rel once the tests have been
+# confirmed to be stable enough.
+dawn_win_builderless_builder(
+    name = "dawn-try-win11-arm64-snapdragon-x-elite-deps-rel",
+    mirrors = [
+        "ci/Dawn Win11 arm64 DEPS Builder",
+        "ci/Dawn Win11 arm64 DEPS Release (Qualcomm Snapdragon X Elite)",
+    ],
+    gn_args = "ci/Dawn Win11 arm64 DEPS Builder",
+    test_presentation = resultdb.test_presentation(
+        grouping_keys = ["status", "v.test_suite", "v.gpu"],
+    ),
+)
 
 dawn_win_builderless_builder(
     name = "dawn-try-win-x64-intel-exp",
@@ -686,7 +730,7 @@ dawn_win_builderless_builder(
     ),
 )
 
-dawn_win_builderful_builder(
+dawn_win_builderless_builder(
     name = "win-dawn-rel",
     mirrors = [
         "ci/Dawn Win10 x64 Builder",
@@ -694,23 +738,25 @@ dawn_win_builderful_builder(
         "ci/Dawn Win10 x64 Release (NVIDIA)",
     ],
     gn_args = "ci/Dawn Win10 x64 Builder",
+    max_concurrent_builds = 3,
     test_presentation = resultdb.test_presentation(
         grouping_keys = ["status", "v.test_suite", "v.gpu"],
     ),
 )
 
-dawn_win_builderful_builder(
+dawn_win_builderless_builder(
     name = "win11-arm64-dawn-rel",
     mirrors = [
         "ci/Dawn Win11 arm64 Builder",
     ],
     gn_args = "ci/Dawn Win11 arm64 Builder",
+    max_concurrent_builds = 6,
     test_presentation = resultdb.test_presentation(
         grouping_keys = ["status", "v.test_suite", "v.gpu"],
     ),
 )
 
-dawn_win_builderful_builder(
+dawn_win_builderless_builder(
     name = "dawn-try-win10-x86-rel",
     mirrors = [
         "ci/Dawn Win10 x86 Builder",

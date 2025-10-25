@@ -46,6 +46,7 @@
 #include "content/browser/loader/reconnectable_url_loader_factory.h"
 #include "content/browser/loader/url_loader_factory_utils.h"
 #include "content/browser/private_aggregation/private_aggregation_manager.h"
+#include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/page_impl.h"
 #include "content/browser/renderer_host/policy_container_host.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
@@ -90,7 +91,7 @@ namespace {
 
 bool IsAdRequestValid(const blink::mojom::AdRequestConfig& config) {
   // The ad_request_url origin has to be HTTPS.
-  if (config.ad_request_url.scheme() != url::kHttpsScheme) {
+  if (config.ad_request_url.GetScheme() != url::kHttpsScheme) {
     return false;
   }
 
@@ -101,7 +102,7 @@ bool IsAdRequestValid(const blink::mojom::AdRequestConfig& config) {
 
   // If a fallback source is specified it must be HTTPS.
   if (config.fallback_source &&
-      (config.fallback_source->scheme() != url::kHttpsScheme)) {
+      (config.fallback_source->GetScheme() != url::kHttpsScheme)) {
     return false;
   }
 

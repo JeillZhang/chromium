@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 #include "net/nqe/network_quality_estimator.h"
 
 #include <algorithm>
@@ -27,6 +26,7 @@
 #include "base/task/lazy_thread_pool_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "net/base/features.h"
 #include "net/base/host_port_pair.h"
@@ -34,7 +34,6 @@
 #include "net/base/load_timing_info.h"
 #include "net/base/network_interfaces.h"
 #include "net/base/trace_constants.h"
-#include "net/base/tracing.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_response_info.h"
 #include "net/http/http_status_code.h"
@@ -251,6 +250,9 @@ NetworkQualityEstimator::~NetworkQualityEstimator() {
 
 void NetworkQualityEstimator::NotifyStartTransaction(
     const URLRequest& request) {
+  TRACE_EVENT(NetTracingCategory(),
+              "NetworkQualityEstimator::NotifyStartTransaction");
+  SCOPED_UMA_HISTOGRAM_TIMER("NQE.Duration.NotifyStartTransaction");
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!RequestSchemeIsHTTPOrHTTPS(request))
@@ -318,8 +320,9 @@ bool NetworkQualityEstimator::IsHangingRequest(
 void NetworkQualityEstimator::NotifyHeadersReceived(
     const URLRequest& request,
     int64_t prefilter_total_bytes_read) {
-  TRACE_EVENT0(NetTracingCategory(),
-               "NetworkQualityEstimator::NotifyHeadersReceived");
+  TRACE_EVENT(NetTracingCategory(),
+              "NetworkQualityEstimator::NotifyHeadersReceived");
+  SCOPED_UMA_HISTOGRAM_TIMER("NQE.Duration.NotifyHeadersReceived");
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!RequestSchemeIsHTTPOrHTTPS(request) ||
@@ -385,14 +388,18 @@ void NetworkQualityEstimator::NotifyHeadersReceived(
 void NetworkQualityEstimator::NotifyBytesRead(
     const URLRequest& request,
     int64_t prefilter_total_bytes_read) {
+  TRACE_EVENT(NetTracingCategory(), "NetworkQualityEstimator::NotifyBytesRead");
+  SCOPED_UMA_HISTOGRAM_TIMER("NQE.Duration.NotifyBytesRead");
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
   throughput_analyzer_->NotifyBytesRead(request);
 }
 
 void NetworkQualityEstimator::NotifyRequestCompleted(
     const URLRequest& request) {
-  TRACE_EVENT0(NetTracingCategory(),
-               "NetworkQualityEstimator::NotifyRequestCompleted");
+  TRACE_EVENT(NetTracingCategory(),
+              "NetworkQualityEstimator::NotifyRequestCompleted");
+  SCOPED_UMA_HISTOGRAM_TIMER("NQE.Duration.NotifyRequestCompleted");
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (!RequestSchemeIsHTTPOrHTTPS(request))
@@ -403,7 +410,10 @@ void NetworkQualityEstimator::NotifyRequestCompleted(
 
 void NetworkQualityEstimator::NotifyURLRequestDestroyed(
     const URLRequest& request) {
+  TRACE_EVENT(NetTracingCategory(),
+              "NetworkQualityEstimator::NotifyURLRequestDestroyed");
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  SCOPED_UMA_HISTOGRAM_TIMER("NQE.Duration.NotifyURLRequestDestroyed");
 
   if (!RequestSchemeIsHTTPOrHTTPS(request))
     return;

@@ -11,7 +11,6 @@ import static androidx.browser.customtabs.CustomTabsCallback.ACTIVITY_LAYOUT_STA
 import static androidx.browser.customtabs.CustomTabsCallback.ACTIVITY_LAYOUT_STATE_SIDE_SHEET_MAXIMIZED;
 import static androidx.browser.customtabs.CustomTabsIntent.ACTIVITY_SIDE_SHEET_DECORATION_TYPE_DIVIDER;
 import static androidx.browser.customtabs.CustomTabsIntent.ACTIVITY_SIDE_SHEET_DECORATION_TYPE_NONE;
-import static androidx.browser.customtabs.CustomTabsIntent.ACTIVITY_SIDE_SHEET_DECORATION_TYPE_SHADOW;
 import static androidx.browser.customtabs.CustomTabsIntent.ACTIVITY_SIDE_SHEET_POSITION_START;
 import static androidx.browser.customtabs.CustomTabsIntent.ACTIVITY_SIDE_SHEET_ROUNDED_CORNERS_POSITION_NONE;
 
@@ -19,7 +18,6 @@ import android.animation.ValueAnimator;
 import android.animation.ValueAnimator.AnimatorUpdateListener;
 import android.app.Activity;
 import android.graphics.drawable.GradientDrawable;
-import android.os.Build;
 import android.os.Handler;
 import android.view.Gravity;
 import android.view.View;
@@ -35,6 +33,8 @@ import androidx.browser.customtabs.CustomTabsCallback;
 import androidx.browser.customtabs.CustomTabsIntent;
 
 import org.chromium.base.SysUtils;
+import org.chromium.build.annotations.Initializer;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
 import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
@@ -50,6 +50,7 @@ import org.chromium.ui.base.LocalizationUtils;
  * CustomTabHeightStrategy for Partial Custom Tab Side-Sheet implementation. An instance of this
  * class should be owned by the CustomTabActivity.
  */
+@NullMarked
 public class PartialCustomTabSideSheetStrategy extends PartialCustomTabBaseStrategy {
     private static final int SIDE_SHEET_UI_DELAY = 20;
     private static final NoAnimator NO_ANIMATOR = new NoAnimator();
@@ -153,6 +154,7 @@ public class PartialCustomTabSideSheetStrategy extends PartialCustomTabBaseStrat
     }
 
     @Override
+    @Initializer
     public void onToolbarInitialized(
             View coordinatorView,
             CustomTabToolbar toolbar,
@@ -178,7 +180,7 @@ public class PartialCustomTabSideSheetStrategy extends PartialCustomTabBaseStrat
         updateDragBarVisibility(/* dragHandlebarVisibility= */ View.GONE);
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     boolean toggleMaximize(boolean animate) {
         mIsMaximized = !mIsMaximized;
         if (mIsMaximized) {
@@ -493,9 +495,7 @@ public class PartialCustomTabSideSheetStrategy extends PartialCustomTabBaseStrat
         // Elevation shadows are only rendered properly on devices >= Android Q
         return notMaxWidthSideSheet
                 && (SysUtils.isLowEndDevice()
-                        || mDecorationType == ACTIVITY_SIDE_SHEET_DECORATION_TYPE_DIVIDER
-                        || (mDecorationType == ACTIVITY_SIDE_SHEET_DECORATION_TYPE_SHADOW
-                                && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q));
+                        || mDecorationType == ACTIVITY_SIDE_SHEET_DECORATION_TYPE_DIVIDER);
     }
 
     @Override

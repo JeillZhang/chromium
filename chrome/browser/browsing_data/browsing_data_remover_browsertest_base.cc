@@ -32,6 +32,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
@@ -368,7 +369,7 @@ bool BrowsingDataRemoverBrowserTestBase::SetGaiaCookieForProfile(
     Profile* profile) {
   GURL google_url = GaiaUrls::GetInstance()->secure_google_url();
   auto cookie = net::CanonicalCookie::CreateUnsafeCookieForTesting(
-      "SAPISID", std::string(), "." + google_url.host(), "/", base::Time(),
+      "SAPISID", std::string(), "." + google_url.GetHost(), "/", base::Time(),
       base::Time(), base::Time(), base::Time(), /*secure=*/true,
       /*httponly=*/false, net::CookieSameSite::NO_RESTRICTION,
       net::COOKIE_PRIORITY_DEFAULT);

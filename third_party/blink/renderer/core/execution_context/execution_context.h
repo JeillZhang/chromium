@@ -36,9 +36,9 @@
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-blink-forward.h"
 #include "services/network/public/mojom/referrer_policy.mojom-blink-forward.h"
+#include "third_party/blink/public/common/fingerprinting_protection/noise_token.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
-#include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/frame/lifecycle.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/permissions_policy/policy_disposition.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/v8_cache_options.mojom-blink-forward.h"
@@ -91,7 +91,6 @@ class ErrorEvent;
 class EventTarget;
 class FrameOrWorkerScheduler;
 class KURL;
-class LocalDOMWindow;
 class OriginTrialContext;
 class RuntimeFeatureStateOverrideContext;
 class PolicyContainer;
@@ -178,6 +177,8 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
 
   virtual bool ShouldInstallV8Extensions() const { return false; }
 
+  virtual void MaybeRecordNetworkRequestUrlForPushEvents(const KURL& url) {}
+
   virtual void CountUseOnlyInCrossSiteIframe(mojom::blink::WebFeature feature) {
   }
 
@@ -255,12 +256,6 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
   void SetLifecycleState(mojom::FrameLifecycleState);
   virtual void NotifyContextDestroyed();
 
-  using ConsoleLogger::AddConsoleMessage;
-
-  void AddConsoleMessage(ConsoleMessage* message,
-                         bool discard_duplicates = false) {
-    AddConsoleMessageImpl(message, discard_duplicates);
-  }
   virtual void AddInspectorIssue(AuditsIssue) = 0;
 
   void CountDeprecation(WebFeature feature) override;
@@ -484,6 +479,14 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
     return net::StorageAccessApiStatus::kNone;
   }
 
+  const std::optional<NoiseToken>& CanvasNoiseToken() const {
+    return canvas_noise_token_;
+  }
+
+  void SetCanvasNoiseToken(std::optional<NoiseToken> token) {
+    canvas_noise_token_ = token;
+  }
+
  protected:
   ExecutionContext(v8::Isolate* isolate, Agent* agent, bool is_window = false);
   ~ExecutionContext() override;
@@ -547,6 +550,8 @@ class CORE_EXPORT ExecutionContext : public Supplementable<ExecutionContext>,
       runtime_feature_state_override_context_;
 
   bool require_trusted_types_ = false;
+
+  std::optional<NoiseToken> canvas_noise_token_;
 };
 
 }  // namespace blink

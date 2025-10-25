@@ -18,7 +18,9 @@ namespace policy {
 // Hence,
 //   (a) existing enumerated constants should never be deleted or reordered, and
 //   (b) new constants should only be appended at the end of the enumeration
-//       (update tools/metrics/histograms/enums.xml as well).
+//       (update tools/metrics/histograms/metadata/enterprise/enums.xml as
+//       well).
+// LINT.IfChange(MetricEnrollment)
 enum MetricEnrollment {
   // User pressed 'Cancel' during the enrollment process.
   kMetricEnrollmentCancelled = 0,
@@ -139,7 +141,7 @@ enum MetricEnrollment {
   kMetricEnrollmentRegisterEnterpriseAccountIsNotEligibleToEnroll = 60,
   // Enrollment failed: Enterprise TOS has not been accepted.
   kMetricEnrollmentRegisterEnterpriseTosHasNotBeenAccepted = 61,
-  // Too many requests are uploadede within a short time.
+  // Too many requests are uploaded within a short time.
   kMetricEnrollmentTooManyRequests = 62,
   // Enrollment failed: illegal account for packaged EDU license.
   kMetricEnrollmentIllegalAccountForPackagedEDULicense = 63,
@@ -162,13 +164,16 @@ enum MetricEnrollment {
   // Max value for use with enumeration histogram UMA functions.
   kMaxValue = kMetricEnrollmentOrgUnitEnrollmentLimitExceeded
 };
+// LINT.ThenChange(//tools/metrics/histograms/metadata/enterprise/enums.xml:EnterpriseEnrollmentType)
 
 // Events related to policy refresh.
 // This enum is used to define the buckets for an enumerated UMA histogram.
 // Hence,
 //   (a) existing enumerated constants should never be deleted or reordered, and
 //   (b) new constants should only be appended at the end of the enumeration
-//       (update tools/metrics/histograms/enums.xml as well).
+//       (update tools/metrics/histograms/metadata/enterprise/enums.xml as
+//       well).
+// LINT.IfChange(MetricPolicyRefresh)
 enum MetricPolicyRefresh {
   // A refresh occurred while the policy was not invalidated and the policy was
   // changed. Invalidations were enabled.
@@ -188,13 +193,16 @@ enum MetricPolicyRefresh {
 
   METRIC_POLICY_REFRESH_SIZE  // Must be the last.
 };
+// LINT.ThenChange(//tools/metrics/histograms/metadata/enterprise/enums.xml:EnterprisePolicyRefresh)
 
 // Types of policy invalidations.
 // This enum is used to define the buckets for an enumerated UMA histogram.
 // Hence,
 //   (a) existing enumerated constants should never be deleted or reordered, and
 //   (b) new constants should only be appended at the end of the enumeration
-//       (update tools/metrics/histograms/enums.xml as well).
+//       (update tools/metrics/histograms/metadata/enterprise/enums.xml as
+//       well).
+// LINT.IfChange(PolicyInvalidationType)
 enum PolicyInvalidationType {
   // The invalidation contained no payload.
   POLICY_INVALIDATION_TYPE_NO_PAYLOAD = 0,
@@ -207,10 +215,12 @@ enum PolicyInvalidationType {
 
   POLICY_INVALIDATION_TYPE_SIZE  // Must be the last.
 };
+// LINT.ThenChange(//tools/metrics/histograms/metadata/enterprise/enums.xml:EnterprisePolicyInvalidations)
 
 // Result of the Device ID field validation in policy protobufs.
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
+// LINT.IfChange(PolicyDeviceIdValidity)
 enum class PolicyDeviceIdValidity {
   kValid = 0,
   kActualIdUnknown = 1,
@@ -218,6 +228,7 @@ enum class PolicyDeviceIdValidity {
   kInvalid = 3,
   kMaxValue = kInvalid,  // Must be the last.
 };
+// LINT.ThenChange(//tools/metrics/histograms/metadata/enterprise/enums.xml:EnterprisePolicyDeviceIdValidity)
 
 // These values are persisted to logs. Entries should not be renumbered and
 // numeric values should never be reused.
@@ -225,6 +236,14 @@ enum class PolicyPromotionBannerAction {
   kBannerDismissed = 0,
   kBannerRedirected = 1,
   kMaxValue = kBannerRedirected,  // Must be the last.
+};
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class ManagementPromotionBannerAction {
+  kManagementBannerDismissed = 0,
+  kManagementRedirected = 1,
+  kMaxValue = kManagementRedirected,  // Must be the last.
 };
 
 // Names for the UMA counters. They are shared from here since the events
@@ -474,6 +493,12 @@ inline constexpr char kUMAPolicyBannerDisplayed[] =
     "Enterprise.PolicyPromotionBannerDisplayed";
 inline constexpr char kUMAPolicyBannerAction[] =
     "Enterprise.PolicyPromotionBannerAction";
+
+// Histograms for the promotion banner on chrome://management
+inline constexpr char kUMAManagementBannerDisplayed[] =
+    "Enterprise.ManagementPromotionBannerDisplayed";
+inline constexpr char kUMAManagementBannerAction[] =
+    "Enterprise.ManagementPromotionBannerAction";
 }  // namespace policy
 
 #endif  // COMPONENTS_POLICY_CORE_COMMON_CLOUD_ENTERPRISE_METRICS_H_

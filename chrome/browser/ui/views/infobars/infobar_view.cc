@@ -6,11 +6,14 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
+#include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
@@ -33,10 +36,11 @@
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/native_theme/common_theme.h"
+#include "ui/gfx/text_constants.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
+#include "ui/views/border.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/image_button_factory.h"
 #include "ui/views/controls/button/label_button_border.h"
@@ -50,7 +54,7 @@
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_utils.h"
 #include "ui/views/widget/widget.h"
-#include "ui/views/window/non_client_view.h"
+#include "ui/views/window/frame_view.h"
 
 // Helpers --------------------------------------------------------------------
 
@@ -107,6 +111,9 @@ InfoBarView::InfoBarView(std::unique_ptr<infobars::InfoBarDelegate> delegate)
     AddChildViewRaw(icon_.get());
   }
 
+  // Create the container that will hold all subclass‑owned children.
+  content_container_ = AddChildView(std::make_unique<views::View>());
+
   if (this->delegate()->IsCloseable()) {
     auto close_button = views::CreateVectorImageButton(base::BindRepeating(
         &InfoBarView::CloseButtonPressed, base::Unretained(this)));
@@ -145,29 +152,56 @@ InfoBarView::~InfoBarView() {
 
 void InfoBarView::Layout(PassKey) {
   const int spacing = GetElementSpacing();
-  int start_x = 0;
-  if (icon_) {
-    icon_->SetPosition(gfx::Point(spacing, OffsetY(icon_)));
-    start_x = icon_->bounds().right();
+  if (base::FeatureList::IsEnabled(features::kInfobarRefresh)) {
+    if (close_button_) {
+      const gfx::Insets close_button_spacing = GetCloseButtonSpacing();
+      close_button_->SizeToPreferredSize();
+      close_button_->SetPosition(gfx::Point(
+          width() - close_button_spacing.right() - close_button_->width(),
+          OffsetY(close_button_)));
+      // For accessibility reasons, the close button should come last.
+      DCHECK_EQ(close_button_, close_button_->parent()->children().back());
+    }
+
+    int content_width = GetContentPreferredWidth();
+    if (icon_) {
+      content_width += icon_->width() + spacing / 2;
+    }
+
+    const int available_width = GetEndX();
+    int start_x = (available_width - content_width) / 2;
+    if (icon_) {
+      icon_->SetPosition(gfx::Point(start_x, OffsetY(icon_)));
+    }
+  } else {
+    int start_x = 0;
+    if (icon_) {
+      icon_->SetPosition(gfx::Point(spacing, OffsetY(icon_)));
+      start_x = icon_->bounds().right();
+    }
+
+    const int content_minimum_width = GetContentMinimumWidth();
+    if (content_minimum_width > 0) {
+      start_x += spacing + content_minimum_width;
+    }
+
+    if (close_button_) {
+      const gfx::Insets close_button_spacing = GetCloseButtonSpacing();
+      close_button_->SizeToPreferredSize();
+      close_button_->SetPosition(gfx::Point(
+          std::max(
+              start_x + close_button_spacing.left(),
+              width() - close_button_spacing.right() - close_button_->width()),
+          OffsetY(close_button_)));
+
+      // For accessibility reasons, the close button should come last.
+      DCHECK_EQ(close_button_, close_button_->parent()->children().back());
+    }
   }
 
-  const int content_minimum_width = GetContentMinimumWidth();
-  if (content_minimum_width > 0) {
-    start_x += spacing + content_minimum_width;
-  }
-
-  if (close_button_) {
-    const gfx::Insets close_button_spacing = GetCloseButtonSpacing();
-    close_button_->SizeToPreferredSize();
-    close_button_->SetPosition(gfx::Point(
-        std::max(
-            start_x + close_button_spacing.left(),
-            width() - close_button_spacing.right() - close_button_->width()),
-        OffsetY(close_button_)));
-
-    // For accessibility reasons, the close button should come last.
-    DCHECK_EQ(close_button_, close_button_->parent()->children().back());
-  }
+  // Ensure the content container spans the full infobar so that its children
+  // can continue to use absolute coordinates unchanged.
+  content_container_->SetBoundsRect(GetLocalBounds());
 }
 
 gfx::Size InfoBarView::CalculatePreferredSize(
@@ -190,24 +224,16 @@ gfx::Size InfoBarView::CalculatePreferredSize(
   return gfx::Size(width + trailing_space, computed_height());
 }
 
-void InfoBarView::ViewHierarchyChanged(
-    const views::ViewHierarchyChangedDetails& details) {
-  View::ViewHierarchyChanged(details);
-
-  // Anything that needs to happen once after all subclasses add their children.
-  // TODO(330923783): Create a container for info bar subclasses to add children
-  // to, so that we don't have to move the close button to the end every time a
-  // child is added.
-  if (details.is_add && (details.child == this) && close_button_) {
-    ReorderChildView(close_button_, children().size());
-  }
-}
-
 void InfoBarView::OnThemeChanged() {
   views::View::OnThemeChanged();
   const auto* cp = GetColorProvider();
   const SkColor background_color = cp->GetColor(kColorInfoBarBackground);
-  SetBackground(views::CreateSolidBackground(background_color));
+  if (base::FeatureList::IsEnabled(features::kInfobarRefresh)) {
+    const SkColor background_theme_color = cp->GetColor(ui::kColorFrameActive);
+    SetBackground(views::CreateSolidBackground(background_theme_color));
+  } else {
+    SetBackground(views::CreateSolidBackground(background_color));
+  }
 
   const SkColor text_color = cp->GetColor(kColorInfoBarForeground);
   const SkColor icon_color = cp->GetColor(kColorInfoBarButtonIcon);
@@ -219,7 +245,7 @@ void InfoBarView::OnThemeChanged() {
         icon_disabled_color);
   }
 
-  for (views::View* child : children()) {
+  for (views::View* child : content_container_->children()) {
     auto* label = views::AsViewClass<views::Label>(child);
     if (label) {
       label->SetBackgroundColor(background_color);
@@ -259,12 +285,18 @@ std::unique_ptr<views::Label> InfoBarView::CreateLabel(
 }
 
 std::unique_ptr<views::Link> InfoBarView::CreateLink(
-    const std::u16string& text) {
+    const std::u16string& text,
+    const std::optional<std::u16string>& accessible_text) {
   auto link = std::make_unique<views::Link>(
       text, views::style::CONTEXT_DIALOG_BODY_TEXT);
   SetLabelDetails(link.get());
   link->SetCallback(
       base::BindRepeating(&InfoBarView::LinkClicked, base::Unretained(this)));
+
+  if (accessible_text.has_value()) {
+    link->SetAccessibleName(accessible_text.value());
+  }
+
   return link;
 }
 
@@ -280,6 +312,10 @@ void InfoBarView::AssignWidths(Views* views, int available_width) {
 }
 
 int InfoBarView::GetContentMinimumWidth() const {
+  return 0;
+}
+
+int InfoBarView::GetContentPreferredWidth() const {
   return 0;
 }
 

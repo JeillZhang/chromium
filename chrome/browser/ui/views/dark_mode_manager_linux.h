@@ -25,6 +25,10 @@ class Response;
 class Signal;
 }  // namespace dbus
 
+namespace dbus_xdg {
+enum class SystemdUnitStatus;
+}  // namespace dbus_xdg
+
 namespace ui {
 
 class LinuxUiTheme;
@@ -32,8 +36,10 @@ class DarkModeManagerLinuxTest;
 
 // Observes the system color scheme preference using
 // org.freedesktop.portal.Settings. Falls back to the toolkit preference if
-// org.freedesktop.portal.Settings is unavailable.  Propagates the dark mode
-// preference to the web theme.
+// org.freedesktop.portal.Settings is unavailable.
+// TODO(pkasting): Perhaps this functionality should be in a new
+// `OsSettingsProviderLinux` class instead? Not sure how it should interact with
+// `OsSettingsProviderGtk`/`OsSettingsProviderQt`.
 class DarkModeManagerLinux : public NativeThemeObserver {
  public:
   DarkModeManagerLinux();
@@ -41,8 +47,7 @@ class DarkModeManagerLinux : public NativeThemeObserver {
       scoped_refptr<dbus::Bus> bus,
       LinuxUiTheme* default_linux_ui_theme,
       const std::vector<raw_ptr<LinuxUiTheme, VectorExperimental>>*
-          linux_ui_themes,
-      std::vector<raw_ptr<NativeTheme, VectorExperimental>> native_themes);
+          linux_ui_themes);
   DarkModeManagerLinux(const DarkModeManagerLinux&) = delete;
   DarkModeManagerLinux& operator=(const DarkModeManagerLinux&) = delete;
   ~DarkModeManagerLinux() override;
@@ -72,13 +77,15 @@ class DarkModeManagerLinux : public NativeThemeObserver {
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
 
   // D-Bus async handlers
+  void OnSystemdUnitStarted(dbus_xdg::SystemdUnitStatus status);
   void OnSignalConnected(const std::string& interface_name,
                          const std::string& signal_name,
                          bool connected);
   void OnPortalSettingChanged(dbus::Signal* signal);
-  void OnReadColorSchemeResponse(dbus::Response* response);
-  void OnReadAccentColorResponse(dbus::Response* response);
-  void OnReadError(dbus::ErrorResponse* error);
+  void OnReadColorScheme(dbus::Response* response,
+                         dbus::ErrorResponse* error_response);
+  void OnReadAccentColor(dbus::Response* response,
+                         dbus::ErrorResponse* error_response);
 
   // Sets `prefer_dark_theme_` and propagates to the web theme.
   void SetColorScheme(bool prefer_dark_theme, bool from_toolkit_theme);
@@ -87,7 +94,6 @@ class DarkModeManagerLinux : public NativeThemeObserver {
 
   raw_ptr<const std::vector<raw_ptr<LinuxUiTheme, VectorExperimental>>>
       linux_ui_themes_;
-  std::vector<raw_ptr<NativeTheme, VectorExperimental>> native_themes_;
 
   scoped_refptr<dbus::Bus> bus_;
   raw_ptr<dbus::ObjectProxy> settings_proxy_;

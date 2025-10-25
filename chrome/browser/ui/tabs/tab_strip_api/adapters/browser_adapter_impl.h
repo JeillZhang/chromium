@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_TABS_TAB_STRIP_API_ADAPTERS_BROWSER_ADAPTER_IMPL_H_
 #define CHROME_BROWSER_UI_TABS_TAB_STRIP_API_ADAPTERS_BROWSER_ADAPTER_IMPL_H_
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_api/adapters/browser_adapter.h"
 
@@ -20,7 +21,11 @@ class BrowserAdapterImpl : public BrowserAdapter {
   BrowserAdapterImpl operator=(const BrowserAdapterImpl&) = delete;
   ~BrowserAdapterImpl() override = default;
 
-  tabs::TabHandle AddTabAt(const GURL& url, std::optional<int> index) override;
+  tabs::TabHandle AddTabAt(
+      const GURL& url,
+      std::optional<int> index,
+      std::optional<tab_groups::TabGroupId> group = std::nullopt,
+      bool pinned = false) override;
 
  private:
   raw_ptr<BrowserWindowInterface> browser_;

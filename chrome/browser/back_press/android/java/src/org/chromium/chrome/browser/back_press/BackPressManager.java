@@ -21,14 +21,16 @@ import org.chromium.base.CallbackUtils;
 import org.chromium.base.ObserverList;
 import org.chromium.base.lifetime.Destroyable;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler.BackPressResult;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler.Type;
+import org.chromium.components.browser_ui.widget.gesture.BackPressHandlerRegistry;
 import org.chromium.components.browser_ui.widget.gesture.OnSystemNavigationObserver;
+
+import java.util.function.Supplier;
 
 /**
  * A central manager class to handle the back gesture. Every component/feature which is going to
@@ -44,7 +46,7 @@ import org.chromium.components.browser_ui.widget.gesture.OnSystemNavigationObser
  * </ol>
  */
 @NullMarked
-public class BackPressManager implements Destroyable {
+public class BackPressManager implements Destroyable, BackPressHandlerRegistry {
     private static final SparseIntArray sMetricsMap;
     private static final int sMetricsMaxValue;
 
@@ -73,9 +75,10 @@ public class BackPressManager implements Destroyable {
         map.put(Type.BOTTOM_CONTROLS, 20);
         map.put(Type.HUB, 21);
         map.put(Type.ARCHIVED_TABS_DIALOG, 22);
+        map.put(Type.NATIVE_PAGE, 23);
 
         // Add new one here and update array size.
-        sMetricsMaxValue = 23;
+        sMetricsMaxValue = 24;
         sMetricsMap = map;
     }
 
@@ -92,7 +95,7 @@ public class BackPressManager implements Destroyable {
                         failed = true;
                         continue;
                     case BackPressResult.SUCCESS:
-                        return Boolean.TRUE;
+                        return true;
                     case BackPressResult.UNKNOWN:
                     case BackPressResult.IGNORED:
                         return null;
@@ -100,7 +103,7 @@ public class BackPressManager implements Destroyable {
             } else {
                 Boolean escapePressResult = handler.handleEscPress();
                 if (escapePressResult != null && escapePressResult) {
-                    return Boolean.TRUE;
+                    return true;
                 }
             }
         }
@@ -258,9 +261,11 @@ public class BackPressManager implements Destroyable {
 
     /**
      * Register the handler to intercept the back gesture.
+     *
      * @param handler Implementer of {@link BackPressHandler}.
      * @param type The {@link Type} of the handler.
      */
+    @Override
     public void addHandler(BackPressHandler handler, @Type int type) {
         assert mHandlers[type] == null : "Each type can have at most one handler";
         mHandlers[type] = handler;
@@ -275,6 +280,7 @@ public class BackPressManager implements Destroyable {
      *
      * @param handler {@link BackPressHandler} to be removed.
      */
+    @Override
     public void removeHandler(BackPressHandler handler) {
         for (int i = 0; i < mHandlers.length; i++) {
             if (mHandlers[i] == handler) {
@@ -329,9 +335,9 @@ public class BackPressManager implements Destroyable {
         return mOnSystemNavigationCallback;
     }
 
-    /*
+    /**
      * @param fallbackOnBackPressed Callback executed when a handler claims to intercept back press
-     *         but no handler succeeds.
+     *     but no handler succeeds.
      */
     public void setFallbackOnBackPressed(Runnable runnable) {
         mFallbackOnBackPressed = runnable;

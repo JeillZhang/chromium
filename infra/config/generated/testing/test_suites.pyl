@@ -13,9 +13,7 @@
     },
 
     'blink_unittests_suite': {
-      'blink_unit_tests': {
-        'test': 'blink_unittests',
-      },
+      'blink_unittests': {},
     },
 
     'blink_web_tests_ppapi_isolated_scripts': {
@@ -158,17 +156,6 @@
       },
     },
 
-    'chromeos_chrome_all_tast_tests': {
-      'chrome_all_tast_tests': {
-        'skylab': {
-          'tast_expr': 'STUB_STRING_TO_RUN_TAST_TESTS',
-          'test_level_retries': 2,
-          'timeout_sec': 14400,
-          'shards': 15,
-        },
-      },
-    },
-
     'chromeos_chrome_all_tast_tests_tfc': {
       'chrome_all_tast_tests': {
         'skylab': {
@@ -185,31 +172,44 @@
           'cros_test_names_exclude_from_file': [
             'chromeos/tast_control_disabled_tests.txt',
           ],
+          'cros_ctp_suite_name': 'chrome-uprev-hw',
         },
       },
     },
 
-    'chromeos_chrome_criticalstaging_tast_tests': {
+    'chromeos_chrome_criticalstaging_tast_tests_tfc': {
       'chrome_criticalstaging_tast_tests': {
         'ci_only': True,
         'skylab': {
           'tast_expr': 'STUB_STRING_TO_RUN_TAST_TESTS',
-          'test_level_retries': 2,
           'timeout_sec': 14400,
-          'shards': 3,
+          'cros_test_tags': [
+            'group:mainline',
+            'dep:chrome',
+            'informational',
+            'group:criticalstaging',
+          ],
+          'cros_test_tags_exclude': [
+            'dep:lacros',
+            'dep:no_chrome_dcheck',
+          ],
+          'cros_test_names_exclude_from_file': [
+            'chromeos/tast_control_disabled_tests.txt',
+          ],
         },
         'experiment_percentage': 100,
       },
     },
 
-    'chromeos_chrome_disabled_tast_tests': {
+    'chromeos_chrome_disabled_tast_tests_tfc': {
       'chrome_disabled_tast_tests': {
         'ci_only': True,
         'skylab': {
           'tast_expr': 'STUB_STRING_TO_RUN_TAST_TESTS',
-          'test_level_retries': 1,
           'timeout_sec': 14400,
-          'shards': 2,
+          'cros_test_names_from_file': [
+            'chromeos/tast_control_disabled_tests.txt',
+          ],
         },
         'experiment_percentage': 100,
       },
@@ -255,7 +255,6 @@
       'google_apis_unittests': {},
       'ipc_tests': {},
       'latency_unittests': {},
-      'libcups_unittests': {},
       'media_unittests': {
         'args': [
           '--test-launcher-filter-file=../../testing/buildbot/filters/chromeos.media_unittests.filter',
@@ -443,7 +442,6 @@
       'google_apis_unittests': {},
       'ipc_tests': {},
       'latency_unittests': {},
-      'libcups_unittests': {},
       'media_unittests': {
         'args': [
           '--test-launcher-filter-file=../../testing/buildbot/filters/chromeos.betty.media_unittests.filter',
@@ -486,6 +484,11 @@
     'chromium_gtests': {
       'absl_hardening_tests': {},
       'angle_unittests': {
+        'test_common': {
+          'mixins': [
+            'gpu_gtest_common_args',
+          ],
+        },
         'android_args': [
           '-v',
         ],
@@ -499,6 +502,11 @@
           'mixins': [
             'skia_gold_test',
           ],
+        },
+      },
+      'blink_unittests': {
+        'android_swarming': {
+          'shards': 6,
         },
       },
       'boringssl_crypto_tests': {},
@@ -541,7 +549,13 @@
       'gcm_unit_tests': {},
       'gin_unittests': {},
       'google_apis_unittests': {},
-      'gpu_unittests': {},
+      'gpu_unittests': {
+        'test_common': {
+          'mixins': [
+            'gpu_gtest_common_args',
+          ],
+        },
+      },
       'gwp_asan_unittests': {},
       'ipc_tests': {},
       'latency_unittests': {},
@@ -567,12 +581,6 @@
       'ui_base_unittests': {},
       'ui_touch_selection_unittests': {},
       'url_unittests': {},
-      'webkit_unit_tests': {
-        'test': 'blink_unittests',
-        'android_swarming': {
-          'shards': 6,
-        },
-      },
       'wtf_unittests': {},
       'zlib_unittests': {},
     },
@@ -793,7 +801,13 @@
       'gcm_unit_tests': {},
       'gin_unittests': {},
       'google_apis_unittests': {},
-      'gpu_unittests': {},
+      'gpu_unittests': {
+        'test_common': {
+          'mixins': [
+            'gpu_gtest_common_args',
+          ],
+        },
+      },
       'headless_browsertests': {},
       'headless_unittests': {},
       'interactive_ui_tests': {},
@@ -1812,7 +1826,13 @@
       'aura_unittests': {},
       'chromeos_components_unittests': {},
       'exo_unittests': {},
-      'gl_unittests_ozone': {},
+      'gl_unittests_ozone': {
+        'test_common': {
+          'mixins': [
+            'gpu_gtest_common_args',
+          ],
+        },
+      },
       'keyboard_unittests': {},
       'ozone_gl_unittests': {
         'args': [
@@ -2002,10 +2022,8 @@
         },
       },
       'message_center_unittests': {},
-      'nacl_loader_unittests': {},
       'native_theme_unittests': {},
       'pdf_unittests': {},
-      'ppapi_unittests': {},
       'printing_unittests': {},
       'remoting_unittests': {},
       'snapshot_unittests': {},
@@ -2016,6 +2034,52 @@
       },
       'ui_unittests': {},
       'views_unittests': {},
+    },
+
+    'ondevice_model_benchmark_tests_cpu_no_submodel_suite': {
+      'ondevice_model_benchmark_tests_cpu_no_submodel': {
+        'test_common': {
+          'mixins': [
+            'has_native_resultdb_integration',
+          ],
+          'args': [
+            '--benchmark_binary_dir=./',
+            '--backends=cpu',
+          ],
+        },
+        'test': 'ondevice_model_benchmark_tests',
+      },
+    },
+
+    'ondevice_model_benchmark_tests_gpu_no_submodel_suite': {
+      'ondevice_model_benchmark_tests_gpu_no_submodel': {
+        'test_common': {
+          'mixins': [
+            'has_native_resultdb_integration',
+          ],
+          'args': [
+            '--benchmark_binary_dir=./',
+            '--backends=gpu',
+          ],
+        },
+        'test': 'ondevice_model_benchmark_tests',
+      },
+    },
+
+    'ondevice_model_benchmark_tests_gpu_submodel_suite': {
+      'ondevice_model_benchmark_tests_gpu_submodel': {
+        'test_common': {
+          'mixins': [
+            'has_native_resultdb_integration',
+          ],
+          'args': [
+            '--benchmark_binary_dir=./',
+            '--backends=gpu',
+            '--use_submodel',
+          ],
+        },
+        'test': 'ondevice_model_benchmark_tests',
+      },
     },
 
     'ondevice_stability_tests_light_suite': {
@@ -2095,7 +2159,49 @@
           '--ui-test-action-timeout=30000',
         ],
         'linux_args': [
-          '-use-xvfb',
+          '--use-xvfb',
+        ],
+      },
+      'optimization_guide_services_unittests': {
+        'test_common': {
+          'args': [
+            '--gtest_filter=*WebNN*',
+            '--use-gpu-in-tests',
+          ],
+        },
+        'test': 'services_unittests',
+        'args': [
+          '--ui-test-action-timeout=30000',
+        ],
+        'linux_args': [
+          '--no-xvfb',
+        ],
+      },
+    },
+
+    'optimization_guide_gpu_isolated_scripts': {
+      'blink_wpt_tests': {
+        'test_common': {
+          'mixins': [
+            'has_native_resultdb_integration',
+            'blink_tests_write_run_histories',
+          ],
+          'args': [
+            '--num-retries=3',
+          ],
+          'merge': {
+            'script': '//third_party/blink/tools/merge_web_test_results.py',
+            'args': [
+              '--verbose',
+            ],
+          },
+        },
+        'results_handler': 'layout tests',
+        'args': [
+          '--additional-driver-flag=--disable-features=WebNNCoreML,WebNNDirectML,WebNNOnnxRuntime',
+          '--ignore-default-expectations',
+          '--additional-expectations=../../third_party/blink/web_tests/OptimizationGuideExpectations',
+          '--test-launcher-filter-file=../../third_party/blink/web_tests/TestLists/optimization_guide.filter',
         ],
       },
     },
@@ -2111,17 +2217,6 @@
 
     'optimization_guide_nogpu_gtests': {
       'chrome_ml_unittests': {
-        'linux_args': [
-          '--use-xvfb',
-        ],
-      },
-      'optimization_guide_browser_tests': {
-        'test_common': {
-          'args': [
-            '--gtest_filter=*OptimizationGuide*:*PageContentAnnotations*',
-          ],
-        },
-        'test': 'browser_tests',
         'linux_args': [
           '--use-xvfb',
         ],
@@ -2284,6 +2379,7 @@
       'gpu_common_and_optional_telemetry_tests',
       'gpu_passthrough_telemetry_tests',
       'gpu_skia_renderer_vulkan_passthrough_telemetry_tests',
+      'gpu_webcodecs_telemetry_test',
       'gpu_webgl2_conformance_gl_passthrough_telemetry_tests',
       'gpu_webgl_conformance_gl_passthrough_telemetry_tests',
     ],
@@ -2352,32 +2448,53 @@
   'matrix_compound_suites': {
 
     'chromeos_brya_skylab_tests': {
-      'chromeos_chrome_all_tast_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
+        'mixins': [
+          'skylab-50-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_criticalstaging_tast_tests': {
+      'chromeos_chrome_criticalstaging_tast_tests_tfc': {
+        'mixins': [
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_disabled_tast_tests': {
+      'chromeos_chrome_disabled_tast_tests_tfc': {
+        'mixins': [
+          'skylab-20-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_integration_tests_suite': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_system_friendly_gtests': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_vaapi_gtests': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2385,20 +2502,56 @@
     },
 
     'chromeos_ctp_preuprev_tests': {
-      'chromeos_chrome_all_tast_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
         'mixins': [
-          'skylab-shards-30',
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
         ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_device_only_gtests': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_integration_tests_suite': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
+        'variants': [
+          'CROS_RELEASE_LKGM',
+        ],
+      },
+    },
+
+    'chromeos_ctp_preuprev_tests_no_arc': {
+      'chromeos_chrome_all_tast_tests_tfc': {
+        'mixins': [
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
+        'variants': [
+          'CROS_RELEASE_LKGM',
+        ],
+      },
+      'chromeos_device_only_gtests': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
+        'variants': [
+          'CROS_RELEASE_LKGM',
+        ],
+      },
+      'chromeos_integration_tests_suite': {
+        'mixins': [
+          'crosier-no-arc',
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2406,20 +2559,27 @@
     },
 
     'chromeos_ctp_preuprev_tests_slow_boards': {
-      'chromeos_chrome_all_tast_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
         'mixins': [
-          'skylab-shards-45',
+          'skylab-20-tests-per-shard',
+          'skylab-rdb-tast',
         ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_device_only_gtests': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_integration_tests_suite': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2427,30 +2587,45 @@
     },
 
     'chromeos_jacuzzi_skylab_tests': {
-      'chromeos_chrome_all_tast_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
         'mixins': [
-          'skylab-shards-30',
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
         ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_criticalstaging_tast_tests': {
+      'chromeos_chrome_criticalstaging_tast_tests_tfc': {
+        'mixins': [
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_disabled_tast_tests': {
+      'chromeos_chrome_disabled_tast_tests_tfc': {
+        'mixins': [
+          'skylab-20-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_device_only_gtests': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_integration_tests_suite': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2458,20 +2633,19 @@
     },
 
     'chromeos_octopus_skylab_tests': {
-      'chromeos_chrome_all_tast_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
+        'mixins': [
+          'skylab-50-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_device_only_gtests': {
-        'variants': [
-          'CROS_RELEASE_LKGM',
+        'mixins': [
+          'skylab-rdb-gtest',
         ],
-      },
-    },
-
-    'chromeos_tfc_tests': {
-      'chromeos_chrome_all_tast_tests_tfc': {
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2479,20 +2653,45 @@
     },
 
     'chromeos_trogdor_skylab_tests': {
-      'chromeos_chrome_all_tast_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
         'mixins': [
-          'skylab-shards-20',
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
+        'variants': [
+          'CROS_RELEASE_LKGM',
+        ],
+      },
+      'chromeos_chrome_criticalstaging_tast_tests_tfc': {
+        'mixins': [
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
+        'variants': [
+          'CROS_RELEASE_LKGM',
+        ],
+      },
+      'chromeos_chrome_disabled_tast_tests_tfc': {
+        'mixins': [
+          'skylab-20-tests-per-shard',
+          'skylab-rdb-tast',
         ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_device_only_gtests': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_integration_tests_suite': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2500,25 +2699,37 @@
     },
 
     'chromeos_vmlab_tests': {
-      'chromeos_chrome_all_tast_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
         'mixins': [
-          'skylab-shards-20',
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
         ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_criticalstaging_tast_tests': {
+      'chromeos_chrome_criticalstaging_tast_tests_tfc': {
+        'mixins': [
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_disabled_tast_tests': {
+      'chromeos_chrome_disabled_tast_tests_tfc': {
+        'mixins': [
+          'skylab-20-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_integration_tests_suite': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2526,12 +2737,16 @@
       'chromeos_system_friendly_gtests_fails_vmlab': {
         'mixins': [
           'experiments',
+          'skylab-rdb-gtest',
         ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_system_friendly_gtests_vmlab': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2539,6 +2754,7 @@
       'chromeos_vaapi_gtests': {
         'mixins': [
           'experiments',
+          'skylab-rdb-gtest',
         ],
         'variants': [
           'CROS_RELEASE_LKGM',
@@ -2547,22 +2763,37 @@
     },
 
     'chromeos_vmlab_tests_no_gtests': {
-      'chromeos_chrome_all_tast_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
+        'mixins': [
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_criticalstaging_tast_tests': {
+      'chromeos_chrome_criticalstaging_tast_tests_tfc': {
+        'mixins': [
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_disabled_tast_tests': {
+      'chromeos_chrome_disabled_tast_tests_tfc': {
+        'mixins': [
+          'skylab-20-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_integration_tests_suite': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2570,17 +2801,29 @@
     },
 
     'chromeos_vmlab_tests_no_gtests_no_arc': {
-      'chromeos_chrome_all_tast_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
+        'mixins': [
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_criticalstaging_tast_tests': {
+      'chromeos_chrome_criticalstaging_tast_tests_tfc': {
+        'mixins': [
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_disabled_tast_tests': {
+      'chromeos_chrome_disabled_tast_tests_tfc': {
+        'mixins': [
+          'skylab-20-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2588,6 +2831,7 @@
       'chromeos_integration_tests_suite': {
         'mixins': [
           'crosier-no-arc',
+          'skylab-rdb-gtest',
         ],
         'variants': [
           'CROS_RELEASE_LKGM',
@@ -2596,27 +2840,45 @@
     },
 
     'chromeos_volteer_skylab_tests': {
-      'chromeos_chrome_all_tast_tests': {
+      'chromeos_chrome_all_tast_tests_tfc': {
+        'mixins': [
+          'skylab-50-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_criticalstaging_tast_tests': {
+      'chromeos_chrome_criticalstaging_tast_tests_tfc': {
+        'mixins': [
+          'skylab-40-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
-      'chromeos_chrome_disabled_tast_tests': {
+      'chromeos_chrome_disabled_tast_tests_tfc': {
+        'mixins': [
+          'skylab-20-tests-per-shard',
+          'skylab-rdb-tast',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_device_only_gtests': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
       },
       'chromeos_integration_tests_suite': {
+        'mixins': [
+          'skylab-rdb-gtest',
+        ],
         'variants': [
           'CROS_RELEASE_LKGM',
         ],
@@ -2625,6 +2887,9 @@
 
     'gpu_fyi_chromeos_brya_telemetry_tests': {
       'gpu_noop_sleep_telemetry_test': {
+        'mixins': [
+          'skylab-rdb-native',
+        ],
         'variants': [
           'CROS_GPU_BRYA_RELEASE_LKGM',
         ],
@@ -2633,6 +2898,9 @@
 
     'gpu_fyi_chromeos_corsola_telemetry_tests': {
       'gpu_noop_sleep_telemetry_test': {
+        'mixins': [
+          'skylab-rdb-native',
+        ],
         'variants': [
           'CROS_GPU_CORSOLA_RELEASE_LKGM',
         ],
@@ -2641,26 +2909,41 @@
 
     'gpu_fyi_chromeos_release_telemetry_tests_jacuzzi_skylab': {
       'gpu_common_and_optional_telemetry_tests': {
+        'mixins': [
+          'skylab-rdb-native',
+        ],
         'variants': [
           'CROS_JACUZZI_RELEASE_LKGM',
         ],
       },
       'gpu_passthrough_telemetry_tests': {
+        'mixins': [
+          'skylab-rdb-native',
+        ],
         'variants': [
           'CROS_JACUZZI_RELEASE_LKGM',
         ],
       },
       'gpu_webcodecs_telemetry_test': {
+        'mixins': [
+          'skylab-rdb-native',
+        ],
         'variants': [
           'CROS_JACUZZI_RELEASE_LKGM',
         ],
       },
       'gpu_webgl2_conformance_gles_passthrough_telemetry_tests': {
+        'mixins': [
+          'skylab-rdb-native',
+        ],
         'variants': [
           'CROS_JACUZZI_RELEASE_LKGM',
         ],
       },
       'gpu_webgl_conformance_gles_passthrough_telemetry_tests': {
+        'mixins': [
+          'skylab-rdb-native',
+        ],
         'variants': [
           'CROS_JACUZZI_RELEASE_LKGM',
         ],
@@ -2669,6 +2952,9 @@
 
     'gpu_fyi_chromeos_skyrim_telemetry_tests': {
       'gpu_noop_sleep_telemetry_test': {
+        'mixins': [
+          'skylab-rdb-native',
+        ],
         'variants': [
           'CROS_GPU_SKYRIM_RELEASE_LKGM',
         ],
@@ -2760,6 +3046,24 @@
           'gce',
         ],
       },
+      'ondevice_model_benchmark_tests_cpu_no_submodel_suite': {
+        'mixins': [
+          'chrome-intelligence-swarming-pool',
+          'non-gce',
+        ],
+      },
+      'ondevice_model_benchmark_tests_gpu_no_submodel_suite': {
+        'mixins': [
+          'chrome-intelligence-swarming-pool',
+          'non-gce',
+        ],
+      },
+      'ondevice_model_benchmark_tests_gpu_submodel_suite': {
+        'mixins': [
+          'chrome-intelligence-swarming-pool',
+          'non-gce',
+        ],
+      },
       'ondevice_stability_tests_suite': {
         'variants': [
           'NVIDIA_GEFORCE_GTX_1660',
@@ -2773,9 +3077,11 @@
     },
 
     'optimization_guide_mac_script_tests': {
-      'chrome_ai_wpt_tests_suite': {},
       'model_validation_tests_light_suite': {},
       'model_validation_tests_suite': {},
+      'ondevice_model_benchmark_tests_cpu_no_submodel_suite': {},
+      'ondevice_model_benchmark_tests_gpu_no_submodel_suite': {},
+      'ondevice_model_benchmark_tests_gpu_submodel_suite': {},
       'ondevice_stability_tests_suite': {},
     },
 
@@ -2807,6 +3113,24 @@
       'model_validation_tests_suite': {
         'mixins': [
           'gce',
+        ],
+      },
+      'ondevice_model_benchmark_tests_cpu_no_submodel_suite': {
+        'mixins': [
+          'chrome-intelligence-swarming-pool',
+          'non-gce',
+        ],
+      },
+      'ondevice_model_benchmark_tests_gpu_no_submodel_suite': {
+        'mixins': [
+          'chrome-intelligence-swarming-pool',
+          'non-gce',
+        ],
+      },
+      'ondevice_model_benchmark_tests_gpu_submodel_suite': {
+        'mixins': [
+          'chrome-intelligence-swarming-pool',
+          'non-gce',
         ],
       },
       'ondevice_stability_tests_suite': {

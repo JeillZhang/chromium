@@ -8,6 +8,7 @@
 
 #include "base/check.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/process_memory_dump.h"
 #include "base/trace_event/trace_event.h"
@@ -98,14 +99,12 @@ SharedMemoryTracker::GetOrCreateSharedMemoryDumpInternal(
   size_t virtual_size = mapped_size;
   // If resident size is not available, a virtual size is used as fallback.
   size_t size = virtual_size;
-#if defined(COUNT_RESIDENT_BYTES_SUPPORTED)
   std::optional<size_t> resident_size =
       trace_event::ProcessMemoryDump::CountResidentBytesInSharedMemory(
           mapped_memory, mapped_size);
   if (resident_size.has_value()) {
     size = resident_size.value();
   }
-#endif
 
   local_dump = pmd->CreateAllocatorDump(dump_name);
   local_dump->AddScalar(trace_event::MemoryAllocatorDump::kNameSize,

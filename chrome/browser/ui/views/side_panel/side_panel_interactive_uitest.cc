@@ -10,6 +10,8 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/interaction/browser_elements.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/browser/ui/toolbar/bookmark_sub_menu_model.h"
@@ -32,6 +34,8 @@
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "chrome/test/interaction/tracked_element_webcontents.h"
 #include "chrome/test/interaction/webcontents_interaction_test_util.h"
+#include "chrome/test/user_education/interactive_feature_promo_test.h"
+#include "components/feature_engagement/public/feature_constants.h"
 #include "components/reading_list/core/reading_list_entry.h"
 #include "content/public/test/browser_test.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -42,6 +46,7 @@
 #include "ui/base/interaction/polling_state_observer.h"
 #include "ui/base/interaction/state_observer.h"
 #include "ui/base/ui_base_features.h"
+#include "ui/gfx/animation/animation_test_api.h"
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/animation/ink_drop_state.h"
 #include "ui/views/controls/combobox/combobox.h"
@@ -95,7 +100,7 @@ IN_PROC_BROWSER_TEST_F(SidePanelInteractiveTest, SidePanelNotShownOnPwa) {
             base::BindRepeating([](SidePanelEntryScope&) {
               return std::make_unique<views::View>();
             }),
-            SidePanelEntry::kSidePanelDefaultContentWidth));
+            /*default_content_width_callback=*/base::NullCallback()));
         coordinator->Show(SidePanelEntry::Id::kCustomizeChrome);
       })),
       WaitForShow(kSidePanelElementId),
@@ -111,30 +116,34 @@ IN_PROC_BROWSER_TEST_F(SidePanelInteractiveTest, SidePanelNotShownOnPwa) {
 
   // Move second_tab contents to app, simulating open pwa from omnibox intent
   // picker.
-  Browser* app_browser = web_app::ReparentWebContentsIntoAppBrowser(
-      browser()->tab_strip_model()->GetActiveWebContents(), app_id);
-  EXPECT_TRUE(app_browser->is_type_app());
+  BrowserWindowInterface* app_browser =
+      web_app::ReparentWebContentsIntoAppBrowser(
+          browser()->tab_strip_model()->GetActiveWebContents(), app_id);
+  EXPECT_TRUE(app_browser->GetType() == BrowserWindowInterface::TYPE_APP);
 
   // App does not show side panel.
-  EXPECT_FALSE(BrowserView::GetBrowserViewForBrowser(app_browser)
-                   ->unified_side_panel()
+  EXPECT_FALSE(BrowserView::GetBrowserViewForBrowser(
+                   app_browser->GetBrowserForMigrationOnly())
+                   ->contents_height_side_panel()
                    ->GetVisible());
 }
 
 // Test case for menus that only appear with the kSidePanelPinning feature
 // enabled.
-class PinnedSidePanelInteractiveTest : public InteractiveBrowserTest {
+class PinnedSidePanelInteractiveTest : public InteractiveFeaturePromoTest {
  public:
-  PinnedSidePanelInteractiveTest() = default;
+  PinnedSidePanelInteractiveTest()
+      : InteractiveFeaturePromoTest(UseDefaultTrackerAllowingPromos(
+            {feature_engagement::kIPHSidePanelGenericPinnableFeature})) {}
   ~PinnedSidePanelInteractiveTest() override = default;
 
   void SetUp() override {
     set_open_about_blank_on_browser_launch(true);
-    InteractiveBrowserTest::SetUp();
+    InteractiveFeaturePromoTest::SetUp();
   }
 
   void SetUpOnMainThread() override {
-    InteractiveBrowserTest::SetUpOnMainThread();
+    InteractiveFeaturePromoTest::SetUpOnMainThread();
     PinnedToolbarActionsModel* const actions_model =
         PinnedToolbarActionsModel::Get(browser()->profile());
     actions_model->UpdatePinnedState(kActionShowChromeLabs, false);
@@ -235,7 +244,7 @@ IN_PROC_BROWSER_TEST_F(PinnedSidePanelInteractiveTest,
       SidePanelEntry::Key(SidePanelEntry::Id::kReadAnything),
       base::BindRepeating(
           [](SidePanelEntryScope&) { return std::make_unique<views::View>(); }),
-      SidePanelEntry::kSidePanelDefaultContentWidth));
+      /*default_content_width_callback=*/base::NullCallback()));
 
   SidePanelCoordinator* const coordinator =
       browser()->GetFeatures().side_panel_coordinator();
@@ -243,8 +252,8 @@ IN_PROC_BROWSER_TEST_F(PinnedSidePanelInteractiveTest,
 
   chrome::ExecuteCommand(browser(), IDC_SHOW_READING_MODE_SIDE_PANEL);
 
-  EXPECT_EQ(SidePanelEntryKey(SidePanelEntryId::kReadAnything),
-            coordinator->GetCurrentSidePanelEntryForTesting()->key());
+  EXPECT_TRUE(coordinator->IsSidePanelEntryShowing(
+      SidePanelEntryKey(SidePanelEntryId::kReadAnything)));
 }
 
 // Verify that we can open the CustomizeChrome side panel from the 3dot -> More
@@ -263,7 +272,7 @@ IN_PROC_BROWSER_TEST_F(PinnedSidePanelInteractiveTest,
       SidePanelEntry::Key(SidePanelEntry::Id::kCustomizeChrome),
       base::BindRepeating(
           [](SidePanelEntryScope&) { return std::make_unique<views::View>(); }),
-      SidePanelEntry::kSidePanelDefaultContentWidth));
+      /*default_content_width_callback=*/base::NullCallback()));
 
   SidePanelCoordinator* const coordinator =
       browser()->GetFeatures().side_panel_coordinator();
@@ -289,15 +298,15 @@ IN_PROC_BROWSER_TEST_F(PinnedSidePanelInteractiveTest,
       SidePanelEntry::Key(SidePanelEntry::Id::kHistoryClusters),
       base::BindRepeating(
           [](SidePanelEntryScope&) { return std::make_unique<views::View>(); }),
-      SidePanelEntry::kSidePanelDefaultContentWidth));
+      /*default_content_width_callback=*/base::NullCallback()));
 
   SidePanelCoordinator* const coordinator =
       browser()->GetFeatures().side_panel_coordinator();
 
   chrome::ExecuteCommand(browser(), IDC_SHOW_HISTORY_CLUSTERS_SIDE_PANEL);
 
-  EXPECT_EQ(SidePanelEntryKey(SidePanelEntryId::kHistoryClusters),
-            coordinator->GetCurrentSidePanelEntryForTesting()->key());
+  EXPECT_TRUE(coordinator->IsSidePanelEntryShowing(
+      SidePanelEntryKey(SidePanelEntryId::kHistoryClusters)));
 }
 
 IN_PROC_BROWSER_TEST_F(PinnedSidePanelInteractiveTest,
@@ -327,7 +336,7 @@ IN_PROC_BROWSER_TEST_F(PinnedSidePanelInteractiveTest,
                        SidePanelPinButtonsHideInIncognitoMode) {
   Browser* const incognito = CreateIncognitoBrowser();
   RunTestSequence(
-      InContext(incognito->window()->GetElementContext(),
+      InContext(BrowserElements::From(incognito)->GetContext(),
                 WaitForShow(kBrowserViewElementId)),
       InSameContext(ActivateSurface(kBrowserViewElementId),
                     EnsureNotPresent(kSidePanelElementId),
@@ -355,7 +364,7 @@ IN_PROC_BROWSER_TEST_F(
       SidePanelEntryKey(SidePanelEntry::Id::kReadAnything),
       base::BindRepeating(
           [](SidePanelEntryScope&) { return std::make_unique<views::View>(); }),
-      SidePanelEntry::kSidePanelDefaultContentWidth));
+      /*default_content_width_callback=*/base::NullCallback()));
 
   PinnedToolbarActionsModel* const actions_model =
       PinnedToolbarActionsModel::Get(browser()->profile());
@@ -494,4 +503,25 @@ IN_PROC_BROWSER_TEST_F(PinnedSidePanelInteractiveTest,
             ->Deregister(SidePanelEntry::Key(SidePanelEntry::Id::kBookmarks));
       }),
       WaitForHide(kSidePanelElementId), WaitForHide(kBookmarksButton));
+}
+
+// Regression test for crbug.com/452911460 where the side panel header close
+// button triggers the side panel to close but the controller is destroyed and
+// triggers a seg fault when trying to retrieve the
+// BrowserUserEducationInterface.
+IN_PROC_BROWSER_TEST_F(PinnedSidePanelInteractiveTest, CloseSidePanel) {
+  auto disable_rich_animation =
+      gfx::AnimationTestApi::SetRichAnimationRenderMode(
+          gfx::Animation::RichAnimationRenderMode::FORCE_DISABLED);
+  RunTestSequence(
+      // Ensure the side panel isn't open
+      EnsureNotPresent(kSidePanelElementId),
+      EnsureNotPresent(kPinnedActionToolbarButtonElementId),
+      // Open bookmarks sidepanel
+      OpenBookmarksSidePanel(), WaitForShow(kSidePanelElementId),
+      WaitForShow(kPinnedToolbarActionsContainerElementId),
+      WaitForShow(kPinnedActionToolbarButtonElementId),
+      WaitForPromo(feature_engagement::kIPHSidePanelGenericPinnableFeature),
+      PressButton(kSidePanelCloseButtonElementId),
+      WaitForHide(kSidePanelElementId));
 }

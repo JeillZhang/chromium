@@ -15,9 +15,12 @@
 #include "extensions/browser/blocked_action_type.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/permissions_manager.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "url/gurl.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -31,16 +34,6 @@ constexpr const char kPrefShowAccessRequestsInToolbar[] =
 // The blocked actions that require a page refresh to run.
 constexpr int kRefreshRequiredActionsMask =
     BLOCKED_ACTION_WEB_REQUEST | BLOCKED_ACTION_SCRIPT_AT_START;
-
-std::vector<ExtensionId> GetExtensionIds(
-    const std::vector<const Extension*>& extensions) {
-  std::vector<ExtensionId> extension_ids;
-  extension_ids.reserve(extensions.size());
-  for (const auto* extension : extensions) {
-    extension_ids.push_back(extension->id());
-  }
-  return extension_ids;
-}
 
 }  // namespace
 
@@ -201,8 +194,7 @@ void SitePermissionsHelper::UpdateSiteAccess(
   if (action_runner && reload_required) {
     // Show the reload bubble for all extensions, since it could be confusing to
     // the user why only some of them appear on the dialog.
-    std::vector<ExtensionId> extension_ids = GetExtensionIds(extensions);
-    action_runner->ShowReloadPageBubble(extension_ids);
+    action_runner->ShowReloadPageBubble(extensions);
   }
 }
 

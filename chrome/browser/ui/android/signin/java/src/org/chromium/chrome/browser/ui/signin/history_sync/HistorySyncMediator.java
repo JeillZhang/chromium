@@ -19,13 +19,12 @@ import org.chromium.chrome.browser.signin.services.ProfileDataCache;
 import org.chromium.chrome.browser.signin.services.SigninManager;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.ui.signin.MinorModeHelper;
-import org.chromium.chrome.browser.ui.signin.MinorModeHelper.ScreenMode;
 import org.chromium.chrome.browser.ui.signin.R;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
+import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.signin.metrics.SigninAccessPoint;
 import org.chromium.components.signin.metrics.SignoutReason;
-import org.chromium.components.signin.metrics.SyncButtonClicked;
 import org.chromium.components.sync.SyncService;
 import org.chromium.components.sync.UserSelectableType;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -55,8 +54,10 @@ class HistorySyncMediator implements ProfileDataCache.Observer, SigninManager.Si
         mAccessPoint = accessPoint;
         mDelegate = delegate;
         mShouldSignOutOnDecline = shouldSignOutOnDecline;
-        mProfileDataCache = ProfileDataCache.createWithDefaultImageSizeAndNoBadge(context);
         mSigninManager = assumeNonNull(IdentityServicesProvider.get().getSigninManager(profile));
+        IdentityManager identityManager = mSigninManager.getIdentityManager();
+        mProfileDataCache =
+                ProfileDataCache.createWithDefaultImageSizeAndNoBadge(context, identityManager);
         mSyncService = assumeNonNull(SyncServiceFactory.getForProfile(profile));
         mHistorySyncHelper = HistorySyncHelper.getForProfile(profile);
         mProfileDataCache.addObserver(this);
@@ -65,9 +66,7 @@ class HistorySyncMediator implements ProfileDataCache.Observer, SigninManager.Si
         mAccountEmail =
                 assumeNonNull(
                         CoreAccountInfo.getEmailFrom(
-                                mSigninManager
-                                        .getIdentityManager()
-                                        .getPrimaryAccountInfo(ConsentLevel.SIGNIN)));
+                                identityManager.getPrimaryAccountInfo(ConsentLevel.SIGNIN)));
         // The history sync screen should never be created when the user is signed out.
         assert mAccountEmail != null;
         DisplayableProfileData profileData =
@@ -82,8 +81,8 @@ class HistorySyncMediator implements ProfileDataCache.Observer, SigninManager.Si
                         profileData,
                         this::onAcceptClicked,
                         this::onDeclineClicked,
-                        mConfig.titleId,
-                        mConfig.subtitleId,
+                        mConfig.title,
+                        mConfig.subtitle,
                         footerString,
                         mUseLandscapeLayout);
     }
@@ -104,7 +103,7 @@ class HistorySyncMediator implements ProfileDataCache.Observer, SigninManager.Si
     public void onSignedOut() {
         RecordHistogram.recordEnumeratedHistogram(
                 "Signin.HistorySyncOptIn.Aborted", mAccessPoint, SigninAccessPoint.MAX_VALUE);
-        mDelegate.dismissHistorySync(/* isHistorySyncAccepted= */ false);
+        mDelegate.dismissHistorySync(/* didSignOut= */ true, /* isHistorySyncAccepted= */ false);
     }
 
     void destroy() {
@@ -117,53 +116,22 @@ class HistorySyncMediator implements ProfileDataCache.Observer, SigninManager.Si
     }
 
     private void onAcceptClicked(View view) {
-        int syncButtonType = mModel.get(HistorySyncProperties.MINOR_MODE_RESTRICTION_STATUS);
-
-        switch (syncButtonType) {
-            case ScreenMode.RESTRICTED:
-            case ScreenMode.DEADLINED:
-                mDelegate.recordHistorySyncOptIn(
-                        mAccessPoint, SyncButtonClicked.HISTORY_SYNC_OPT_IN_EQUAL_WEIGHTED);
-                break;
-            case ScreenMode.UNRESTRICTED:
-                mDelegate.recordHistorySyncOptIn(
-                        mAccessPoint, SyncButtonClicked.HISTORY_SYNC_OPT_IN_NOT_EQUAL_WEIGHTED);
-                break;
-            case ScreenMode.UNSUPPORTED:
-            case ScreenMode.PENDING:
-                throw new IllegalStateException("Unrecognized restriction status.");
-        }
-
+        mDelegate.recordHistorySyncOptIn(mAccessPoint, /* isHistorySyncAccepted= */ true);
         mSyncService.setSelectedType(UserSelectableType.HISTORY, /* isTypeOn= */ true);
         mSyncService.setSelectedType(UserSelectableType.TABS, /* isTypeOn= */ true);
         mHistorySyncHelper.clearHistorySyncDeclinedPrefs();
-        mDelegate.dismissHistorySync(/* isHistorySyncAccepted= */ true);
+        mDelegate.dismissHistorySync(/* didSignOut= */ false, /* isHistorySyncAccepted= */ true);
     }
 
     private void onDeclineClicked(View view) {
-        int syncButtonType = mModel.get(HistorySyncProperties.MINOR_MODE_RESTRICTION_STATUS);
-
-        switch (syncButtonType) {
-            case ScreenMode.RESTRICTED:
-            case ScreenMode.DEADLINED:
-                mDelegate.recordHistorySyncOptIn(
-                        mAccessPoint, SyncButtonClicked.HISTORY_SYNC_CANCEL_EQUAL_WEIGHTED);
-                break;
-            case ScreenMode.UNRESTRICTED:
-                mDelegate.recordHistorySyncOptIn(
-                        mAccessPoint, SyncButtonClicked.HISTORY_SYNC_CANCEL_NOT_EQUAL_WEIGHTED);
-                break;
-            case ScreenMode.UNSUPPORTED:
-            case ScreenMode.PENDING:
-                throw new IllegalStateException("Unrecognized restriction status.");
-        }
-
+        mDelegate.recordHistorySyncOptIn(mAccessPoint, /* isHistorySyncAccepted= */ false);
         if (mShouldSignOutOnDecline) {
             mSigninManager.signOut(
                     SignoutReason.USER_DECLINED_HISTORY_SYNC_AFTER_DEDICATED_SIGN_IN);
         }
         mHistorySyncHelper.recordHistorySyncDeclinedPrefs();
-        mDelegate.dismissHistorySync(/* isHistorySyncAccepted= */ false);
+        mDelegate.dismissHistorySync(
+                /* didSignOut= */ mShouldSignOutOnDecline, /* isHistorySyncAccepted= */ false);
     }
 
     /**

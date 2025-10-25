@@ -233,8 +233,7 @@ public class PwaUniversalInstallBottomSheetCoordinator {
     }
 
     public void fetchAppData(WebContents webContents) {
-        PwaUniversalInstallBottomSheetCoordinatorJni.get()
-                .fetchAppData(PwaUniversalInstallBottomSheetCoordinator.this, webContents);
+        PwaUniversalInstallBottomSheetCoordinatorJni.get().fetchAppData(this, webContents);
     }
 
     private void logFetchTimeMetrics(@AppType int appType, long fetchDuration) {
@@ -335,7 +334,6 @@ public class PwaUniversalInstallBottomSheetCoordinator {
 
     @NativeMethods
     interface Natives {
-        public void fetchAppData(
-                PwaUniversalInstallBottomSheetCoordinator caller, WebContents webContents);
+        void fetchAppData(PwaUniversalInstallBottomSheetCoordinator self, WebContents webContents);
     }
 }

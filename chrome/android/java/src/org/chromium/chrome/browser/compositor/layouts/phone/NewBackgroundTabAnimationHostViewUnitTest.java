@@ -13,8 +13,10 @@ import static org.mockito.Mockito.when;
 import android.animation.Animator;
 import android.animation.AnimatorSet;
 import android.app.Activity;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.Rect;
+import android.graphics.drawable.GradientDrawable;
 import android.view.LayoutInflater;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -29,13 +31,15 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
+import org.robolectric.annotation.Config;
 
 import org.chromium.base.MathUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.theme.SurfaceColorUpdateUtils;
 import org.chromium.chrome.browser.toolbar.top.ToggleTabStackButton;
 import org.chromium.chrome.browser.ui.theme.BrandedColorScheme;
+import org.chromium.components.browser_ui.styles.ChromeColors;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.ui.base.TestActivity;
 
 import java.util.ArrayList;
@@ -56,6 +60,7 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
     private NewBackgroundTabFakeTabSwitcherButton mFakeTabSwitcherButton;
     private FrameLayout mFakeTabSwitcherInnerContainer;
     private ImageView mFakeTabSwitcherButtonView;
+    private ImageView mLinkIconView;
     private Rect mTabSwitcherRect;
 
     @Before
@@ -73,6 +78,7 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
                                         R.layout.new_background_tab_animation_host_view,
                                         null,
                                         false);
+        mLinkIconView = mHostView.findViewById(R.id.new_tab_background_animation_link_icon);
         mFakeTabSwitcherButton =
                 mHostView.findViewById(R.id.new_background_tab_fake_tab_switcher_button);
         mFakeTabSwitcherInnerContainer =
@@ -94,7 +100,7 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
                 /* isNtp= */ false,
                 /* isIncognito= */ false,
                 /* isTopToolbar= */ false,
-                /* backgroundColor= */ SurfaceColorUpdateUtils.getDefaultThemeColor(
+                /* backgroundColor= */ ChromeColors.getDefaultThemeColor(
                         mActivity, /* isIncognito= */ false),
                 /* tabCount= */ 12,
                 /* toolbarHeight= */ 30,
@@ -103,7 +109,7 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
                 /* ntpToolbarTransitionPercentage= */ 1f);
 
         assertDefaultSettings(
-                /* buttonColor= */ SurfaceColorUpdateUtils.getDefaultThemeColor(
+                /* buttonColor= */ ChromeColors.getDefaultThemeColor(
                         mActivity, /* isIncognito= */ false),
                 BrandedColorScheme.APP_DEFAULT,
                 /* tabCount= */ 12,
@@ -117,7 +123,7 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
                 /* isNtp= */ false,
                 /* isIncognito= */ false,
                 /* isTopToolbar= */ false,
-                /* backgroundColor= */ SurfaceColorUpdateUtils.getDefaultThemeColor(
+                /* backgroundColor= */ ChromeColors.getDefaultThemeColor(
                         mActivity, /* isIncognito= */ false),
                 /* tabCount= */ 12,
                 /* toolbarHeight= */ 7,
@@ -133,7 +139,7 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
                 /* isNtp= */ true,
                 /* isIncognito= */ false,
                 /* isTopToolbar= */ false,
-                /* backgroundColor= */ SurfaceColorUpdateUtils.getDefaultThemeColor(
+                /* backgroundColor= */ ChromeColors.getDefaultThemeColor(
                         mActivity, /* isIncognito= */ false),
                 /* tabCount= */ 56,
                 /* toolbarHeight= */ 94,
@@ -142,7 +148,7 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
                 /* ntpToolbarTransitionPercentage= */ 1f);
 
         assertDefaultSettings(
-                SurfaceColorUpdateUtils.getDefaultThemeColor(mActivity, /* isIncognito= */ false),
+                ChromeColors.getDefaultThemeColor(mActivity, /* isIncognito= */ false),
                 BrandedColorScheme.APP_DEFAULT,
                 /* tabCount= */ 56,
                 /* topMargin= */ 84,
@@ -271,7 +277,7 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
                 /* isNtp= */ false,
                 /* isIncognito= */ false,
                 /* isTopToolbar= */ false,
-                /* backgroundColor= */ SurfaceColorUpdateUtils.getDefaultThemeColor(
+                /* backgroundColor= */ ChromeColors.getDefaultThemeColor(
                         mActivity, /* isIncognito= */ false),
                 /* tabCount= */ 0,
                 /* toolbarHeight= */ 0,
@@ -287,7 +293,7 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
                 /* isNtp= */ false,
                 /* isIncognito= */ true,
                 /* isTopToolbar= */ false,
-                /* backgroundColor= */ SurfaceColorUpdateUtils.getDefaultThemeColor(
+                /* backgroundColor= */ ChromeColors.getDefaultThemeColor(
                         mActivity, /* isIncognito= */ true),
                 /* tabCount= */ 0,
                 /* toolbarHeight= */ 0,
@@ -329,6 +335,27 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
                 mFakeTabSwitcherButton.getBrandedColorSchemeForTesting());
     }
 
+    @Test
+    @Config(qualifiers = "night")
+    public void testNightMode() {
+        mHostView.setUpAnimation(
+                mTabSwitcherButton,
+                /* isNtp= */ false,
+                /* isIncognito= */ false,
+                /* isTopToolbar= */ false,
+                /* backgroundColor= */ Color.GREEN,
+                /* tabCount= */ 0,
+                /* toolbarHeight= */ 0,
+                /* statusBarHeight= */ 0,
+                /* xOffset= */ 0,
+                /* ntpToolbarTransitionPercentage= */ 0f);
+
+        GradientDrawable roundedRect = (GradientDrawable) mLinkIconView.getBackground();
+        assertEquals(
+                ColorStateList.valueOf(SemanticColorUtils.getColorSurfaceContainerHigh(mActivity)),
+                roundedRect.getColor());
+    }
+
     private void setButtonVisibility(boolean isVisible) {
         doAnswer(
                         invocation -> {
@@ -344,7 +371,7 @@ public class NewBackgroundTabAnimationHostViewUnitTest {
             @NewBackgroundTabAnimationHostView.AnimationType int animationType,
             int tabCount,
             int leftMargin) {
-        assertEquals(animationType, mHostView.getAnimationTypeForTesting());
+        assertEquals(animationType, mHostView.getAnimationType());
         assertEquals(tabCount, mFakeTabSwitcherButton.getTabCountForTesting());
 
         FrameLayout.LayoutParams params =

@@ -20,7 +20,6 @@
 #include "build/build_config.h"
 #include "services/tracing/public/cpp/perfetto/custom_event_recorder.h"
 #include "services/tracing/public/cpp/perfetto/histogram_samples_data_source.h"
-#include "services/tracing/public/cpp/perfetto/metadata_data_source.h"
 #include "services/tracing/public/cpp/perfetto/perfetto_tracing_backend.h"
 #include "services/tracing/public/cpp/perfetto/track_name_recorder.h"
 #include "services/tracing/public/cpp/stack_sampling/tracing_sampler_profiler.h"
@@ -51,9 +50,7 @@ namespace tracing {
 namespace {
 
 #if BUILDFLAG(IS_WIN)
-BASE_FEATURE(kWindowsSystemTracingInBrowser,
-             "WindowsSystemTracingInBrowser",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kWindowsSystemTracingInBrowser, base::FEATURE_DISABLED_BY_DEFAULT);
 #endif
 
 PerfettoTracedProcess* g_instance = nullptr;
@@ -206,15 +203,7 @@ base::Thread* PerfettoTracedProcess::GetTraceThread() {
 }
 
 // static
-PerfettoTracedProcess& PerfettoTracedProcess::MaybeCreateInstance() {
-  static base::NoDestructor<PerfettoTracedProcess> traced_process(
-      base::ThreadPool::CreateSequencedTaskRunner(
-          {base::MayBlock(), base::TaskPriority::USER_BLOCKING}));
-  return *traced_process;
-}
-
-// static
-PerfettoTracedProcess& PerfettoTracedProcess::MaybeCreateInstanceWithThread(
+PerfettoTracedProcess& PerfettoTracedProcess::MaybeCreateInstance(
     bool will_trace_thread_restart) {
   static base::NoDestructor<PerfettoTracedProcess> traced_process(
       will_trace_thread_restart);
@@ -295,14 +284,12 @@ void PerfettoTracedProcess::SetupForTesting(
   DataSourceBase::ResetTaskRunner(task_runner_);
 
   tracing_backend_ = std::make_unique<PerfettoTracingBackend>();
-  OnThreadPoolAvailable(
-      /* enable_consumer */ true);
+  SetupClientLibrary(/*enable_consumer=*/true, ShouldSetupSystemTracing());
   // Disassociate the PerfettoTracedProcess from any prior task runner.
   DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
 void PerfettoTracedProcess::ResetForTesting() {
-  startup_tracing_needed_ = false;
   base::WaitableEvent on_reset_done;
   // The tracing backend is used internally in Perfetto on the |task_runner_|
   // sequence. Reset and destroy the backend on the task runner to avoid racing
@@ -329,19 +316,24 @@ void PerfettoTracedProcess::ResetForTesting() {
   task_runner_ = nullptr;
 }
 
-void PerfettoTracedProcess::RequestStartupTracing(
-    const perfetto::TraceConfig& config,
-    const perfetto::Tracing::SetupStartupTracingOpts& opts) {
-  if (thread_pool_started_) {
-    perfetto::Tracing::SetupStartupTracingBlocking(config, opts);
+#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
+void PerfettoTracedProcess::DeferOrConnectProducerSocket(
+    perfetto::CreateSocketCallback cb) {
+  CHECK(!system_tracing_producer_socket_cb_);
+  // Hold off the attempts to get socket fd until trace thread restarts.
+  if (will_trace_thread_restart_) {
+    system_tracing_producer_socket_cb_ = base::BindOnce(
+        ConnectProducerSocketViaMojo, cb, base::Milliseconds(100));
   } else {
-    saved_config_ = config;
-    saved_opts_ = opts;
-    startup_tracing_needed_ = true;
+    ConnectProducerSocketViaMojo(cb, base::Milliseconds(100));
   }
 }
+#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
 
-void PerfettoTracedProcess::SetupClientLibrary(bool enable_consumer) {
+void PerfettoTracedProcess::SetupClientLibrary(
+    bool enable_consumer,
+    bool enable_system_backend,
+    std::optional<uint64_t> process_track_uuid) {
   perfetto::TracingInitArgs init_args;
   init_args.platform = platform_.get();
   init_args.custom_backend = tracing_backend_.get();
@@ -351,8 +343,9 @@ void PerfettoTracedProcess::SetupClientLibrary(bool enable_consumer) {
   init_args.shmem_direct_patching_enabled = true;
   init_args.use_monotonic_clock = true;
   init_args.disallow_merging_with_system_tracks = true;
+  init_args.process_uuid = process_track_uuid;
 #if BUILDFLAG(IS_POSIX)
-  if (ShouldSetupSystemTracing()) {
+  if (enable_system_backend) {
     init_args.backends |= perfetto::kSystemBackend;
     init_args.tracing_policy = this;
 #if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
@@ -378,8 +371,6 @@ void PerfettoTracedProcess::SetupClientLibrary(bool enable_consumer) {
   // kSystemMetricsSourceName.
   tracing::SystemMetricsSampler::Register(/*system_wide=*/enable_consumer);
   if (enable_consumer) {
-    // Metadata only needs to be installed in the browser process.
-    tracing::MetadataDataSource::Register();
 #if BUILDFLAG(IS_WIN)
     // Etw Data Source only needs to be installed in the browser process.
     if (base::FeatureList::IsEnabled(kWindowsSystemTracingInBrowser)) {
@@ -389,30 +380,6 @@ void PerfettoTracedProcess::SetupClientLibrary(bool enable_consumer) {
   }
   TrackNameRecorder::GetInstance();
   CustomEventRecorder::GetInstance();
-}
-
-#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
-void PerfettoTracedProcess::DeferOrConnectProducerSocket(
-    perfetto::CreateSocketCallback cb) {
-  CHECK(!system_tracing_producer_socket_cb_);
-  // Hold off the attempts to get socket fd until trace thread restarts.
-  if (will_trace_thread_restart_) {
-    system_tracing_producer_socket_cb_ = base::BindOnce(
-        ConnectProducerSocketViaMojo, cb, base::Milliseconds(100));
-  } else {
-    ConnectProducerSocketViaMojo(cb, base::Milliseconds(100));
-  }
-}
-#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_ANDROID)
-
-void PerfettoTracedProcess::OnThreadPoolAvailable(bool enable_consumer) {
-  thread_pool_started_ = true;
-  SetupClientLibrary(enable_consumer);
-
-  if (startup_tracing_needed_) {
-    perfetto::Tracing::SetupStartupTracingBlocking(saved_config_, saved_opts_);
-    startup_tracing_needed_ = false;
-  }
 }
 
 void PerfettoTracedProcess::SetAllowSystemTracingConsumerCallback(

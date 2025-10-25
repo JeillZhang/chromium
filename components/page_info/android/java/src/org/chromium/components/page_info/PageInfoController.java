@@ -31,7 +31,6 @@ import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
-import org.chromium.components.content_settings.ContentSettingValues;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.components.embedder_support.util.UrlUtilities;
@@ -59,9 +58,11 @@ import org.chromium.url.GURL;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.ref.WeakReference;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Deque;
 import java.util.List;
 
 /** Java side of Android implementation of the page info UI. */
@@ -128,11 +129,12 @@ public class PageInfoController
     // Used to show Site settings from Page Info UI.
     private final PermissionParamsListBuilder mPermissionParamsListBuilder;
 
-    // The current page info subpage controller, if any.
-    private @Nullable PageInfoSubpageController mCurrentSubpageController;
+    // The current page info subpage controller stack, if any.
+    private final Deque<PageInfoSubpageController> mCurrentSubpageControllers = new ArrayDeque<>();
 
     // The controller for the connection section of the page info.
     private final PageInfoConnectionController mConnectionController;
+    private final PageInfoConnectionSecurityController mConnectionSecurityController;
 
     // The controller for the permissions section of the page info.
     private final PageInfoPermissionsController mPermissionsController;
@@ -159,7 +161,7 @@ public class PageInfoController
     public PageInfoController(
             WebContents webContents,
             @ConnectionSecurityLevel int securityLevel,
-            String publisher,
+            @Nullable String publisher,
             PageInfoControllerDelegate delegate,
             PageInfoHighlight pageInfoHighlight,
             @OpenedFromSource int source,
@@ -271,6 +273,13 @@ public class PageInfoController
                         publisher,
                         mIsInternalPage);
         mSubpageControllers.add(mConnectionController);
+        mConnectionSecurityController =
+                new PageInfoConnectionSecurityController(
+                        this,
+                        mView.getConnectionSecurityView(),
+                        mView.getConnectionRowView(),
+                        mWebContents);
+        mSubpageControllers.add(mConnectionSecurityController);
         mPermissionsController =
                 new PageInfoPermissionsController(
                         this,
@@ -352,6 +361,9 @@ public class PageInfoController
         if (mCookiesController != null) {
             mCookiesController.destroy();
         }
+        if (mConnectionSecurityController != null) {
+            mConnectionSecurityController.destroy();
+        }
     }
 
     /**
@@ -359,18 +371,14 @@ public class PageInfoController
      *
      * @param name The title of the permission to display to the user.
      * @param nameMidSentence The title of the permission to display to the user when used
-     *         mid-sentence.
+     *     mid-sentence.
      * @param type The ContentSettingsType of the permission.
-     * @param currentSettingValue The ContentSetting value of the currently selected setting.
+     * @param allowed Whether the permission is allowed.
      */
     @CalledByNative
     private void addPermissionSection(
-            String name,
-            String nameMidSentence,
-            int type,
-            @ContentSettingValues int currentSettingValue) {
-        mPermissionParamsListBuilder.addPermissionEntry(
-                name, nameMidSentence, type, currentSettingValue);
+            String name, String nameMidSentence, int type, boolean allowed) {
+        mPermissionParamsListBuilder.addPermissionEntry(name, nameMidSentence, type, allowed);
     }
 
     /** Update the permissions view based on the contents of mDisplayedPermissions. */
@@ -389,6 +397,22 @@ public class PageInfoController
     @CalledByNative
     private void setSecurityDescription(String summary, String details) {
         mConnectionController.setSecurityDescription(summary, details);
+    }
+
+    /**
+     * Creates a button in the PageInfo UI that displays only a summary line about connection
+     * security; when tapped the button opens a subpage that displays the full connection security
+     * info.
+     */
+    @CalledByNative
+    private void showOpenSecurityPageButton(String summary) {
+        mConnectionSecurityController.showSecurityPageButton(summary);
+    }
+
+    /** Displays the full connection security info in the PageInfo UI. */
+    @CalledByNative
+    private void showConnectionSecurityInfo() {
+        mConnectionSecurityController.showSecurityInfo();
     }
 
     /** Updates the Topic view if present. */
@@ -424,8 +448,10 @@ public class PageInfoController
                 });
     }
 
-    /** Dismiss the popup, and then run a task after the animation has completed (if there is one). */
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    /**
+     * Dismiss the popup, and then run a task after the animation has completed (if there is one).
+     */
+    @VisibleForTesting
     public void runAfterDismiss(Runnable task) {
         assert mPendingRunAfterDismissTask == null;
         mPendingRunAfterDismissTask = task;
@@ -438,14 +464,15 @@ public class PageInfoController
     @Override
     public void onDismiss(PropertyModel model, @DialogDismissalCause int dismissalCause) {
         assert mNativePageInfoController != 0;
-        if (mCurrentSubpageController != null) {
-            mCurrentSubpageController.onSubpageRemoved();
-            mCurrentSubpageController = null;
+        while (!mCurrentSubpageControllers.isEmpty()) {
+            PageInfoSubpageController currentSubpageController =
+                    mCurrentSubpageControllers.removeFirst();
+            currentSubpageController.onSubpageRemoved();
         }
 
         destroy();
 
-        PageInfoControllerJni.get().destroy(mNativePageInfoController, PageInfoController.this);
+        PageInfoControllerJni.get().destroy(mNativePageInfoController);
         mNativePageInfoController = 0;
         if (mPendingRunAfterDismissTask != null) {
             mPendingRunAfterDismissTask.run();
@@ -456,9 +483,7 @@ public class PageInfoController
     public void recordAction(@PageInfoAction int action) {
         assert mNativePageInfoController != 0;
         if (mNativePageInfoController != 0) {
-            PageInfoControllerJni.get()
-                    .recordPageInfoAction(
-                            mNativePageInfoController, PageInfoController.this, action);
+            PageInfoControllerJni.get().recordPageInfoAction(mNativePageInfoController, action);
         }
     }
 
@@ -466,8 +491,7 @@ public class PageInfoController
     public void refreshPermissions() {
         mPermissionParamsListBuilder.clearPermissionEntries();
         if (mNativePageInfoController != 0) {
-            PageInfoControllerJni.get()
-                    .updatePermissions(mNativePageInfoController, PageInfoController.this);
+            PageInfoControllerJni.get().updatePermissions(mNativePageInfoController);
         }
     }
 
@@ -480,17 +504,17 @@ public class PageInfoController
         return !DeviceFormFactor.isNonMultiDisplayContextOnTablet(mContext);
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public View getPageInfoView() {
         return mContainer;
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public @Nullable PageInfoCookiesController getCookiesController() {
         return mCookiesController;
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public boolean isDialogShowing() {
         return mDialog != null;
     }
@@ -510,7 +534,7 @@ public class PageInfoController
     public static void show(
             final Activity activity,
             WebContents webContents,
-            final String contentPublisher,
+            final @Nullable String contentPublisher,
             @OpenedFromSource int source,
             PageInfoControllerDelegate delegate,
             PageInfoHighlight pageInfoHighlight,
@@ -547,7 +571,7 @@ public class PageInfoController
                                 dialogPosition));
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public static @Nullable PageInfoController getLastPageInfoController() {
         return sLastPageInfoControllerForTesting != null
                 ? sLastPageInfoControllerForTesting.get()
@@ -558,12 +582,11 @@ public class PageInfoController
     interface Natives {
         long init(PageInfoController controller, WebContents webContents);
 
-        void destroy(long nativePageInfoControllerAndroid, PageInfoController caller);
+        void destroy(long nativePageInfoControllerAndroid);
 
-        void recordPageInfoAction(
-                long nativePageInfoControllerAndroid, PageInfoController caller, int action);
+        void recordPageInfoAction(long nativePageInfoControllerAndroid, int action);
 
-        void updatePermissions(long nativePageInfoControllerAndroid, PageInfoController caller);
+        void updatePermissions(long nativePageInfoControllerAndroid);
     }
 
     @Override
@@ -571,7 +594,7 @@ public class PageInfoController
         return mDelegate.getBrowserContext();
     }
 
-    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    @VisibleForTesting
     public PageInfoControllerDelegate getPageInfoControllerDelegate() {
         return mDelegate;
     }
@@ -579,35 +602,48 @@ public class PageInfoController
     /** Launches a subpage for the specified controller. */
     @Override
     public void launchSubpage(PageInfoSubpageController controller) {
-        if (mCurrentSubpageController != null) return;
-        mCurrentSubpageController = controller;
-        CharSequence title = mCurrentSubpageController.getSubpageTitle();
-        View subview = mCurrentSubpageController.createViewForSubpage(mContainer);
+        if (mContainer.isPageChangeInProgress()) return;
+        mCurrentSubpageControllers.addFirst(controller);
+        displayCurrentSubpageInStack(/* onPreviousPageRemoved= */ null);
+    }
+
+    private void displayCurrentSubpageInStack(@Nullable Runnable onPreviousPageRemoved) {
+        assert !mCurrentSubpageControllers.isEmpty();
+        PageInfoSubpageController currentSubpageController = mCurrentSubpageControllers.peekFirst();
+        CharSequence title = currentSubpageController.getSubpageTitle();
+        View subview =
+                currentSubpageController.getCurrentSubpageView() != null
+                        ? currentSubpageController.getCurrentSubpageView()
+                        : currentSubpageController.createViewForSubpage(mContainer);
+
         if (subview != null) {
-            mContainer.showPage(subview, title, null);
+            currentSubpageController.updateSubpageIfNeeded();
+            mContainer.showPage(subview, title, onPreviousPageRemoved);
         }
     }
 
     /** Exits the subpage of the current controller. */
     @Override
     public void exitSubpage() {
-        if (mCurrentSubpageController == null) return;
-        mContainer.showPage(
-                mView,
-                null,
+        if (mCurrentSubpageControllers.isEmpty()) return;
+        PageInfoSubpageController previousSubpageController =
+                mCurrentSubpageControllers.removeFirst();
+        Runnable onPreviousPageRemoved =
                 () -> {
-                    // The PageInfo dialog can get dismissed during the page change animation.
-                    // In that case mSubpageController will already be null.
-                    if (mCurrentSubpageController == null) return;
-                    mCurrentSubpageController.onSubpageRemoved();
-                    mCurrentSubpageController.updateRowIfNeeded();
-                    mCurrentSubpageController = null;
-                });
+                    previousSubpageController.onSubpageRemoved();
+                    previousSubpageController.updateRowIfNeeded();
+                };
+
+        if (mCurrentSubpageControllers.isEmpty()) {
+            mContainer.showPage(mView, null, onPreviousPageRemoved);
+        } else {
+            displayCurrentSubpageInStack(onPreviousPageRemoved);
+        }
     }
 
     @Override
-    public @Nullable Activity getActivity() {
-        return mWindowAndroid.getActivity().get();
+    public Activity getActivity() {
+        return assertNonNull(mWindowAndroid.getActivity().get());
     }
 
     @Override

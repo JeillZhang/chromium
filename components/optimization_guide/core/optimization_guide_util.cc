@@ -108,9 +108,17 @@ std::string_view GetStringNameForModelExecutionFeature(
     case proto::ModelExecutionFeature::
         MODEL_EXECUTION_FEATURE_ZERO_STATE_SUGGESTIONS:
       return "ZeroStateSuggestions";
-    case proto::ModelExecutionFeature::
-        MODEL_EXECUTION_FEATURE_PROOFREADER_API:
+    case proto::ModelExecutionFeature::MODEL_EXECUTION_FEATURE_PROOFREADER_API:
       return "ProofreaderApi";
+    case proto::ModelExecutionFeature::
+        MODEL_EXECUTION_FEATURE_WALLETABLE_PASS_EXTRACTION:
+      return "WalletablePassExtraction";
+    case proto::ModelExecutionFeature::
+        MODEL_EXECUTION_FEATURE_AMOUNT_EXTRACTION:
+      return "AmountExtraction";
+    case proto::ModelExecutionFeature::
+        MODEL_EXECUTION_FEATURE_ON_DEVICE_SPEECH_RECOGNITION:
+      return "OnDeviceSpeechRecognition";
     case proto::ModelExecutionFeature::MODEL_EXECUTION_FEATURE_UNSPECIFIED:
       return "Unknown";
       // Must be in sync with the ModelExecutionFeature variant in
@@ -162,12 +170,6 @@ void LogFeatureFlagsInfo(OptimizationGuideLogger* optimization_guide_logger,
         optimization_guide_common::mojom::LogSource::SERVICE_AND_SETTINGS,
         optimization_guide_logger, "FEATURE_FLAG Hints component disabled");
   }
-  if (!optimization_guide::features::IsRemoteFetchingEnabled()) {
-    OPTIMIZATION_GUIDE_LOG(
-        optimization_guide_common::mojom::LogSource::SERVICE_AND_SETTINGS,
-        optimization_guide_logger,
-        "FEATURE_FLAG remote fetching feature disabled");
-  }
   if (!optimization_guide::IsUserPermittedToFetchFromRemoteOptimizationGuide(
           is_off_the_record, pref_service)) {
     OPTIMIZATION_GUIDE_LOG(
@@ -180,12 +182,6 @@ void LogFeatureFlagsInfo(OptimizationGuideLogger* optimization_guide_logger,
         optimization_guide_common::mojom::LogSource::SERVICE_AND_SETTINGS,
         optimization_guide_logger,
         "FEATURE_FLAG remote push notification feature disabled");
-  }
-  if (!optimization_guide::features::IsModelDownloadingEnabled()) {
-    OPTIMIZATION_GUIDE_LOG(
-        optimization_guide_common::mojom::LogSource::SERVICE_AND_SETTINGS,
-        optimization_guide_logger,
-        "FEATURE_FLAG model downloading feature disabled");
   }
 }
 

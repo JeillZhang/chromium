@@ -973,9 +973,16 @@ EditingTriState EditingStyle::TriStateOfStyle(
     return EditingTriState::kFalse;
 
   if (selection.IsCaret()) {
+    EditingStyle* style_at_start =
+        RuntimeEnabledFeatures::
+                    ConsiderSubOrSuperScriptAncestorAlignForCaretSelectionEnabled() &&
+                is_vertical_align_
+            ? EditingStyleUtilities::CreateStyleAtSelectionStart(selection,
+                                                                 false, Style())
+            : EditingStyleUtilities::CreateStyleAtSelectionStart(selection);
+
     return TriStateOfStyle(
-        selection.Start().AnchorNode()->GetExecutionContext(),
-        EditingStyleUtilities::CreateStyleAtSelectionStart(selection),
+        selection.Start().AnchorNode()->GetExecutionContext(), style_at_start,
         secure_context_mode);
   }
 
@@ -1563,9 +1570,14 @@ static MutableCSSPropertyValueSet* StyleFromMatchedRulesForElement(
   StyleRuleList* matched_rules =
       element->GetDocument().GetStyleResolver().StyleRulesForElement(
           element, rules_to_include);
-  if (matched_rules) {
-    for (unsigned i = 0; i < matched_rules->size(); ++i)
+  if (matched_rules && !matched_rules->empty()) {
+    // Initialize the style using the first matched_rule to reduce the number of
+    // merges and the overall time consumption.
+    style = MakeGarbageCollected<MutableCSSPropertyValueSet>(
+        matched_rules->at(0)->Properties());
+    for (unsigned i = 1; i < matched_rules->size(); ++i) {
       style->MergeAndOverrideOnConflict(&matched_rules->at(i)->Properties());
+    }
   }
   return style;
 }

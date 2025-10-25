@@ -15,10 +15,18 @@ import androidx.annotation.UiThread;
 import androidx.annotation.WorkerThread;
 
 import org.chromium.android_webview.AwBrowserContext;
+import org.chromium.android_webview.AwOriginMatchedHeader;
+import org.chromium.android_webview.common.AwFeatureMap;
+import org.chromium.android_webview.common.AwFeatures;
 import org.chromium.android_webview.common.Lifetime;
+import org.chromium.android_webview.common.WebViewCachedFlags;
+import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
+import org.chromium.url.GURL;
 
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
@@ -28,6 +36,7 @@ import java.util.function.Consumer;
  */
 @Lifetime.Profile
 public class Profile {
+    private static final String TAG = "Profile";
 
     @NonNull private final AwBrowserContext mBrowserContext;
 
@@ -47,30 +56,35 @@ public class Profile {
             ThreadUtils.checkUiThread();
             mBrowserContext = browserContext;
             mName = browserContext.getName();
-
             WebViewChromiumFactoryProvider factory = WebViewChromiumFactoryProvider.getSingleton();
-            if (browserContext.isDefaultAwBrowserContext()) {
-                mCookieManager = factory.getCookieManager();
-                mWebStorage = factory.getWebStorage();
-                mGeolocationPermissions = factory.getGeolocationPermissions();
-                mServiceWorkerController = factory.getServiceWorkerController();
+            if (browserContext.isDefaultAwBrowserContext()
+                    && !WebViewCachedFlags.get()
+                            .isCachedFeatureEnabled(
+                                    AwFeatures.WEBVIEW_BYPASS_PROVISIONAL_COOKIE_MANAGER)) {
+                mCookieManager = CookieManager.getInstance();
             } else {
                 mCookieManager = new CookieManagerAdapter(browserContext.getCookieManager());
-                mWebStorage =
-                        new WebStorageAdapter(factory, browserContext.getQuotaManagerBridge());
-                mGeolocationPermissions =
-                        new GeolocationPermissionsAdapter(
-                                factory, browserContext.getGeolocationPermissions());
-                mServiceWorkerController =
-                        new ServiceWorkerControllerAdapter(
-                                browserContext.getServiceWorkerController());
             }
+            mWebStorage = new WebStorageAdapter(factory, browserContext.getQuotaManagerBridge());
+            mGeolocationPermissions =
+                    new GeolocationPermissionsAdapter(
+                            factory, browserContext.getGeolocationPermissions());
+            mServiceWorkerController =
+                    new ServiceWorkerControllerAdapter(browserContext.getServiceWorkerController());
         }
+    }
+
+    public AwBrowserContext getBrowserContext() {
+        return mBrowserContext;
     }
 
     @NonNull
     public String getName() {
         return mName;
+    }
+
+    public void preconnect(String url) {
+        mBrowserContext.getPreconnector().preconnect(new GURL(url));
     }
 
     @NonNull
@@ -145,7 +159,7 @@ public class Profile {
 
     @UiThread
     public void cancelPrefetch(int prefetchKey) {
-        // TODO(334016945): do the actual implementation
+        mBrowserContext.getPrefetchManager().cancelPrefetch(prefetchKey);
     }
 
     @UiThread
@@ -175,6 +189,48 @@ public class Profile {
         try (TraceEvent event =
                 TraceEvent.scoped("WebView.Profile.ApiCall.WARM_UP_RENDERER_PROCESS")) {
             mBrowserContext.warmUpSpareRenderer();
+        }
+    }
+
+    @UiThread
+    public void setOriginMatchedHeader(
+            String headerName, String headerValue, Set<String> originRules) {
+        mBrowserContext.setOriginMatchedHeader(headerName, headerValue, originRules);
+    }
+
+    @UiThread
+    public void addOriginMatchedHeader(
+            String headerName, String headerValue, Set<String> originRules) {
+        mBrowserContext.addOriginMatchedHeader(headerName, headerValue, originRules);
+    }
+
+    @UiThread
+    public boolean hasOriginMatchedHeader(String headerName) {
+        return mBrowserContext.hasOriginMatchedHeader(headerName);
+    }
+
+    @UiThread
+    public List<AwOriginMatchedHeader> findOriginMatchedHeaders(
+            @Nullable String headerName, @Nullable String headerValue) {
+        return mBrowserContext.findOriginMatchedHeaders(headerName, headerValue);
+    }
+
+    @UiThread
+    public void clearOriginMatchedHeader(String headerName, @Nullable String headerValue) {
+        mBrowserContext.clearOriginMatchedHeader(headerName, headerValue);
+    }
+
+    @UiThread
+    public void clearAllOriginMatchedHeaders() {
+        mBrowserContext.clearAllOriginMatchedHeaders();
+    }
+
+    @UiThread
+    public void addQuicHints(Set<String> origins) {
+        if (AwFeatureMap.isEnabled(AwFeatures.WEBVIEW_ADD_QUIC_HINTS)) {
+            mBrowserContext.addQuicHints(origins);
+        } else {
+            Log.w(TAG, "Profile.addQuicHints has been disabled.");
         }
     }
 }

@@ -60,6 +60,7 @@
 #include "v8/include/v8-forward.h"
 
 namespace base {
+class Location;
 class SingleThreadTaskRunner;
 }
 
@@ -256,6 +257,7 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
 
   // Get the highest-level LocalFrame in this frame's in-process subtree.
   virtual WebLocalFrame* LocalRoot() = 0;
+  virtual const WebLocalFrame* LocalRoot() const = 0;
 
   // Returns the WebFrameWidget associated with this frame if there is one or
   // nullptr otherwise.
@@ -541,6 +543,11 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
   virtual void SetTextDirectionForTesting(
       base::i18n::TextDirection direction) = 0;
 
+  // Sets whether caret browsing mode has been overridden. Embedders that want
+  // to override caret browsing need to set this to prevent any default move
+  // commands from interfering with the embedder's implementation.
+  virtual void SetIsCaretBrowsingOverridden(bool should_update) = 0;
+
   // Selection -----------------------------------------------------------
   virtual void CenterSelection() = 0;
 
@@ -748,6 +755,11 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
   virtual scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(
       TaskType) = 0;
 
+  // Schedules a callback to run when the main thread is idle.
+  virtual void PostIdleTask(
+      const base::Location&,
+      base::OnceCallback<void(base::TimeTicks deadline)>) = 0;
+
   // Returns the WebInputMethodController associated with this local frame.
   virtual WebInputMethodController* GetInputMethodController() = 0;
 
@@ -764,6 +776,11 @@ class BLINK_EXPORT WebLocalFrame : public WebFrame {
   // and PepperPluginInstanceImpl::HandleDocumentLoad() and so it should not be
   // used on a regular basis.
   virtual void DeprecatedStopLoading() = 0;
+
+  // Invokes the given callback when the Blink determines it is in an idle
+  // period of network resource requests. Only one callback is currently
+  // supported at a time.
+  virtual void RequestNetworkIdleCallback(base::OnceClosure callback) = 0;
 
   // Geometry -----------------------------------------------------------------
 

@@ -215,7 +215,6 @@ public class BundleUtils {
             // SplitCompat is installed on the application context, so check there for library paths
             // which were added to that ClassLoader.
             ClassLoader classLoader = ContextUtils.getApplicationContext().getClassLoader();
-            // In WebLayer, the class loader will be a WrappedClassLoader.
             if (classLoader instanceof BaseDexClassLoader) {
                 path = ((BaseDexClassLoader) classLoader).findLibrary(libraryName);
             } else if (classLoader instanceof WrappedClassLoader) {
@@ -345,11 +344,16 @@ public class BundleUtils {
                 LOADED_SPLITS_KEY, new ArrayList(sInflationClassLoaders.keySet()));
     }
 
-    public static void restoreLoadedSplits(Bundle savedInstanceState) {
+    public static void restoreLoadedSplits(@Nullable Bundle savedInstanceState) {
         if (savedInstanceState == null) {
             return;
         }
         sSplitsToRestore = savedInstanceState.getStringArrayList(LOADED_SPLITS_KEY);
+        // TODO(crbug.com/430099860): Delete after M141.
+        if (sSplitsToRestore != null && sSplitsToRestore.contains("google3")) {
+            sSplitsToRestore.add("on_demand");
+            sSplitsToRestore.remove("google3");
+        }
     }
 
     private static class SplitCompatClassLoader extends ClassLoader {

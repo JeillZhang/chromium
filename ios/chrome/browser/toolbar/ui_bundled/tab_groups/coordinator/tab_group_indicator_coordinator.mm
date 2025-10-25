@@ -4,8 +4,6 @@
 
 #import "ios/chrome/browser/toolbar/ui_bundled/tab_groups/coordinator/tab_group_indicator_coordinator.h"
 
-#import <MaterialComponents/MaterialSnackbar.h>
-
 #import "base/strings/sys_string_conversions.h"
 #import "components/collaboration/public/collaboration_flow_entry_point.h"
 #import "components/collaboration/public/collaboration_flow_type.h"
@@ -18,6 +16,8 @@
 #import "ios/chrome/browser/collaboration/model/ios_collaboration_controller_delegate.h"
 #import "ios/chrome/browser/data_sharing/model/data_sharing_service_factory.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
+#import "ios/chrome/browser/saved_tab_groups/coordinator/face_pile_configuration.h"
+#import "ios/chrome/browser/saved_tab_groups/coordinator/face_pile_coordinator.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_service_factory.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
@@ -30,7 +30,8 @@
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/public/commands/tab_grid_commands.h"
 #import "ios/chrome/browser/shared/public/commands/tab_groups_commands.h"
-#import "ios/chrome/browser/shared/ui/util/snackbar_util.h"
+#import "ios/chrome/browser/shared/public/snackbar/snackbar_message.h"
+#import "ios/chrome/browser/shared/public/snackbar/snackbar_message_action.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/create_or_edit_tab_group_coordinator_delegate.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/create_tab_group_coordinator.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_group_action_type.h"
@@ -48,6 +49,11 @@ using ResultCallback =
 using collaboration::CollaborationControllerDelegate;
 using collaboration::FlowType;
 using collaboration::IOSCollaborationControllerDelegate;
+
+namespace {
+// The preferred size in points for the avatar icons.
+constexpr CGFloat kFacePileAvatarSize = 20;
+}  // namespace
 
 @interface TabGroupIndicatorCoordinator () <
     CreateOrEditTabGroupCoordinatorDelegate,
@@ -170,6 +176,7 @@ using collaboration::IOSCollaborationControllerDelegate;
         break;
       case TabGroupActionType::kLeaveOrKeepSharedTabGroup:
       case TabGroupActionType::kDeleteOrKeepSharedTabGroup:
+      case TabGroupActionType::kCloseLastTabUnknownRole:
         NOTREACHED();
     }
   };
@@ -248,8 +255,9 @@ using collaboration::IOSCollaborationControllerDelegate;
   // Create and config the snackbar.
   NSString* messageLabel = base::SysUTF16ToNSString(
       l10n_util::GetPluralStringFUTF16(IDS_IOS_TAB_GROUP_SNACKBAR_LABEL, 1));
-  MDCSnackbarMessage* message = CreateSnackbarMessage(messageLabel);
-  MDCSnackbarMessageAction* action = [[MDCSnackbarMessageAction alloc] init];
+  SnackbarMessage* message =
+      [[SnackbarMessage alloc] initWithTitle:messageLabel];
+  SnackbarMessageAction* action = [[SnackbarMessageAction alloc] init];
   action.handler = openTabGroupPanelAction;
   action.title = l10n_util::GetNSString(IDS_IOS_TAB_GROUP_SNACKBAR_ACTION);
   message.action = action;
@@ -321,6 +329,21 @@ using collaboration::IOSCollaborationControllerDelegate;
               self.profile, self.baseViewController, FlowType::kShareOrManage));
   collaborationService->StartShareOrManageFlow(
       std::move(delegate), tabGroup->tab_group_id(), entryPoint);
+}
+
+- (id<FacePileProviding>)facePileProviderForGroupID:
+    (const std::string&)groupID {
+  // Configure the face pile.
+  FacePileConfiguration* config = [[FacePileConfiguration alloc] init];
+  config.groupID = data_sharing::GroupId(groupID);
+  config.avatarSize = kFacePileAvatarSize;
+
+  FacePileCoordinator* facePileCoordinator =
+      [[FacePileCoordinator alloc] initWithFacePileConfiguration:config
+                                                         browser:self.browser];
+  [facePileCoordinator start];
+
+  return facePileCoordinator;
 }
 
 #pragma mark - CreateOrEditTabGroupCoordinatorDelegate

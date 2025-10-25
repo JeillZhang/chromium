@@ -6,14 +6,14 @@
 
 #include "base/apple/foundation_util.h"
 #include "base/check.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/ios_buildflags.h"
 #include "ui/display/display.h"
 #include "ui/display/display_features.h"
 #include "ui/display/screen_base.h"
 #include "ui/display/util/display_util.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 namespace display {
 namespace {
@@ -25,7 +25,7 @@ class ScreenNotification {
 }  // namespace display
 
 @interface ScreenObserver : NSObject {
-  raw_ptr<display::ScreenNotification> _notifier;
+  raw_ptr<display::ScreenNotification, DanglingUntriaged> _notifier;
 }
 - (void)mainScreenChanged;
 @end

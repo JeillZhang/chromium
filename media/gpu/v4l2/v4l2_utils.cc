@@ -18,8 +18,11 @@
 #include <map>
 #include <sstream>
 
+#if BUILDFLAG(IS_LINUX)
+#include <drm_fourcc.h>
+#endif
+
 #include "base/containers/contains.h"
-#include "base/metrics/histogram_functions.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/stringprintf.h"
@@ -47,6 +50,10 @@
 #define MAKE_V4L2_CODEC_PAIR(codec, suffix) \
   std::make_pair(codec##_##suffix, codec)
 
+#ifndef DRM_FORMAT_MOD_MTK_16L_32S_TILE
+#define DRM_FORMAT_MOD_MTK_16L_32S_TILE 0x0b00000000000001
+#endif
+
 namespace {
 int HandledIoctl(int fd, int request, void* arg) {
   return HANDLE_EINTR(ioctl(fd, request, arg));
@@ -65,16 +72,6 @@ std::string GetDriverName(const media::IoctlAsCallback& ioctl_cb) {
 }
 }  // namespace
 namespace media {
-
-void RecordMediaIoctlUMA(MediaIoctlRequests function) {
-  base::UmaHistogramEnumeration("Media.V4l2VideoDecoder.MediaIoctlError",
-                                function);
-}
-
-void RecordVidiocIoctlErrorUMA(VidiocIoctlRequests function) {
-  base::UmaHistogramEnumeration("Media.V4l2VideoDecoder.VidiocIoctlError",
-                                function);
-}
 
 const char* V4L2MemoryToString(const v4l2_memory memory) {
   switch (memory) {
@@ -206,7 +203,7 @@ VideoCodecProfile V4L2ProfileToVideoCodecProfile(uint32_t v4l2_codec,
       }
       break;
 #endif
-#if BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(USE_AV1_HW_DECODER)
     case V4L2_CID_MPEG_VIDEO_AV1_PROFILE:
       switch (v4l2_profile) {
         case V4L2_MPEG_VIDEO_AV1_PROFILE_MAIN:
@@ -246,6 +243,12 @@ std::optional<VideoFrameLayout> V4L2FormatToVideoFrameLayout(
     return std::nullopt;
   }
   const VideoPixelFormat video_format = video_fourcc->ToVideoPixelFormat();
+  uint64_t modifiers = gfx::NativePixmapHandle::kNoModifier;
+#if BUILDFLAG(IS_LINUX)
+  if (video_fourcc == Fourcc(Fourcc::MM21)) {
+    modifiers = DRM_FORMAT_MOD_MTK_16L_32S_TILE;
+  }
+#endif
   const size_t num_buffers = pix_mp.num_planes;
   const size_t num_color_planes = VideoFrame::NumPlanes(video_format);
   if (num_color_planes == 0) {
@@ -316,11 +319,11 @@ std::optional<VideoFrameLayout> V4L2FormatToVideoFrameLayout(
   if (num_buffers == 1) {
     return VideoFrameLayout::CreateWithPlanes(
         video_format, gfx::Size(pix_mp.width, pix_mp.height), std::move(planes),
-        buffer_alignment);
+        buffer_alignment, modifiers);
   } else {
     return VideoFrameLayout::CreateMultiPlanar(
         video_format, gfx::Size(pix_mp.width, pix_mp.height), std::move(planes),
-        buffer_alignment);
+        buffer_alignment, modifiers);
   }
 }
 
@@ -338,7 +341,7 @@ static const std::map<v4l2_enum_type, v4l2_enum_type>
         {V4L2_PIX_FMT_VP8_FRAME, V4L2_CID_MPEG_VIDEO_VP8_PROFILE},
         {V4L2_PIX_FMT_VP9, V4L2_CID_MPEG_VIDEO_VP9_PROFILE},
         {V4L2_PIX_FMT_VP9_FRAME, V4L2_CID_MPEG_VIDEO_VP9_PROFILE},
-#if BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(USE_AV1_HW_DECODER)
         {V4L2_PIX_FMT_AV1, V4L2_CID_MPEG_VIDEO_AV1_PROFILE},
         {V4L2_PIX_FMT_AV1_FRAME, V4L2_CID_MPEG_VIDEO_AV1_PROFILE},
 #endif
@@ -359,7 +362,7 @@ static const std::map<v4l2_enum_type, std::vector<VideoCodecProfile>>
 #endif  // BUILDFLAG(ENABLE_HEVC_PARSER_AND_HW_DECODER)
         {V4L2_CID_MPEG_VIDEO_VP8_PROFILE, {VP8PROFILE_ANY}},
         {V4L2_CID_MPEG_VIDEO_VP9_PROFILE, {VP9PROFILE_PROFILE0}},
-#if BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(USE_AV1_HW_DECODER)
         {V4L2_CID_MPEG_VIDEO_AV1_PROFILE, {AV1PROFILE_PROFILE_MAIN}},
 #endif
 };
@@ -379,7 +382,7 @@ static const std::map<VideoCodecProfile,
         {VP8PROFILE_ANY, MAKE_V4L2_CODEC_PAIR(V4L2_PIX_FMT_VP8, FRAME)},
         {VP9PROFILE_PROFILE0, MAKE_V4L2_CODEC_PAIR(V4L2_PIX_FMT_VP9, FRAME)},
         {VP9PROFILE_PROFILE2, MAKE_V4L2_CODEC_PAIR(V4L2_PIX_FMT_VP9, FRAME)},
-#if BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(USE_AV1_HW_DECODER)
         {AV1PROFILE_PROFILE_MAIN,
          MAKE_V4L2_CODEC_PAIR(V4L2_PIX_FMT_AV1, FRAME)},
 #endif
@@ -527,7 +530,8 @@ void GetSupportedResolution(const IoctlAsCallback& ioctl_cb,
   memset(&frame_size, 0, sizeof(frame_size));
   frame_size.pixel_format = pixelformat;
   if (ioctl_cb.Run(VIDIOC_ENUM_FRAMESIZES, &frame_size) == kIoctlOk) {
-    if (frame_size.type == V4L2_FRMSIZE_TYPE_STEPWISE) {
+    if (frame_size.type == V4L2_FRMSIZE_TYPE_STEPWISE ||
+        frame_size.type == V4L2_FRMSIZE_TYPE_CONTINUOUS) {
       max_resolution->SetSize(frame_size.stepwise.max_width,
                               frame_size.stepwise.max_height);
       min_resolution->SetSize(frame_size.stepwise.min_width,
@@ -562,10 +566,17 @@ base::TimeDelta TimeValToTimeDelta(const struct timeval& timeval) {
 struct timeval TimeDeltaToTimeVal(base::TimeDelta time_delta) {
   const int64_t time_delta_linear = time_delta.InMicroseconds();
   constexpr int64_t kMicrosecondsPerSecond = 1000 * 1000;
-  return {.tv_sec = base::checked_cast<__time_t>(time_delta_linear /
-                                                 kMicrosecondsPerSecond),
-          .tv_usec = base::checked_cast<__suseconds_t>(time_delta_linear %
-                                                       kMicrosecondsPerSecond)};
+  int64_t tv_sec = time_delta_linear / kMicrosecondsPerSecond;
+  int64_t tv_usec = time_delta_linear % kMicrosecondsPerSecond;
+
+  // Ensure that microseconds timeval field is non-negative.
+  if (tv_usec < 0) {
+    tv_usec += kMicrosecondsPerSecond;
+    tv_sec -= 1;
+  }
+
+  return {.tv_sec = base::checked_cast<__time_t>(tv_sec),
+          .tv_usec = base::checked_cast<__suseconds_t>(tv_usec)};
 }
 
 std::optional<SupportedVideoDecoderConfigs> GetSupportedV4L2DecoderConfigs() {

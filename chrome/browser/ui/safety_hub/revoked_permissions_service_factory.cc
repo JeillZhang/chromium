@@ -52,13 +52,7 @@ RevokedPermissionsServiceFactory::BuildServiceInstanceForBrowserContext(
 
 bool RevokedPermissionsServiceFactory::ServiceIsCreatedWithBrowserContext()
     const {
-#if BUILDFLAG(IS_ANDROID)
-  return base::FeatureList::IsEnabled(features::kSafetyHub) ||
-         base::FeatureList::IsEnabled(
-             safe_browsing::kSafetyHubAbusiveNotificationRevocation);
-#else   // BUILDFLAG(IS_ANDROID)
-  return base::FeatureList::IsEnabled(features::kSafetyHubServicesOnStartUp);
-#endif  // BUILDFLAG(IS_ANDROID)
+  return true;
 }
 
 bool RevokedPermissionsServiceFactory::ServiceIsNULLWhileTesting() const {

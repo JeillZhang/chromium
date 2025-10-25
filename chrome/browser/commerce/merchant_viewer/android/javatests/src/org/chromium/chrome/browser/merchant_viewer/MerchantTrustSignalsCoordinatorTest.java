@@ -161,7 +161,6 @@ public class MerchantTrustSignalsCoordinatorTest {
         doReturn(mMockProfile).when(mMockProfileSupplier).get();
         doReturn(false).when(mMockProfile).isOffTheRecord();
         doReturn(FAKE_HOST).when(mMockGurl).getSpec();
-        doReturn(true).when(mMockTabProvider).hasValue();
         doReturn(mMockTab).when(mMockTabProvider).get();
         doReturn(mMockWebContents).when(mMockTab).getWebContents();
         doAnswer((Answer<String>) invocation -> mSerializedTimestamps)
@@ -604,7 +603,7 @@ public class MerchantTrustSignalsCoordinatorTest {
 
     private void setMockTrustSignalsData(MerchantInfo merchantInfo) {
         doAnswer(
-                        new Answer<Void>() {
+                        new Answer<>() {
                             @Override
                             public Void answer(InvocationOnMock invocation) {
                                 Callback callback = (Callback) invocation.getArguments()[2];
@@ -618,7 +617,7 @@ public class MerchantTrustSignalsCoordinatorTest {
 
     private void setMockTrustSignalsEventData(String hostname, MerchantTrustSignalsEvent event) {
         doAnswer(
-                        new Answer<Void>() {
+                        new Answer<>() {
                             @Override
                             public Void answer(InvocationOnMock invocation) {
                                 Callback callback = (Callback) invocation.getArguments()[1];

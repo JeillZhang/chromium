@@ -21,8 +21,13 @@ struct PageActionProperties {
   const char* histogram_name = nullptr;
   // Indicates whether the page action is always visible or will be
   // conditionally visible for some time. This is optional.
-  bool is_ephemeral = false;
-  // Indicates the page action type and it' mandatory.
+  // Defaulted to `true` because most page actions are be ephemeral.
+  bool is_ephemeral = true;
+  // This allows the page action to be exempt from the controller-wide
+  // suppression due to current omnibox state (eg. Omnibox popup open, or
+  // Omnibox text being edited). This is optional.
+  bool exempt_from_omnibox_suppression = false;
+  // Indicates the page action type and it's mandatory.
   PageActionIconType type;
   // This indicates the page action view element identifier. This is optional.
   ui::ElementIdentifier element_identifier;
@@ -44,6 +49,8 @@ class PageActionPropertiesProvider
  public:
   PageActionPropertiesProvider();
   ~PageActionPropertiesProvider() override;
+
+  bool Contains(actions::ActionId action_id) const;
 
   // PageActionPropertiesProviderInterface
   const PageActionProperties& GetProperties(

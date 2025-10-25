@@ -56,15 +56,9 @@ class ChromeHintsManagerFetchingTest
  public:
   ChromeHintsManagerFetchingTest() {
     scoped_feature_list_.InitWithFeaturesAndParameters(
-        {{
-             optimization_guide::features::kRemoteOptimizationGuideFetching,
-             {{"max_concurrent_page_navigation_fetches", "2"},
-              {"max_urls_for_optimization_guide_service_hints_fetch", "30"}},
-         },
-         {optimization_guide::features::kOptimizationHints,
+        {{optimization_guide::features::kOptimizationHints,
           {{"max_host_keyed_hint_cache_size", "1"}}}},
-        {optimization_guide::features::
-             kRemoteOptimizationGuideFetchingAnonymousDataConsent});
+        {});
   }
   ChromeHintsManagerFetchingTest(const ChromeHintsManagerFetchingTest&) =
       delete;
@@ -184,7 +178,7 @@ class ChromeHintsManagerFetchingTest
   content::BrowserTaskEnvironment task_environment_{
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
   base::test::ScopedFeatureList scoped_feature_list_;
-  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
+  variations::test::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
   TestingProfile testing_profile_;
   std::unique_ptr<content::TestWebContentsFactory> web_contents_factory_;
@@ -226,10 +220,14 @@ TEST_F(ChromeHintsManagerFetchingTest, HintsFetched_AtSRP_DuplicatesRemoved) {
     // Ensure that we only include 2 hosts in the request. These would be
     // foo.com and bar.com.
     histogram_tester.ExpectUniqueSample(
-        "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 2, 1);
+        "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+        "BatchUpdateGoogleSRP",
+        2, 1);
     // Ensure that we include all URLs in the request.
     histogram_tester.ExpectUniqueSample(
-        "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 4, 1);
+        "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+        "BatchUpdateGoogleSRP",
+        4, 1);
     RunUntilIdle();
   }
 
@@ -240,7 +238,9 @@ TEST_F(ChromeHintsManagerFetchingTest, HintsFetched_AtSRP_DuplicatesRemoved) {
 
     // Ensure that URLs are not re-fetched.
     histogram_tester.ExpectTotalCount(
-        "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 0);
+        "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+        "BatchUpdateGoogleSRP",
+        0);
   }
 }
 
@@ -270,10 +270,14 @@ TEST_F(ChromeHintsManagerFetchingTest,
   // Ensure that we include both web hosts in the request. These would be
   // foo.com and httppage.com.
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 2, 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "BatchUpdateGoogleSRP",
+      2, 1);
   // Ensure that we only include 2 URLs in the request.
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 2, 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "BatchUpdateGoogleSRP",
+      2, 1);
 }
 
 TEST_F(ChromeHintsManagerFetchingTest, HintsFetched_AtSRP) {
@@ -296,9 +300,13 @@ TEST_F(ChromeHintsManagerFetchingTest, HintsFetched_AtSRP) {
   hints_manager()->OnPredictionUpdated(prediction);
   FetchHintsUsingWebContentsObserverURLs(web_contents);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "BatchUpdateGoogleSRP",
+      1);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "BatchUpdateGoogleSRP",
+      1);
 }
 
 TEST_F(ChromeHintsManagerFetchingTest, HintsFetched_AtSRP_GoogleLinksIgnored) {
@@ -322,9 +330,13 @@ TEST_F(ChromeHintsManagerFetchingTest, HintsFetched_AtSRP_GoogleLinksIgnored) {
   hints_manager()->OnPredictionUpdated(prediction);
   FetchHintsUsingWebContentsObserverURLs(web_contents);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "BatchUpdateGoogleSRP",
+      1);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "BatchUpdateGoogleSRP",
+      1);
 }
 
 TEST_F(ChromeHintsManagerFetchingTest, HintsFetched_AtNonSRP) {
@@ -347,9 +359,13 @@ TEST_F(ChromeHintsManagerFetchingTest, HintsFetched_AtNonSRP) {
   hints_manager()->OnPredictionUpdated(prediction);
   FetchHintsUsingWebContentsObserverURLs(web_contents);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 0);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "BatchUpdateGoogleSRP",
+      0);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 0);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "BatchUpdateGoogleSRP",
+      0);
 }
 
 class ChromeHintsManagerPushEnabledTest

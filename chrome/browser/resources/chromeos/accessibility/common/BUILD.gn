@@ -3,7 +3,6 @@
 # found in the LICENSE file.
 
 import("//build/config/chromeos/ui_mode.gni")
-import("//build/config/features.gni")
 import(
     "//chrome/browser/resources/chromeos/accessibility/tools/run_jsbundler.gni")
 import("//chrome/common/features.gni")
@@ -31,6 +30,18 @@ js_sources = [
   "gdocs_script.js",
   "testing/accessibility_test_base.js",
   "testing/test_node_generator.js",
+]
+
+earcons = [
+  "earcons/chromevox_loaded.ogg",
+  "earcons/chromevox_loading.ogg",
+  "earcons/control.wav",
+  "earcons/invalid_keypress.ogg",
+  "earcons/selection.ogg",
+  "earcons/selection_reverse.ogg",
+  "earcons/skim.wav",
+  "earcons/small_room_2.wav",
+  "earcons/static.wav",
 ]
 
 # Add typescript files to compile here.
@@ -139,8 +150,8 @@ run_jsbundler("copied_files") {
   mode = "copy"
   dest_dir = accessibility_common_out_dir
   deps = [ ":ts_build" ]
-  sources =
-      js_sources + filter_include(get_target_outputs(":ts_build"), [ "*.js" ])
+  sources = earcons + js_sources +
+            filter_include(get_target_outputs(":ts_build"), [ "*.js" ])
 
   rewrite_rules = [
     rebase_path(tsc_out_dir, root_build_dir) + ":",

@@ -46,6 +46,27 @@ testing::Matcher<const OverlayCandidate&> OverlayHasClip(
 testing::Matcher<const OverlayCandidate&> OverlayHasRoundedCorners(
     gfx::RRectF rounded_corners);
 
+testing::Matcher<const OverlayCandidate&> OverlayIsFullScreen();
+
+testing::Matcher<const OverlayCandidate&> OverlayTargetRectIs(
+    const gfx::RectF& expected);
+
+// Return the count of non-primary-plane overlays in `candidate_list`.
+size_t NumOverlaysExcludingPrimaryPlane(
+    const OverlayCandidateList& candidate_list);
+
+// Matches an `OverlayCandidateList` with a primary plane overlay that matches
+// `is_opaque`.
+MATCHER_P(HasPrimaryPlaneWithOpaqueness, is_opaque, "") {
+  if (auto it = std::ranges::find_if(
+          arg, [](const auto& overlay) { return overlay.is_root_render_pass; });
+      it != arg.end()) {
+    return it->is_opaque == is_opaque;
+  } else {
+    return false;
+  }
+}
+
 }  // namespace test
 
 }  // namespace viz

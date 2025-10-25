@@ -19,6 +19,7 @@
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
 #include "components/optimization_guide/core/hints/hints_processing_util.h"
+#include "components/optimization_guide/core/hints/store_update_data.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_enums.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
@@ -49,8 +50,7 @@ class HintsFetcherTest : public testing::Test,
             base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
                 &test_url_loader_factory_)) {
     scoped_list_.InitWithFeaturesAndParameters(
-        {{features::kRemoteOptimizationGuideFetching, {}},
-         {features::kOptimizationHints,
+        {{features::kOptimizationHints,
           {{"persist_hints_to_disk",
             base::ToString(ShouldPersistHintsToDisk())}}}},
         {});
@@ -167,7 +167,7 @@ class HintsFetcherTest : public testing::Test,
     base::RunLoop().RunUntilIdle();
   }
 
-  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
+  variations::test::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
   bool hints_fetched_ = false;
   base::test::ScopedFeatureList scoped_list_;
@@ -211,8 +211,6 @@ TEST_P(HintsFetcherTest, FetchOptimizationGuideServiceHints) {
   EXPECT_TRUE(SimulateResponse(response_content, net::HTTP_OK));
   EXPECT_TRUE(hints_fetched());
 
-  histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.FetchLatency", 1);
   histogram_tester.ExpectTotalCount(
       "OptimizationGuide.HintsFetcher.GetHintsRequest.FetchLatency."
       "BatchUpdateActiveTabs",
@@ -281,9 +279,8 @@ TEST_P(HintsFetcherTest, FetchInProgress_HostsHintsRefreshed) {
   std::vector<std::string> hosts{"foo.com", "bar.com"};
   // Advancing the clock so that it's still one hour before the hints need to be
   // refreshed.
-  test_clock->Advance(features::StoredFetchedHintsFreshnessDuration() -
-                      features::GetHostHintsFetchRefreshDuration() -
-                      base::Hours(1));
+  test_clock->Advance(StoreUpdateData::kMaxStoreDuration -
+                      HintsFetcher::kFetchRefreshDuration - base::Hours(1));
 
   EXPECT_FALSE(FetchHints({"foo.com"}, /*urls=*/{}));
   EXPECT_FALSE(FetchHints({"bar.com"}, /*urls=*/{}));
@@ -314,7 +311,7 @@ TEST_P(HintsFetcherTest, FetchInProgress_HostsHintsRefreshed) {
 
   // Advance clock for the default duration that the hint normally expires
   // under.
-  test_clock->Advance(features::StoredFetchedHintsFreshnessDuration());
+  test_clock->Advance(StoreUpdateData::kMaxStoreDuration);
 
   // Max cache duration from response should be used for pref instead.
   EXPECT_FALSE(FetchHints({"baz.com"}, /*urls=*/{}));
@@ -354,7 +351,9 @@ TEST_P(HintsFetcherTest, FetchReturned404) {
 
   // Make sure histograms are recorded correctly on bad response.
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.FetchLatency", 0);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.FetchLatency."
+      "BatchUpdateActiveTabs",
+      0);
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.HintsFetcher.GetHintsRequest.RequestStatus."
       "BatchUpdateActiveTabs",
@@ -372,7 +371,9 @@ TEST_P(HintsFetcherTest, FetchReturnBadResponse) {
 
   // Make sure histograms are recorded correctly on bad response.
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.FetchLatency", 0);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.FetchLatency."
+      "BatchUpdateActiveTabs",
+      0);
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.HintsFetcher.GetHintsRequest.RequestStatus."
       "BatchUpdateActiveTabs",
@@ -403,8 +404,7 @@ TEST_P(HintsFetcherTest, HintsFetchSuccessfulHostsRecorded) {
     EXPECT_NEAR((base::Time::FromDeltaSinceWindowsEpoch(base::Seconds(*value)) -
                  GetMockClock()->Now())
                     .InMinutes(),
-                features::StoredFetchedHintsFreshnessDuration().InMinutes(),
-                10);
+                StoreUpdateData::kMaxStoreDuration.InMinutes(), 10);
   }
 }
 
@@ -595,8 +595,7 @@ TEST_P(HintsFetcherTest, HintsFetcherSuccessfullyFetchedHostsFull) {
 
   std::string response_content;
   std::vector<std::string> hosts;
-  size_t max_hosts =
-      optimization_guide::features::MaxHostsForRecordingSuccessfullyCovered();
+  size_t max_hosts = HintsFetcher::kMaxCoveredHosts;
   for (size_t i = 0; i < max_hosts - 1; ++i) {
     hosts.push_back("host" + base::NumberToString(i) + ".com");
   }
@@ -631,8 +630,7 @@ TEST_P(HintsFetcherTest, MaxHostsForOptimizationGuideServiceHintsFetch) {
   all_hosts.push_back("8.8.8.8");
   all_hosts.push_back("probably%20not%20Canonical");
 
-  size_t max_hosts_in_fetch_request = optimization_guide::features::
-      MaxHostsForOptimizationGuideServiceHintsFetch();
+  size_t max_hosts_in_fetch_request = HintsFetcher::kMaxHosts;
   for (size_t i = 0; i < max_hosts_in_fetch_request; ++i) {
     all_hosts.push_back("host" + base::NumberToString(i) + ".com");
   }
@@ -675,8 +673,7 @@ TEST_P(HintsFetcherTest, MaxUrlsForOptimizationGuideServiceHintsFetch) {
   all_urls.push_back(GURL("localhost"));
   all_urls.push_back(GURL("8.8.8.8"));
 
-  size_t max_urls_in_fetch_request = optimization_guide::features::
-      MaxUrlsForOptimizationGuideServiceHintsFetch();
+  size_t max_urls_in_fetch_request = HintsFetcher::kMaxUrls;
   for (size_t i = 0; i < max_urls_in_fetch_request; ++i) {
     all_urls.push_back(GURL("https://url" + base::NumberToString(i) + ".com/"));
   }
@@ -690,7 +687,8 @@ TEST_P(HintsFetcherTest, MaxUrlsForOptimizationGuideServiceHintsFetch) {
   EXPECT_TRUE(hints_fetched());
 
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount",
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "BatchUpdateActiveTabs",
       max_urls_in_fetch_request, 1);
 
   proto::GetHintsRequest last_request;
@@ -718,8 +716,6 @@ TEST_P(HintsFetcherTest, OnlyURLsToFetch) {
   EXPECT_TRUE(SimulateResponse(response_content, net::HTTP_OK));
   EXPECT_TRUE(hints_fetched());
 
-  histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.FetchLatency", 1);
   histogram_tester.ExpectTotalCount(
       "OptimizationGuide.HintsFetcher.GetHintsRequest.FetchLatency."
       "BatchUpdateActiveTabs",

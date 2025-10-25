@@ -80,12 +80,14 @@ std::u16string GetPinButtonAccessibleName(
   return l10n_util::GetStringFUTF16(tooltip_id, extension_name);
 }
 
-std::u16string GetContextMenuAccessibleName(bool is_pinned) {
+std::u16string GetContextMenuAccessibleName(
+    bool is_pinned,
+    const std::u16string& extension_name) {
   int tooltip_id =
       is_pinned
           ? IDS_EXTENSIONS_MENU_EXTENSION_CONTEXT_MENU_BUTTON_PINNED_ACCESSIBLE_NAME
           : IDS_EXTENSIONS_MENU_EXTENSION_CONTEXT_MENU_BUTTON_ACCESSIBLE_NAME;
-  return l10n_util::GetStringUTF16(tooltip_id);
+  return l10n_util::GetStringFUTF16(tooltip_id, extension_name);
 }
 
 std::u16string GetPinButtonPressedAccText(bool is_pinned) {
@@ -425,35 +427,34 @@ void ExtensionMenuItemView::Update(
     SitePermissionsButtonState site_permissions_button_state,
     SitePermissionsButtonAccess site_permissions_button_access,
     bool is_enterprise) {
-  if (base::FeatureList::IsEnabled(
+  if (!base::FeatureList::IsEnabled(
           extensions_features::kExtensionsMenuAccessControl)) {
-    bool is_toggle_on = site_access_toggle_state == SiteAccessToggleState::kOn;
-    site_access_toggle_->SetVisible(site_access_toggle_state !=
-                                    SiteAccessToggleState::kHidden);
-    site_access_toggle_->SetIsOn(is_toggle_on);
-    site_access_toggle_->SetTooltipText(
-        GetSiteAccessToggleTooltip(is_toggle_on));
-
-    site_permissions_button_->SetVisible(site_permissions_button_state !=
-                                         SitePermissionsButtonState::kHidden);
-    site_permissions_button_->SetEnabled(site_permissions_button_state ==
-                                         SitePermissionsButtonState::kEnabled);
-    std::u16string site_permissions_text =
-        GetSitePermissionsButtonText(site_permissions_button_access);
-    site_permissions_button_->SetText(site_permissions_text);
-    site_permissions_button_->SetTooltipText(GetSitePermissionsButtonTooltip(
-        is_enterprise, site_permissions_button_access));
-    site_permissions_button_->GetViewAccessibility().SetName(
-        GetSitePermissionsButtonAccName(is_enterprise,
-                                        site_permissions_button_access,
-                                        site_permissions_text));
-
-    // Update button size after changing its contents so it fits in the menu
-    // item row.
-    site_permissions_button_->PreferredSizeChanged();
+    return;
   }
 
-  view_controller()->UpdateState();
+  bool is_toggle_on = site_access_toggle_state == SiteAccessToggleState::kOn;
+  site_access_toggle_->SetVisible(site_access_toggle_state !=
+                                  SiteAccessToggleState::kHidden);
+  site_access_toggle_->SetIsOn(is_toggle_on);
+  site_access_toggle_->SetTooltipText(GetSiteAccessToggleTooltip(is_toggle_on));
+
+  site_permissions_button_->SetVisible(site_permissions_button_state !=
+                                       SitePermissionsButtonState::kHidden);
+  site_permissions_button_->SetEnabled(site_permissions_button_state ==
+                                       SitePermissionsButtonState::kEnabled);
+  std::u16string site_permissions_text =
+      GetSitePermissionsButtonText(site_permissions_button_access);
+  site_permissions_button_->SetText(site_permissions_text);
+  site_permissions_button_->SetTooltipText(GetSitePermissionsButtonTooltip(
+      is_enterprise, site_permissions_button_access));
+  site_permissions_button_->GetViewAccessibility().SetName(
+      GetSitePermissionsButtonAccName(is_enterprise,
+                                      site_permissions_button_access,
+                                      site_permissions_text));
+
+  // Update button size after changing its contents so it fits in the menu
+  // item row.
+  site_permissions_button_->PreferredSizeChanged();
 }
 
 void ExtensionMenuItemView::UpdatePinButton(bool is_force_pinned,
@@ -509,7 +510,8 @@ void ExtensionMenuItemView::UpdateContextMenuButton(bool is_action_pinned) {
   context_menu_button_->SetImageModel(views::Button::STATE_PRESSED,
                                       three_dot_icon);
   context_menu_button_->GetViewAccessibility().SetName(
-      GetContextMenuAccessibleName(is_action_pinned));
+      GetContextMenuAccessibleName(is_action_pinned,
+                                   controller_->GetActionName()));
 }
 
 void ExtensionMenuItemView::SetupContextMenuButton() {

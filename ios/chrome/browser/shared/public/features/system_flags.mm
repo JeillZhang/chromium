@@ -30,12 +30,12 @@ NSString* const kAlternateDiscoverFeedServerURL =
 NSString* const kEnableStartupCrash = @"EnableStartupCrash";
 NSString* const kFirstRunForceEnabled = @"FirstRunForceEnabled";
 NSString* const kFirstRunForceDisabled = @"FirstRunForceDisabled";
-NSString* const kUpgradePromoForceEnabled = @"UpgradePromoForceEnabled";
 NSString* const kOriginServerHost = @"AlternateOriginServerHost";
 NSString* const kWhatsNewPromoStatus = @"WhatsNewPromoStatus";
 NSString* const kClearApplicationGroup = @"ClearApplicationGroup";
 NSString* const kNextPromoForDisplayOverride = @"NextPromoForDisplayOverride";
 NSString* const kFirstRunRecency = @"FirstRunRecency";
+NSString* const kIgnoreDeviceLocaleConditions = @"IgnoreDeviceLocaleConditions";
 NSString* const kForceExperienceForDeviceSwitcherExperimentalSettings =
     @"ForceExperienceForDeviceSwitcher";
 NSString* const kForceExperienceForShopperExperimentalSettings =
@@ -58,7 +58,6 @@ NSString* const kShouldIgnoreHistorySyncDeclineLimits =
 NSString* const kSafetyCheckNotificationsInactivityThreshold =
     @"SafetyCheckNotificationsInactivityThreshold";
 BASE_FEATURE(kEnableThirdPartyKeyboardWorkaround,
-             "EnableThirdPartyKeyboardWorkaround",
              base::FEATURE_ENABLED_BY_DEFAULT);
 NSString* const kTipsMagicStackLensShopWithImage =
     @"TipsMagicStackLensShopWithImage";
@@ -81,11 +80,6 @@ bool NeverDisplayFirstRun() {
       [[NSUserDefaults standardUserDefaults] boolForKey:kFirstRunForceDisabled];
 }
 
-bool AlwaysDisplayUpgradePromo() {
-  return [[NSUserDefaults standardUserDefaults]
-      boolForKey:kUpgradePromoForceEnabled];
-}
-
 NSString* GetOriginServerHost() {
   return [[NSUserDefaults standardUserDefaults] stringForKey:kOriginServerHost];
 }
@@ -99,37 +93,26 @@ bool ShouldResetNoticeCardOnFeedStart() {
   return [[NSUserDefaults standardUserDefaults] boolForKey:@"ResetNoticeCard"];
 }
 
-bool ShouldResetFirstFollowCount() {
-  return [[NSUserDefaults standardUserDefaults] boolForKey:@"ResetFirstFollow"];
-}
-
 bool ShouldForceContentNotificationsPromo() {
   return [[NSUserDefaults standardUserDefaults]
       boolForKey:@"ForceContentNotificationsPromo"];
 }
 
 bool ShouldForceFeedSigninPromo() {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   return [[NSUserDefaults standardUserDefaults]
-      boolForKey:@"ForceFeedSigninPromo"];
+             boolForKey:@"ForceFeedSigninPromo"] ||
+         command_line->HasSwitch(switches::kForceFeedSigninPromo);
+}
+
+bool ShouldIgnoreDeviceLocaleConditions() {
+  return [[NSUserDefaults standardUserDefaults]
+      boolForKey:kIgnoreDeviceLocaleConditions];
 }
 
 bool ShouldIgnoreTileAblationConditions() {
   return [[NSUserDefaults standardUserDefaults]
       boolForKey:@"IgnoreTileAblationConditions"];
-}
-
-void DidResetFirstFollowCount() {
-  [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"ResetFirstFollow"];
-}
-
-bool ShouldAlwaysShowFirstFollow() {
-  return [[NSUserDefaults standardUserDefaults]
-      boolForKey:@"AlwaysShowFirstFollow"];
-}
-
-bool ShouldAlwaysShowFollowIPH() {
-  return
-      [[NSUserDefaults standardUserDefaults] boolForKey:@"AlwaysShowFollowIPH"];
 }
 
 bool IsMemoryDebuggingEnabled() {

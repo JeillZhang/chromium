@@ -84,10 +84,6 @@ gfx::Rect OpaqueBrowserFrameViewLayout::GetBoundsForTabStripRegion(
 
 gfx::Rect OpaqueBrowserFrameViewLayout::GetBoundsForWebAppFrameToolbar(
     const gfx::Size& toolbar_preferred_size) const {
-  if (delegate_->IsFullscreen()) {
-    return gfx::Rect();
-  }
-
   // Adding 2px of vertical padding puts at least 1 px of space on the top and
   // bottom of the element.
   constexpr int kVerticalPadding = 2;
@@ -98,16 +94,6 @@ gfx::Rect OpaqueBrowserFrameViewLayout::GetBoundsForWebAppFrameToolbar(
                    std::max(0, available_width),
                    toolbar_preferred_size.height() + kVerticalPadding +
                        kContentEdgeShadowThickness);
-}
-
-void OpaqueBrowserFrameViewLayout::LayoutWebAppWindowTitle(
-    const gfx::Rect& available_space,
-    views::Label& window_title_label) const {
-  gfx::Rect bounds = available_space;
-  bounds.Inset(gfx::Insets::TLBR(0, kIconTitleSpacing, 0, kCaptionSpacing));
-  window_title_label.SetSubpixelRenderingEnabled(false);
-  window_title_label.SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  window_title_label.SetBoundsRect(bounds);
 }
 
 gfx::Size OpaqueBrowserFrameViewLayout::GetMinimumSize(
@@ -193,7 +179,7 @@ int OpaqueBrowserFrameViewLayout::DefaultCaptionButtonY(bool restored) const {
   // Maximized buttons start at window top, since the window has no border. This
   // offset is for the image (the actual clickable bounds extend all the way to
   // the top to take Fitts' Law into account).
-  return views::NonClientFrameView::kFrameShadowThickness;
+  return kFrameShadowThickness;
 }
 
 int OpaqueBrowserFrameViewLayout::CaptionButtonY(views::FrameButton button_id,
@@ -229,8 +215,7 @@ int OpaqueBrowserFrameViewLayout::GetWindowCaptionSpacing(
       // If we're the first button and maximized, add width to the right
       // hand side of the screen.
       return delegate_->IsFrameCondensed() && is_leading_button
-                 ? kFrameBorderThickness -
-                       views::NonClientFrameView::kFrameShadowThickness
+                 ? kFrameBorderThickness - kFrameShadowThickness
                  : 0;
     }
     if (forced_window_caption_spacing_ >= 0) {

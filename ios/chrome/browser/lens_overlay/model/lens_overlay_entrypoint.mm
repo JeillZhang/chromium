@@ -15,6 +15,20 @@ bool IsImageContextMenuEntrypoint(LensOverlayEntrypoint entrypoint) {
   return entrypoint == LensOverlayEntrypoint::kSearchImageContextMenu;
 }
 
+bool EntrypointRequiresUserConsent(LensOverlayEntrypoint entrypoint) {
+  switch (entrypoint) {
+    case LensOverlayEntrypoint::kLocationBar:
+    case LensOverlayEntrypoint::kOverflowMenu:
+    case LensOverlayEntrypoint::kAIHub:
+      return true;
+    case LensOverlayEntrypoint::kSearchImageContextMenu:
+    case LensOverlayEntrypoint::kLVFImagePicker:
+    case LensOverlayEntrypoint::kLVFCameraCapture:
+    case LensOverlayEntrypoint::kFREPromo:
+      return false;
+  }
+}
+
 LensOverlayInvocationSource InvocationSourceFromEntrypoint(
     LensOverlayEntrypoint entrypoint) {
   switch (entrypoint) {
@@ -30,6 +44,8 @@ LensOverlayInvocationSource InvocationSourceFromEntrypoint(
       return LensOverlayInvocationSource::kLVFShutterButton;
     case LensOverlayEntrypoint::kAIHub:
       return LensOverlayInvocationSource::kAIHub;
+    case LensOverlayEntrypoint::kFREPromo:
+      return LensOverlayInvocationSource::kFREPromo;
   }
 }
 

@@ -41,6 +41,7 @@
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/ash/components/growth/campaigns_logger.h"
 #include "chromeos/ash/components/growth/campaigns_manager.h"
 #include "chromeos/ash/components/growth/campaigns_utils.h"
@@ -120,7 +121,7 @@ void CampaignsManagerClientImpl::AddOnTrackerInitializedCallback(
 }
 
 bool CampaignsManagerClientImpl::IsDeviceInDemoMode() const {
-  return ash::DemoSession::IsDeviceInDemoMode();
+  return ash::demo_mode::IsDeviceInDemoMode();
 }
 
 bool CampaignsManagerClientImpl::IsCloudGamingDevice() const {
@@ -144,7 +145,7 @@ bool CampaignsManagerClientImpl::IsAppIconOnShelf(
 
   // Shelf is always considered hidden when in tablet mode, but the Hotseat can
   // still be expanded.
-  const bool is_tablet_mode = display::Screen::GetScreen()->InTabletMode();
+  const bool is_tablet_mode = display::Screen::Get()->InTabletMode();
 
   if (!is_shelf_visible && !is_tablet_mode) {
     growth::RecordCampaignsManagerError(
@@ -276,12 +277,6 @@ void CampaignsManagerClientImpl::RecordEvent(const std::string& event_name,
   tracker->NotifyEvent(AddEventPrefix(event_name));
 
   if (!trigger_campaigns) {
-    return;
-  }
-
-  // If the App Mall app is not enabled, do not trigger by the event.
-  if (event_name == growth::kGrowthCampaignsEventHotseatHover &&
-      !chromeos::features::IsCrosMallSwaEnabled()) {
     return;
   }
 

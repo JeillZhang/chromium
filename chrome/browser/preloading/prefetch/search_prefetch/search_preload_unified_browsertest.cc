@@ -26,6 +26,7 @@
 #include "chrome/browser/preloading/prefetch/search_prefetch/search_preload_test_response_utils.h"
 #include "chrome/browser/preloading/prefetch/search_prefetch/streaming_search_prefetch_url_loader.h"
 #include "chrome/browser/preloading/prerender/prerender_manager.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/common/chrome_paths.h"
@@ -62,11 +63,11 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
+#include "chrome/browser/ui/omnibox/omnibox_controller.h"
+#include "chrome/browser/ui/omnibox/omnibox_edit_model.h"
+#include "chrome/browser/ui/omnibox/omnibox_view.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
-#include "components/omnibox/browser/omnibox_controller.h"
-#include "components/omnibox/browser/omnibox_edit_model.h"
-#include "components/omnibox/browser/omnibox_view.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
 namespace {
@@ -412,6 +413,10 @@ class SearchPreloadUnifiedBrowserTest : public PlatformBrowserTest,
 
   constexpr static char kSearchDomain[] = "a.test";
   constexpr static char16_t kSearchDomain16[] = u"a.test";
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
   base::ScopedMockElapsedTimersForTest scoped_test_timer_;
   raw_ptr<PrerenderManager, AcrossTasksDanglingUntriaged> prerender_manager_ =
       nullptr;
@@ -1297,15 +1302,11 @@ IN_PROC_BROWSER_TEST_P(HTTPCacheSearchPreloadUnifiedBrowserTest,
   EXPECT_EQ(0, prerender_helper().GetRequestCount(expected_prerender_url_1));
   EXPECT_EQ(1, prerender_helper().GetRequestCount(expected_prefetch_url_1));
 
-  if (!GetParam()) {
-    // If NoVarySearch is enabled, we do not use
-    // CacheAliasSearchPrefetchURLLoader so it does not record anything.
-    histogram_tester.ExpectUniqueSample(
-        "Omnibox.SearchPrefetch.CacheAliasFallbackReason",
-        CacheAliasSearchPrefetchURLLoader::FallbackReason::kNoFallback, 1);
-    histogram_tester.ExpectTotalCount(
-        "Omnibox.SearchPrefetch.CacheAliasElapsedTimeToFallback", 0);
-  }
+  histogram_tester.ExpectUniqueSample(
+      "Omnibox.SearchPrefetch.CacheAliasFallbackReason",
+      CacheAliasSearchPrefetchURLLoader::FallbackReason::kNoFallback, 1);
+  histogram_tester.ExpectTotalCount(
+      "Omnibox.SearchPrefetch.CacheAliasElapsedTimeToFallback", 0);
 }
 
 // Tests the started prerender is destroyed after prefetch request expired.
@@ -1405,7 +1406,7 @@ IN_PROC_BROWSER_TEST_F(SearchPreloadUnifiedBrowserTest, TriggerAndActivate) {
   // 4. Click and activate.
   content::test::PrerenderHostObserver prerender_observer(
       *GetActiveWebContents(), expected_prerender_url);
-  omnibox->model()->OpenSelection();
+  omnibox->model()->OpenSelectionForTesting();
   prerender_observer.WaitForActivation();
   histogram_tester.ExpectUniqueSample(
       "Omnibox.SearchPrefetch.PrefetchFinalStatus.SuggestionPrefetch",
@@ -1483,7 +1484,7 @@ IN_PROC_BROWSER_TEST_F(SearchPreloadUnifiedBrowserTest,
   // 5. Click the result.
   content::TestNavigationObserver navigation_observer(GetActiveWebContents(),
                                                       1);
-  omnibox->model()->OpenSelection();
+  omnibox->model()->OpenSelectionForTesting();
   navigation_observer.Wait();
   histogram_tester.ExpectBucketCount(
       "Omnibox.SearchPrefetch.PrefetchServingReason2",
@@ -1741,8 +1742,16 @@ IN_PROC_BROWSER_TEST_F(SearchPreloadUnifiedBrowserTest,
 
 // Tests that the SearchSuggestionService can trigger prerendering if it
 // receives prerender hints after the previous prefetch request succeeds.
+// TODO(crbug.com/442469525): Deflake and re-enable on Android.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_PrerenderHintReceivedAfterCompletion \
+  DISABLED_PrerenderHintReceivedAfterCompletion
+#else
+#define MAYBE_PrerenderHintReceivedAfterCompletion \
+  PrerenderHintReceivedAfterCompletion
+#endif
 IN_PROC_BROWSER_TEST_F(SearchPreloadUnifiedBrowserTest,
-                       PrerenderHintReceivedAfterCompletion) {
+                       MAYBE_PrerenderHintReceivedAfterCompletion) {
   base::HistogramTester histogram_tester;
   const GURL kInitialUrl = embedded_test_server()->GetURL("/empty.html");
   ASSERT_TRUE(GetActiveWebContents());

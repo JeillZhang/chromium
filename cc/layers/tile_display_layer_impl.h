@@ -14,7 +14,7 @@
 #include "base/memory/raw_ref.h"
 #include "cc/base/tiling_data.h"
 #include "cc/cc_export.h"
-#include "cc/layers/layer_impl.h"
+#include "cc/layers/tile_based_layer_impl.h"
 #include "cc/mojom/missing_tile_reason.mojom.h"
 #include "cc/tiles/tile_index.h"
 #include "cc/tiles/tile_priority.h"
@@ -30,7 +30,7 @@ namespace cc {
 // Viz-side counterpart to a client-side PictureLayerImpl when TreesInViz is
 // enabled. Clients push tiling information and tile contents from a picture
 // layer down to Viz, and this layer uses that information to draw tile quads.
-class CC_EXPORT TileDisplayLayerImpl : public LayerImpl {
+class CC_EXPORT TileDisplayLayerImpl : public TileBasedLayerImpl {
  public:
   struct NoContents {
     mojom::MissingTileReason reason =
@@ -77,8 +77,9 @@ class CC_EXPORT TileDisplayLayerImpl : public LayerImpl {
       return std::nullopt;
     }
 
-    // We only construct Tile objects that are ready to draw.
-    bool IsReadyToDraw() const { return true; }
+    bool IsReadyToDraw() const {
+      return !std::holds_alternative<NoContents>(contents_);
+    }
 
    private:
     const raw_ref<TileDisplayLayerImpl> layer_;
@@ -140,11 +141,18 @@ class CC_EXPORT TileDisplayLayerImpl : public LayerImpl {
 
   Tiling& GetOrCreateTilingFromScaleKey(float scale_key);
   void RemoveTiling(float scale_key);
-
   void SetSolidColor(std::optional<SkColor4f> color) { solid_color_ = color; }
-  void SetIsBackdropFilterMask(bool is_backdrop_filter_mask) {
-    is_backdrop_filter_mask_ = is_backdrop_filter_mask;
+  void SetIsDirectlyCompositedImage(bool is_directly_composited_image) {
+    is_directly_composited_image_ = is_directly_composited_image;
   }
+  void SetNearestNeighbor(bool nearest_neighbor) {
+    nearest_neighbor_ = nearest_neighbor;
+  }
+  void SetRecordedBounds(const gfx::Rect& bounds) { recorded_bounds_ = bounds; }
+  bool is_directly_composited_image() const {
+    return is_directly_composited_image_;
+  }
+  bool nearest_neighbor() const { return nearest_neighbor_; }
 
   // LayerImpl overrides:
   mojom::LayerType GetLayerType() const override;
@@ -159,15 +167,28 @@ class CC_EXPORT TileDisplayLayerImpl : public LayerImpl {
                              gfx::SizeF* resource_uv_size) const override;
   gfx::Rect GetDamageRect() const override;
   void ResetChangeTracking() override;
+  gfx::ContentColorUsage GetContentColorUsage() const override;
+
+  void SetContentColorUsage(gfx::ContentColorUsage content_color_usage) {
+    content_color_usage_ = content_color_usage;
+  }
 
   void RecordDamage(const gfx::Rect& damage_rect);
 
   const Tiling* GetTilingForTesting(float scale_key) const;
   void DiscardResource(viz::ResourceId resource);
 
+  // For testing
+  std::optional<SkColor4f> solid_color_for_testing() const {
+    return solid_color_;
+  }
+
  private:
   std::optional<SkColor4f> solid_color_;
-  bool is_backdrop_filter_mask_ = false;
+  bool is_directly_composited_image_ = false;
+  bool nearest_neighbor_ = false;
+  gfx::ContentColorUsage content_color_usage_ = gfx::ContentColorUsage::kSRGB;
+  gfx::Rect recorded_bounds_;
 
   // Denotes an area that is damaged and needs redraw. This is in the layer's
   // space.

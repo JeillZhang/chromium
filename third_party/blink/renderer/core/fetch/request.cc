@@ -13,6 +13,7 @@
 #include "services/network/public/mojom/ip_address_space.mojom-blink.h"
 #include "services/network/public/mojom/trust_tokens.mojom-blink.h"
 #include "third_party/blink/public/common/blob/blob_utils.h"
+#include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/platform/web_url_request.h"
 #include "third_party/blink/renderer/bindings/core/v8/dictionary.h"
@@ -184,7 +185,8 @@ FetchRequestData* CreateCopyOfFetchRequestDataForFetch(
   request->SetAttributionReportingSupport(original->AttributionSupport());
   request->SetServiceWorkerRaceNetworkRequestToken(
       original->ServiceWorkerRaceNetworkRequestToken());
-  if (original->HasRetryOptions()) {
+  if (RuntimeEnabledFeatures::FetchRetryEnabled(context) &&
+      original->HasRetryOptions()) {
     request->SetRetryOptions(original->RetryOptions().value());
   }
 
@@ -566,9 +568,9 @@ Request* Request::CreateRequestWithRequestOrString(
   // https://wicg.github.io/priority-hints/#fetch-integration
   if (init->hasPriority()) {
     UseCounter::Count(execution_context, WebFeature::kPriorityHints);
-    if (init->priority() == "low") {
+    if (init->priority() == V8FetchPriority::Enum::kLow) {
       request->SetFetchPriorityHint(mojom::blink::FetchPriorityHint::kLow);
-    } else if (init->priority() == "high") {
+    } else if (init->priority() == V8FetchPriority::Enum::kHigh) {
       request->SetFetchPriorityHint(mojom::blink::FetchPriorityHint::kHigh);
     }
   }
@@ -590,22 +592,26 @@ Request* Request::CreateRequestWithRequestOrString(
   if (init->hasTargetAddressSpace()) {
     // 'private' is kept as an alias to 'local'; the previous PNA spec had
     // 'private' for what LNA considers to be 'local'.
-    //
-    // TODO(crbug.com/418737577): Public names don't match
-    // network::mojom::IPAddressSpace enum yet. Finish rename by changing the
-    // enum.
-    if (init->targetAddressSpace() == "loopback") {
-      request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kLocal);
-    } else if (init->targetAddressSpace() == "local") {
-      request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kPrivate);
-    } else if (init->targetAddressSpace() == "private") {
-      UseCounter::Count(execution_context,
-                        WebFeature::kLocalNetworkAccessPrivateAliasUse);
-      request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kPrivate);
-    } else if (init->targetAddressSpace() == "public") {
-      request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kPublic);
-    } else if (init->targetAddressSpace() == "unknown") {
-      request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kUnknown);
+    switch (init->targetAddressSpace().AsEnum()) {
+      case V8IPAddressSpace::Enum::kLoopback:
+        request->SetTargetAddressSpace(
+            network::mojom::IPAddressSpace::kLoopback);
+        break;
+      case V8IPAddressSpace::Enum::kLocal:
+        request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kLocal);
+        break;
+      case V8IPAddressSpace::Enum::kPrivate:
+        UseCounter::Count(execution_context,
+                          WebFeature::kLocalNetworkAccessPrivateAliasUse);
+        request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kLocal);
+        break;
+      case V8IPAddressSpace::Enum::kPublic:
+        request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kPublic);
+        break;
+      case V8IPAddressSpace::Enum::kUnknown:
+        request->SetTargetAddressSpace(
+            network::mojom::IPAddressSpace::kUnknown);
+        break;
     }
   } else {
     request->SetTargetAddressSpace(network::mojom::IPAddressSpace::kUnknown);
@@ -613,19 +619,25 @@ Request* Request::CreateRequestWithRequestOrString(
 
   // "If |init|'s cache member is present, set |request|'s cache mode to it."
   if (init->hasCache()) {
-    auto&& cache = init->cache();
-    if (cache == "default") {
-      request->SetCacheMode(mojom::blink::FetchCacheMode::kDefault);
-    } else if (cache == "no-store") {
-      request->SetCacheMode(mojom::blink::FetchCacheMode::kNoStore);
-    } else if (cache == "reload") {
-      request->SetCacheMode(mojom::blink::FetchCacheMode::kBypassCache);
-    } else if (cache == "no-cache") {
-      request->SetCacheMode(mojom::blink::FetchCacheMode::kValidateCache);
-    } else if (cache == "force-cache") {
-      request->SetCacheMode(mojom::blink::FetchCacheMode::kForceCache);
-    } else if (cache == "only-if-cached") {
-      request->SetCacheMode(mojom::blink::FetchCacheMode::kOnlyIfCached);
+    switch (init->cache().AsEnum()) {
+      case V8RequestCache::Enum::kDefault:
+        request->SetCacheMode(mojom::blink::FetchCacheMode::kDefault);
+        break;
+      case V8RequestCache::Enum::kNoStore:
+        request->SetCacheMode(mojom::blink::FetchCacheMode::kNoStore);
+        break;
+      case V8RequestCache::Enum::kReload:
+        request->SetCacheMode(mojom::blink::FetchCacheMode::kBypassCache);
+        break;
+      case V8RequestCache::Enum::kNoCache:
+        request->SetCacheMode(mojom::blink::FetchCacheMode::kValidateCache);
+        break;
+      case V8RequestCache::Enum::kForceCache:
+        request->SetCacheMode(mojom::blink::FetchCacheMode::kForceCache);
+        break;
+      case V8RequestCache::Enum::kOnlyIfCached:
+        request->SetCacheMode(mojom::blink::FetchCacheMode::kOnlyIfCached);
+        break;
     }
   }
 
@@ -641,12 +653,16 @@ Request* Request::CreateRequestWithRequestOrString(
   // "If |init|'s redirect member is present, set |request|'s redirect mode
   // to it."
   if (init->hasRedirect()) {
-    if (init->redirect() == "follow") {
-      request->SetRedirect(network::mojom::RedirectMode::kFollow);
-    } else if (init->redirect() == "error") {
-      request->SetRedirect(network::mojom::RedirectMode::kError);
-    } else if (init->redirect() == "manual") {
-      request->SetRedirect(network::mojom::RedirectMode::kManual);
+    switch (init->redirect().AsEnum()) {
+      case V8RequestRedirect::Enum::kFollow:
+        request->SetRedirect(network::mojom::RedirectMode::kFollow);
+        break;
+      case V8RequestRedirect::Enum::kError:
+        request->SetRedirect(network::mojom::RedirectMode::kError);
+        break;
+      case V8RequestRedirect::Enum::kManual:
+        request->SetRedirect(network::mojom::RedirectMode::kManual);
+        break;
     }
   }
 
@@ -658,7 +674,9 @@ Request* Request::CreateRequestWithRequestOrString(
   if (init->hasKeepalive())
     request->SetKeepalive(init->keepalive());
 
-  if (init->hasRetryOptions()) {
+  if (RuntimeEnabledFeatures::FetchRetryEnabled(execution_context) &&
+      init->hasRetryOptions()) {
+    UseCounter::Count(execution_context, WebFeature::kFetchRetry);
     network::FetchRetryOptions options;
     RetryOptions* retry_options = init->retryOptions();
     options.max_attempts = retry_options->maxAttempts();
@@ -670,10 +688,12 @@ Request* Request::CreateRequestWithRequestOrString(
       options.backoff_factor = retry_options->backoffFactor();
     }
     if (retry_options->hasMaxAge()) {
-      options.max_age = base::Milliseconds(retry_options->maxAge().value());
+      options.max_age = base::Milliseconds(retry_options->maxAge());
     }
     options.retry_after_unload = retry_options->retryAfterUnload();
     options.retry_non_idempotent = retry_options->retryNonIdempotent();
+    options.retry_only_if_server_unreached =
+        retry_options->retryOnlyIfServerUnreached();
     request->SetRetryOptions(options);
   }
 
@@ -1057,6 +1077,21 @@ Request::Request(ScriptState* script_state,
               Headers::Create(request->HeaderList()),
               signal) {
   headers_->SetGuard(Headers::kRequestGuard);
+
+  // This is currently only meant to allow certain contexts to bypass request
+  // forbidden header setting in the renderer. For example in Chromium:
+  // extension
+  // (https://www.chromium.org/developers/design-documents/extensions/) script
+  // contexts are an example of a context depending on their configuration.
+  if (base::FeatureList::IsEnabled(
+          features::kBypassRequestForbiddenHeadersCheck)) {
+    bool bypass_forbidden_fetch_request_headers =
+        SecurityPolicy::IsOriginAccessToURLAllowed(
+            ExecutionContext::From(script_state)->GetSecurityOrigin(),
+            request_->Url());
+    headers_->SetBypassRequestForbiddenHeaderCheck(
+        bypass_forbidden_fetch_request_headers);
+  }
 }
 
 String Request::method() const {
@@ -1190,9 +1225,9 @@ bool Request::keepalive() const {
 
 V8IPAddressSpace Request::targetAddressSpace() const {
   switch (request_->TargetAddressSpace()) {
-    case network::mojom::IPAddressSpace::kLocal:
+    case network::mojom::IPAddressSpace::kLoopback:
       return V8IPAddressSpace(V8IPAddressSpace::Enum::kLoopback);
-    case network::mojom::IPAddressSpace::kPrivate:
+    case network::mojom::IPAddressSpace::kLocal:
       return V8IPAddressSpace(V8IPAddressSpace::Enum::kLocal);
     case network::mojom::IPAddressSpace::kPublic:
       return V8IPAddressSpace(V8IPAddressSpace::Enum::kPublic);
@@ -1225,6 +1260,32 @@ Request* Request::clone(ScriptState* script_state,
   auto* signal = MakeGarbageCollected<AbortSignal>(script_state, signals);
 
   return MakeGarbageCollected<Request>(script_state, request, headers, signal);
+}
+
+RetryOptions* Request::getRetryOptions() const {
+  if (!request_->HasRetryOptions()) {
+    return nullptr;
+  }
+
+  const network::FetchRetryOptions& network_options =
+      request_->RetryOptions().value();
+  RetryOptions* options = RetryOptions::Create();
+  options->setMaxAttempts(network_options.max_attempts);
+  if (network_options.initial_delay.has_value()) {
+    options->setInitialDelay(
+        network_options.initial_delay.value().InMilliseconds());
+  }
+  if (network_options.backoff_factor.has_value()) {
+    options->setBackoffFactor(network_options.backoff_factor.value());
+  }
+  if (network_options.max_age.has_value()) {
+    options->setMaxAge(network_options.max_age->InMilliseconds());
+  }
+  options->setRetryAfterUnload(network_options.retry_after_unload);
+  options->setRetryNonIdempotent(network_options.retry_non_idempotent);
+  options->setRetryOnlyIfServerUnreached(
+      network_options.retry_only_if_server_unreached);
+  return options;
 }
 
 FetchRequestData* Request::PassRequestData(ScriptState* script_state,
@@ -1263,7 +1324,7 @@ mojom::blink::FetchAPIRequestPtr Request::CreateFetchAPIRequest() const {
     HTTPHeaderMap::AddResult result = headers.Add(key, value);
     if (!result.is_new_entry) {
       result.stored_value->value =
-          AtomicString(WTF::StrCat({result.stored_value->value, ", ", value}));
+          AtomicString(StrCat({result.stored_value->value, ", ", value}));
     }
   }
   for (const auto& pair : headers)

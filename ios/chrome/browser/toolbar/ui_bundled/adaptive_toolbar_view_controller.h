@@ -52,6 +52,9 @@
 @property(nonatomic, weak) id<AdaptiveToolbarViewControllerDelegate>
     adaptiveDelegate;
 
+// Returns the tab grid button.
+- (ToolbarButton*)tabGridButton;
+
 // Returns the tools menu button.
 - (ToolbarButton*)toolsMenuButton;
 
@@ -72,6 +75,8 @@
 // Highlights the tab grid button if `highlight` is YES, resets to original
 // color if NO.
 - (void)IPHHighlightTabGridButton:(BOOL)highlight;
+// Sets the height of the location bar. Used when the omnibox is multiline.
+- (void)setLocationBarHeight:(CGFloat)height;
 
 @end
 

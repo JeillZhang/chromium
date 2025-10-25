@@ -303,6 +303,8 @@ const char* ToString(
 void ResetDeclinedBootstrappingCount(Profile* profile) {
   profile->GetPrefs()->SetInteger(
       webauthn::pref_names::kEnclaveDeclinedGPMBootstrappingCount, 0);
+  profile->GetPrefs()->SetInteger(
+      webauthn::pref_names::kEnclaveDeclinedGPMCredentialCreationCount, 0);
 }
 
 }  // namespace
@@ -423,6 +425,7 @@ GPMEnclaveController::GPMEnclaveController(
       request_type == device::FidoRequestType::kGetAssertion) {
     // No possibility of using GPM for this request.
     FIDO_LOG(EVENT) << "Enclave is not a candidate for this request";
+    SetAccountState(AccountState::kNone);
     SetActive(EnclaveEnabledStatus::kDisabled);
     return;
   }
@@ -441,14 +444,11 @@ GPMEnclaveController::GPMEnclaveController(
     SetActive(EnclaveEnabledStatus::kEnabledAndReauthNeeded);
     return;
   }
-  if (base::FeatureList::IsEnabled(device::kWebAuthnNoAccountTimeout)) {
-    SetActive(EnclaveEnabledStatus::kEnabled);
-  }
+  SetActive(EnclaveEnabledStatus::kEnabled);
   if (enclave_manager_->is_loaded()) {
     OnEnclaveLoaded();
   } else {
     FIDO_LOG(EVENT) << "Loading enclave state";
-    SetAccountState(AccountState::kLoading);
     enclave_manager_->Load(
         base::BindOnce(&GPMEnclaveController::OnEnclaveLoaded,
                        weak_ptr_factory_.GetWeakPtr()));
@@ -547,13 +547,41 @@ Profile* GPMEnclaveController::GetProfile() const {
       ->GetOriginalProfile();
 }
 
+void GPMEnclaveController::ShowSecurityDomainRecoveryUI() {
+  // The acquired lock indicates that the explicit key retrieval flow is being
+  // used.
+  store_keys_lock_ = enclave_manager_->GetStoreKeysLock();
+  model_->SetStep(Step::kRecoverSecurityDomain);
+}
+
 GPMEnclaveController::AccountState
 GPMEnclaveController::account_state_for_testing() const {
   return account_state_;
 }
 
-bool GPMEnclaveController::is_account_ready() const {
-  return account_state_ == AccountState::kReady;
+GPMEnclaveController::AccountReadyState
+GPMEnclaveController::account_ready_state() const {
+  switch (account_state_) {
+    case AccountState::kLoading:
+      return AccountReadyState::kLoading;
+    case AccountState::kReady:
+      return AccountReadyState::kReady;
+    case AccountState::kNone:
+    case AccountState::kRecoverable:
+    case AccountState::kIrrecoverable:
+    case AccountState::kEmpty:
+      return AccountReadyState::kNotReady;
+  }
+}
+
+void GPMEnclaveController::RunWhenAccountReady(base::OnceClosure callback) {
+  if (account_state_ != AccountState::kLoading) {
+    std::move(callback).Run();
+    return;
+  }
+
+  CHECK(!waiting_for_account_state_);
+  waiting_for_account_state_ = std::move(callback);
 }
 
 void GPMEnclaveController::OnEnclaveLoaded() {
@@ -587,12 +615,6 @@ void GPMEnclaveController::OnEnclaveLoaded() {
       }
     }
 
-    if (!base::FeatureList::IsEnabled(device::kWebAuthnNoAccountTimeout)) {
-      // For get() requests, progress the UI now because, with GPM PIN support,
-      // we can handle the account in any state and we'll block the UI if needed
-      // when the user selects a GPM credential.
-      SetActive(EnclaveEnabledStatus::kEnabled);
-    }
   }
 
   FIDO_LOG(EVENT) << "Checking for UV key capability";
@@ -609,21 +631,8 @@ void GPMEnclaveController::OnUVCapabilityKnown(bool can_make_uv_keys) {
 
 void GPMEnclaveController::DownloadAccountState() {
   FIDO_LOG(EVENT) << "Fetching account state";
-  SetAccountState(AccountState::kChecking);
 
   auto* rfh = content::RenderFrameHost::FromID(render_frame_host_id_);
-  account_state_timeout_ = std::make_unique<base::OneShotTimer>(
-      GpmTickAndTaskRunnerProvider::GetTickClock(rfh));
-  if (auto task_runner = GpmTickAndTaskRunnerProvider::GetTaskRunner(rfh)) {
-    account_state_timeout_->SetTaskRunner(task_runner);
-  }
-  if (!base::FeatureList::IsEnabled(device::kWebAuthnNoAccountTimeout)) {
-    account_state_timeout_->Start(
-        FROM_HERE, kDownloadAccountStateTimeout,
-        base::BindOnce(&GPMEnclaveController::OnAccountStateTimeOut,
-                       weak_ptr_factory_.GetWeakPtr()));
-  }
-
   auto* const identity_manager =
       IdentityManagerFactory::GetForProfile(GetProfile());
   scoped_refptr<network::SharedURLLoaderFactory> testing_url_loader =
@@ -645,31 +654,7 @@ void GPMEnclaveController::DownloadAccountState() {
           base::BindOnce(&GPMEnclaveController::OnAccountStateDownloaded,
                          weak_ptr_factory_.GetWeakPtr(), account.gaia,
                          std::move(trusted_vault_conn)),
-          base::BindRepeating(&GPMEnclaveController::OnAccountStateKeepAlive,
-                              weak_ptr_factory_.GetWeakPtr()));
-}
-
-void GPMEnclaveController::OnAccountStateKeepAlive() {
-  if (!base::FeatureList::IsEnabled(device::kWebAuthnNoAccountTimeout)) {
-    account_state_timeout_->Reset();
-  }
-}
-
-void GPMEnclaveController::OnAccountStateTimeOut() {
-  FIDO_LOG(ERROR) << "Fetching the account state timed out.";
-  device::enclave::RecordEvent(
-      device::enclave::Event::kDownloadAccountStateTimeout);
-  download_account_state_request_.reset();
-  if (enclave_manager_->is_ready()) {
-    // If we were checking the security domain just to check whether the epoch
-    // has changed then we assume that it hasn't.
-    SetAccountState(AccountState::kReady);
-    SetActive(EnclaveEnabledStatus::kEnabled);
-  } else {
-    model_->OnLoadingEnclaveTimeout();
-    SetAccountState(AccountState::kNone);
-    SetActive(EnclaveEnabledStatus::kDisabled);
-  }
+          base::DoNothing());
 }
 
 void GPMEnclaveController::OnAccountStateDownloaded(
@@ -679,12 +664,7 @@ void GPMEnclaveController::OnAccountStateDownloaded(
         result) {
   using Result =
       trusted_vault::DownloadAuthenticationFactorsRegistrationStateResult;
-  if (account_state_ != AccountState::kChecking) {
-    // This request timed out.
-    return;
-  }
   download_account_state_request_.reset();
-  account_state_timeout_.reset();
 
   FIDO_LOG(EVENT)
       << "Download account state result: " << ToString(result.state)
@@ -701,9 +681,6 @@ void GPMEnclaveController::OnAccountStateDownloaded(
       enclave_manager_->ConsiderSecurityDomainState(result,
                                                     base::DoNothing())) {
     SetAccountState(AccountState::kReady);
-    if (!base::FeatureList::IsEnabled(device::kWebAuthnNoAccountTimeout)) {
-      SetActive(EnclaveEnabledStatus::kEnabled);
-    }
     return;
   }
 
@@ -727,12 +704,6 @@ void GPMEnclaveController::OnAccountStateDownloaded(
   pin_metadata_ = std::move(result.gpm_pin_metadata);
   security_domain_icloud_recovery_keys_ = std::move(result.icloud_keys);
   user_gaia_id_ = std::move(gaia_id);
-
-  if (!base::FeatureList::IsEnabled(device::kWebAuthnNoAccountTimeout)) {
-    SetActive(account_state_ != AccountState::kNone
-                  ? EnclaveEnabledStatus::kEnabled
-                  : EnclaveEnabledStatus::kDisabled);
-  }
 }
 
 void GPMEnclaveController::SetActive(EnclaveEnabledStatus status) {
@@ -754,6 +725,9 @@ void GPMEnclaveController::OnKeysStored() {
     // MagicArch recovery.
     webauthn::user_actions::RecordRecoverySucceeded();
     device::enclave::RecordEvent(device::enclave::Event::kRecoverySuccessful);
+    webauthn::metrics::RecordGPMRecoveryEvent(
+        webauthn::metrics::WebAuthenticationGPMRecoveryEvent::
+            kStoreKeysFromExplicitFlowSucceeded);
   } else {
     // Keys were stored but we were not expecting it, e.g. because it happened
     // during a request at a different step on another tab. Ignore it.
@@ -762,6 +736,7 @@ void GPMEnclaveController::OnKeysStored() {
 
   CHECK(enclave_manager_->has_pending_keys());
   CHECK(!enclave_manager_->is_ready());
+  store_keys_lock_.reset();
 
   if ((pin_metadata_.has_value() && pin_metadata_->usable_pin_metadata) ||
       *can_make_uv_keys_) {
@@ -779,6 +754,8 @@ void GPMEnclaveController::OnKeysStored() {
     model_->SetStep(Step::kGPMCreatePin);
   }
 }
+
+void GPMEnclaveController::OnStateUpdated() {}
 
 void GPMEnclaveController::OnDeviceAdded(bool success) {
   ResetDeclinedBootstrappingCount(GetProfile());
@@ -803,7 +780,7 @@ void GPMEnclaveController::RecoverSecurityDomain() {
       trusted_vault::SecurityDomainId::kPasskeys,
       kICloudKeychainRecoveryKeyAccessGroup);
 #else
-  model_->SetStep(Step::kRecoverSecurityDomain);
+  ShowSecurityDomainRecoveryUI();
 #endif  // BUILDFLAG(IS_MAC)
 }
 
@@ -881,7 +858,7 @@ void GPMEnclaveController::OnICloudKeysRetrievedForRecovery(
       });
   if (local_icloud_key_it == local_icloud_keys.end()) {
     FIDO_LOG(DEBUG) << "Could not find matching iCloud recovery key";
-    model_->SetStep(Step::kRecoverSecurityDomain);
+    ShowSecurityDomainRecoveryUI();
     return;
   }
   const auto member_key_it = std::ranges::max_element(
@@ -894,11 +871,12 @@ void GPMEnclaveController::OnICloudKeysRetrievedForRecovery(
   if (!security_domain_secret) {
     FIDO_LOG(ERROR)
         << "Could not decrypt security domain secret with iCloud key";
-    model_->SetStep(Step::kRecoverSecurityDomain);
+    ShowSecurityDomainRecoveryUI();
     return;
   }
   FIDO_LOG(EVENT) << "Successful recovery from iCloud recovery key";
   recovered_with_icloud_keychain_ = true;
+  store_keys_lock_ = enclave_manager_->GetStoreKeysLock();
   enclave_manager_->StoreKeys(user_gaia_id_,
                               {std::move(*security_domain_secret)},
                               member_key_it->version);
@@ -957,6 +935,52 @@ void GPMEnclaveController::SetAccountState(AccountState account_state) {
   }
 }
 
+void GPMEnclaveController::PromptForPin() {
+  if (GetFailedPINAttemptCount() >= device::enclave::kMaxFailedPINAttempts) {
+    model_->SetStep(Step::kGPMLockedPin);
+  } else {
+    model_->SetStep(pin_is_arbitrary_ ? Step::kGPMEnterArbitraryPin
+                                      : Step::kGPMEnterPin);
+  }
+}
+
+void GPMEnclaveController::OnGpmPinChanged(bool success) {
+  changing_gpm_pin_ = false;
+
+  if (!success) {
+    model_->SetStep(Step::kGPMError);
+    ChangePinControllerImpl::RecordHistogram(ChangePinEvent::kFailed);
+    return;
+  }
+
+  SetFailedPINAttemptCount(0);
+  model_->gpm_pin_remaining_attempts_ = std::nullopt;
+  // Changing GPM Pin required reauth, hence we can just proceed with the
+  // get/create passkey transaction.
+  StartTransaction();
+  ChangePinControllerImpl::RecordHistogram(
+      ChangePinEvent::kCompletedSuccessfully);
+}
+
+void GPMEnclaveController::OnGpmSelectedWhileLoading() {
+  CHECK(waiting_for_account_state_);
+  if (model_->step() != AuthenticatorRequestDialogModel::Step::kNotStarted) {
+    model_->DisableUiOrShowLoadingDialog();
+    return;
+  }
+  loading_timeout_.Start(FROM_HERE, kLoadingTimeout,
+                         base::BindOnce(&GPMEnclaveController::OnLoadingTimeout,
+                                        weak_ptr_factory_.GetWeakPtr()));
+  return;
+}
+
+void GPMEnclaveController::OnLoadingTimeout() {
+  device::enclave::RecordEvent(device::enclave::Event::kLoadingTimeout);
+  waiting_for_account_state_.Reset();
+  model_->SetStep(AuthenticatorRequestDialogModel::Step::kMechanismSelection);
+}
+
+
 void GPMEnclaveController::OnGPMSelected() {
   // Reset after each GPM selection to ensure correct metric emission.
   model_->in_onboarding_flow = false;
@@ -966,10 +990,9 @@ void GPMEnclaveController::OnGPMSelected() {
     return;
   }
 
-  if (account_state_ != AccountState::kLoading &&
-      account_state_ != AccountState::kChecking) {
-    // `kLoading` and `kChecking` will call `OnGPMSelected` again,
-    // therefore we don't emit in these states.
+  if (account_state_ != AccountState::kLoading) {
+    // `kLoading` will call `OnGPMSelected` again, therefore we don't emit in
+    // these states.
     RecordGPMMakeCredentialEvent(
         webauthn::metrics::GPMMakeCredentialEvents::kStarted);
   }
@@ -1021,7 +1044,6 @@ void GPMEnclaveController::OnGPMSelected() {
       break;
 
     case AccountState::kLoading:
-    case AccountState::kChecking:
       waiting_for_account_state_ = base::BindOnce(
           &GPMEnclaveController::OnGPMSelected, weak_ptr_factory_.GetWeakPtr());
       OnGpmSelectedWhileLoading();
@@ -1037,10 +1059,9 @@ void GPMEnclaveController::OnGPMPasskeySelected(
     std::vector<uint8_t> credential_id) {
   selected_cred_id_ = std::move(credential_id);
 
-  if (account_state_ != AccountState::kLoading &&
-      account_state_ != AccountState::kChecking) {
-    // `kLoading` and `kChecking` will call `OnGPMPasskeySelected` again,
-    // therefore we don't emit in these states.
+  if (account_state_ != AccountState::kLoading) {
+    // `kLoading` will call `OnGPMPasskeySelected` again, therefore we don't
+    // emit in these states.
     RecordGPMGetAssertionEvent(
         webauthn::metrics::GPMGetAssertionEvents::kStarted);
   }
@@ -1088,7 +1109,6 @@ void GPMEnclaveController::OnGPMPasskeySelected(
       break;
 
     case AccountState::kLoading:
-    case AccountState::kChecking:
       waiting_for_account_state_ =
           base::BindOnce(&GPMEnclaveController::OnGPMPasskeySelected,
                          weak_ptr_factory_.GetWeakPtr(), *selected_cred_id_);
@@ -1096,71 +1116,17 @@ void GPMEnclaveController::OnGPMPasskeySelected(
       break;
 
     case AccountState::kNone:
-      if (model_->priority_phone_name.has_value()) {
-        model_->ContactPriorityPhone();
-      } else {
-        // This can happen if a passkey is selected after the enclave times out.
-        model_->SetStep(Step::kGPMError);
-      }
+      // This can happen if a passkey is selected after the enclave times out.
+      model_->SetStep(Step::kGPMError);
       break;
 
     case AccountState::kEmpty:
-      if (model_->priority_phone_name.has_value()) {
-        model_->ContactPriorityPhone();
-      } else {
-        // The security domain is empty but there were
-        // sync entities. Most like the security domain was reset without
-        // clearing the entities, thus they are unusable.
-        model_->SetStep(Step::kGPMError);
-      }
+      // The security domain is empty but there were
+      // sync entities. Most like the security domain was reset without
+      // clearing the entities, thus they are unusable.
+      model_->SetStep(Step::kGPMError);
       break;
   }
-}
-
-void GPMEnclaveController::PromptForPin() {
-  if (GetFailedPINAttemptCount() >= device::enclave::kMaxFailedPINAttempts) {
-    model_->SetStep(Step::kGPMLockedPin);
-  } else {
-    model_->SetStep(pin_is_arbitrary_ ? Step::kGPMEnterArbitraryPin
-                                      : Step::kGPMEnterPin);
-  }
-}
-
-void GPMEnclaveController::OnGpmPinChanged(bool success) {
-  changing_gpm_pin_ = false;
-
-  if (!success) {
-    model_->SetStep(Step::kGPMError);
-    ChangePinControllerImpl::RecordHistogram(ChangePinEvent::kFailed);
-    return;
-  }
-
-  SetFailedPINAttemptCount(0);
-  model_->gpm_pin_remaining_attempts_ = std::nullopt;
-  // Changing GPM Pin required reauth, hence we can just proceed with the
-  // get/create passkey transaction.
-  StartTransaction();
-  ChangePinControllerImpl::RecordHistogram(
-      ChangePinEvent::kCompletedSuccessfully);
-}
-
-void GPMEnclaveController::OnGpmSelectedWhileLoading() {
-  CHECK(waiting_for_account_state_);
-  if (!base::FeatureList::IsEnabled(device::kWebAuthnNoAccountTimeout) ||
-      model_->step() != AuthenticatorRequestDialogModel::Step::kNotStarted) {
-    model_->DisableUiOrShowLoadingDialog();
-    return;
-  }
-  loading_timeout_.Start(FROM_HERE, kLoadingTimeout,
-                         base::BindOnce(&GPMEnclaveController::OnLoadingTimeout,
-                                        weak_ptr_factory_.GetWeakPtr()));
-  return;
-}
-
-void GPMEnclaveController::OnLoadingTimeout() {
-  device::enclave::RecordEvent(device::enclave::Event::kLoadingTimeout);
-  waiting_for_account_state_.Reset();
-  model_->SetStep(AuthenticatorRequestDialogModel::Step::kMechanismSelection);
 }
 
 void GPMEnclaveController::OnTrustThisComputer() {

@@ -51,7 +51,6 @@ class FakeProxy : public Proxy {
   void QueueImageDecode(int request_id,
                         const DrawImage& image,
                         bool speculative) override;
-  bool SpeculativeDecodeRequestInFlight() const override;
   void SetMutator(std::unique_ptr<LayerTreeMutator> mutator) override;
   void SetPaintWorkletLayerPainter(
       std::unique_ptr<PaintWorkletLayerPainter> painter) override;
@@ -64,8 +63,6 @@ class FakeProxy : public Proxy {
           offset_tag_modifications) override {}
   void RequestBeginMainFrameNotExpected(bool new_state) override {}
   void SetSourceURL(ukm::SourceId source_id, const GURL& url) override {}
-  void SetUkmSmoothnessDestination(
-      base::WritableSharedMemoryMapping ukm_smoothness_data) override {}
   void SetUkmDroppedFramesDestination(
       base::WritableSharedMemoryMapping ukm_dropped_frames_data) override {}
   void SetRenderFrameObserver(
@@ -73,7 +70,7 @@ class FakeProxy : public Proxy {
   void CompositeImmediatelyForTest(base::TimeTicks frame_begin_time,
                                    bool raster,
                                    base::OnceClosure callback) override {}
-  double GetPercentDroppedFrames() const override;
+  double GetAverageThroughput() const override;
   void SetPauseRendering(bool pause_rendering) override {}
   void SetInputResponsePending() override {}
   bool IsRenderingPaused() const override;

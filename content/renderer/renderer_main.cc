@@ -26,10 +26,12 @@
 #include "base/task/sequence_manager/sequence_manager.h"
 #include "base/threading/hang_watcher.h"
 #include "base/threading/platform_thread.h"
+#include "base/threading/platform_thread_metrics.h"
 #include "base/time/time.h"
 #include "base/timer/hi_res_timer_manager.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
+#include "content/child/memory_coordinator/child_memory_consumer_registry.h"
 #include "content/common/content_constants_internal.h"
 #include "content/common/content_switches_internal.h"
 #include "content/common/features.h"
@@ -38,6 +40,7 @@
 #include "content/public/common/main_function_params.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/public/renderer/render_thread.h"
+#include "content/renderer/memory_coordinator/renderer_memory_coordinator_policy.h"
 #include "content/renderer/render_process_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/renderer_main_platform_delegate.h"
@@ -45,7 +48,6 @@
 #include "mojo/public/cpp/bindings/direct_receiver.h"
 #include "mojo/public/cpp/bindings/interface_endpoint_client.h"
 #include "mojo/public/cpp/bindings/mojo_buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "sandbox/policy/switches.h"
 #include "services/tracing/public/cpp/trace_startup.h"
 #include "third_party/blink/public/common/features.h"
@@ -82,10 +84,6 @@
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #include "content/child/sandboxed_process_thread_type_handler.h"
-#endif
-
-#if BUILDFLAG(ENABLE_PPAPI)
-#include "content/renderer/pepper/pepper_plugin_registry.h"
 #endif
 
 #if BUILDFLAG(MOJO_RANDOM_DELAYS_ENABLED)
@@ -216,15 +214,15 @@ int RendererMain(MainFunctionParams parameters) {
 
   platform.PlatformInitialize();
 
-#if BUILDFLAG(ENABLE_PPAPI)
-  // Load pepper plugins before engaging the sandbox.
-  PepperPluginRegistry::GetInstance();
-#endif
   // Initialize WebRTC before engaging the sandbox.
   // NOTE: On linux, this call could already have been made from
   // zygote_main_linux.cc.  However, calling multiple times from the same thread
   // is OK.
   InitializeWebRtcModuleBeforeSandbox();
+
+  RendererMemoryCoordinatorPolicy render_memory_coordinator_policy(
+      static_cast<ChildMemoryConsumerRegistry&>(
+          base::MemoryConsumerRegistry::Get()));
 
   {
     content::ContentRendererClient* client = GetContentClient()->renderer();
@@ -271,6 +269,16 @@ int RendererMain(MainFunctionParams parameters) {
             : base::ThreadType::kDisplayCritical;
     base::PlatformThread::SetCurrentThreadType(thread_type);
 
+    // Startup tracing creates a tracing thread, which is incompatible on
+    // platforms that require single-threaded sandbox initialization. In these
+    // cases, startup tracing is initialized right after sandbox initialization.
+    if (parameters.needs_startup_tracing_after_sandbox_init) {
+      tracing::InitTracingPostFeatureList(/*enable_consumer=*/false,
+                                          /*will_trace_thread_restart=*/false);
+      TRACE_EVENT_INSTANT1("startup", "RendererMain", TRACE_EVENT_SCOPE_THREAD,
+                           "needs_startup_tracing_after_sandbox_init", true);
+    }
+
     std::unique_ptr<RenderProcess> render_process = RenderProcessImpl::Create();
     // It's not a memory leak since RenderThread has the same lifetime
     // as a renderer process.
@@ -293,15 +301,6 @@ int RendererMain(MainFunctionParams parameters) {
       swap_init.reset();
     }
 #endif
-
-    // Mojo IPC support is brought up by RenderThreadImpl, so startup tracing
-    // is enabled here if it needs to start after mojo init (normally so the
-    // mojo broker can bypass the sandbox to allocate startup tracing's SMB).
-    if (parameters.needs_startup_tracing_after_mojo_init) {
-      tracing::EnableStartupTracingIfNeeded();
-      TRACE_EVENT_INSTANT1("startup", "RendererMain", TRACE_EVENT_SCOPE_THREAD,
-                           "needs_startup_tracing_after_mojo_init", true);
-    }
 
 #if BUILDFLAG(IS_WIN)
     // Now that Mojo is initialized, but before the sandbox is enabled, set up
@@ -333,6 +332,12 @@ int RendererMain(MainFunctionParams parameters) {
           uncovered_hang_watcher_time);
       base::HangWatcher::GetInstance()->Start();
     }
+
+#if BUILDFLAG(IS_ANDROID)
+    base::PlatformThreadPriorityMonitor::Get().RegisterCurrentThread(
+        "RendererMain");
+    base::PlatformThreadPriorityMonitor::Get().Start();
+#endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(MOJO_RANDOM_DELAYS_ENABLED)
     mojo::BeginRandomMojoDelays();

@@ -16,7 +16,6 @@
               "project": "chromium"
             },
             "builder_spec": {
-              "build_gs_bucket": "chromium-clang-archive",
               "builder_group": "chromium.clang",
               "execution_mode": "COMPILE_AND_TEST",
               "legacy_chromium_config": {
@@ -76,5 +75,5 @@
   "sheriff_rotations": [
     "chromium.clang"
   ],
-  "xcode_build_version": "16c5032a"
+  "xcode_build_version": "17a324"
 }

@@ -28,16 +28,18 @@ import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.ContextUtils;
+import org.chromium.base.UserDataHost;
+import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.layouts.LayoutStateProvider;
+import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
 import org.chromium.chrome.browser.omnibox.ChromeAutocompleteSchemeClassifier;
 import org.chromium.chrome.browser.omnibox.ChromeAutocompleteSchemeClassifierJni;
 import org.chromium.chrome.browser.omnibox.LocationBarDataProvider;
 import org.chromium.chrome.browser.omnibox.NewTabPageDelegate;
+import org.chromium.chrome.browser.paint_preview.TabbedPaintPreview;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.components.dom_distiller.core.DomDistillerUrlUtilsJni;
 import org.chromium.components.omnibox.OmniboxUrlEmphasizerJni;
 import org.chromium.url.GURL;
 
@@ -70,9 +72,10 @@ public class LocationBarModelUnitTest {
     @Mock private LocationBarDataProvider.Observer mLocationBarDataObserver;
     @Mock private LocationBarModel.Natives mLocationBarModelJni;
     @Mock private ChromeAutocompleteSchemeClassifier.Natives mChromeAutocompleteSchemeClassifierJni;
-    @Mock private DomDistillerUrlUtilsJni mDomDistillerUrlUtilsJni;
     @Mock private OmniboxUrlEmphasizerJni mOmniboxUrlEmphasizerJni;
-    @Mock private LayoutStateProvider mLayoutStateProvider;
+    @Mock private TabbedPaintPreview mTabbedPaintPreview;
+
+    private final UserDataHost mUserDataHost = new UserDataHost();
 
     @Spy
     public LocationBarModel mLocationBarModel =
@@ -81,7 +84,8 @@ public class LocationBarModelUnitTest {
                             ContextUtils.getApplicationContext(), R.style.Theme_BrowserUI_DayNight),
                     NewTabPageDelegate.EMPTY,
                     url -> url.getSpec(),
-                    OFFLINE_STATUS);
+                    OFFLINE_STATUS,
+                    new ObservableSupplierImpl(ControlsPosition.TOP));
 
     private final GURL mExampleGurl = new GURL("http://www.example.com/");
 
@@ -90,13 +94,14 @@ public class LocationBarModelUnitTest {
         ChromeAutocompleteSchemeClassifierJni.setInstanceForTesting(
                 mChromeAutocompleteSchemeClassifierJni);
         LocationBarModelJni.setInstanceForTesting(mLocationBarModelJni);
-        DomDistillerUrlUtilsJni.setInstanceForTesting(mDomDistillerUrlUtilsJni);
         OmniboxUrlEmphasizerJni.setInstanceForTesting(mOmniboxUrlEmphasizerJni);
 
         when(mPrimaryOtrProfileMock.isOffTheRecord()).thenReturn(true);
         when(mNonPrimaryOtrProfileMock.isOffTheRecord()).thenReturn(true);
 
+        mUserDataHost.setUserData(TabbedPaintPreview.USER_DATA_KEY, mTabbedPaintPreview);
         when(mRegularTabMock.getProfile()).thenReturn(mRegularProfileMock);
+        when(mRegularTabMock.getUserDataHost()).thenReturn(mUserDataHost);
 
         when(mIncognitoTabMock.isIncognito()).thenReturn(true);
         when(mIncognitoTabMock.getProfile()).thenReturn(mPrimaryOtrProfileMock);
@@ -174,24 +179,37 @@ public class LocationBarModelUnitTest {
 
         doReturn(mExampleGurl)
                 .when(mLocationBarModelJni)
-                .getUrlOfVisibleNavigationEntry(Mockito.anyLong(), Mockito.any());
+                .getUrlOfVisibleNavigationEntry(Mockito.anyLong());
         mLocationBarModel.updateVisibleGurl();
 
         // The visible url should be cached and hasn't changed, so onUrlChanged shouldn't be called
-        mLocationBarModel.notifyUrlChanged();
-        verify(mLocationBarDataObserver, never()).onUrlChanged();
+        mLocationBarModel.notifyUrlChanged(false);
+        verify(mLocationBarDataObserver, never()).onUrlChanged(Mockito.anyBoolean());
 
         // Setting to a new tab with a different url
-        GURL mExampleGurl2 = new GURL("http://www.example2.com/");
-        doReturn(mExampleGurl2)
+        GURL exampleGurl2 = new GURL("http://www.example2.com/");
+        doReturn(exampleGurl2)
                 .when(mLocationBarModelJni)
-                .getUrlOfVisibleNavigationEntry(Mockito.anyLong(), Mockito.any());
+                .getUrlOfVisibleNavigationEntry(Mockito.anyLong());
         mLocationBarModel.setTab(mRegularTabMock, mRegularProfileMock);
-        verify(mLocationBarDataObserver).onUrlChanged();
+        verify(mLocationBarDataObserver).onTabChanged(null);
+        verify(mLocationBarDataObserver, times(1)).onUrlChanged(true);
 
+        // Setting to another new tab with a different url
+        GURL exampleGurl3 = new GURL("http://www.example3.com/");
+        Tab regularTabMock2 = Mockito.mock(Tab.class);
+        when(regularTabMock2.getProfile()).thenReturn(mRegularProfileMock);
+        doReturn(exampleGurl3)
+                .when(mLocationBarModelJni)
+                .getUrlOfVisibleNavigationEntry(Mockito.anyLong());
+        mLocationBarModel.setTab(regularTabMock2, mRegularProfileMock);
+        verify(mLocationBarDataObserver).onTabChanged(mRegularTabMock);
+        verify(mLocationBarDataObserver, times(2)).onUrlChanged(true);
+
+        // onUrlChanged() won't be called after calling removeObserver().
         mLocationBarModel.removeObserver(mLocationBarDataObserver);
-        mLocationBarModel.notifyUrlChanged();
-        verify(mLocationBarDataObserver).onUrlChanged();
+        mLocationBarModel.notifyUrlChanged(false);
+        verify(mLocationBarDataObserver, never()).onUrlChanged(false);
     }
 
     @Test
@@ -209,11 +227,11 @@ public class LocationBarModelUnitTest {
         mLocationBarModel.addObserver(mLocationBarDataObserver);
         doReturn(mExampleGurl)
                 .when(mLocationBarModelJni)
-                .getUrlOfVisibleNavigationEntry(Mockito.anyLong(), Mockito.any());
+                .getUrlOfVisibleNavigationEntry(Mockito.anyLong());
         mLocationBarModel.updateVisibleGurl();
 
         verify(mLocationBarDataObserver, never()).onTitleChanged();
-        verify(mLocationBarDataObserver, never()).onUrlChanged();
+        verify(mLocationBarDataObserver, never()).onUrlChanged(Mockito.anyBoolean());
         verify(mLocationBarDataObserver, never()).onPrimaryColorChanged();
         verify(mLocationBarDataObserver, never()).onSecurityStateChanged();
 
@@ -221,7 +239,7 @@ public class LocationBarModelUnitTest {
 
         // The omnibox is not showing, and we have not switched to a new tab yet, so don't expect
         // notifications of a url change
-        verify(mLocationBarDataObserver, never()).onUrlChanged();
+        verify(mLocationBarDataObserver, never()).onUrlChanged(Mockito.anyBoolean());
         Assert.assertEquals(mLocationBarModel.getCurrentGurl(), mExampleGurl);
 
         verify(mLocationBarDataObserver).onTitleChanged();
@@ -237,13 +255,13 @@ public class LocationBarModelUnitTest {
 
         doReturn(mExampleGurl)
                 .when(mLocationBarModelJni)
-                .getUrlOfVisibleNavigationEntry(Mockito.anyLong(), Mockito.any());
+                .getUrlOfVisibleNavigationEntry(Mockito.anyLong());
         doReturn(mExampleGurl.getSpec())
                 .when(mLocationBarModelJni)
-                .getFormattedFullURL(Mockito.anyLong(), Mockito.any());
+                .getFormattedFullURL(Mockito.anyLong());
         doReturn(mExampleGurl.getSpec())
                 .when(mLocationBarModelJni)
-                .getURLForDisplay(Mockito.anyLong(), Mockito.any());
+                .getURLForDisplay(Mockito.anyLong());
         Assert.assertTrue(mLocationBarModel.updateVisibleGurl());
         Assert.assertFalse("Update should be suppressed", mLocationBarModel.updateVisibleGurl());
 
@@ -251,13 +269,13 @@ public class LocationBarModelUnitTest {
         GURL exampleGurl2 = new GURL("http://www.example2.com/");
         doReturn(exampleGurl2)
                 .when(mLocationBarModelJni)
-                .getUrlOfVisibleNavigationEntry(Mockito.anyLong(), Mockito.any());
+                .getUrlOfVisibleNavigationEntry(Mockito.anyLong());
         doReturn(exampleGurl2.getSpec())
                 .when(mLocationBarModelJni)
-                .getFormattedFullURL(Mockito.anyLong(), Mockito.any());
+                .getFormattedFullURL(Mockito.anyLong());
         doReturn(exampleGurl2.getSpec())
                 .when(mLocationBarModelJni)
-                .getURLForDisplay(Mockito.anyLong(), Mockito.any());
+                .getURLForDisplay(Mockito.anyLong());
         Assert.assertTrue("New url should notify", mLocationBarModel.updateVisibleGurl());
         Assert.assertFalse(
                 "Update should be suppressed again", mLocationBarModel.updateVisibleGurl());

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/extensions/api/downloads/downloads_api.h"
 
 #include <stddef.h>
@@ -39,27 +34,21 @@
 #include "base/uuid.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/browser/download/bubble/download_bubble_ui_controller.h"
-#include "chrome/browser/download/bubble/download_display_controller.h"
-#include "chrome/browser/download/download_browsertest_utils.h"
 #include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/download/download_core_service_factory.h"
 #include "chrome/browser/download/download_file_icon_extractor.h"
 #include "chrome/browser/download/download_open_prompt.h"
 #include "chrome/browser/download/download_prefs.h"
 #include "chrome/browser/download/download_test_file_activity_observer.h"
+#include "chrome/browser/extensions/api/downloads/download_extension_errors.h"
+#include "chrome/browser/extensions/api/downloads/downloads_api.h"
 #include "chrome/browser/extensions/api/downloads_internal/downloads_internal_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/platform_util_internal.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_tabstrip.h"
-#include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/download/download_display.h"
 #include "chrome/common/extensions/api/downloads.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "components/download/public/common/download_item.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/content/common/file_type_policies_test_util.h"
@@ -82,6 +71,7 @@
 #include "extensions/browser/api_test_utils.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_function_dispatcher.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/manifest_handlers/incognito_info.h"
 #include "net/base/data_url.h"
 #include "net/base/mime_util.h"
@@ -94,7 +84,23 @@
 #include "storage/browser/file_system/file_system_operation_runner.h"
 #include "storage/browser/file_system/file_system_url.h"
 #include "ui/base/page_transition_types.h"
+#include "ui/base/window_open_disposition.h"
 #include "url/origin.h"
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+#include "chrome/browser/download/bubble/download_bubble_ui_controller.h"
+#include "chrome/browser/download/bubble/download_display_controller.h"
+#include "chrome/browser/download/download_browsertest_utils.h"
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_tabstrip.h"
+#include "chrome/browser/ui/browser_window.h"
+#include "chrome/test/base/ui_test_utils.h"
+#if !BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/ui/download/download_display.h"
+#endif
+#endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using content::BrowserContext;
 using content::BrowserThread;
@@ -112,15 +118,9 @@ const char kFirstDownloadUrl[] = "/download1";
 const char kSecondDownloadUrl[] = "/download2";
 const int kDownloadSize = 1024 * 10;
 
-void OnFileDeleted(bool success) {}
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 
-// Comparator that orders download items by their ID. Can be used with
-// std::sort.
-struct DownloadIdComparator {
-  bool operator() (DownloadItem* first, DownloadItem* second) {
-    return first->GetId() < second->GetId();
-  }
-};
+void OnFileDeleted(bool success) {}
 
 bool IsDownloadExternallyRemoved(download::DownloadItem* item) {
   return item->GetFileExternallyRemoved();
@@ -135,6 +135,16 @@ void OnOpenPromptCreated(download::DownloadItem* item,
       base::BindOnce(&DownloadOpenPrompt::AcceptConfirmationDialogForTesting,
                      base::Unretained(prompt)));
 }
+
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
+// Comparator that orders download items by their ID. Can be used with
+// std::sort.
+struct DownloadIdComparator {
+  bool operator()(DownloadItem* first, DownloadItem* second) {
+    return first->GetId() < second->GetId();
+  }
+};
 
 class DownloadsEventsListener : public EventRouter::TestObserver {
  public:
@@ -214,7 +224,7 @@ class DownloadsEventsListener : public EventRouter::TestObserver {
     }
 
    private:
-    raw_ptr<Profile, AcrossTasksDanglingUntriaged> profile_;
+    raw_ptr<Profile> profile_;
     std::string event_name_;
     std::string json_args_;
     base::Value args_;
@@ -247,7 +257,9 @@ class DownloadsEventsListener : public EventRouter::TestObserver {
                const std::string& event_name,
                const std::string& json_args) {
     base::RunLoop loop;
-    base::Value args = base::JSONReader::Read(json_args).value();
+    base::Value args =
+        base::JSONReader::Read(json_args, base::JSON_PARSE_CHROMIUM_EXTENSIONS)
+            .value();
     waiting_for_ =
         std::make_unique<Event>(profile, event_name, args, base::Time());
     for (const auto& event : events_) {
@@ -286,7 +298,7 @@ class DownloadsEventsListener : public EventRouter::TestObserver {
   base::Time last_wait_;
   std::unique_ptr<Event> waiting_for_;
   base::circular_deque<std::unique_ptr<Event>> events_;
-  raw_ptr<Profile, AcrossTasksDanglingUntriaged> profile_;
+  raw_ptr<Profile> profile_;
   base::OnceClosure quit_closure_;
 };
 
@@ -335,13 +347,10 @@ class DownloadOpenObserver : public download::DownloadItem::Observer {
 
 class DownloadExtensionTest : public ExtensionApiTest {
  public:
-  DownloadExtensionTest()
-      : extension_(nullptr),
-        incognito_browser_(nullptr),
-        current_browser_(nullptr) {}
-
+  DownloadExtensionTest() = default;
   DownloadExtensionTest(const DownloadExtensionTest&) = delete;
   DownloadExtensionTest& operator=(const DownloadExtensionTest&) = delete;
+  ~DownloadExtensionTest() override = default;
 
  protected:
   // Used with CreateHistoryDownloads
@@ -367,13 +376,28 @@ class DownloadExtensionTest : public ExtensionApiTest {
     second_extension_ = LoadExtensionInternal(name, false);
   }
 
+  Profile* current_profile() { return current_profile_; }
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  Browser* current_browser() { return current_browser_; }
+#endif
+
   content::RenderProcessHost* AddFilenameDeterminer() {
-    ExtensionDownloadsEventRouter::SetDetermineFilenameTimeoutSecondsForTesting(
-        2);
-    content::WebContents* tab = chrome::AddSelectedTabWithURL(
-        current_browser(), extension_->ResolveExtensionURL("empty.html"),
-        ui::PAGE_TRANSITION_LINK);
-    EventRouter::Get(current_browser()->profile())
+    ExtensionDownloadsEventRouter::SetDetermineFilenameTimeoutForTesting(
+        base::Seconds(2));
+    GURL url(extension_->GetResourceURL("empty.html"));
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+    content::WebContents* const tab = chrome::AddSelectedTabWithURL(
+        current_browser(), url, ui::PAGE_TRANSITION_LINK);
+#else
+    // TODO(crbug.com/405219117): Support incognito when we can load an URL into
+    // an existing incognito window on Android.
+    CHECK(current_profile()->IsRegularProfile())
+        << "Incognito not supported yet";
+    content::WebContents* const tab =
+        LoadURLNoWait(url, WindowOpenDisposition::NEW_FOREGROUND_TAB);
+#endif
+    EventRouter::Get(current_profile())
         ->AddEventListener(downloads::OnDeterminingFilename::kEventName,
                            tab->GetPrimaryMainFrame()->GetProcess(),
                            GetExtensionId());
@@ -381,25 +405,23 @@ class DownloadExtensionTest : public ExtensionApiTest {
   }
 
   void RemoveFilenameDeterminer(content::RenderProcessHost* host) {
-    EventRouter::Get(current_browser()->profile())->RemoveEventListener(
-        downloads::OnDeterminingFilename::kEventName, host, GetExtensionId());
+    EventRouter::Get(current_profile())
+        ->RemoveEventListener(downloads::OnDeterminingFilename::kEventName,
+                              host, GetExtensionId());
   }
-
-  Browser* current_browser() { return current_browser_; }
 
   // InProcessBrowserTest
   void SetUpOnMainThread() override {
     ExtensionApiTest::SetUpOnMainThread();
     GoOnTheRecord();
-    current_browser()->profile()->GetPrefs()->SetBoolean(
-        prefs::kPromptForDownload, false);
+    current_profile()->GetPrefs()->SetBoolean(prefs::kPromptForDownload, false);
     // Create event listener using current profile.
     events_listener_ =
-        std::make_unique<DownloadsEventsListener>(current_browser()->profile());
-    extensions::EventRouter::Get(current_browser()->profile())
+        std::make_unique<DownloadsEventsListener>(current_profile());
+    extensions::EventRouter::Get(current_profile())
         ->AddObserverForTesting(events_listener());
     // Disable file chooser for current profile.
-    DownloadTestFileActivityObserver observer(current_browser()->profile());
+    DownloadTestFileActivityObserver observer(current_profile());
     observer.EnableFileChooser(false);
 
     first_download_ =
@@ -414,33 +436,51 @@ class DownloadExtensionTest : public ExtensionApiTest {
 
   // InProcessBrowserTest
   void TearDownOnMainThread() override {
-    EventRouter::Get(current_browser()->profile())
+    EventRouter::Get(current_profile())
         ->RemoveObserverForTesting(events_listener_.get());
+    events_listener_.reset();
+    // Avoid dangling pointers.
+    extension_ = nullptr;
+    second_extension_ = nullptr;
+    current_profile_ = nullptr;
+    incognito_profile_ = nullptr;
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+    current_browser_ = nullptr;
+    incognito_browser_ = nullptr;
+#endif
     ExtensionApiTest::TearDownOnMainThread();
   }
 
   void GoOnTheRecord() {
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     current_browser_ = browser();
+#endif
+    current_profile_ = profile();
     if (events_listener_.get())
-      events_listener_->UpdateProfile(current_browser()->profile());
+      events_listener_->UpdateProfile(current_profile());
   }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  // TODO(crbug.com/405219117): Support incognito. This may require support for
+  // CreateBrowserWindow() with incognito profiles on Android.
   void GoOffTheRecord() {
     if (!incognito_browser_) {
       incognito_browser_ = CreateIncognitoBrowser();
+      incognito_profile_ = incognito_browser_->profile();
       // Disable file chooser for incognito profile.
-      DownloadTestFileActivityObserver observer(incognito_browser_->profile());
+      DownloadTestFileActivityObserver observer(incognito_profile_);
       observer.EnableFileChooser(false);
     }
     SetPromptForDownload(incognito_browser_, false);
     current_browser_ = incognito_browser_;
+    current_profile_ = incognito_profile_;
     if (events_listener_.get())
-      events_listener_->UpdateProfile(current_browser()->profile());
+      events_listener_->UpdateProfile(current_profile());
   }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
   bool WaitFor(const std::string& event_name, const std::string& json_args) {
-    return events_listener_->WaitFor(
-        current_browser()->profile(), event_name, json_args);
+    return events_listener_->WaitFor(current_profile(), event_name, json_args);
   }
 
   bool WaitForInterruption(DownloadItem* item,
@@ -469,10 +509,8 @@ class DownloadExtensionTest : public ExtensionApiTest {
     return extension_->url().spec();
   }
   content::StoragePartitionConfig GetExtensionStoragePartitionConfig() {
-    return browser()
-        ->profile()
-        ->GetDownloadManager()
-        ->GetStoragePartitionConfigForSiteUrl(extension_->url());
+    return profile()->GetDownloadManager()->GetStoragePartitionConfigForSiteUrl(
+        extension_->url());
   }
   std::string GetExtensionId() {
     return extension_->id();
@@ -493,17 +531,16 @@ class DownloadExtensionTest : public ExtensionApiTest {
   }
 
   DownloadManager* GetOnRecordManager() {
-    return browser()->profile()->GetDownloadManager();
+    return profile()->GetDownloadManager();
   }
   DownloadManager* GetOffRecordManager() {
-    return browser()
-        ->profile()
+    return profile()
         ->GetPrimaryOTRProfile(/*create_if_needed=*/true)
         ->GetDownloadManager();
   }
   DownloadManager* GetCurrentManager() {
-    return (current_browser_ == incognito_browser_) ?
-      GetOffRecordManager() : GetOnRecordManager();
+    return (current_profile_ == incognito_profile_) ? GetOffRecordManager()
+                                                    : GetOnRecordManager();
   }
 
   // Creates a set of history downloads based on the provided |history_info|
@@ -526,8 +563,7 @@ class DownloadExtensionTest : public ExtensionApiTest {
           download::DownloadItem::kInvalidId + 1 + i,
           downloads_directory().Append(history_info[i].filename),
           downloads_directory().Append(history_info[i].filename), url_chain,
-          GURL(),
-          content::StoragePartitionConfig::CreateDefault(browser()->profile()),
+          GURL(), content::StoragePartitionConfig::CreateDefault(profile()),
           GURL(), GURL(), url::Origin(), std::string(),
           std::string(),  // mime_type, original_mime_type
           current,
@@ -585,9 +621,7 @@ class DownloadExtensionTest : public ExtensionApiTest {
     DownloadManager* manager = GetCurrentManager();
 
     const GURL url = embedded_test_server()->GetURL(path);
-    ui_test_utils::NavigateToURLWithDisposition(
-        current_browser(), url, WindowOpenDisposition::CURRENT_TAB,
-        ui_test_utils::BROWSER_TEST_NO_WAIT);
+    LoadURLNoWait(url, WindowOpenDisposition::CURRENT_TAB);
 
     response->WaitForRequest();
     response->Send(
@@ -646,7 +680,7 @@ class DownloadExtensionTest : public ExtensionApiTest {
   }
 
   api_test_utils::FunctionMode GetRunMode() {
-    return current_browser()->profile()->IsOffTheRecord()
+    return current_profile()->IsOffTheRecord()
                ? api_test_utils::FunctionMode::kIncognito
                : api_test_utils::FunctionMode::kNone;
   }
@@ -660,7 +694,7 @@ class DownloadExtensionTest : public ExtensionApiTest {
       const std::string& args) {
     SetUpExtensionFunction(extension_, function.get());
     return api_test_utils::RunFunctionAndReturnSingleResult(
-        function.get(), args, current_browser()->profile(), GetRunMode());
+        function.get(), args, current_profile(), GetRunMode());
   }
 
   std::string RunFunctionAndReturnError(
@@ -668,7 +702,7 @@ class DownloadExtensionTest : public ExtensionApiTest {
       const std::string& args) {
     SetUpExtensionFunction(extension_, function.get());
     return api_test_utils::RunFunctionAndReturnError(
-        function.get(), args, current_browser()->profile(), GetRunMode());
+        function.get(), args, current_profile(), GetRunMode());
   }
 
   std::string RunFunctionAndReturnErrorInSecondExtension(
@@ -676,7 +710,7 @@ class DownloadExtensionTest : public ExtensionApiTest {
       const std::string& args) {
     SetUpExtensionFunction(second_extension_, function.get());
     return api_test_utils::RunFunctionAndReturnError(
-        function.get(), args, current_browser()->profile(), GetRunMode());
+        function.get(), args, current_profile(), GetRunMode());
   }
 
   bool RunFunctionAndReturnString(scoped_refptr<ExtensionFunction> function,
@@ -697,8 +731,24 @@ class DownloadExtensionTest : public ExtensionApiTest {
     return base::StringPrintf("[%d]", download_item->GetId());
   }
 
+  // Loads a URL without waiting for the navigation to complete.
+  content::WebContents* LoadURLNoWait(const GURL& url,
+                                      WindowOpenDisposition disposition) {
+    content::WebContents* tab = GetActiveWebContents();
+    if (current_profile()->IsOffTheRecord()) {
+      // Ensure we have an OTR window and OTR web contents.
+      tab = PlatformOpenURLOffTheRecord(current_profile(), GURL("about:blank"));
+    }
+    content::OpenURLParams params(url, content::Referrer(), disposition,
+                                  ui::PAGE_TRANSITION_LINK,
+                                  /*is_renderer_initiated=*/false);
+    tab->OpenURL(params,
+                 /*navigation_handle_callback=*/{});
+    return tab;
+  }
+
   base::FilePath downloads_directory() {
-    return DownloadPrefs(current_browser()->profile()).DownloadPath();
+    return DownloadPrefs(current_profile()).DownloadPath();
   }
 
   DownloadsEventsListener* events_listener() { return events_listener_.get(); }
@@ -709,17 +759,17 @@ class DownloadExtensionTest : public ExtensionApiTest {
   void SetUpExtensionFunction(const Extension* extension,
                               scoped_refptr<ExtensionFunction> function) {
     if (extension) {
-      const GURL url = current_browser_ == incognito_browser_ &&
+      const GURL url = current_profile_ == incognito_profile_ &&
                                !IncognitoInfo::IsSplitMode(extension)
                            ? GURL(url::kAboutBlankURL)
-                           : extension->ResolveExtensionURL("empty.html");
+                           : extension->GetResourceURL("empty.html");
       // Watch and wait for the navigation to take place.
       auto observer = std::make_unique<content::TestNavigationObserver>(url);
       observer->WatchExistingWebContents();
       observer->StartWatchingNewWebContents();
       // Recreate the tab each time for insulation.
-      content::WebContents* tab = chrome::AddSelectedTabWithURL(
-          current_browser(), url, ui::PAGE_TRANSITION_LINK);
+      content::WebContents* tab =
+          LoadURLNoWait(url, WindowOpenDisposition::NEW_FOREGROUND_TAB);
       observer->WaitForNavigationFinished();
       function->set_extension(extension);
       function->SetRenderFrameHost(tab->GetPrimaryMainFrame());
@@ -733,8 +783,8 @@ class DownloadExtensionTest : public ExtensionApiTest {
                            const std::string& args) {
     scoped_refptr<ExtensionFunction> delete_function(function);
     SetUpExtensionFunction(extension, function);
-    bool result = api_test_utils::RunFunction(
-        function.get(), args, current_browser()->profile(), GetRunMode());
+    bool result = api_test_utils::RunFunction(function.get(), args,
+                                              current_profile(), GetRunMode());
     if (!result) {
       LOG(ERROR) << function->GetError();
     }
@@ -750,29 +800,33 @@ class DownloadExtensionTest : public ExtensionApiTest {
         test_data_dir_.AppendASCII(name),
         {.allow_in_incognito = true, .allow_file_access = enable_file_access});
     CHECK(extension);
-    content::WebContents* tab = chrome::AddSelectedTabWithURL(
-        current_browser(), extension->ResolveExtensionURL("empty.html"),
-        ui::PAGE_TRANSITION_LINK);
+    GURL url = extension->GetResourceURL("empty.html");
+    content::WebContents* tab =
+        LoadURLNoWait(url, WindowOpenDisposition::NEW_FOREGROUND_TAB);
     EXPECT_TRUE(content::WaitForLoadStop(tab));
-    EventRouter::Get(current_browser()->profile())
+    EventRouter::Get(current_profile())
         ->AddEventListener(downloads::OnCreated::kEventName,
                            tab->GetPrimaryMainFrame()->GetProcess(),
                            extension->id());
-    EventRouter::Get(current_browser()->profile())
+    EventRouter::Get(current_profile())
         ->AddEventListener(downloads::OnChanged::kEventName,
                            tab->GetPrimaryMainFrame()->GetProcess(),
                            extension->id());
-    EventRouter::Get(current_browser()->profile())
+    EventRouter::Get(current_profile())
         ->AddEventListener(downloads::OnErased::kEventName,
                            tab->GetPrimaryMainFrame()->GetProcess(),
                            extension->id());
     return extension;
   }
 
-  raw_ptr<const Extension, DanglingUntriaged> extension_;
-  raw_ptr<const Extension, DanglingUntriaged> second_extension_;
-  raw_ptr<Browser, AcrossTasksDanglingUntriaged> incognito_browser_;
-  raw_ptr<Browser, AcrossTasksDanglingUntriaged> current_browser_;
+  raw_ptr<const Extension> extension_ = nullptr;
+  raw_ptr<const Extension> second_extension_ = nullptr;
+  raw_ptr<Profile> current_profile_ = nullptr;
+  raw_ptr<Profile> incognito_profile_ = nullptr;
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  raw_ptr<Browser> current_browser_ = nullptr;
+  raw_ptr<Browser> incognito_browser_ = nullptr;
+#endif
   std::unique_ptr<DownloadsEventsListener> events_listener_;
 
   std::unique_ptr<net::test_server::ControllableHttpResponse> first_download_;
@@ -928,34 +982,21 @@ class HTML5FileWriter {
   }
 };
 
-// TODO(benjhayden) Merge this with the other TestObservers.
-class JustInProgressDownloadObserver
-    : public content::DownloadTestObserverInProgress {
- public:
-  JustInProgressDownloadObserver(
-      DownloadManager* download_manager, size_t wait_count)
-      : content::DownloadTestObserverInProgress(download_manager, wait_count) {
-  }
-
-  JustInProgressDownloadObserver(const JustInProgressDownloadObserver&) =
-      delete;
-  JustInProgressDownloadObserver& operator=(
-      const JustInProgressDownloadObserver&) = delete;
-
-  ~JustInProgressDownloadObserver() override = default;
-
- private:
-  bool IsDownloadInFinalState(DownloadItem* item) override {
-    return item->GetState() == DownloadItem::IN_PROGRESS;
-  }
-};
-
-bool ItemIsInterrupted(DownloadItem* item) {
-  return item->GetState() == DownloadItem::INTERRUPTED;
-}
-
 }  // namespace
 
+// Tests that Number/double properties in query are parsed correctly.
+// Regression test for https://crbug.com/617435.
+IN_PROC_BROWSER_TEST_F(DownloadExtensionTest, ParseSearchQuery) {
+  ASSERT_TRUE(
+      RunFunction(new DownloadsSearchFunction, "[{\"totalBytesLess\":1}]"));
+  ASSERT_TRUE(
+      RunFunction(new DownloadsSearchFunction, "[{\"totalBytesGreater\":2}]"));
+}
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+// The open dialog is not yet implemented on desktop Android. Also, Java-side
+// org.chromium.ui.permissions.ContextualNotificationPermissionRequester may
+// need to be initialized in android_browsertests for this test to pass.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest, DownloadExtensionTest_Open) {
   platform_util::internal::DisableShellOperationsForTesting();
 
@@ -995,7 +1036,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest, DownloadExtensionTest_Open) {
                RunFunctionAndReturnError(
                   open_function,
                   DownloadItemIdAsArgList(download_item)).c_str());
-  current_browser()->tab_strip_model()->GetActiveWebContents();
+  ASSERT_TRUE(GetActiveWebContents());
   EXPECT_FALSE(download_item->GetOpened());
 
   open_function = base::MakeRefCounted<DownloadsOpenFunction>();
@@ -1009,7 +1050,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest, DownloadExtensionTest_Open) {
   DownloadsOpenFunction::set_on_prompt_created_cb_for_testing(&callback);
   api_test_utils::SendResponseHelper response_helper(open_function.get());
   std::unique_ptr<ExtensionFunctionDispatcher> dispatcher(
-      new ExtensionFunctionDispatcher(current_browser()->profile()));
+      new ExtensionFunctionDispatcher(current_profile()));
   open_function->SetDispatcher(dispatcher->AsWeakPtr());
   open_function->RunWithValidation().Execute();
   response_helper.WaitForResponse();
@@ -1020,6 +1061,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest, DownloadExtensionTest_Open) {
   EXPECT_TRUE(download_item->GetOpened());
 }
 
+// Flaky on desktop Android.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_PauseResumeCancelErase) {
   DownloadItem* download_item = CreateFirstSlowTestDownload();
@@ -1111,6 +1153,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   ASSERT_TRUE(result_list[0].is_int());
   EXPECT_EQ(id, result_list[0].GetInt());
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Open_Remove_Open) {
@@ -1154,8 +1197,12 @@ scoped_refptr<ExtensionFunction> MockedGetFileIconFunction(
   return function;
 }
 
+// TODO(crbug.com/405219117): Port more tests to desktop Android.
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+
 // Test downloads.getFileIcon() on in-progress, finished, cancelled and deleted
 // download items.
+// Flaky on desktop Android.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_FileIcon_Active) {
   DownloadItem* download_item = CreateFirstSlowTestDownload();
@@ -1242,6 +1289,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   EXPECT_STREQ(errors::kInvalidId,
                error.c_str());
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test that we can acquire file icons for history downloads regardless of
 // whether they exist or not.  If the file doesn't exist we should receive a
@@ -1280,7 +1328,11 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   }
 }
 
+// TODO(crbug.com/405219117): Enable more tests on desktop Android.
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+
 // Test passing the empty query to search().
+// Crashes on desktop Android with no logs and no stack.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_SearchEmptyQuery) {
   ScopedCancellingItem item(CreateFirstSlowTestDownload());
@@ -1294,6 +1346,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 
 // Test that file existence check should be performed after search.
+// Crashes on desktop Android with no logs and no stack.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest, FileExistenceCheckAfterSearch) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   DownloadItem* download_item = CreateFirstSlowTestDownload();
@@ -1340,6 +1393,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 #endif
 
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test the |filenameRegex| parameter for search().
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
@@ -1365,8 +1419,9 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   ASSERT_EQ(all_downloads[0]->GetId(), static_cast<uint32_t>(*item_id));
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Test the |id| parameter for search().
-//
+// Flaky on desktop Android.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest, DownloadExtensionTest_SearchId) {
   DownloadManager::DownloadVector items;
   CreateTwoDownloads(&items);
@@ -1386,7 +1441,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest, DownloadExtensionTest_SearchId) {
 }
 
 // Test specifying both the |id| and |filename| parameters for search().
-//
+// Flaky on desktop Android.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_SearchIdAndFilename) {
   DownloadManager::DownloadVector items;
@@ -1400,6 +1455,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   ASSERT_TRUE(result->is_list());
   ASSERT_EQ(0UL, result->GetList().size());
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test a single |orderBy| parameter for search().
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
@@ -1483,7 +1539,9 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   ASSERT_EQ(1UL, result->GetList().size());
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Test the |state| option for search().
+// Flaky on desktop Android.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_SearchState) {
   DownloadManager::DownloadVector items;
@@ -1501,6 +1559,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 
 // Test the |limit| option for search().
+// Flaky on desktop Android.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_SearchLimit) {
   DownloadManager::DownloadVector items;
@@ -1513,6 +1572,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   ASSERT_TRUE(result->is_list());
   ASSERT_EQ(1UL, result->GetList().size());
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test invalid search parameters.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
@@ -1564,10 +1624,13 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   ASSERT_EQ(items[2]->GetTargetFilePath().AsUTF8Unsafe(), *item_name);
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Test that incognito downloads are only visible in incognito contexts, and
 // test that on-record downloads are visible in both incognito and on-record
 // contexts, for DownloadsSearchFunction, DownloadsPauseFunction,
 // DownloadsResumeFunction, and DownloadsCancelFunction.
+// TODO(crbug.com/405219117): Support incognito on desktop Android. This is
+// blocked on Android support for CreateBrowserWindow().
 IN_PROC_BROWSER_TEST_F(
     DownloadExtensionTest,
     DownloadExtensionTest_SearchPauseResumeCancelGetFileIconIncognito) {
@@ -1726,6 +1789,8 @@ IN_PROC_BROWSER_TEST_F(
 
 // Test that we can start a download and that the correct sequence of events is
 // fired for it.
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_Basic) {
   LoadExtension("downloads_split");
@@ -1777,6 +1842,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 
 // Test that we can start a download that gets redirected and that the correct
 // sequence of events is fired for it.
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_Redirect) {
   LoadExtension("downloads_split");
@@ -1831,6 +1898,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 
 // Test that we can start a download from an incognito context, and that the
 // download knows that it's incognito.
+// TODO(crbug.com/405219117): Support incognito on desktop Android. This is
+// blocked on Android support for CreateBrowserWindow().
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_Incognito) {
   LoadExtension("downloads_split");
@@ -1877,6 +1946,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 
 // Test that if file name with disallowed characters are provided, the
 // characters will be replaced.
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Disallowed_Character_In_Filename) {
   LoadExtension("downloads_split");
@@ -1901,6 +1972,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   EXPECT_EQ(FILE_PATH_LITERAL("foo_bar"),
             item->GetFileNameToReportUser().value());
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 namespace {
 
@@ -1947,6 +2019,8 @@ class CustomResponse : public net::test_server::HttpResponse {
 
 }  // namespace
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+// Flaky on desktop Android.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_InterruptAndResume) {
   LoadExtension("downloads_split");
@@ -2015,10 +2089,13 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                                          "    \"previous\": \"in_progress\"}}]",
                                          result_id)));
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test that we disallow certain headers case-insensitively.
 // TODO(crbug.com/335421977): Flaky on "Linux ChromiumOS MSan Tests"
-#if (BUILDFLAG(IS_CHROMEOS) && defined(MEMORY_SANITIZER))
+// TODO(crbug.com/441086569): Flaky on "Linux Tests (dbg)"
+#if (BUILDFLAG(IS_CHROMEOS) && defined(MEMORY_SANITIZER)) || \
+    (BUILDFLAG(IS_LINUX) && !defined(NDEBUG))
 #define MAYBE_DownloadExtensionTest_Download_UnsafeHeaders \
   DISABLED_DownloadExtensionTest_Download_UnsafeHeaders
 #else
@@ -2111,6 +2188,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
           .c_str());
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+// TODO(crbug.com/405219117): Flaky on desktop Android.
 #if BUILDFLAG(IS_WIN)
 #define MAYBE_DownloadExtensionTest_Download_Subdirectory \
   DISABLED_DownloadExtensionTest_Download_Subdirectory
@@ -2162,6 +2241,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                           "    \"current\": \"complete\"}}]",
                           result_id)));
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test that invalid filenames are disallowed.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
@@ -2199,7 +2279,10 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   }
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 // Test various failure modes for downloading invalid URLs.
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to
+// networking differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_InvalidURLs2) {
   LoadExtension("downloads_split");
@@ -2234,6 +2317,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 
 // Valid URLs plus fragments are still valid URLs.
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_URLFragment) {
   LoadExtension("downloads_split");
@@ -2278,6 +2363,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 
 // conflictAction may be specified without filename.
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_ConflictAction) {
   static char kFilename[] = "download.txt";
@@ -2359,6 +2446,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 
 // Valid data URLs are valid URLs.
+// TODO(crbug.com/405219117): Fails on desktop Android, possibly due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_DataURL) {
   LoadExtension("downloads_split");
@@ -2404,6 +2493,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 
 // Valid file URLs are valid URLs.
+// TODO(crbug.com/405219117): Fails on desktop Android, possibly due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_File) {
   GoOnTheRecord();
@@ -2463,6 +2554,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 // Authorization header and chrome fails to propagate it back to the server.
 // This tests both that testserver.py does not succeed when it should fail as
 // well as how the downloads extension API exposes the failure to extensions.
+// TODO(crbug.com/405219117): Fails on desktop Android, possibly due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_AuthBasic_Fail) {
   LoadExtension("downloads_split");
@@ -2494,6 +2587,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 
 // Test that DownloadsDownloadFunction propagates |headers| to the URLRequest.
+// TODO(crbug.com/405219117): Fails on desktop Android, possibly due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_Headers) {
   LoadExtension("downloads_split");
@@ -2551,6 +2646,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 // chrome fails to propagate them back to the server.  This tests both that
 // testserver.py does not succeed when it should fail as well as how the
 // downloads extension api exposes the failure to extensions.
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to
+// networking differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_Headers_Fail) {
   LoadExtension("downloads_split");
@@ -2590,6 +2687,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 
 // Test that DownloadsDownloadFunction propagates the Authorization header
 // correctly.
+// TODO(crbug.com/405219117): Fails on desktop Android, possibly due to
+// networking differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_AuthBasic) {
   LoadExtension("downloads_split");
@@ -2636,6 +2735,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 
 // Test that DownloadsDownloadFunction propagates the |method| and |body|
 // parameters to the URLRequest.
+// TODO(crbug.com/405219117): Fails on desktop Android, possibly due to
+// networking differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_Post) {
   LoadExtension("downloads_split");
@@ -2692,6 +2793,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 // server. This tests both that testserver.py does not succeed when it should
 // fail, and this tests how the downloads extension api exposes the failure to
 // extensions.
+// TODO(crbug.com/405219117): Fails on desktop Android, possibly due to
+// networking differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_Post_Get) {
   LoadExtension("downloads_split");
@@ -2733,6 +2836,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 // server. This tests both that testserver.py does not succeed when it should
 // fail, and this tests how the downloads extension api exposes the failure to
 // extensions.
+// TODO(crbug.com/405219117): Fails on desktop Android, possibly due to
+// networking differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_Download_Post_NoBody) {
   LoadExtension("downloads_split");
@@ -2768,6 +2873,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                          "  \"url\": \"%s\"}]",
                          result_id, download_url.c_str())));
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 // Test that cancel()ing an in-progress download causes its state to transition
 // to interrupted, and test that that state transition is detectable by an
@@ -2815,6 +2921,9 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                           result_id)));
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+// TODO(crbug.com/405219117): Fails on desktop Android, possibly due to
+// networking differences.
 // TODO(crbug.com/41119270): Flaky on macOS
 #if BUILDFLAG(IS_MAC)
 #define MAYBE_DownloadExtensionTest_Download_FileSystemURL \
@@ -2837,10 +2946,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 
   // Setup a file in the filesystem which we can download.
   ASSERT_TRUE(HTML5FileWriter::CreateFileForTesting(
-      current_browser()
-          ->profile()
-          ->GetDefaultStoragePartition()
-          ->GetFileSystemContext(),
+      current_profile()->GetDefaultStoragePartition()->GetFileSystemContext(),
       storage::FileSystemURL::CreateForTest(GURL(download_url)), kPayloadData,
       strlen(kPayloadData)));
 
@@ -2886,6 +2992,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   EXPECT_STREQ(kPayloadData, disk_data.c_str());
 }
 
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_OnDeterminingFilename_NoChange) {
   GoOnTheRecord();
@@ -2928,8 +3036,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   // Respond to the onDeterminingFilename.
   std::string error;
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
-      base::FilePath(), downloads::FilenameConflictAction::kUniquify, &error));
+      current_profile(), false, GetExtensionId(), result_id, base::FilePath(),
+      downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_EQ("", error);
 
   // The download should complete successfully.
@@ -2959,8 +3067,8 @@ IN_PROC_BROWSER_TEST_F(
   ASSERT_TRUE(StartEmbeddedTestServer());
   std::string download_url = embedded_test_server()->GetURL("/slow?0").spec();
 
-  ExtensionDownloadsEventRouter::SetDetermineFilenameTimeoutSecondsForTesting(
-      0);
+  ExtensionDownloadsEventRouter::SetDetermineFilenameTimeoutForTesting(
+      base::Seconds(0));
 
   // Start downloading a file.
   std::optional<base::Value> result = RunFunctionAndReturnResult(
@@ -3010,6 +3118,8 @@ IN_PROC_BROWSER_TEST_F(
                          result_id)));
 }
 
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_OnDeterminingFilename_Twice) {
   GoOnTheRecord();
@@ -3051,14 +3161,14 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   // Respond to the onDeterminingFilename.
   std::string error;
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
-      base::FilePath(), downloads::FilenameConflictAction::kUniquify, &error));
+      current_profile(), false, GetExtensionId(), result_id, base::FilePath(),
+      downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_EQ("", error);
 
   // Calling DetermineFilename again should return an error instead of calling
   // DownloadTargetDeterminer.
   ASSERT_FALSE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("different")),
       downloads::FilenameConflictAction::kOverwrite, &error));
   EXPECT_EQ(errors::kTooManyListeners, error);
@@ -3126,6 +3236,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 
 // Tests that overriding a safe file extension to a dangerous extension will not
 // trigger the dangerous prompt and will not change the extension.
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(
     DownloadExtensionTest,
     DownloadExtensionTest_OnDeterminingFilename_DangerousOverride) {
@@ -3168,7 +3280,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename with a dangerous extension.
   std::string error;
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("overridden.swf")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_EQ("", error);
@@ -3185,6 +3297,8 @@ IN_PROC_BROWSER_TEST_F(
 
 // Tests that overriding a dangerous file extension to a safe extension will
 // trigger the dangerous prompt and will not change the extension.
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(
     DownloadExtensionTest,
     DownloadExtensionTest_OnDeterminingFilename_SafeOverride) {
@@ -3227,7 +3341,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename with a safe extension.
   std::string error;
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("overridden.txt")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_EQ("", error);
@@ -3260,6 +3374,8 @@ IN_PROC_BROWSER_TEST_F(
             item->GetTargetFilePath());
 }
 
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(
     DownloadExtensionTest,
     DownloadExtensionTest_OnDeterminingFilename_ReferencesParentInvalid) {
@@ -3302,7 +3418,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename.
   std::string error;
   ASSERT_FALSE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("sneaky/../../sneaky.txt")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_STREQ(errors::kInvalidFilename, error.c_str());
@@ -3322,6 +3438,8 @@ IN_PROC_BROWSER_TEST_F(
                           result_id)));
 }
 
+// TODO(crbug.com/405219117): Fails on desktop Android, possible due to path
+// handling differences.
 IN_PROC_BROWSER_TEST_F(
     DownloadExtensionTest,
     DownloadExtensionTest_OnDeterminingFilename_IllegalFilename) {
@@ -3364,7 +3482,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename.
   std::string error;
   ASSERT_FALSE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("<")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_STREQ(errors::kInvalidFilename, error.c_str());
@@ -3426,7 +3544,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename.
   std::string error;
   ASSERT_FALSE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL(
           "My Computer.{20D04FE0-3AEA-1069-A2D8-08002B30309D}/foo")),
       downloads::FilenameConflictAction::kUniquify, &error));
@@ -3489,7 +3607,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename.
   std::string error;
   ASSERT_FALSE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("con.foo")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_STREQ(errors::kInvalidFilename, error.c_str());
@@ -3551,7 +3669,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename.
   std::string error;
   ASSERT_FALSE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL(".")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_STREQ(errors::kInvalidFilename, error.c_str());
@@ -3613,7 +3731,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename.
   std::string error;
   ASSERT_FALSE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("..")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_STREQ(errors::kInvalidFilename, error.c_str());
@@ -3675,7 +3793,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename. Absolute paths should be rejected.
   std::string error;
   ASSERT_FALSE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       downloads_directory().Append(FILE_PATH_LITERAL("sneaky.txt")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_STREQ(errors::kInvalidFilename, error.c_str());
@@ -3739,7 +3857,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename. Empty basenames should be rejected.
   std::string error;
   ASSERT_FALSE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("foo/")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_STREQ(errors::kInvalidFilename, error.c_str());
@@ -3801,8 +3919,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   // Respond to the onDeterminingFilename.
   std::string error;
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
-      base::FilePath(), downloads::FilenameConflictAction::kUniquify, &error));
+      current_profile(), false, GetExtensionId(), result_id, base::FilePath(),
+      downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_EQ("", error);
 
   ASSERT_TRUE(
@@ -3856,8 +3974,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   // python extensions or kernel extensions or firefox extensions...)
   error = "";
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
-      base::FilePath(), downloads::FilenameConflictAction::kOverwrite, &error));
+      current_profile(), false, GetExtensionId(), result_id, base::FilePath(),
+      downloads::FilenameConflictAction::kOverwrite, &error));
   EXPECT_EQ("", error);
 
   ASSERT_TRUE(
@@ -3916,8 +4034,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   // Respond to the onDeterminingFilename.
   std::string error;
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
-      base::FilePath(), downloads::FilenameConflictAction::kUniquify, &error));
+      current_profile(), false, GetExtensionId(), result_id, base::FilePath(),
+      downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_EQ("", error);
 
   ASSERT_TRUE(
@@ -3971,7 +4089,7 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   // python extensions or kernel extensions or firefox extensions...)
   error = "";
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("foo")),
       downloads::FilenameConflictAction::kOverwrite, &error));
   EXPECT_EQ("", error);
@@ -4112,7 +4230,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename events.
   std::string error;
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("42.txt")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_EQ("", error);
@@ -4171,7 +4289,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename.
   error = "";
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), result_id,
+      current_profile(), false, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("5.txt")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_EQ("", error);
@@ -4245,7 +4363,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename events.
   std::string error;
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), true, GetExtensionId(), result_id,
+      current_profile(), true, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("42.txt")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_EQ("", error);
@@ -4303,7 +4421,7 @@ IN_PROC_BROWSER_TEST_F(
   // Respond to the onDeterminingFilename.
   error = "";
   ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), true, GetExtensionId(), result_id,
+      current_profile(), true, GetExtensionId(), result_id,
       base::FilePath(FILE_PATH_LITERAL("42.txt")),
       downloads::FilenameConflictAction::kUniquify, &error));
   EXPECT_EQ("", error);
@@ -4326,155 +4444,20 @@ IN_PROC_BROWSER_TEST_F(
                           result_id)));
 }
 
-// This test is very flaky on Win XP and Aura. http://crbug.com/248438
-// Also flaky on Linux. http://crbug.com/700382
-// Also flaky on Mac ASAN.
-// Test download interruption while extensions determining filename. Should not
-// re-dispatch onDeterminingFilename.
-IN_PROC_BROWSER_TEST_F(
-    DownloadExtensionTest,
-    DISABLED_DownloadExtensionTest_OnDeterminingFilename_InterruptedResume) {
-  LoadExtension("downloads_split");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-  GoOnTheRecord();
-  content::RenderProcessHost* host = AddFilenameDeterminer();
-
-  // Start a download.
-  DownloadItem* item = nullptr;
-  {
-    DownloadManager* manager = GetCurrentManager();
-    std::unique_ptr<content::DownloadTestObserver> observer(
-        new JustInProgressDownloadObserver(manager, 1));
-    ASSERT_EQ(0, manager->InProgressCount());
-    ASSERT_EQ(0, manager->BlockingShutdownCount());
-    // Tabs created just for a download are automatically closed, invalidating
-    // the download's WebContents. Downloads without WebContents cannot be
-    // resumed. http://crbug.com/225901
-    ui_test_utils::NavigateToURLWithDisposition(
-        current_browser(),
-        // This code used to use a mock class that no longer works, due to the
-        // NetworkService shipping.
-        // TODO(crbug.com/41306723): Fix or delete this test.
-        GURL(), WindowOpenDisposition::CURRENT_TAB,
-        ui_test_utils::BROWSER_TEST_NO_WAIT);
-    observer->WaitForFinished();
-    EXPECT_EQ(1u, observer->NumDownloadsSeenInState(DownloadItem::IN_PROGRESS));
-    DownloadManager::DownloadVector items;
-    manager->GetAllDownloads(&items);
-    for (download::DownloadItem* download_item : items) {
-      if (download_item->GetState() == DownloadItem::IN_PROGRESS) {
-        // There should be only one IN_PROGRESS item.
-        EXPECT_EQ(nullptr, item);
-        item = download_item;
-      }
-    }
-    ASSERT_TRUE(item);
-  }
-  ScopedCancellingItem canceller(item);
-
-  // Wait for the onCreated and onDeterminingFilename event.
-  ASSERT_TRUE(WaitFor(downloads::OnCreated::kEventName,
-                      base::StringPrintf(
-                          "[{\"danger\": \"safe\","
-                          "  \"incognito\": false,"
-                          "  \"id\": %d,"
-                          "  \"mime\": \"application/octet-stream\","
-                          "  \"paused\": false}]",
-                          item->GetId())));
-  ASSERT_TRUE(WaitFor(downloads::OnDeterminingFilename::kEventName,
-                      base::StringPrintf(
-                          "[{\"id\": %d,"
-                          "  \"incognito\": false,"
-                          "  \"filename\":\"download-unknown-size\"}]",
-                          item->GetId())));
-  ASSERT_TRUE(item->GetTargetFilePath().empty());
-  ASSERT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
-
-  ClearEvents();
-  ui_test_utils::NavigateToURLWithDisposition(
-      current_browser(),
-      // This code used to use a mock class that no longer works, due to the
-      // NetworkService shipping.
-      // TODO(crbug.com/41306723): Fix or delete this test.
-      GURL(), WindowOpenDisposition::NEW_BACKGROUND_TAB,
-      ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
-
-  // Errors caught before filename determination are delayed until after
-  // filename determination.
-  std::string error;
-  ASSERT_TRUE(ExtensionDownloadsEventRouter::DetermineFilename(
-      current_browser()->profile(), false, GetExtensionId(), item->GetId(),
-      base::FilePath(FILE_PATH_LITERAL("42.txt")),
-      downloads::FilenameConflictAction::kUniquify, &error))
-      << error;
-  EXPECT_EQ("", error);
-  ASSERT_TRUE(WaitFor(downloads::OnChanged::kEventName,
-                      base::StringPrintf(
-                          "[{\"id\": %d,"
-                          "  \"filename\": {"
-                          "    \"previous\": \"\","
-                          "    \"current\": \"%s\"}}]",
-                          item->GetId(),
-                          GetFilename("42.txt").c_str())));
-
-  content::DownloadUpdatedObserver interrupted(
-      item, base::BindRepeating(ItemIsInterrupted));
-  ASSERT_TRUE(interrupted.WaitForEvent());
-  ASSERT_TRUE(WaitFor(downloads::OnChanged::kEventName,
-                      base::StringPrintf(
-                          "[{\"id\": %d,"
-                          "  \"error\":{\"current\":\"NETWORK_FAILED\"},"
-                          "  \"state\":{"
-                          "    \"previous\":\"in_progress\","
-                          "    \"current\":\"interrupted\"}}]",
-                          item->GetId())));
-
-  ClearEvents();
-  // Downloads that are restarted on resumption trigger another download target
-  // determination.
-  RemoveFilenameDeterminer(host);
-  item->Resume(true);
-
-  // Errors caught before filename determination is complete are delayed until
-  // after filename determination so that, on resumption, filename determination
-  // does not need to be re-done. So, there will not be a second
-  // onDeterminingFilename event.
-
-  ASSERT_TRUE(WaitFor(downloads::OnChanged::kEventName,
-                      base::StringPrintf(
-                          "[{\"id\": %d,"
-                          "  \"error\":{\"previous\":\"NETWORK_FAILED\"},"
-                          "  \"state\":{"
-                          "    \"previous\":\"interrupted\","
-                          "    \"current\":\"in_progress\"}}]",
-                          item->GetId())));
-
-  ClearEvents();
-  FinishFirstSlowDownloads();
-
-  // The download should complete successfully.
-  ASSERT_TRUE(WaitFor(downloads::OnChanged::kEventName,
-                      base::StringPrintf(
-                          "[{\"id\": %d,"
-                          "  \"state\": {"
-                          "    \"previous\": \"in_progress\","
-                          "    \"current\": \"complete\"}}]",
-                          item->GetId())));
-}
-
+// Desktop Android does not use the download shelf UI.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_SetShelfEnabled) {
   LoadExtension("downloads_split");
   EXPECT_TRUE(RunFunction(
       base::MakeRefCounted<DownloadsSetShelfEnabledFunction>(), "[false]"));
-  EXPECT_FALSE(DownloadCoreServiceFactory::GetForBrowserContext(
-                   current_browser()->profile())
-                   ->IsDownloadUiEnabled());
+  EXPECT_FALSE(
+      DownloadCoreServiceFactory::GetForBrowserContext(current_profile())
+          ->IsDownloadUiEnabled());
   EXPECT_TRUE(RunFunction(
       base::MakeRefCounted<DownloadsSetShelfEnabledFunction>(), "[true]"));
-  EXPECT_TRUE(DownloadCoreServiceFactory::GetForBrowserContext(
-                  current_browser()->profile())
-                  ->IsDownloadUiEnabled());
+  EXPECT_TRUE(
+      DownloadCoreServiceFactory::GetForBrowserContext(current_profile())
+          ->IsDownloadUiEnabled());
   // TODO(benjhayden) Test that browsers associated with other profiles are not
   // affected.
 }
@@ -4484,26 +4467,29 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 
 // TODO(benjhayden) Test that the shelf is shown for download() both with and
 // without a WebContents.
-
+//
+// Desktop Android does not use the download shelf UI.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_SetUiOptions) {
   LoadExtension("downloads_split");
   EXPECT_TRUE(RunFunction(base::MakeRefCounted<DownloadsSetUiOptionsFunction>(),
                           R"([{"enabled": false}])"));
-  EXPECT_FALSE(DownloadCoreServiceFactory::GetForBrowserContext(
-                   current_browser()->profile())
-                   ->IsDownloadUiEnabled());
+  EXPECT_FALSE(
+      DownloadCoreServiceFactory::GetForBrowserContext(current_profile())
+          ->IsDownloadUiEnabled());
   EXPECT_TRUE(RunFunction(base::MakeRefCounted<DownloadsSetUiOptionsFunction>(),
                           R"([{"enabled": true}])"));
-  EXPECT_TRUE(DownloadCoreServiceFactory::GetForBrowserContext(
-                  current_browser()->profile())
-                  ->IsDownloadUiEnabled());
+  EXPECT_TRUE(
+      DownloadCoreServiceFactory::GetForBrowserContext(current_profile())
+          ->IsDownloadUiEnabled());
 }
 
 void OnDangerPromptCreated(DownloadDangerPrompt* prompt) {
   prompt->InvokeActionForTesting(DownloadDangerPrompt::ACCEPT);
 }
 
+// TODO(crbug.com/450662444): Enable this test on desktop Android when the
+// DownloadDangerPrompt is implemented.
 IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
                        DownloadExtensionTest_AcceptDanger) {
   safe_browsing::FileTypePoliciesTestOverlay scoped_dangerous =
@@ -4541,8 +4527,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
   DownloadsAcceptDangerFunction::OnPromptCreatedForTesting(
       &callback);
 
-  const GURL url = extension()->ResolveExtensionURL("accept_danger.html");
-  ASSERT_TRUE(ui_test_utils::NavigateToURL(current_browser(), url));
+  const GURL url = extension()->GetResourceURL("accept_danger.html");
+  ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), url));
 
   observer->WaitForFinished();
 }
@@ -4594,8 +4580,8 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionTest,
 }
 
 // The DownloadExtensionBubbleEnabledTest relies on the download surface, which
-// ChromeOS_ASH doesn't use (see crbug.com/1323505).
-#if !BUILDFLAG(IS_CHROMEOS)
+// ChromeOS_ASH and Android don't use (see crbug.com/1323505).
+#if !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
 class DownloadExtensionBubbleEnabledTest : public DownloadExtensionTest {
  public:
   DownloadExtensionBubbleEnabledTest() = default;
@@ -4693,7 +4679,9 @@ IN_PROC_BROWSER_TEST_F(DownloadExtensionBubbleEnabledTest,
   items[0]->Cancel(true);
   EXPECT_TRUE(GetDownloadToolbarButton()->IsShowing());
 }
-#endif  // !BUILDFLAG(IS_CHROMEOS)
+#endif  // !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_ANDROID)
+
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 class DownloadsApiTest : public ExtensionApiTest {
  public:

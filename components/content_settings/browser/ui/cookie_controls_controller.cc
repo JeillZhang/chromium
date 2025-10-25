@@ -4,10 +4,13 @@
 
 #include "components/content_settings/browser/ui/cookie_controls_controller.h"
 
+#include <limits>
 #include <memory>
 #include <string>
 
+#include "base/containers/lru_cache.h"
 #include "base/feature_list.h"
+#include "base/features.h"
 #include "base/functional/bind.h"
 #include "base/json/values_util.h"
 #include "base/metrics/histogram_functions.h"
@@ -38,6 +41,7 @@
 #include "components/strings/grit/privacy_sandbox_strings.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/reload_type.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
@@ -56,6 +60,12 @@ constexpr char kEntryPointAnimatedKey[] = "entry_point_animated";
 constexpr char kLastExpirationKey[] = "last_expiration";
 constexpr char kLastVisitedActiveException[] = "last_visited_active_exception";
 constexpr char kActivationsCountKey[] = "activations_count_key";
+
+using CacheSizeType =
+    base::LRUCacheSet<content_settings::AccessDetails>::size_type;
+constexpr CacheSizeType kAccessDetailsCacheSize = 1000;
+constexpr CacheSizeType kMaximumCacheCapacity =
+    std::numeric_limits<CacheSizeType>::max();
 
 base::Value::Dict GetMetadata(HostContentSettingsMap* settings_map,
                               const GURL& url) {
@@ -128,6 +138,8 @@ CookieControlsController::CookieControlsController(
   CHECK(cookie_settings_);
   CHECK(tracking_protection_settings_);
   cookie_observation_.Observe(cookie_settings_.get());
+  tracking_protection_settings_observation_.Observe(
+      tracking_protection_settings);
 }
 
 CookieControlsController::Status::Status(
@@ -146,7 +158,10 @@ CookieControlsController::~CookieControlsController() = default;
 void CookieControlsController::OnUiClosing() {
   auto* web_contents = GetWebContents();
   if (should_reload_ && web_contents && !web_contents->IsBeingDestroyed()) {
-    web_contents->GetController().Reload(content::ReloadType::NORMAL, true);
+    web_contents->GetController().Reload(
+        ShowActFeatures() ? content::ReloadType::BYPASSING_CACHE
+                          : content::ReloadType::NORMAL,
+        true);
   }
   should_reload_ = false;
 }
@@ -156,6 +171,7 @@ void CookieControlsController::Update(content::WebContents* web_contents) {
   if (!tab_observer_ || GetWebContents() != web_contents) {
     tab_observer_ = std::make_unique<TabObserver>(this, web_contents);
     SetStateChangedViaBypass(false);
+    show_icon_as_confirmation_ = false;
   }
   if (observers_.empty()) {
     return;
@@ -336,12 +352,14 @@ void CookieControlsController::OnCookieBlockingEnabledForSite(
   if (block_third_party_cookies) {
     base::RecordAction(UserMetricsAction("CookieControls.Bubble.TurnOn"));
     cookie_settings_->ResetThirdPartyCookieSetting(url);
+    Update(GetWebContents());
     return;
   }
 
   CHECK(!block_third_party_cookies);
   base::RecordAction(UserMetricsAction("CookieControls.Bubble.TurnOff"));
   cookie_settings_->SetCookieSettingForUserBypass(url);
+  Update(GetWebContents());
   // Record expiration metadata for the newly created exception, and increased
   // the activation count.
   base::Value::Dict metadata = GetMetadata(settings_map_, url);
@@ -475,6 +493,9 @@ void CookieControlsController::UpdatePageReloadStatus(
     int recent_reloads_count) {
   if (StateChangedViaBypass() && recent_reloads_count > 0) {
     waiting_for_page_load_finish_ = true;
+    show_icon_as_confirmation_ = true;
+  } else {
+    show_icon_as_confirmation_ = false;
   }
   SetStateChangedViaBypass(false);
   recent_reloads_count_ = recent_reloads_count;
@@ -486,12 +507,21 @@ void CookieControlsController::UpdatePageReloadStatus(
   }
 }
 
+void CookieControlsController::OnBubbleCloseTriggered() {
+  for (auto& observer : observers_) {
+    observer.OnBubbleCloseTriggered();
+  }
+}
+
 void CookieControlsController::OnPageFinishedLoading() {
   if (!waiting_for_page_load_finish_) {
     return;
   }
   waiting_for_page_load_finish_ = false;
 
+  // Ensure the bubble is closed before subsequent calls are made to update the
+  // UI.
+  OnBubbleCloseTriggered();
   for (auto& observer : observers_) {
     observer.OnFinishedPageReloadWithChangedSettings();
   }
@@ -500,13 +530,25 @@ void CookieControlsController::OnPageFinishedLoading() {
 void CookieControlsController::OnThirdPartyCookieBlockingChanged(
     bool block_third_party_cookies) {
   if (GetWebContents()) {
-    Update(GetWebContents());
+    UpdateUserBypass();
   }
 }
 
 void CookieControlsController::OnCookieSettingChanged() {
   if (GetWebContents()) {
-    Update(GetWebContents());
+    UpdateUserBypass();
+  }
+}
+
+void CookieControlsController::OnIpProtectionEnabledChanged() {
+  if (GetWebContents()) {
+    UpdateUserBypass();
+  }
+}
+
+void CookieControlsController::OnFpProtectionEnabledChanged() {
+  if (GetWebContents()) {
+    UpdateUserBypass();
   }
 }
 
@@ -535,7 +577,6 @@ void CookieControlsController::RecordActivationMetrics() {
   const GURL& url = GetWebContents()->GetLastCommittedURL();
 
   // Metrics, related to confidence signals:
-  // TODO(crbug.com/40064612): Add CookieControlsActivated.FedCmInitiated
   base::UmaHistogramBoolean(
       "Privacy.CookieControlsActivated.SaaRequested",
       cookie_settings_->HasAnyFrameRequestedStorageAccess(url));
@@ -554,7 +595,6 @@ void CookieControlsController::RecordActivationMetrics() {
       site_data_access_type);
 
   // Record activation UKM.
-  // TODO(crbug.com/40064612): Include FedCM information.
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   auto ukm_source_id =
       GetWebContents()->GetPrimaryMainFrame()->GetPageUkmSourceId();
@@ -571,8 +611,6 @@ void CookieControlsController::RecordActivationMetrics() {
       .SetThirdPartySiteDataAccessType(
           static_cast<uint64_t>(site_data_access_type))
       .Record(ukm::UkmRecorder::Get());
-
-  // TODO(crbug.com/40064612): Add metrics, related to repeated activations.
 }
 
 bool CookieControlsController::ShouldHighlightUserBypass(
@@ -592,7 +630,6 @@ bool CookieControlsController::ShouldHighlightUserBypass(
     return false;
   }
 
-  // TODO(crbug.com/40064612): Check if FedCM was requested.
   const GURL& url = web_contents->GetLastCommittedURL();
   if (cookie_settings_->HasAnyFrameRequestedStorageAccess(url)) {
     return false;
@@ -629,12 +666,13 @@ bool CookieControlsController::ShouldUserBypassIconBeVisible(
   if (controls_state == CookieControlsState::kHidden) {
     return false;
   }
-  // 3PCD prevents SameSite=None cookies from being sent when the top-level
-  // document is sandboxed without `allow-origin`. For instance when loaded
-  // with: `Content-Security-Policy: sandbox`. In that case, we render the UI to
-  // allow the user to opt into sending SameSite=None cookies again in those
-  // contexts.
-  return HasOriginSandboxedTopLevelDocument() ||
+  return show_icon_as_confirmation_ ||
+         // 3PC blocking prevents SameSite=None cookies from being sent when the
+         // top-level document is sandboxed without `allow-origin`. For instance
+         // when loaded with: `Content-Security-Policy: sandbox`. In that case,
+         // we render the UI to allow the user to opt into sending SameSite=None
+         // cookies again in those contexts.
+         HasOriginSandboxedTopLevelDocument() ||
          controls_state == CookieControlsState::kAllowed3pc ||
          controls_state == CookieControlsState::kPausedTp ||
          // If no 3P sites have attempted to access site data, nor were any
@@ -657,7 +695,12 @@ CookieControlsController::TabObserver::TabObserver(
     : content_settings::PageSpecificContentSettings::SiteDataObserver(
           web_contents),
       content::WebContentsObserver(web_contents),
-      cookie_controls_(cookie_controls) {
+      cookie_controls_(cookie_controls),
+      // When under the ReducePPMs experiment reduce the capacity of the
+      // cache and leave it practically unbounded otherwise.
+      cookie_accessed_set_(base::features::IsReducePPMsEnabled()
+                               ? kAccessDetailsCacheSize
+                               : kMaximumCacheCapacity) {
   last_visited_url_ =
       content::WebContentsObserver::web_contents()->GetVisibleURL();
   auto* fpf_web_contents_helper = fingerprinting_protection_filter::
@@ -678,6 +721,7 @@ CookieControlsController::TabObserver::~TabObserver() = default;
 void CookieControlsController::TabObserver::WebContentsDestroyed() {
   fpf_observation_.Reset();
   ip_protection_observation_.Reset();
+  cookie_controls_->tracking_protection_settings_observation_.Reset();
 }
 
 void CookieControlsController::TabObserver::OnSiteDataAccessed(
@@ -702,10 +746,11 @@ void CookieControlsController::TabObserver::OnSiteDataAccessed(
   // Model's StorageType, which would let us remove an enum, and let us cache
   // all accesses here.
 
-  if (cookie_accessed_set_.count(access_details)) {
+  if (cookie_accessed_set_.Get(access_details) != cookie_accessed_set_.end()) {
     return;
   }
-  cookie_accessed_set_.insert(access_details);
+
+  cookie_accessed_set_.Put(AccessDetails(access_details));
   cookie_controls_->UpdateUserBypass();
 }
 
@@ -726,7 +771,7 @@ void CookieControlsController::TabObserver::PrimaryPageChanged(
     content::Page& page) {
   const GURL& current_url =
       content::WebContentsObserver::web_contents()->GetVisibleURL();
-  cookie_accessed_set_.clear();
+  cookie_accessed_set_.Clear();
 
   if (current_url != last_visited_url_) {
     reload_count_ = 0;
@@ -745,6 +790,10 @@ void CookieControlsController::TabObserver::PrimaryPageChanged(
 
 void CookieControlsController::TabObserver::DidStopLoading() {
   cookie_controls_->OnPageFinishedLoading();
+}
+
+void CookieControlsController::TabObserver::BeforeFormRepostWarningShow() {
+  cookie_controls_->OnBubbleCloseTriggered();
 }
 
 void CookieControlsController::TabObserver::ResetReloadCounter() {

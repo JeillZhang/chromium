@@ -7,10 +7,10 @@
 #include "base/check.h"
 #include "base/command_line.h"
 #include "base/memory/shared_memory_switch.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "base/trace_event/trace_log.h"
 #include "build/build_config.h"
-#include "components/tracing/common/trace_to_console.h"
 #include "components/tracing/common/tracing_switches.h"
 #include "services/tracing/public/cpp/perfetto/perfetto_config.h"
 #include "services/tracing/public/cpp/perfetto/perfetto_traced_process.h"
@@ -38,48 +38,56 @@ constexpr SharedMemoryMachPortRendezvousKey kTraceConfigRendezvousKey = 'trcc';
 constexpr SharedMemoryMachPortRendezvousKey kTraceBufferRendezvousKey = 'trbc';
 #endif
 
-constexpr uint32_t kStartupTracingTimeoutMs = 30 * 1000;  // 30 sec
-
 using base::trace_event::TraceConfig;
 using base::trace_event::TraceLog;
 
 }  // namespace
 
-bool g_tracing_initialized_after_featurelist = false;
-bool g_tracing_with_thread = false;
+bool g_tracing_initialized = false;
 
 bool IsTracingInitialized() {
-  return g_tracing_initialized_after_featurelist;
+  return g_tracing_initialized;
 }
 
-void EnableStartupTracingIfNeeded(bool with_thread) {
-  RegisterTracedValueProtoWriter();
+void InitTracing(
+    bool enable_consumer,
+    bool will_trace_thread_restart,
+    bool enable_system_backend,
+    base::RepeatingCallback<bool()> allow_system_tracing_consumer) {
+  DCHECK(!g_tracing_initialized);
+  g_tracing_initialized = true;
 
-  // Initialize the client library's TrackRegistry to support trace points
-  // during startup tracing. We don't setup the client library completely here
-  // yet, because we don't have field trials loaded yet (which influence which
-  // backends we enable).
-  // TODO(eseckler): Make it possible to initialize client lib backends after
-  // setting up the client library?
-  perfetto::internal::TrackRegistry::InitializeInstance();
+  std::optional<uint64_t> maybe_process_track_uuid;
+  auto* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kTraceProcessTrackUuid)) {
+    uint64_t process_track_uuid;
+    if (base::StringToUint64(
+            command_line->GetSwitchValueASCII(switches::kTraceProcessTrackUuid),
+            &process_track_uuid)) {
+      maybe_process_track_uuid = process_track_uuid;
+    }
+  }
 
   // Create the PerfettoTracedProcess.
-  if (with_thread) {
-    g_tracing_with_thread = true;
-#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
-    PerfettoTracedProcess::MaybeCreateInstanceWithThread(
-        /*will_trace_thread_restart=*/true);
-#else
-    PerfettoTracedProcess::MaybeCreateInstanceWithThread(
-        /*will_trace_thread_restart=*/false);
-#endif
-  } else {
-    PerfettoTracedProcess::MaybeCreateInstance();
+  auto& traced_process =
+      PerfettoTracedProcess::MaybeCreateInstance(will_trace_thread_restart);
+  if (allow_system_tracing_consumer) {
+    traced_process.SetAllowSystemTracingConsumerCallback(
+        std::move(allow_system_tracing_consumer));
   }
+  traced_process.SetupClientLibrary(enable_consumer, enable_system_backend,
+                                    maybe_process_track_uuid);
+
+  RegisterTracedValueProtoWriter();
 
   // Ensure TraceLog is initialized first.
   // https://crbug.com/764357
   TraceLog::GetInstance();
+
+#if BUILDFLAG(IS_WIN)
+  tracing::EnableETWExport();
+#endif  // BUILDFLAG(IS_WIN)
+
   auto& startup_config = TraceStartupConfig::GetInstance();
 
   if (startup_config.IsEnabled()) {
@@ -90,40 +98,19 @@ void EnableStartupTracingIfNeeded(bool with_thread) {
     // TODO(khokhlov): Support startup tracing with the system backend in the
     // SDK build.
     opts.backend = perfetto::kCustomBackend;
-    // TODO(khokhlov): After client library is moved onto a separate thread
-    // and it's possible to start startup tracing early, replace this call with
-    // perfetto::Tracing::SetupStartupTracing(perfetto_config, args).
-    PerfettoTracedProcess::Get().RequestStartupTracing(perfetto_config, opts);
+
+    perfetto::Tracing::SetupStartupTracingBlocking(perfetto_config, opts);
   }
 }
 
-bool EnableStartupTracingForProcess(
-    const perfetto::TraceConfig& perfetto_config) {
-  perfetto::Tracing::SetupStartupTracingOpts opts;
-  opts.timeout_ms = kStartupTracingTimeoutMs;
-  opts.backend = perfetto::kCustomBackend;
-  // TODO(khokhlov): After client library is moved onto a separate thread
-  // and it's possible to start startup tracing early, replace this call with
-  // perfetto::Tracing::SetupStartupTracing(perfetto_config, args).
-  PerfettoTracedProcess::Get().RequestStartupTracing(perfetto_config, opts);
-  return true;
-}
-
-void InitTracingPostFeatureList(bool enable_consumer) {
-  if (g_tracing_initialized_after_featurelist) {
-    return;
-  }
-  g_tracing_initialized_after_featurelist = true;
+void InitTracingPostFeatureList(
+    bool enable_consumer,
+    bool will_trace_thread_restart,
+    base::RepeatingCallback<bool()> allow_system_tracing_consumer) {
   DCHECK(base::FeatureList::GetInstance());
-
-  // Create the PerfettoTracedProcess.
-  if (!g_tracing_with_thread) {
-    PerfettoTracedProcess::MaybeCreateInstance();
-  }
-  PerfettoTracedProcess::Get().OnThreadPoolAvailable(enable_consumer);
-#if BUILDFLAG(IS_WIN)
-  tracing::EnableETWExport();
-#endif  // BUILDFLAG(IS_WIN)
+  InitTracing(enable_consumer, will_trace_thread_restart,
+              ShouldSetupSystemTracing(),
+              std::move(allow_system_tracing_consumer));
 }
 
 base::ReadOnlySharedMemoryRegion CreateTracingConfigSharedMemory() {

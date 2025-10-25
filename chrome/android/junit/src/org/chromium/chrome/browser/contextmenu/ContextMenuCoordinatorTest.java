@@ -4,20 +4,24 @@
 
 package org.chromium.chrome.browser.contextmenu;
 
-import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 
+import static org.chromium.content_public.browser.test.util.TestSelectionDropdownMenuDelegate.ListMenuItemType.MENU_ITEM;
+import static org.chromium.ui.listmenu.ListItemType.MENU_ITEM_WITH_SUBMENU;
+import static org.chromium.ui.listmenu.ListMenuItemProperties.CLICK_LISTENER;
 import static org.chromium.ui.listmenu.ListMenuItemProperties.ENABLED;
-import static org.chromium.ui.listmenu.ListMenuItemProperties.MENU_ITEM_ID;
 import static org.chromium.ui.listmenu.ListMenuItemProperties.TITLE;
+import static org.chromium.ui.listmenu.ListMenuSubmenuItemProperties.SUBMENU_ITEMS;
 
 import android.app.Activity;
 import android.graphics.Rect;
-import android.util.Pair;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 
 import androidx.annotation.Nullable;
 import androidx.test.ext.junit.rules.ActivityScenarioRule;
@@ -42,12 +46,9 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.blink_public.common.ContextMenuDataMediaFlags;
 import org.chromium.blink_public.common.ContextMenuDataMediaType;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.contextmenu.ChromeContextMenuItem.Item;
-import org.chromium.chrome.browser.contextmenu.ChromeContextMenuPopulator.ContextMenuGroup;
-import org.chromium.chrome.browser.contextmenu.ContextMenuCoordinator.ListItemType;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.browser_ui.widget.ContextMenuDialog;
 import org.chromium.components.embedder_support.contextmenu.ContextMenuNativeDelegate;
@@ -63,6 +64,10 @@ import org.chromium.ui.base.TestActivity;
 import org.chromium.ui.base.ViewAndroidDelegate;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.dragdrop.DragStateTracker;
+import org.chromium.ui.hierarchicalmenu.FlyoutController.FlyoutPopupEntry;
+import org.chromium.ui.listmenu.ListMenuItemProperties;
+import org.chromium.ui.listmenu.ListMenuSubmenuItemProperties;
+import org.chromium.ui.listmenu.MenuModelBridge;
 import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -75,9 +80,9 @@ import java.util.List;
 /** Unit tests for the context menu. Use density=mdpi so the screen density is 1. */
 @RunWith(BaseRobolectricTestRunner.class)
 @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
-@EnableFeatures({ChromeFeatureList.CONTEXT_MENU_SYS_UI_MATCHES_ACTIVITY})
 public class ContextMenuCoordinatorTest {
     private static final int TOP_CONTENT_OFFSET_PX = 17;
+    public static final String PARENT_LABEL = "Parent item";
 
     /**
      * Shadow class used to capture the inputs for {@link
@@ -122,19 +127,6 @@ public class ContextMenuCoordinatorTest {
         }
     }
 
-    /** No-op constructor for test cases that does not care of creation of real object. */
-    @Implements(ContextMenuHeaderCoordinator.class)
-    public static class ShadowContextMenuHeaderCoordinator {
-        public ShadowContextMenuHeaderCoordinator() {}
-
-        @Implementation
-        public void __constructor__(
-                Activity activity,
-                ContextMenuParams params,
-                Profile profile,
-                ContextMenuNativeDelegate nativeDelegate) {}
-    }
-
     /** Helper shadow to set the results for {@link Profile#fromWebContents}. */
     @Implements(Profile.class)
     public static class ShadowProfile {
@@ -146,6 +138,13 @@ public class ContextMenuCoordinatorTest {
         }
     }
 
+    /** Helper class to access the protected constructor of ViewAndroidDelegate. */
+    public static class TestViewAndroidDelegate extends ViewAndroidDelegate {
+        public TestViewAndroidDelegate(ViewGroup containerView) {
+            super(containerView);
+        }
+    }
+
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Rule
@@ -154,6 +153,7 @@ public class ContextMenuCoordinatorTest {
 
     @Mock ContextMenuNativeDelegate mNativeDelegate;
     @Mock WebContentsImpl mWebContentsMock;
+    @Mock private MenuModelBridge mMenuModelBridge;
 
     private ContextMenuCoordinator mCoordinator;
     private Activity mActivity;
@@ -164,199 +164,7 @@ public class ContextMenuCoordinatorTest {
         mActivityScenarioRule.getScenario().onActivity((activity) -> mActivity = activity);
         mCoordinator = new ContextMenuCoordinator(TOP_CONTENT_OFFSET_PX, mNativeDelegate);
         ShadowProfile.sProfileFromWebContents = mProfile;
-    }
-
-    @Test
-    public void testGetItemListWithImageLink() {
-        final ContextMenuParams params =
-                new ContextMenuParams(
-                        0,
-                        ContextMenuDataMediaType.IMAGE,
-                        GURL.emptyGURL(),
-                        GURL.emptyGURL(),
-                        "",
-                        GURL.emptyGURL(),
-                        GURL.emptyGURL(),
-                        "",
-                        null,
-                        false,
-                        0,
-                        0,
-                        0,
-                        false,
-                        /* openedFromInterestTarget= */ false,
-                        /* interestTargetNodeID= */ 0,
-                        /* additionalNavigationParams= */ null);
-        List<Pair<Integer, ModelList>> rawItems = new ArrayList<>();
-        // Link items
-        ModelList groupOne = new ModelList();
-        groupOne.add(createListItem(Item.OPEN_IN_NEW_TAB));
-        groupOne.add(createListItem(Item.OPEN_IN_INCOGNITO_TAB));
-        groupOne.add(createListItem(Item.SAVE_LINK_AS));
-        groupOne.add(createShareListItem(Item.SHARE_LINK));
-        rawItems.add(new Pair<>(ContextMenuGroup.LINK, groupOne));
-        // Image Items
-        ModelList groupTwo = new ModelList();
-        groupTwo.add(createListItem(Item.OPEN_IMAGE_IN_NEW_TAB));
-        groupTwo.add(createListItem(Item.SAVE_IMAGE));
-        groupTwo.add(createShareListItem(Item.SHARE_IMAGE));
-        rawItems.add(new Pair<>(ContextMenuGroup.IMAGE, groupTwo));
-
-        mCoordinator.initializeHeaderCoordinatorForTesting(
-                mActivity, params, mProfile, mNativeDelegate);
-        ModelList itemList = mCoordinator.getItemList(mActivity, rawItems, (i) -> {}, true);
-
-        assertThat(itemList.get(0).type, equalTo(ListItemType.HEADER));
-        assertThat(itemList.get(1).type, equalTo(ListItemType.DIVIDER));
-        assertThat(itemList.get(2).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(3).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(4).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(5).type, equalTo(ListItemType.CONTEXT_MENU_ITEM_WITH_ICON_BUTTON));
-        assertThat(itemList.get(6).type, equalTo(ListItemType.DIVIDER));
-        assertThat(itemList.get(7).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(8).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(9).type, equalTo(ListItemType.CONTEXT_MENU_ITEM_WITH_ICON_BUTTON));
-        // "Save link as"  and "save image" should be enabled.
-        assertTrue(itemList.get(4).model.get(ENABLED));
-        assertTrue(itemList.get(8).model.get(ENABLED));
-    }
-
-    @Test
-    public void testGetItemListWithDownloadBlockedByPolicy() {
-        final ContextMenuParams params =
-                new ContextMenuParams(
-                        0,
-                        ContextMenuDataMediaType.IMAGE,
-                        GURL.emptyGURL(),
-                        GURL.emptyGURL(),
-                        "",
-                        GURL.emptyGURL(),
-                        GURL.emptyGURL(),
-                        "",
-                        null,
-                        false,
-                        0,
-                        0,
-                        0,
-                        false,
-                        /* openedFromInterestTarget= */ false,
-                        /* interestTargetNodeID= */ 0,
-                        /* additionalNavigationParams= */ null);
-        List<Pair<Integer, ModelList>> rawItems = new ArrayList<>();
-        // Link items
-        ModelList groupOne = new ModelList();
-        groupOne.add(createListItem(Item.OPEN_IN_NEW_TAB));
-        groupOne.add(createListItem(Item.OPEN_IN_INCOGNITO_TAB));
-        groupOne.add(createListItem(Item.SAVE_LINK_AS, false));
-        groupOne.add(createShareListItem(Item.SHARE_LINK));
-        rawItems.add(new Pair<>(ContextMenuGroup.LINK, groupOne));
-        // Image Items
-        ModelList groupTwo = new ModelList();
-        groupTwo.add(createListItem(Item.OPEN_IMAGE_IN_NEW_TAB));
-        groupTwo.add(createListItem(Item.SAVE_IMAGE, false));
-        groupTwo.add(createShareListItem(Item.SHARE_IMAGE));
-        rawItems.add(new Pair<>(ContextMenuGroup.IMAGE, groupTwo));
-
-        mCoordinator.initializeHeaderCoordinatorForTesting(
-                mActivity, params, mProfile, mNativeDelegate);
-        ModelList itemList = mCoordinator.getItemList(mActivity, rawItems, (i) -> {}, true);
-
-        assertThat(itemList.get(0).type, equalTo(ListItemType.HEADER));
-        assertThat(itemList.get(1).type, equalTo(ListItemType.DIVIDER));
-        assertThat(itemList.get(2).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(3).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(4).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(5).type, equalTo(ListItemType.CONTEXT_MENU_ITEM_WITH_ICON_BUTTON));
-        assertThat(itemList.get(6).type, equalTo(ListItemType.DIVIDER));
-        assertThat(itemList.get(7).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(8).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(9).type, equalTo(ListItemType.CONTEXT_MENU_ITEM_WITH_ICON_BUTTON));
-        // "Save link as"  and "save image" should be disabled.
-        assertFalse(itemList.get(4).model.get(ENABLED));
-        assertFalse(itemList.get(8).model.get(ENABLED));
-    }
-
-    @Test
-    public void testGetItemListWithLink() {
-        // We're testing it for a link, but the mediaType in params is image. That's because if it
-        // isn't image or video, the header mediator tries to get a favicon for us and calls
-        // ProfileManager.getLastUsedRegularProfile(), which throws an exception because native
-        // isn't
-        // initialized. mediaType here doesn't have any effect on what we're testing.
-        final ContextMenuParams params =
-                new ContextMenuParams(
-                        0,
-                        ContextMenuDataMediaType.IMAGE,
-                        GURL.emptyGURL(),
-                        GURL.emptyGURL(),
-                        "",
-                        GURL.emptyGURL(),
-                        GURL.emptyGURL(),
-                        "",
-                        null,
-                        false,
-                        0,
-                        0,
-                        0,
-                        false,
-                        /* openedFromInterestTarget= */ false,
-                        /* interestTargetNodeID= */ 0,
-                        /* additionalNavigationParams= */ null);
-        List<Pair<Integer, ModelList>> rawItems = new ArrayList<>();
-        // Link items
-        ModelList groupOne = new ModelList();
-        groupOne.add(createListItem(Item.OPEN_IN_NEW_TAB));
-        groupOne.add(createListItem(Item.OPEN_IN_INCOGNITO_TAB));
-        groupOne.add(createListItem(Item.SAVE_LINK_AS));
-        groupOne.add(createShareListItem(Item.SHARE_LINK));
-        rawItems.add(new Pair<>(ContextMenuGroup.LINK, groupOne));
-
-        mCoordinator.initializeHeaderCoordinatorForTesting(
-                mActivity, params, mProfile, mNativeDelegate);
-        ModelList itemList = mCoordinator.getItemList(mActivity, rawItems, (i) -> {}, true);
-
-        assertThat(itemList.get(0).type, equalTo(ListItemType.HEADER));
-        assertThat(itemList.get(1).type, equalTo(ListItemType.DIVIDER));
-        assertThat(itemList.get(2).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(3).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(4).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
-        assertThat(itemList.get(5).type, equalTo(ListItemType.CONTEXT_MENU_ITEM_WITH_ICON_BUTTON));
-    }
-
-    @Test
-    public void testGetItemListWithVideo() {
-        final ContextMenuParams params =
-                new ContextMenuParams(
-                        0,
-                        ContextMenuDataMediaType.VIDEO,
-                        GURL.emptyGURL(),
-                        GURL.emptyGURL(),
-                        "",
-                        GURL.emptyGURL(),
-                        GURL.emptyGURL(),
-                        "",
-                        null,
-                        false,
-                        0,
-                        0,
-                        0,
-                        false,
-                        /* openedFromInterestTarget= */ false,
-                        /* interestTargetNodeID= */ 0,
-                        /* additionalNavigationParams= */ null);
-        List<Pair<Integer, ModelList>> rawItems = new ArrayList<>();
-        // Video items
-        ModelList groupOne = new ModelList();
-        groupOne.add(createListItem(Item.SAVE_VIDEO));
-        rawItems.add(new Pair<>(ContextMenuGroup.LINK, groupOne));
-
-        mCoordinator.initializeHeaderCoordinatorForTesting(
-                mActivity, params, mProfile, mNativeDelegate);
-        ModelList itemList = mCoordinator.getItemList(mActivity, rawItems, (i) -> {}, true);
-
-        assertThat(itemList.get(0).type, equalTo(ListItemType.HEADER));
-        assertThat(itemList.get(1).type, equalTo(ListItemType.DIVIDER));
-        assertThat(itemList.get(2).type, equalTo(ListItemType.CONTEXT_MENU_ITEM));
+        ContextMenuHeaderCoordinator.setDisableForTesting(true);
     }
 
     @Test
@@ -473,11 +281,7 @@ public class ContextMenuCoordinatorTest {
     @DisabledTest(message = "crbug.com/1444964")
     @DisableFeatures(ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU)
     @Config(
-            shadows = {
-                ShadowContextMenuDialog.class,
-                ShadowContextMenuHeaderCoordinator.class,
-                ShadowProfile.class
-            },
+            shadows = {ShadowContextMenuDialog.class, ShadowProfile.class},
             qualifiers = "mdpi")
     public void testDisplayMenu() {
         final int triggeringTouchXDp = 100;
@@ -486,8 +290,10 @@ public class ContextMenuCoordinatorTest {
                 displayContextMenuDialogAtLocation(triggeringTouchXDp, triggeringTouchYDp);
         ShadowContextMenuDialog shadowDialog = Shadow.extract(dialog);
 
-        ContextMenuListView listView = mCoordinator.getListViewForTest();
-        Assert.assertNotNull("List view should not be null.", listView);
+        List<ContextMenuListView> listViews = mCoordinator.getListViewsForTest();
+        Assert.assertEquals("There should be exactly 1 ListView.", 1, listViews.size());
+        ContextMenuListView listView = listViews.get(0);
+
         Assert.assertFalse(
                 "Fading edge should not be enabled.", listView.isVerticalFadingEdgeEnabled());
 
@@ -508,11 +314,7 @@ public class ContextMenuCoordinatorTest {
     @DisabledTest(message = "crbug.com/1444964")
     @EnableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
     @Config(
-            shadows = {
-                ShadowContextMenuDialog.class,
-                ShadowContextMenuHeaderCoordinator.class,
-                ShadowProfile.class
-            },
+            shadows = {ShadowContextMenuDialog.class, ShadowProfile.class},
             qualifiers = "mdpi")
     @CommandLineFlags.Add(ContextMenuSwitches.FORCE_CONTEXT_MENU_POPUP)
     public void testDisplayMenu_DragEnabled() {
@@ -526,8 +328,10 @@ public class ContextMenuCoordinatorTest {
                 displayContextMenuDialogAtLocation(triggeringTouchXDp, triggeringTouchYDp);
         ShadowContextMenuDialog shadowDialog = Shadow.extract(dialog);
 
-        ContextMenuListView listView = mCoordinator.getListViewForTest();
-        Assert.assertNotNull("List view should not be null.", listView);
+        List<ContextMenuListView> listViews = mCoordinator.getListViewsForTest();
+        Assert.assertEquals("There should be exactly 1 ListView.", 1, listViews.size());
+        ContextMenuListView listView = listViews.get(0);
+
         Assert.assertTrue("Fading edge should be enabled.", listView.isVerticalFadingEdgeEnabled());
         Assert.assertEquals(
                 "Fading edge size is wrong.",
@@ -556,32 +360,129 @@ public class ContextMenuCoordinatorTest {
                 rect.bottom);
     }
 
-    private ListItem createListItem(@Item int item) {
-        return createListItem(item, /* enabled= */ true);
+    @Test
+    @EnableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    @Config(
+            shadows = {ShadowContextMenuDialog.class, ShadowProfile.class},
+            qualifiers = "mdpi")
+    @CommandLineFlags.Add(ContextMenuSwitches.FORCE_CONTEXT_MENU_POPUP)
+    public void testAddFlyoutWindow() {
+        final int triggeringTouchXDp = 100;
+        final int triggeringTouchYDp = 200;
+        ContextMenuDialog dialog =
+                displayContextMenuDialogAtLocation(triggeringTouchXDp, triggeringTouchYDp);
+        ShadowContextMenuDialog shadowDialog = (ShadowContextMenuDialog) Shadow.extract(dialog);
+        shadowDialog.show();
+
+        ListItem parentItem =
+                new ListItem(
+                        MENU_ITEM_WITH_SUBMENU,
+                        new PropertyModel.Builder(ListMenuSubmenuItemProperties.ALL_KEYS)
+                                .with(TITLE, "Parent item")
+                                .with(ENABLED, true)
+                                .with(SUBMENU_ITEMS, new ArrayList<>())
+                                .build());
+        View mockAnchorView = mock(View.class);
+        mCoordinator.addFlyoutWindow(parentItem, mockAnchorView, 0);
+
+        Assert.assertEquals(
+                "There should be 2 dialogs after adding a flyout.",
+                2,
+                mCoordinator.getDialogsForTest().size());
+        Assert.assertEquals(
+                "There should be 2 ListViews after adding a flyout.",
+                2,
+                mCoordinator.getListViewsForTest().size());
     }
 
-    private ListItem createListItem(@Item int item, boolean enabled) {
-        final PropertyModel model =
-                new PropertyModel.Builder(MENU_ITEM_ID, TITLE, ENABLED)
-                        .with(MENU_ITEM_ID, ChromeContextMenuItem.getMenuId(item))
-                        .with(ENABLED, enabled)
-                        .with(
-                                TITLE,
-                                ChromeContextMenuItem.getTitle(mActivity, mProfile, item, false))
-                        .build();
-        return new ListItem(ListItemType.CONTEXT_MENU_ITEM, model);
+    @Test
+    @EnableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    @Config(
+            shadows = {ShadowContextMenuDialog.class, ShadowProfile.class},
+            qualifiers = "mdpi")
+    @CommandLineFlags.Add(ContextMenuSwitches.FORCE_CONTEXT_MENU_POPUP)
+    public void testRemoveFlyoutWindow() {
+        final int triggeringTouchXDp = 100;
+        final int triggeringTouchYDp = 200;
+        ContextMenuDialog dialog =
+                displayContextMenuDialogAtLocation(triggeringTouchXDp, triggeringTouchYDp);
+        ShadowContextMenuDialog shadowDialog = (ShadowContextMenuDialog) Shadow.extract(dialog);
+        shadowDialog.show();
+
+        // Add the flyout popup to be removed.
+        ListItem parentItem =
+                new ListItem(
+                        MENU_ITEM_WITH_SUBMENU,
+                        new PropertyModel.Builder(ListMenuSubmenuItemProperties.ALL_KEYS)
+                                .with(TITLE, PARENT_LABEL)
+                                .with(ENABLED, true)
+                                .with(SUBMENU_ITEMS, new ArrayList<>())
+                                .build());
+        View mockAnchorView = mock(View.class);
+        mCoordinator.addFlyoutWindow(parentItem, mockAnchorView, 0);
+
+        // Remove the flyout popup.
+        mCoordinator.removeFlyoutWindows(1);
+
+        Assert.assertEquals(
+                "There should be 1 dialog after removing the last flyout.",
+                1,
+                mCoordinator.getDialogsForTest().size());
+        Assert.assertEquals(
+                "There should be 1 ListView after removing the last flyout.",
+                1,
+                mCoordinator.getListViewsForTest().size());
     }
 
-    private ListItem createShareListItem(@Item int item) {
-        final PropertyModel model =
-                new PropertyModel.Builder(ContextMenuItemWithIconButtonProperties.ALL_KEYS)
-                        .with(MENU_ITEM_ID, ChromeContextMenuItem.getMenuId(item))
-                        .with(ENABLED, true)
-                        .with(
-                                TITLE,
-                                ChromeContextMenuItem.getTitle(mActivity, mProfile, item, false))
-                        .build();
-        return new ListItem(ListItemType.CONTEXT_MENU_ITEM_WITH_ICON_BUTTON, model);
+    @Test
+    @EnableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    @Config(
+            shadows = {ShadowContextMenuDialog.class, ShadowProfile.class},
+            qualifiers = "mdpi")
+    @CommandLineFlags.Add(ContextMenuSwitches.FORCE_CONTEXT_MENU_POPUP)
+    public void testFocusAfterSubmenuNavigation() {
+        final int triggeringTouchXDp = 100;
+        final int triggeringTouchYDp = 200;
+
+        List<ListItem> submenu =
+                List.of(
+                        new ListItem(
+                                MENU_ITEM,
+                                new PropertyModel.Builder(ListMenuItemProperties.ALL_KEYS)
+                                        .with(TITLE, "Example title")
+                                        .with(ENABLED, true)
+                                        .build()));
+        ListItem submenuParent =
+                new ListItem(
+                        MENU_ITEM_WITH_SUBMENU,
+                        new PropertyModel.Builder(ListMenuSubmenuItemProperties.ALL_KEYS)
+                                .with(TITLE, PARENT_LABEL)
+                                .with(ENABLED, true)
+                                .with(SUBMENU_ITEMS, submenu)
+                                .build());
+        ModelList modelList = new ModelList();
+        modelList.add(submenuParent);
+
+        ContextMenuDialog dialog =
+                displayContextMenuDialogAtLocation(
+                        triggeringTouchXDp, triggeringTouchYDp, List.of(modelList));
+        ShadowContextMenuDialog shadowDialog = (ShadowContextMenuDialog) Shadow.extract(dialog);
+        shadowDialog.show();
+
+        List<ContextMenuListView> listViews = mCoordinator.getListViewsForTest();
+        assertThat("Expected there to be 1 ContextMenuListView", listViews, hasSize(1));
+        ContextMenuListView listView = listViews.get(0);
+        // Navigate to submenu
+        ListItem lastListItem = mCoordinator.getItem(mCoordinator.getCount() - 1);
+        Assert.assertEquals(
+                "Expected last list item to be the submenu parent",
+                PARENT_LABEL,
+                String.valueOf(lastListItem.model.get(TITLE)));
+        lastListItem.model.get(CLICK_LISTENER).onClick(listView);
+
+        // Verify that 1st item is selected
+        Assert.assertEquals(
+                "Expected 1st list item to be selected", 0, listView.getSelectedItemPosition());
     }
 
     private ContextMenuDialog createContextMenuDialogForTest(boolean isPopup) {
@@ -594,21 +495,25 @@ public class ContextMenuCoordinatorTest {
                 rootView,
                 contentView,
                 isPopup,
+                false,
                 ContextMenuUtils.isPopupSupported(mActivity),
                 0,
                 0,
                 0,
                 0,
                 webContentView,
-                new Rect(0, 0, 0, 0));
+                new Rect(0, 0, 0, 0),
+                null);
     }
 
     private ContextMenuDialog displayContextMenuDialogAtLocation(
-            int triggeringTouchXDp, int triggeringTouchYDp) {
+            int triggeringTouchXDp, int triggeringTouchYDp, List<ModelList> items) {
         final ContextMenuParams params =
                 new ContextMenuParams(
                         0,
+                        mMenuModelBridge,
                         ContextMenuDataMediaType.IMAGE,
+                        ContextMenuDataMediaFlags.MEDIA_NONE,
                         GURL.emptyGURL(),
                         GURL.emptyGURL(),
                         "",
@@ -621,21 +526,36 @@ public class ContextMenuCoordinatorTest {
                         triggeringTouchYDp,
                         0,
                         false,
-                        /* openedFromInterestTarget= */ false,
-                        /* interestTargetNodeID= */ 0,
+                        /* openedFromInterestFor= */ false,
+                        /* interestForNodeID= */ 0,
                         /* additionalNavigationParams= */ null);
 
         final WindowAndroid windowAndroid = Mockito.mock(WindowAndroid.class);
+        final Window window = Mockito.mock(Window.class);
+
         doReturn(new WeakReference<>(mActivity)).when(windowAndroid).getActivity();
+        doReturn(window).when(windowAndroid).getWindow();
+        final WindowManager.LayoutParams attrs = new WindowManager.LayoutParams();
+        doReturn(attrs).when(window).getAttributes();
+        final View mockDecorView = Mockito.mock(View.class);
+        doReturn(mockDecorView).when(window).getDecorView();
 
-        List<Pair<Integer, ModelList>> rawItems = new ArrayList<>();
+        final ViewGroup mockContainerView = Mockito.mock(ViewGroup.class);
+        final ViewAndroidDelegate viewAndroidDelegate =
+                new TestViewAndroidDelegate(mockContainerView);
+        doReturn(viewAndroidDelegate).when(mWebContentsMock).getViewAndroidDelegate();
 
-        mCoordinator.displayMenu(
-                windowAndroid, mWebContentsMock, params, rawItems, null, null, null);
+        mCoordinator.displayMenu(windowAndroid, mWebContentsMock, params, items, null, null, null);
 
-        ContextMenuDialog dialog = mCoordinator.getDialogForTest();
-        Assert.assertNotNull("ContextMenuDialog is null", dialog);
-        return dialog;
+        List<FlyoutPopupEntry<ContextMenuDialog>> dialogs = mCoordinator.getDialogsForTest();
+        Assert.assertEquals("mDialogs contains no windows.", 1, dialogs.size());
+        return dialogs.get(0).popupWindow;
+    }
+
+    private ContextMenuDialog displayContextMenuDialogAtLocation(
+            int triggeringTouchXDp, int triggeringTouchYDp) {
+        return displayContextMenuDialogAtLocation(
+                triggeringTouchXDp, triggeringTouchYDp, List.of(new ModelList()));
     }
 
     private void setupMocksForDragShadowImage(

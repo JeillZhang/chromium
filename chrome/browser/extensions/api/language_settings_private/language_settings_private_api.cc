@@ -275,21 +275,15 @@ LanguageSettingsPrivateGetLanguageListFunction::Run() {
 
 #if BUILDFLAG(IS_WIN)
   if (spellcheck::UseBrowserSpellChecker()) {
-    if (!base::FeatureList::IsEnabled(
-            spellcheck::kWinDelaySpellcheckServiceInit)) {
-      // Platform dictionary support already determined at browser startup.
-      UpdateSupportedPlatformDictionaries();
-    } else {
-      // Asynchronously load the dictionaries to determine platform support.
-      SpellcheckService* service =
-          SpellcheckServiceFactory::GetForContext(browser_context());
-      AddRef();  // Balanced in OnDictionariesInitialized
-      service->InitializeDictionaries(
-          base::BindOnce(&LanguageSettingsPrivateGetLanguageListFunction::
-                             OnDictionariesInitialized,
-                         base::Unretained(this)));
-      return RespondLater();
-    }
+    // Asynchronously load the dictionaries to determine platform support.
+    SpellcheckService* service =
+        SpellcheckServiceFactory::GetForContext(browser_context());
+    AddRef();  // Balanced in OnDictionariesInitialized
+    service->InitializeDictionaries(
+        base::BindOnce(&LanguageSettingsPrivateGetLanguageListFunction::
+                           OnDictionariesInitialized,
+                       base::Unretained(this)));
+    return RespondLater();
   }
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -486,8 +480,8 @@ LanguageSettingsPrivateMoveLanguageFunction::Run() {
 
   const std::string app_locale =
       ExtensionsBrowserClient::Get()->GetApplicationLocale();
-  std::vector<std::string> supported_language_codes;
-  l10n_util::GetAcceptLanguagesForLocale(app_locale, &supported_language_codes);
+  std::vector<std::string> supported_language_codes =
+      l10n_util::GetAcceptLanguagesForLocale(app_locale);
 
   const std::string& language_code = parameters->language_code;
   const language_settings_private::MoveType move_type = parameters->move_type;

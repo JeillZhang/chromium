@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/core/dom/id_target_observer.h"
 #include "third_party/blink/renderer/core/html/html_element.h"
 #include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 
 namespace blink {
 
@@ -54,11 +55,8 @@ void AnchorElementObserver::Trace(Visitor* visitor) const {
 void AnchorElementObserver::Notify() {
   Element* new_anchor = source_element_->anchorElement();
   if (current_anchor_ != new_anchor) {
-    if (current_anchor_) {
-      current_anchor_->DecrementImplicitlyAnchoredElementCount();
-    }
     if (new_anchor) {
-      new_anchor->IncrementImplicitlyAnchoredElementCount();
+      new_anchor->SetMayBeImplicitAnchor();
     }
     current_anchor_ = new_anchor;
     if (source_element_->GetLayoutObject()) {

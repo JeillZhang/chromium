@@ -14,16 +14,8 @@
 
 namespace features {
 
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kAlignSurfaceLayerImplToPixelGrid);
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(kComputeRasterTranslateForExternalScale);
 CC_BASE_EXPORT BASE_DECLARE_FEATURE(kSynchronizedScrolling);
-
-// Enables partial raster in ZeroCopyRasterBufferProvider when used with the GPU
-// compositor.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kZeroCopyRBPPartialRasterWithGpuCompositor);
-
-// Sets raster tree priority to NEW_CONTENT_TAKES_PRIORITY when performing a
-// unified scroll with main-thread repaint reasons.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kMainRepaintScrollPrefersNewContent);
 
 // When enabled, the scheduler will allow deferring impl invalidation frames
 // for N frames (default 1) to reduce contention with main frames, allowing
@@ -34,12 +26,6 @@ CC_BASE_EXPORT extern const base::FeatureParam<int>
 
 // Use DMSAA instead of MSAA for rastering tiles.
 CC_BASE_EXPORT BASE_DECLARE_FEATURE(kUseDMSAAForTiles);
-
-// When LayerTreeHostImpl::ReclaimResources() is called in background, trigger a
-// additional delayed flush to reclaim resources.
-//
-// Enabled 03/2024, kept to run a holdback experiment.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kReclaimResourcesDelayedFlushInBackground);
 
 // When no frames are produced in a certain time interval, reclaim prepaint
 // tiles.
@@ -57,23 +43,13 @@ CC_BASE_EXPORT extern const base::FeatureParam<int> kInterestAreaSizeInPixels;
 CC_BASE_EXPORT BASE_DECLARE_FEATURE(kReclaimOldPrepaintTiles);
 CC_BASE_EXPORT extern const base::FeatureParam<int> kReclaimDelayInSeconds;
 
-// Kill switch for using MapRect() to compute filter pixel movement.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kUseMapRectForPixelMovement);
-
-// When enabled, we will not schedule drawing for viz::Surfaces that have been
-// evicted. Instead waiting for an ActiveTree that is defining a newer
-// viz::Surface.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kEvictionThrottlesDraw);
+// When enabled, TileManager running into OOM will forcibly mark tiles as OOM so
+// that it doesn't wait for resource releases that will never come.
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(kTileOOMFreezeMitigation);
 
 // When a LayerTreeHostImpl is not visible, clear its transferable resources
 // that haven't been imported into viz.
 CC_BASE_EXPORT BASE_DECLARE_FEATURE(kClearCanvasResourcesInBackground);
-
-// Currently CC Metrics does a lot of calculations for UMA and Tracing. While
-// Traces themselves won't run when we are not tracing, some of the calculation
-// work is done regardless. When enabled this feature reduces extra calculation
-// to when tracing is enabled.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kMetricsTracingCalculationReduction);
 
 // Currently there is a race between OnBeginFrames from the GPU process and
 // input arriving from the Browser process. Due to this we can start to produce
@@ -85,10 +61,6 @@ CC_BASE_EXPORT BASE_DECLARE_FEATURE(kMetricsTracingCalculationReduction);
 CC_BASE_EXPORT BASE_DECLARE_FEATURE(kWaitForLateScrollEvents);
 CC_BASE_EXPORT extern const base::FeatureParam<double>
     kWaitForLateScrollEventsDeadlineRatio;
-
-// When enabled we stop always pushing PictureLayerImpl properties on
-// tree Activation. See crbug.com/40335690.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kDontAlwaysPushPictureLayerImpls);
 
 // When enabled, image quality settings will be preserved in the discardable
 // image map.
@@ -155,19 +127,20 @@ CC_BASE_EXPORT BASE_DECLARE_FEATURE(kSendExplicitDecodeRequestsImmediately);
 // When enabled, the CC tree priority will be switched to
 // NEW_CONTENT_TAKES_PRIORITY during long scroll that cause checkerboarding.
 CC_BASE_EXPORT BASE_DECLARE_FEATURE(kNewContentForCheckerboardedScrolls);
+// When kNewContentForCheckerboardedScrolls is enabled with this param, the tree
+// priority will be changed *after* a frame is drawn with checkerboarding, and
+// will remain changed until the current scroll ends.
+CC_BASE_EXPORT extern const char kNewContentForCheckerboardedScrollsPerScroll[];
+// When kNewContentForCheckerboardedScrolls is enabled with this param, the tree
+// priority will be changed *before* a frame is drawn with checkerboarding, and
+// will be reset at the first frame that is painted without checkerboarding.
+CC_BASE_EXPORT extern const char kNewContentForCheckerboardedScrollsPerFrame[];
+CC_BASE_EXPORT extern const base::FeatureParam<std::string>
+    kNewContentForCheckerboardedScrollsParam;
 
 // When enabled, LCD text is allowed with some filters and backdrop filters.
 // Killswitch M135.
 CC_BASE_EXPORT BASE_DECLARE_FEATURE(kAllowLCDTextWithFilter);
-
-// When enabled, impl-only scroll animations may execute concurrently.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kMultipleImplOnlyScrollAnimations);
-CC_BASE_EXPORT extern bool MultiImplOnlyScrollAnimationsSupported();
-
-// When enabled, for a render surface with fractional translation, we'll try to
-// align the texels in the render surface to screen pixels to avoid blurriness
-// during compositing.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kRenderSurfacePixelAlignment);
 
 // When enabled, and an image decode is requested by both a tile task and
 // explicitly via img.decode(), it will be decoded only once.
@@ -177,14 +150,13 @@ CC_BASE_EXPORT BASE_DECLARE_FEATURE(kPreventDuplicateImageDecodes);
 // initialized to 0 instead of now.
 CC_BASE_EXPORT BASE_DECLARE_FEATURE(kInitImageDecodeLastUseTime);
 
-// The position affected by the safe area inset bottom will be handled by CC in
-// the Render Compositor Thread. The transform metrix y is adjusted for all
-// affected nodes.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kDynamicSafeAreaInsetsSupportedByCC);
-
 // On devices with a high refresh rate, whether to throttle main (not impl)
 // frame production to 60Hz.
 CC_BASE_EXPORT BASE_DECLARE_FEATURE(kThrottleMainFrameTo60Hz);
+
+// When main frame production is throttled, whether the throttling should be
+// paused for some duration after an urgent main frame request is processed.
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(kBoostFrameRateForUrgentMainFrame);
 
 // We only want to test the feature value if the client satisfies an eligibility
 // criteria, as testing the value enters the client into an experimental group,
@@ -217,11 +189,6 @@ CC_BASE_EXPORT extern const base::FeatureParam<int>
 // tasks.
 CC_BASE_EXPORT BASE_DECLARE_FEATURE(kFastPathNoRaster);
 
-// When enabled, moves the layer tree client's metric export call
-// for from beginning of the subsequent frame to the end of the subsequent
-// frame.
-CC_BASE_EXPORT BASE_DECLARE_FEATURE(kExportFrameTimingAfterFrameDone);
-
 // When enabled, internal begin frame source will be used in cc to reduce IPC
 // between cc and viz when there were many "did not produce frame" recently,
 // and SetAutoNeedsBeginFrame will be called on CompositorFrameSink.
@@ -244,7 +211,45 @@ CC_BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(double, kCubicBezierY1);
 CC_BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(double, kCubicBezierX2);
 CC_BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(double, kCubicBezierY2);
 CC_BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(base::TimeDelta,
-                                          kMaxAnimtionDuration);
+                                          kMaxAnimationDuration);
+
+// When enabled, slim will receive CompositorFrameSink messages directly without
+// the intermediate IO-thread hop.
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(kSlimDirectReceiverIpc);
+
+// When enabled, the overscroll behavior will be respected on all scroll
+// containers.
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(
+    kOverscrollBehaviorRespectedOnAllScrollContainers);
+
+// When enabled, the overscroll effect will display on non-root scrollers.
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(kOverscrollEffectOnNonRootScrollers);
+
+// A kill switch in case skipping finish causes unexpected issues.
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(kSkipFinishDuringReleaseLayerTreeFrameSink);
+
+// When enabled, the V4 scroll jank metric will be emitted.
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(kScrollJankV4Metric);
+CC_BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(
+    double,
+    kScrollJankV4MetricStabilityCorrection);
+CC_BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(double,
+                                          kScrollJankV4MetricDiscountFactor);
+CC_BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(
+    double,
+    kScrollJankV4MetricFastScrollContinuityThreshold);
+CC_BASE_EXPORT BASE_DECLARE_FEATURE_PARAM(
+    double,
+    kScrollJankV4MetricFlingContinuityThreshold);
+
+// When enabled, the V1/V4 per-scroll jank metric will be emitted at the end of
+// a scroll (as opposed to at the beginning of the next scroll).
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(kEmitPerScrollJankV1MetricAtEndOfScroll);
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(kEmitPerScrollJankV4MetricAtEndOfScroll);
+
+// When enabled, AsyncLayerTreeFrameSink will generate its own BeginFrameArgs
+// when auto_needs_begin_frame_ is enabled.
+CC_BASE_EXPORT BASE_DECLARE_FEATURE(kManualBeginFrame);
 
 }  // namespace features
 

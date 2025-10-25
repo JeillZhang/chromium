@@ -5,6 +5,8 @@
 package org.chromium.components.webauthn;
 
 import static org.chromium.build.NullUtil.assertNonNull;
+import static org.chromium.components.webauthn.WebauthnLogger.log;
+import static org.chromium.components.webauthn.WebauthnLogger.logError;
 
 import android.os.Bundle;
 
@@ -14,13 +16,14 @@ import com.google.android.gms.identitycredentials.CreateCredentialHandle;
 import com.google.android.gms.identitycredentials.CreateCredentialRequest;
 import com.google.android.gms.identitycredentials.IdentityCredentialClient;
 import com.google.android.gms.identitycredentials.IdentityCredentialManager;
+import com.google.android.gms.identitycredentials.SignalCredentialStateRequest;
 
 import org.jni_zero.JNINamespace;
 
-import org.chromium.base.Log;
 import org.chromium.blink.mojom.AuthenticatorStatus;
 import org.chromium.blink.mojom.MakeCredentialAuthenticatorResponse;
 import org.chromium.blink.mojom.PublicKeyCredentialCreationOptions;
+import org.chromium.blink.mojom.PublicKeyCredentialReportOptions;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.components.webauthn.cred_man.CredManHelper;
@@ -29,8 +32,7 @@ import org.chromium.components.webauthn.cred_man.CredManHelper;
 @JNINamespace("webauthn")
 @NullMarked
 public class IdentityCredentialsHelper {
-    private static final String TAG = "IdentityCredHelper";
-
+    private static final String TAG = "IdentityCredentialsHelper";
     private static final String CRED_MAN_PREFIX = "androidx.credentials.";
 
     private final AuthenticationContextProvider mAuthenticationContextProvider;
@@ -38,7 +40,7 @@ public class IdentityCredentialsHelper {
     // A callback that provides an AuthenticatorStatus error in the first argument, and optionally a
     // metrics recording outcome in the second.
     public interface ErrorCallback {
-        public void onResult(int error, @Nullable Integer metricsOutcome);
+        void onResult(int error, @Nullable Integer metricsOutcome);
     }
 
     public IdentityCredentialsHelper(AuthenticationContextProvider authenticationContextProvider) {
@@ -53,23 +55,27 @@ public class IdentityCredentialsHelper {
             byte @Nullable [] clientDataHash,
             MakeCredentialResponseCallback responseCallback,
             ErrorCallback errorCallback) {
+        log(TAG, "handleConditionalCreateRequest");
         try {
             IdentityCredentialClient client =
                     IdentityCredentialManager.Companion.getClient(
                             assertNonNull(mAuthenticationContextProvider.getContext()));
             client.createCredential(buildConditionalCreateRequest(options, origin, clientDataHash))
                     .addOnSuccessListener(
-                            (handle) ->
-                                    onConditionalCreateSuccess(
-                                            clientDataJson,
-                                            options,
-                                            responseCallback,
-                                            errorCallback,
-                                            handle))
+                            GmsCoreUtils.wrapSuccessCallback(
+                                    (handle) ->
+                                            onConditionalCreateSuccess(
+                                                    clientDataJson,
+                                                    options,
+                                                    responseCallback,
+                                                    errorCallback,
+                                                    handle)))
                     .addOnFailureListener(
-                            (exception) -> onConditionalCreateFailure(errorCallback, exception));
+                            GmsCoreUtils.wrapFailureCallback(
+                                    (exception) ->
+                                            onConditionalCreateFailure(errorCallback, exception)));
         } catch (Exception e) {
-            Log.d(TAG, "CreateCredential failed ", e);
+            logError(TAG, "CreateCredential failed ", e);
             errorCallback.onResult(
                     AuthenticatorStatus.NOT_ALLOWED_ERROR, MakeCredentialOutcome.OTHER_FAILURE);
             return;
@@ -82,11 +88,12 @@ public class IdentityCredentialsHelper {
             MakeCredentialResponseCallback responseCallback,
             ErrorCallback errorCallback,
             CreateCredentialHandle handle) {
+        log(TAG, "onConditionalCreateSuccess");
         Bundle data = assertNonNull(handle.getCreateCredentialResponse()).getData();
         MakeCredentialAuthenticatorResponse response =
                 CredManHelper.parseCreateCredentialResponseData(data);
         if (response == null) {
-            Log.d(TAG, "parseCreateCredentialResponseData() failed");
+            log(TAG, "parseCreateCredentialResponseData() failed");
             errorCallback.onResult(
                     AuthenticatorStatus.NOT_ALLOWED_ERROR, MakeCredentialOutcome.OTHER_FAILURE);
             return;
@@ -99,7 +106,7 @@ public class IdentityCredentialsHelper {
     }
 
     private void onConditionalCreateFailure(ErrorCallback errorCallback, Exception e) {
-        Log.d(TAG, "CreateCredential request failed ", e);
+        log(TAG, "CreateCredential request failed ", e);
         errorCallback.onResult(
                 AuthenticatorStatus.NOT_ALLOWED_ERROR,
                 MakeCredentialOutcome.CONDITIONAL_CREATE_FAILURE);
@@ -114,6 +121,48 @@ public class IdentityCredentialsHelper {
         credentialData.putByteArray(
                 CRED_MAN_PREFIX + "BUNDLE_KEY_CLIENT_DATA_HASH", clientDataHash);
         return credentialData;
+    }
+
+    // Dispatches a Report request.
+    public void handleReportRequest(PublicKeyCredentialReportOptions options, String origin) {
+        log(TAG, "handleReportRequest");
+        try {
+            IdentityCredentialClient client =
+                    IdentityCredentialManager.Companion.getClient(
+                            assertNonNull(mAuthenticationContextProvider.getContext()));
+            client.signalCredentialState(buildSignalCredentialStateRequest(options, origin))
+                    .addOnSuccessListener(
+                            GmsCoreUtils.wrapSuccessCallback(
+                                    (handle) ->
+                                            log(TAG, "Signal API request completed successfully")))
+                    .addOnFailureListener(
+                            GmsCoreUtils.wrapFailureCallback(
+                                    (e) -> logError(TAG, "Signal API Report request failed ", e)));
+        } catch (Exception e) {
+            logError(TAG, "handleReportRequest failed ", e);
+            return;
+        }
+    }
+
+    @VisibleForTesting
+    public SignalCredentialStateRequest buildSignalCredentialStateRequest(
+            PublicKeyCredentialReportOptions options, String origin) {
+        String type;
+        if (options.unknownCredentialId != null) {
+            type = CRED_MAN_PREFIX + "SIGNAL_UNKNOWN_CREDENTIAL_STATE_REQUEST_TYPE";
+        } else if (options.allAcceptedCredentials != null) {
+            type = CRED_MAN_PREFIX + "SIGNAL_ALL_ACCEPTED_CREDENTIALS_REQUEST_TYPE";
+        } else {
+            assert (options.currentUserDetails != null);
+            type = CRED_MAN_PREFIX + "SIGNAL_CURRENT_USER_DETAILS_STATE_REQUEST_TYPE";
+        }
+
+        String requestJson =
+                Fido2CredentialRequestJni.get().reportOptionsToJson(options.serialize());
+        Bundle requestDataBundle = new Bundle();
+        requestDataBundle.putCharSequence(CRED_MAN_PREFIX + "signal_request_json_key", requestJson);
+
+        return new SignalCredentialStateRequest(type, origin, requestDataBundle);
     }
 
     @VisibleForTesting

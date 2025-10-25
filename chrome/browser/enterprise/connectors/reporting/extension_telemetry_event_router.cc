@@ -8,7 +8,9 @@
 #include "chrome/browser/enterprise/connectors/reporting/extension_telemetry_event_router_factory.h"
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client.h"
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client_factory.h"
+#include "components/enterprise/common/proto/synced/browser_events.pb.h"
 #include "components/enterprise/connectors/core/reporting_service_settings.h"
+#include "components/policy/core/common/cloud/realtime_reporting_job_configuration.h"
 #include "components/safe_browsing/core/common/features.h"
 
 namespace enterprise_connectors {
@@ -30,6 +32,41 @@ using RemoteHostContactedInfo = safe_browsing::
     ExtensionTelemetryReportRequest_SignalInfo_RemoteHostContactedInfo;
 using TabsApiInfo =
     safe_browsing::ExtensionTelemetryReportRequest_SignalInfo_TabsApiInfo;
+
+std::unique_ptr<ExtensionTelemetryReportRequest>
+CreateRedactedExtensionTelemetryReportRequestProto(
+    const ExtensionTelemetryReportRequest* request) {
+  auto redacted_request = std::make_unique<ExtensionTelemetryReportRequest>();
+
+  redacted_request->set_creation_timestamp_msec(
+      request->creation_timestamp_msec());
+
+  for (const auto& report : request->reports()) {
+    safe_browsing::ExtensionTelemetryReportRequest_Report* redacted_report =
+        redacted_request->add_reports();
+
+    // Copy ExtensionInfo
+    *redacted_report->mutable_extension() = report.extension();
+
+    // Copy select subset of signals.
+    for (const auto& signal : report.signals()) {
+      if (signal.has_cookies_get_all_info()) {
+        *redacted_report->add_signals()->mutable_cookies_get_all_info() =
+            signal.cookies_get_all_info();
+      } else if (signal.has_cookies_get_info()) {
+        *redacted_report->add_signals()->mutable_cookies_get_info() =
+            signal.cookies_get_info();
+      } else if (signal.has_remote_host_contacted_info()) {
+        *redacted_report->add_signals()->mutable_remote_host_contacted_info() =
+            signal.remote_host_contacted_info();
+      } else if (signal.has_tabs_api_info()) {
+        *redacted_report->add_signals()->mutable_tabs_api_info() =
+            signal.tabs_api_info();
+      }
+    }
+  }
+  return redacted_request;
+}
 
 base::Value::Dict CreateExtensionInfoDict(const ExtensionInfo& extension_info) {
   base::Value::Dict dict;
@@ -271,11 +308,6 @@ ExtensionTelemetryEventRouter::ExtensionTelemetryEventRouter(
 ExtensionTelemetryEventRouter::~ExtensionTelemetryEventRouter() = default;
 
 bool ExtensionTelemetryEventRouter::IsPolicyEnabled() {
-  if (!base::FeatureList::IsEnabled(
-          safe_browsing::kExtensionTelemetryForEnterprise)) {
-    return false;
-  }
-
   auto* reporting_client =
       RealtimeReportingClientFactory::GetForProfile(context_);
   if (!reporting_client) {
@@ -301,9 +333,27 @@ void ExtensionTelemetryEventRouter::UploadTelemetryReport(
   std::optional<ReportingSettings> settings =
       reporting_client->GetReportingSettings();
 
-  reporting_client->ReportRealtimeEvent(
-      kExtensionTelemetryEvent, std::move(settings.value()),
-      CreateExtensionTelemetryReportRequestDict(*telemetry_report_request));
+  if (base::FeatureList::IsEnabled(
+          policy::kUploadRealtimeReportingEventsUsingProto)) {
+    chrome::cros::reporting::proto::ExtensionTelemetryEvent
+        extension_telemetry_event;
+    *extension_telemetry_event.mutable_extension_telemetry_report() =
+        *CreateRedactedExtensionTelemetryReportRequestProto(
+            telemetry_report_request.get());
+    extension_telemetry_event.set_profile_identifier(
+        reporting_client->GetProfileIdentifier());
+    extension_telemetry_event.set_profile_user_name(
+        reporting_client->GetProfileUserName());
+
+    chrome::cros::reporting::proto::Event event;
+    *event.mutable_extension_telemetry_event() = extension_telemetry_event;
+
+    reporting_client->ReportEvent(std::move(event), settings.value());
+  } else {
+    reporting_client->ReportRealtimeEvent(
+        kExtensionTelemetryEvent, std::move(settings.value()),
+        CreateExtensionTelemetryReportRequestDict(*telemetry_report_request));
+  }
 }
 
 }  // namespace enterprise_connectors

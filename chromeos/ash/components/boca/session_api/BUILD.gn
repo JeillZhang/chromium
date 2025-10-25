@@ -15,6 +15,8 @@ source_set("session_api") {
     "get_session_request.h",
     "join_session_request.cc",
     "join_session_request.h",
+    "json_proto_converters.cc",
+    "json_proto_converters.h",
     "remove_student_request.cc",
     "remove_student_request.h",
     "renotify_student_request.cc",
@@ -39,14 +41,6 @@ source_set("session_api") {
     "//ash/constants",
     "//base",
     "//chromeos/ash/components/boca/proto",
-
-    # TODO(http://crbug.com/421832370): The following deps is made necessary
-    # only because of the existing circular dependency between
-    # //c/a/c/boca and //c/a/c/boca/session_api. This issue was exposed by a
-    # ChromeOS build issue documented as a different bug in
-    # https://crbug.com/354839582. Remove the following deps when the circular
-    # dependency issue is fixed.
-    "//chromeos/services/network_config/public/cpp",
     "//components/signin/public/identity_manager",
     "//google_apis",
     "//google_apis/common",
@@ -63,6 +57,7 @@ source_set("unit_tests") {
     "create_session_request_unittest.cc",
     "get_session_request_unittest.cc",
     "join_session_request_unittest.cc",
+    "json_proto_converters_unittest.cc",
     "remove_student_request_unittest.cc",
     "renotify_student_request_unittest.cc",
     "session_client_impl_unittest.cc",

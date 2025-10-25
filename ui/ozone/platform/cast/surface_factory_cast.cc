@@ -58,8 +58,8 @@ class CastPixmap : public gfx::NativePixmap {
   size_t GetDmaBufOffset(size_t plane) const override { return 0; }
   size_t GetDmaBufPlaneSize(size_t plane) const override { return 0; }
   uint64_t GetBufferFormatModifier() const override { return 0; }
-  gfx::BufferFormat GetBufferFormat() const override {
-    return gfx::BufferFormat::BGRA_8888;
+  viz::SharedImageFormat GetSharedImageFormat() const override {
+    return viz::SinglePlaneFormat::kBGRA_8888;
   }
   size_t GetNumberOfPlanes() const override { return 1; }
   bool SupportsZeroCopyWebGPUImport() const override {
@@ -102,16 +102,16 @@ SurfaceFactoryCast::~SurfaceFactoryCast() {}
 std::vector<gl::GLImplementationParts>
 SurfaceFactoryCast::GetAllowedGLImplementations() {
   std::vector<gl::GLImplementationParts> impls;
-  if (egl_implementation_)
-    impls.emplace_back(
-        gl::GLImplementationParts(gl::kGLImplementationEGLGLES2));
+  if (egl_implementation_) {
+    impls.push_back(gl::GLImplementationParts(gl::kGLImplementationEGLANGLE));
+  }
   return impls;
 }
 
 GLOzone* SurfaceFactoryCast::GetGLOzone(
     const gl::GLImplementationParts& implementation) {
   switch (implementation.gl) {
-    case gl::kGLImplementationEGLGLES2:
+    case gl::kGLImplementationEGLANGLE:
       return egl_implementation_.get();
     default:
       return nullptr;

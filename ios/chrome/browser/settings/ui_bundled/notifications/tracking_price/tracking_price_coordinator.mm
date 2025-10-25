@@ -62,7 +62,6 @@
                   prefService:self.profile->GetPrefs()];
   self.mediator.consumer = self.viewController;
   self.mediator.presenter = self;
-  self.viewController.modelDelegate = self.mediator;
   [self.baseNavigationController pushViewController:self.viewController
                                            animated:YES];
 }
@@ -84,9 +83,7 @@
 
 - (void)presentPushNotificationPermissionAlert {
   NSString* settingURL = UIApplicationOpenSettingsURLString;
-  if (@available(iOS 15.4, *)) {
-    settingURL = UIApplicationOpenNotificationSettingsURLString;
-  }
+  settingURL = UIApplicationOpenNotificationSettingsURLString;
 
   NSString* alertTitle =
       l10n_util::GetNSString(IDS_IOS_PRICE_NOTIFICATIONS_SETTINGS_ALERT_TITLE);

@@ -216,8 +216,8 @@ class TraversalListener : public PhysicalFragmentTraversalListener {
     auto mutator = fragment.GetMutableForContainerLayout();
     mutator.SetOffsetFromRootFragmentationContext(new_accumulated_offset);
 
-    const auto* layout_box = DynamicTo<LayoutBox>(fragment.GetLayoutObject());
-    if (layout_box && layout_box->ChildLayoutBlockedByDisplayLock()) {
+    const LayoutObject* layout_object = fragment.GetLayoutObject();
+    if (layout_object && layout_object->ChildLayoutBlockedByDisplayLock()) {
       return kSkipChildren;
     }
 
@@ -225,7 +225,7 @@ class TraversalListener : public PhysicalFragmentTraversalListener {
         force_entire_subtree_update_ + ShouldForceEntireSubtreeUpdate(fragment);
     bool update_children = new_force_entire_subtree_update ||
                            fragment.IsFragmentainerBox() ||
-                           layout_box->ShouldCheckForPaintInvalidation();
+                           layout_object->ShouldCheckForPaintInvalidation();
     if (!update_children) {
       return kSkipChildren;
     }
@@ -320,37 +320,6 @@ LayoutUnit BoxTotalBlockSize(const LayoutBox& box) {
   return total_block_size;
 }
 
-DeprecatedLayoutPoint ComputeBoxLocation(
-    const PhysicalBoxFragment& child_fragment,
-    PhysicalOffset offset,
-    const PhysicalBoxFragment& container_fragment,
-    const BlockBreakToken* previous_container_break_token) {
-  DCHECK(!RuntimeEnabledFeatures::LayoutBoxVisualLocationEnabled());
-  if (container_fragment.Style().IsFlippedBlocksWritingMode()) [[unlikely]] {
-    // Move the physical offset to the right side of the child fragment,
-    // relative to the right edge of the container fragment. This is the
-    // block-start offset in vertical-rl, and the legacy engine expects always
-    // expects the block offset to be relative to block-start.
-    offset.left = container_fragment.Size().width - offset.left -
-                  child_fragment.Size().width;
-  }
-
-  if (previous_container_break_token) [[unlikely]] {
-    // Add the amount of block-size previously (in previous fragmentainers)
-    // consumed by the container fragment. This will map the child's offset
-    // nicely into the flow thread coordinate system used by the legacy engine.
-    LayoutUnit consumed =
-        previous_container_break_token->ConsumedBlockSizeForLegacy();
-    if (container_fragment.Style().IsHorizontalWritingMode()) {
-      offset.top += consumed;
-    } else {
-      offset.left += consumed;
-    }
-  }
-
-  return offset.FaultyToDeprecatedLayoutPoint();
-}
-
 void UpdateChildLayoutBoxLocations(const PhysicalBoxFragment& fragment) {
   if (fragment.GetLayoutObject()->ChildLayoutBlockedByDisplayLock()) {
     return;
@@ -388,6 +357,18 @@ void UpdateChildLayoutBoxLocations(const PhysicalBoxFragment& fragment) {
       }
       PhysicalRect rect = StitchedPageContentRect(page_area, *first_page_area,
                                                   previous_break_token);
+
+      // A page area, being a fragmentainer, acts as the containing block for
+      // out-of-flow positioned descendants on the page. As such, its (stitched)
+      // offset from the first page will be needed, in order to calculate the
+      // location of any OOFs. We need to do this manually here, since we cannot
+      // process the page area as part of normal subtree processing, because the
+      // page area is the boundary between the page container coordinate system
+      // (with page margin boxes and so on), and the stitched coordinate system
+      // of the fragmented flow.
+      auto mutator = page_area.GetMutableForContainerLayout();
+      mutator.SetOffsetFromRootFragmentationContext(rect.offset);
+
       UpdateOffsetsFromRootFragmentationContext(page_area, rect.offset);
       previous_break_token = page_area.GetBreakToken();
     }

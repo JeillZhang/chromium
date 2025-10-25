@@ -31,6 +31,9 @@ enum class PushNotificationClientId;
             (UIViewController*)baseViewController
                           skipIfUINotAvailable:(BOOL)skipIfUINotAvailable;
 
+// Shows the BWG settings UI.
+- (void)showBWGSettings;
+
 // TODO(crbug.com/41352590) : Do not pass baseViewController through dispatcher.
 // Shows the Google services settings UI, presenting from `baseViewController`.
 // If `baseViewController` is nil BVC will be used as presenterViewController.
@@ -86,9 +89,6 @@ enum class PushNotificationClientId;
                                         sourceForUMA:
                                             (DefaultBrowserSettingsPageSource)
                                                 source;
-
-// Shows the settings page allowing the user to clear their browsing data.
-- (void)showClearBrowsingDataSettings;
 
 // Shows the Safety Check page and starts the Safety Check for `referrer`.
 - (void)showAndStartSafetyCheckForReferrer:

@@ -102,6 +102,9 @@ uint32_t DragOperationsToDndActions(int operations) {
   if (operations & DragDropTypes::DRAG_MOVE) {
     dnd_actions |= WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
   }
+  if (operations & DragDropTypes::DRAG_LINK) {
+    dnd_actions |= WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+  }
   return dnd_actions;
 }
 
@@ -130,6 +133,7 @@ WaylandDataDragController::WaylandDataDragController(
 
 WaylandDataDragController::~WaylandDataDragController() {
   window_manager_->RemoveObserver(this);
+  data_device_manager_->GetDevice()->ResetDragDelegate();
 }
 
 bool WaylandDataDragController::StartSession(const OSExchangeData& data,
@@ -569,7 +573,13 @@ void WaylandDataDragController::OnDataSourceDropPerformed(
           << " origin=" << !!origin_window_
           << " nested_dispatcher=" << !!nested_dispatcher_;
 
-  HandleDragEnd(DragResult::kCompleted, timestamp);
+  // Treat a "drop performed" event with a `dnd_action` of NONE (0) as a
+  // cancellation (passing `kCancelled`). Per the protocol, `cancelled` event
+  // can be sent after "drop performed", that is what `KWin` does, for example.
+  // See crbug.com/447037092.
+  HandleDragEnd(data_source_->dnd_action() ? DragResult::kCompleted
+                                           : DragResult::kCancelled,
+                timestamp);
 }
 
 void WaylandDataDragController::OnDataSourceSend(WaylandDataSource* source,

@@ -15,6 +15,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/notimplemented.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -127,7 +128,7 @@ void UiDevToolsServer::IOThreadData::MakeServer(
   DCHECK(!server_);
 
   // Create the socket using the address 127.0.0.1 to listen on all interfaces.
-  constexpr int kBacklog = 1;
+  constexpr int kBacklog = 128;
   std::unique_ptr<net::ServerSocket> socket =
       std::make_unique<net::TCPServerSocket>(nullptr, net::NetLogSource());
   if (socket->Listen(net::IPEndPoint(net::IPAddress::IPv4Localhost(), port),

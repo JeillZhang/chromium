@@ -9,10 +9,12 @@
 
 #include "chrome/browser/new_tab_page/feature_promo_helper/new_tab_page_feature_promo_helper.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/search/background/ntp_custom_background_service_factory.h"
 #include "chrome/browser/ui/views/side_panel/customize_chrome/customize_chrome_utils.h"
 #include "chrome/browser/ui/webui/customize_buttons/customize_buttons_handler.h"
 #include "chrome/browser/ui/webui/new_tab_footer/new_tab_footer.mojom.h"
 #include "chrome/browser/ui/webui/new_tab_footer/new_tab_footer_handler.h"
+#include "chrome/browser/ui/webui/new_tab_page/new_tab_page_ui.h"
 #include "chrome/browser/ui/webui/webui_load_timer.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
@@ -65,6 +67,10 @@ NewTabFooterUI::NewTabFooterUI(content::WebUI* web_ui)
        IDS_NTP_CUSTOM_BG_CUSTOMIZE_NTP_WALLPAPER_SEARCH_LABEL},
       {"manageExtension", IDS_MANAGE_EXTENSION},
       {"wallpaperSearchButton", IDS_NTP_WALLPAPER_SEARCH_PAGE_HEADER},
+      // TODO(crbug.com/394902303): alphabetically order the following strings.
+      {"backgroundAttributionDesc",
+       IDS_NEW_TAB_FOOTER_BACKGROUND_ATTRIBUTION_ARIA_DESC},
+      {"managementLinkDesc", IDS_OPENS_MANAGEMENT_PAGE},
   };
   source->AddLocalizedStrings(kLocalizedStrings);
 }
@@ -103,14 +109,44 @@ void NewTabFooterUI::BindInterface(
   customize_buttons_factory_receiver_.Bind(std::move(pending_receiver));
 }
 
+void NewTabFooterUI::BindInterface(
+    mojo::PendingReceiver<help_bubble::mojom::HelpBubbleHandlerFactory>
+        pending_receiver) {
+  if (help_bubble_handler_factory_receiver_.is_bound()) {
+    help_bubble_handler_factory_receiver_.reset();
+  }
+  help_bubble_handler_factory_receiver_.Bind(std::move(pending_receiver));
+}
+
 void NewTabFooterUI::CreateNewTabFooterHandler(
     mojo::PendingRemote<new_tab_footer::mojom::NewTabFooterDocument>
         pending_document,
     mojo::PendingReceiver<new_tab_footer::mojom::NewTabFooterHandler>
         pending_handler) {
-  handler_ = std::make_unique<NewTabFooterHandler>(std::move(pending_handler),
-                                                   std::move(pending_document),
-                                                   web_ui()->GetWebContents());
+  handler_ = std::make_unique<NewTabFooterHandler>(
+      std::move(pending_handler), std::move(pending_document), this->embedder(),
+      NtpCustomBackgroundServiceFactory::GetForProfile(profile_),
+      web_ui()->GetWebContents());
+  if (!source_tab_url_.is_empty()) {
+    handler_->AttachedTabStateUpdated(source_tab_url_);
+  }
+}
+
+void NewTabFooterUI::CreateHelpBubbleHandler(
+    mojo::PendingRemote<help_bubble::mojom::HelpBubbleClient> client,
+    mojo::PendingReceiver<help_bubble::mojom::HelpBubbleHandler> handler) {
+  help_bubble_handler_ = std::make_unique<user_education::HelpBubbleHandler>(
+      std::move(handler), std::move(client), this,
+      std::vector<ui::ElementIdentifier>{
+          CustomizeButtonsHandler::kCustomizeChromeButtonElementId});
+}
+
+void NewTabFooterUI::AttachedTabStateUpdated(const GURL& url) {
+  if (handler_) {
+    handler_->AttachedTabStateUpdated(url);
+  } else {
+    source_tab_url_ = url;
+  }
 }
 
 void NewTabFooterUI::CreateCustomizeButtonsHandler(

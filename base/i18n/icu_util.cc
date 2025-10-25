@@ -17,6 +17,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/debug/alias.h"
+#include "base/debug/crash_logging.h"
 #include "base/environment.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -25,6 +26,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/metrics_hashes.h"
 #include "base/path_service.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "build/chromecast_buildflags.h"
 #include "third_party/icu/source/common/unicode/putil.h"
@@ -34,7 +36,6 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/apk_assets.h"
-#include "base/android/timezone_utils.h"
 #endif
 
 #if BUILDFLAG(IS_IOS)
@@ -60,7 +61,6 @@
 
 namespace base::i18n {
 
-#if !BUILDFLAG(IS_NACL)
 namespace {
 
 #if DCHECK_IS_ON()
@@ -178,7 +178,8 @@ void LazyInitIcuDataFile() {
     return;
   }
 #endif  // !BUILDFLAG(IS_APPLE)
-  File file(data_path, File::FLAG_OPEN | File::FLAG_READ);
+  File file(data_path,
+            File::FLAG_OPEN | File::FLAG_READ | File::FLAG_WIN_SHARE_DELETE);
   if (file.IsValid()) {
     // TODO(brucedawson): http://crbug.com/445616.
     g_debug_icu_pf_last_error = 0;
@@ -196,6 +197,13 @@ void LazyInitIcuDataFile() {
     g_debug_icu_pf_last_error = ::GetLastError();
     g_debug_icu_pf_error_details = file.error_details();
     UNSAFE_TODO(wcscpy_s(g_debug_icu_pf_filename, data_path.value().c_str()));
+    static auto* const path_crash_key = debug::AllocateCrashKeyString(
+        "icu-open-file-path", debug::CrashKeySize::Size256);
+    debug::SetCrashKeyString(path_crash_key, data_path.AsUTF8Unsafe());
+    static auto* const error_crash_key = debug::AllocateCrashKeyString(
+        "icu-open-file-error", debug::CrashKeySize::Size32);
+    debug::SetCrashKeyString(error_crash_key,
+                             NumberToString(g_debug_icu_pf_last_error));
   }
 #endif  // BUILDFLAG(IS_WIN)
 }
@@ -306,17 +314,7 @@ bool InitializeICUFromDataFile() {
 // On some platforms, the time zone must be explicitly initialized zone rather
 // than relying on ICU's internal initialization.
 void InitializeIcuTimeZone() {
-#if BUILDFLAG(IS_ANDROID)
-  // On Android, we can't leave it up to ICU to set the default time zone
-  // because ICU's time zone detection does not work in many time zones (e.g.
-  // Australia/Sydney, Asia/Seoul, Europe/Paris ). Use JNI to detect the host
-  // time zone and set the ICU default time zone accordingly in advance of
-  // actual use. See crbug.com/722821 and
-  // https://ssl.icu-project.org/trac/ticket/13208 .
-  std::u16string zone_id = android::GetDefaultTimeZoneId();
-  icu::TimeZone::adoptDefault(icu::TimeZone::createTimeZone(
-      icu::UnicodeString(false, zone_id.data(), zone_id.length())));
-#elif BUILDFLAG(IS_FUCHSIA)
+#if BUILDFLAG(IS_FUCHSIA)
   // The platform-specific mechanisms used by ICU's detectHostTimeZone() to
   // determine the default time zone will not work on Fuchsia. Therefore,
   // proactively set the default system.
@@ -329,12 +327,13 @@ void InitializeIcuTimeZone() {
       FuchsiaIntlProfileWatcher::GetPrimaryTimeZoneIdForIcuInitialization();
   icu::TimeZone::adoptDefault(
       icu::TimeZone::createTimeZone(icu::UnicodeString::fromUTF8(zone_id)));
-#elif BUILDFLAG(IS_CHROMEOS) || (BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CASTOS))
+#elif BUILDFLAG(IS_CHROMEOS) || \
+    (BUILDFLAG(IS_LINUX) && !BUILDFLAG(IS_CASTOS)) || BUILDFLAG(IS_ANDROID)
   // To respond to the time zone change properly, the default time zone
   // cache in ICU has to be populated on starting up.
   // See TimeZoneMonitorLinux::NotifyClientsFromImpl().
   std::unique_ptr<icu::TimeZone> zone(icu::TimeZone::createDefault());
-#endif  // BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(IS_FUSCHIA)
 }
 
 enum class ICUCreateInstance {
@@ -438,7 +437,5 @@ void AllowMultipleInitializeCallsForTesting() {
   g_check_called_once = false;
 #endif
 }
-
-#endif  // !BUILDFLAG(IS_NACL)
 
 }  // namespace base::i18n

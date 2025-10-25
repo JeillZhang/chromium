@@ -48,8 +48,6 @@ struct OnDeviceOptions final {
   on_device_model::Capabilities capabilities;
   SamplingParams sampling_params;
 
-  base::WeakPtr<OptimizationGuideLogger> logger;
-
   // Returns true if the on-device model may be used.
   bool ShouldUse() const;
 };
@@ -64,9 +62,8 @@ class OnDeviceContext : public on_device_model::mojom::ContextClient {
   ~OnDeviceContext() override;
 
   // Constructs the input context and begins processing it.
-  bool SetInput(
-      MultimodalMessageReadView request,
-      OptimizationGuideModelExecutor::Session::SetInputCallback callback);
+  bool SetInput(MultimodalMessageReadView request,
+                OnDeviceSession::SetInputCallback callback);
 
   // Get the session that we've sent the input to, creating it if does not
   // exist (e.g. due to a disconnect.)
@@ -106,7 +103,7 @@ class OnDeviceContext : public on_device_model::mojom::ContextClient {
   uint32_t tokens_processed_ = 0;
   on_device_model::mojom::Priority priority_ =
       on_device_model::mojom::Priority::kForeground;
-  OptimizationGuideModelExecutor::Session::SetInputCallback callback_;
+  OnDeviceSession::SetInputCallback callback_;
   mojo::ReceiverSet<on_device_model::mojom::ContextClient> clients_;
 };
 

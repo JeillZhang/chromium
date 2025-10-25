@@ -19,6 +19,7 @@
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "google_apis/gaia/oauth_multilogin_result.h"
+#include "net/http/http_request_headers.h"
 #include "net/base/net_errors.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/mojom/fetch_api.mojom.h"
@@ -42,6 +43,17 @@ namespace gaia {
 enum class MultiloginMode {
   MULTILOGIN_UPDATE_COOKIE_ACCOUNTS_ORDER = 0,
   MULTILOGIN_PRESERVE_COOKIE_ACCOUNTS_ORDER
+};
+
+// Mode determining the cookie binding mode for a multilogin request. This does
+// not have any effect if none of the tokens used in the request are bound.
+//
+// This parameter is only going to be used during a gradual feature rollout.
+// TODO(crbug.com/452551212): remove this parameter after the full launch.
+enum class MultiloginCookieBindingMode {
+  kDisabled,
+  kEnabledUnenforced,
+  kEnabledEnforced
 };
 
 // Specifies the "source" parameter for Gaia calls.
@@ -128,7 +140,9 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
       const std::vector<gaia::MultiloginAccountAuthCredentials>& accounts,
       const std::string& external_cc_result,
       OAuthMultiloginResult::CookieDecryptor cookie_decryptor =
-          base::NullCallback());
+          base::NullCallback(),
+      gaia::MultiloginCookieBindingMode cookie_binding_mode =
+          gaia::MultiloginCookieBindingMode::kDisabled);
 
   // Starts a request to list the accounts in the GAIA cookie.
   void StartListAccounts();
@@ -166,8 +180,8 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
  protected:
   // Creates and starts |url_loader_|, used to make all Gaia request.  |body| is
   // used as the body of the POST request sent to GAIA. |body_content_type| is
-  // the body content type to set, but only used if |body| is set.  Any strings
-  // listed in |headers| are added as extra HTTP headers in the request.
+  // the body content type to set, but only used if |body| is set.
+  // |request_headers| are added as extra HTTP headers in the request.
   //
   // |credentials_mode| are passed to directly to
   // network::SimpleURLLoader::Create() when creating the SimpleURLLoader.
@@ -177,7 +191,7 @@ class COMPONENT_EXPORT(GOOGLE_APIS) GaiaAuthFetcher {
   virtual void CreateAndStartGaiaFetcher(
       const std::string& body,
       const std::string& body_content_type,
-      const std::string& headers,
+      const net::HttpRequestHeaders& request_headers,
       const GURL& gaia_gurl,
       network::mojom::CredentialsMode credentials_mode,
       const net::NetworkTrafficAnnotationTag& traffic_annotation);

@@ -11,7 +11,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/task/thread_pool.h"
 #include "base/time/time.h"
-#include "chrome/browser/glic/resources/grit/glic_browser_resources.h"
 #include "chrome/browser/media/webrtc/desktop_media_picker_controller.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
@@ -33,6 +32,8 @@ namespace {
 std::vector<uint8_t> ConvertFrameToJpeg(
     std::unique_ptr<webrtc::DesktopFrame> frame) {
   CHECK(frame);
+  // TODO(crbug.com/352187279): Support other pixel formats.
+  CHECK_EQ(frame->pixel_format(), webrtc::FOURCC_ARGB);
   SkImageInfo image_info =
       SkImageInfo::Make(frame->size().width(), frame->size().height(),
                         kBGRA_8888_SkColorType, kPremul_SkAlphaType);
@@ -65,7 +66,11 @@ std::vector<uint8_t> ConvertFrameToJpeg(
 
 GlicScreenshotCapturer::GlicScreenshotCapturer() = default;
 
-GlicScreenshotCapturer::~GlicScreenshotCapturer() = default;
+GlicScreenshotCapturer::~GlicScreenshotCapturer() {
+  if (capture_callback_) {
+    SignalError(glic::mojom::CaptureScreenshotErrorReason::kUnknown);
+  }
+}
 
 void GlicScreenshotCapturer::CaptureScreenshot(
     gfx::NativeWindow parent_window,

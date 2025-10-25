@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/new_tab_page/one_google_bar/one_google_bar_loader_impl.h"
 
 #include <map>
@@ -346,7 +341,7 @@ GURL OneGoogleBarLoaderImpl::GetApiUrl() const {
     // Add the "async=" parameter. We can't use net::AppendQueryParameter for
     // this because we need the ":" to remain unescaped.
     if (param_pair.first == "async") {
-      std::string query = api_url.query() + "&async=" + param_pair.second;
+      std::string query = api_url.GetQuery() + "&async=" + param_pair.second;
       if (query.at(0) == '&') {
         query = query.substr(1);
       }

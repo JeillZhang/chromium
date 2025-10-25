@@ -345,6 +345,24 @@ void AssertParseError(const SpeculationRuleSet* rule_set) {
   EXPECT_THAT(rule_set->prerender_rules(), ElementsAre());
 }
 
+TEST_F(SpeculationRuleSetTest, PrerenderUntilScript) {
+  auto* rule_set = CreateRuleSet(
+      R"({
+        "prerender_until_script": [{
+        "source": "list",
+        "urls": ["https://example.com/index2.html"]
+      }]
+    })",
+      KURL("https://example.com/"), execution_context());
+
+  EXPECT_THAT(rule_set->prefetch_rules(), ElementsAre());
+  EXPECT_THAT(rule_set->prefetch_with_subresources_rules(), ElementsAre());
+  EXPECT_THAT(rule_set->prerender_rules(), ElementsAre());
+  EXPECT_THAT(
+      rule_set->prerender_until_script_rules(),
+      ElementsAre(MatchesListOfURLs("https://example.com/index2.html")));
+}
+
 TEST_F(SpeculationRuleSetTest, RejectsInvalidJSON) {
   auto* rule_set = CreateRuleSet("[invalid]", KURL("https://example.com"),
                                  execution_context());
@@ -374,12 +392,12 @@ TEST_F(SpeculationRuleSetTest, RejectsComments) {
 
 TEST_F(SpeculationRuleSetTest, SimplePrefetchRule) {
   auto* rule_set = CreateRuleSet(
-      R"({
-        "prefetch": [{
-          "source": "list",
-          "urls": ["https://example.com/index2.html"]
-        }]
-      })",
+    R"({
+      "prefetch": [{
+        "source": "list",
+        "urls": ["https://example.com/index2.html"]
+      }]
+    })",
       KURL("https://example.com/"), execution_context());
   ASSERT_TRUE(rule_set);
   EXPECT_EQ(rule_set->error_type(), SpeculationRuleSetErrorType::kNoError);
@@ -846,7 +864,7 @@ TEST_F(SpeculationRuleSetTest, PropagatesToDocument) {
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
   script->setAttribute(html_names::kTypeAttr, AtomicString("SpEcUlAtIoNrUlEs"));
-  script->setText(
+  script->setTextWithoutTrustedTypes(
       R"({"prefetch": [
            {"source": "list", "urls": ["https://example.com/foo"]}
          ],
@@ -871,7 +889,7 @@ HTMLScriptElement* InsertSpeculationRules(Document& document,
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
   script->setAttribute(html_names::kTypeAttr, AtomicString("SpEcUlAtIoNrUlEs"));
-  script->setText(speculation_script);
+  script->setTextWithoutTrustedTypes(speculation_script);
   document.head()->appendChild(script);
   return script;
 }
@@ -896,10 +914,9 @@ void PropagateRulesToStubSpeculationHost(
   frame.GetSettings()->SetScriptEnabled(true);
 
   auto& broker = frame.DomWindow()->GetBrowserInterfaceBroker();
-  broker.SetBinderForTesting(
-      mojom::blink::SpeculationHost::Name_,
-      WTF::BindRepeating(&StubSpeculationHost::BindUnsafe,
-                         WTF::Unretained(&speculation_host)));
+  broker.SetBinderForTesting(mojom::blink::SpeculationHost::Name_,
+                             BindRepeating(&StubSpeculationHost::BindUnsafe,
+                                           Unretained(&speculation_host)));
 
   base::RunLoop run_loop;
   speculation_host.SetDoneClosure(run_loop.QuitClosure());
@@ -934,10 +951,9 @@ testing::AssertionResult NoRulesPropagatedToStubSpeculationHost(
     IncludesStyleUpdate includes_style_update = IncludesStyleUpdate{true}) {
   LocalFrame& frame = page_holder.GetFrame();
   auto& broker = frame.DomWindow()->GetBrowserInterfaceBroker();
-  broker.SetBinderForTesting(
-      mojom::blink::SpeculationHost::Name_,
-      WTF::BindRepeating(&StubSpeculationHost::BindUnsafe,
-                         WTF::Unretained(&speculation_host)));
+  broker.SetBinderForTesting(mojom::blink::SpeculationHost::Name_,
+                             BindRepeating(&StubSpeculationHost::BindUnsafe,
+                                           Unretained(&speculation_host)));
 
   bool done_was_called = false;
 
@@ -1093,7 +1109,7 @@ TEST_F(SpeculationRuleSetTest, ExcludesFragmentLinksWithBase) {
   DummyPageHolder page_holder;
   StubSpeculationHost speculation_host;
   page_holder.GetDocument().SetURL(KURL("https://example.com/"));
-  page_holder.GetDocument().head()->setInnerHTML(
+  page_holder.GetDocument().head()->SetInnerHTMLWithoutTrustedTypes(
       "<base href=\"https://not-example.com/\">");
 
   PropagateRulesToStubSpeculationHost(page_holder, speculation_host,
@@ -1192,18 +1208,18 @@ TEST_F(SpeculationRuleSetTest, RemoveInMicrotask) {
     ::testing::InSequence sequence;
     EXPECT_CALL(mock_callback, Run(::testing::SizeIs(2)));
     EXPECT_CALL(mock_callback, Run(::testing::SizeIs(1)));
-    EXPECT_CALL(mock_callback, Run(::testing::SizeIs(2)))
-        .WillOnce(::testing::Invoke([&]() { run_loop.Quit(); }));
+    EXPECT_CALL(mock_callback, Run(::testing::SizeIs(2))).WillOnce([&]() {
+      run_loop.Quit();
+    });
   }
   speculation_host.SetCandidatesUpdatedCallback(mock_callback.Get());
 
   LocalFrame& frame = page_holder.GetFrame();
   frame.GetSettings()->SetScriptEnabled(true);
   auto& broker = frame.DomWindow()->GetBrowserInterfaceBroker();
-  broker.SetBinderForTesting(
-      mojom::blink::SpeculationHost::Name_,
-      WTF::BindRepeating(&StubSpeculationHost::BindUnsafe,
-                         WTF::Unretained(&speculation_host)));
+  broker.SetBinderForTesting(mojom::blink::SpeculationHost::Name_,
+                             BindRepeating(&StubSpeculationHost::BindUnsafe,
+                                           Unretained(&speculation_host)));
 
   // First simulated task adds the rule sets.
   InsertSpeculationRules(page_holder.GetDocument(),
@@ -1260,7 +1276,7 @@ TEST_F(SpeculationRuleSetTest, ConsoleWarning) {
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
   script->setAttribute(html_names::kTypeAttr, AtomicString("speculationrules"));
-  script->setText("[invalid]");
+  script->setTextWithoutTrustedTypes("[invalid]");
   document.head()->appendChild(script);
 
   EXPECT_TRUE(std::ranges::any_of(
@@ -1279,7 +1295,7 @@ TEST_F(SpeculationRuleSetTest, ConsoleWarningForInvalidRule) {
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
   script->setAttribute(html_names::kTypeAttr, AtomicString("speculationrules"));
-  script->setText(
+  script->setTextWithoutTrustedTypes(
       R"({
         "prefetch": [{
           "source": "list",
@@ -1296,13 +1312,15 @@ TEST_F(SpeculationRuleSetTest, ConsoleWarningForInvalidRule) {
 
 // Tests that a warning is shown when speculation rules are added using the
 // innerHTML setter, which doesn't currently do what the author meant.
-TEST_F(SpeculationRuleSetTest, ConsoleWarningForSetInnerHTML) {
+TEST_F(SpeculationRuleSetTest,
+       ConsoleWarningForSetInnerHTMLWithoutTrustedTypes) {
   auto* chrome_client = MakeGarbageCollected<ConsoleCapturingChromeClient>();
   DummyPageHolder page_holder(/*initial_view_size=*/{}, chrome_client);
   page_holder.GetFrame().GetSettings()->SetScriptEnabled(true);
 
   Document& document = page_holder.GetDocument();
-  document.head()->setInnerHTML("<script type=speculationrules>{}</script>");
+  document.head()->SetInnerHTMLWithoutTrustedTypes(
+      "<script type=speculationrules>{}</script>");
 
   EXPECT_TRUE(std::ranges::any_of(
       chrome_client->ConsoleMessages(), [](const String& message) {
@@ -1322,10 +1340,10 @@ TEST_F(SpeculationRuleSetTest, ConsoleWarningForChildModification) {
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
   script->setAttribute(html_names::kTypeAttr, AtomicString("speculationrules"));
-  script->setText("{}");
+  script->setTextWithoutTrustedTypes("{}");
   document.head()->appendChild(script);
 
-  script->setText(R"({"prefetch": [{"urls": "/2"}]})");
+  script->setTextWithoutTrustedTypes(R"({"prefetch": [{"urls": "/2"}]})");
 
   EXPECT_TRUE(std::ranges::any_of(
       chrome_client->ConsoleMessages(), [](const String& message) {
@@ -1344,7 +1362,7 @@ TEST_F(SpeculationRuleSetTest, ConsoleWarningForDuplicateKey) {
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
   script->setAttribute(html_names::kTypeAttr, AtomicString("speculationrules"));
-  script->setText(
+  script->setTextWithoutTrustedTypes(
       R"({
         "prefetch": [{"urls": ["a.html"]}],
         "prefetch": [{"urls": ["b.html"]}]
@@ -1904,7 +1922,7 @@ TEST_F(DocumentRulesTest, ConsoleWarningForInvalidRule) {
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
   script->setAttribute(html_names::kTypeAttr, AtomicString("speculationrules"));
-  script->setText(
+  script->setTextWithoutTrustedTypes(
       R"({
         "prefetch": [{
           "source": "document",
@@ -2904,7 +2922,7 @@ TEST_F(DocumentRulesTest, SelectorMatchesAddsCandidates) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
     <div id="unimportant-section"></div>
   )HTML");
@@ -2936,7 +2954,7 @@ TEST_F(DocumentRulesTest, SelectorMatchesIsDynamic) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
     <div id="unimportant-section"></div>
   )HTML");
@@ -2984,7 +3002,7 @@ TEST_F(DocumentRulesTest, AddingDocumentRulesInvalidatesStyle) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
     <div id="unimportant-section"></div>
   )HTML");
@@ -3043,7 +3061,7 @@ TEST_F(DocumentRulesTest, BasicStyleInvalidation) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
     <div id="unimportant-section"></div>
   )HTML");
@@ -3076,7 +3094,7 @@ TEST_F(DocumentRulesTest, IrrelevantDOMChangeShouldNotInvalidateCandidateList) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
     <div id="unimportant-section"></div>
   )HTML");
@@ -3113,7 +3131,7 @@ TEST_F(DocumentRulesTest, SelectorMatchesInsideShadowTree) {
 
   ShadowRoot& shadow_root =
       document.body()->AttachShadowRootForTesting(ShadowRootMode::kOpen);
-  shadow_root.setInnerHTML(R"HTML(
+  shadow_root.SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
     <div id="unimportant-section"></div>
   )HTML");
@@ -3143,7 +3161,7 @@ TEST_F(DocumentRulesTest, SelectorMatchesWithScopePseudoSelector) {
   Document& document = page_holder.GetDocument();
 
   document.body()->setAttribute(html_names::kClassAttr, AtomicString("foo"));
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <a href="https://foo.com/fizz"></a>
     <div class="foo">
       <a href="https://foo.com/buzz"></a>
@@ -3170,7 +3188,7 @@ TEST_F(DocumentRulesTest, UpdateQueueingWithSelectorMatches_1) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
     <div id="unimportant-section"></div>
   )HTML");
@@ -3250,7 +3268,7 @@ TEST_F(DocumentRulesTest, UpdateQueueingWithSelectorMatches_2) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
   )HTML");
   auto* important_section =
@@ -3293,7 +3311,7 @@ TEST_F(DocumentRulesTest, UpdateQueueingWithSelectorMatches_3) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
   )HTML");
   auto* important_section =
@@ -3324,7 +3342,7 @@ TEST_F(DocumentRulesTest, UpdateQueueingWithSelectorMatches_4) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
   )HTML");
   auto* important_section =
@@ -3361,7 +3379,7 @@ TEST_F(DocumentRulesTest, UpdateQueueingWithSelectorMatches_5) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
   )HTML");
   auto* important_section =
@@ -3395,7 +3413,7 @@ TEST_F(DocumentRulesTest, LinksWithoutComputedStyle) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
   )HTML");
   auto* important_section =
@@ -3441,7 +3459,7 @@ TEST_F(DocumentRulesTest, LinksWithoutComputedStyle_HrefMatches) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
   )HTML");
   auto* important_section =
@@ -3471,7 +3489,7 @@ TEST_F(DocumentRulesTest, LinkInsideDisplayLockedElement) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
   )HTML");
   auto* important_section =
@@ -3507,7 +3525,7 @@ TEST_F(DocumentRulesTest, LinkInsideNestedDisplayLockedElement) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section">
       <div id="links"></div>
     </div>
@@ -3635,7 +3653,7 @@ TEST_F(DocumentRulesTest, DisplayLockedLink) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
   )HTML");
   auto* important_section =
@@ -3671,7 +3689,7 @@ TEST_F(DocumentRulesTest, AddLinkToDisplayLockedContainer) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section">
     </div>
   )HTML");
@@ -3713,7 +3731,7 @@ TEST_F(DocumentRulesTest, DisplayLockedContainerTracking) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <div id="important-section"></div>
     <div id="irrelevant-section"><span></span></div>
   )HTML");
@@ -3799,8 +3817,9 @@ TEST_F(DocumentRulesTest, RemoveForcesStyleUpdate) {
   {
     ::testing::InSequence sequence;
     EXPECT_CALL(mock_callback, Run(::testing::SizeIs(2)));
-    EXPECT_CALL(mock_callback, Run(::testing::SizeIs(3)))
-        .WillOnce(::testing::Invoke([&]() { run_loop.Quit(); }));
+    EXPECT_CALL(mock_callback, Run(::testing::SizeIs(3))).WillOnce([&]() {
+      run_loop.Quit();
+    });
   }
   speculation_host.SetCandidatesUpdatedCallback(mock_callback.Get());
 
@@ -3808,10 +3827,9 @@ TEST_F(DocumentRulesTest, RemoveForcesStyleUpdate) {
   Document& doc = page_holder.GetDocument();
   frame.GetSettings()->SetScriptEnabled(true);
   auto& broker = frame.DomWindow()->GetBrowserInterfaceBroker();
-  broker.SetBinderForTesting(
-      mojom::blink::SpeculationHost::Name_,
-      WTF::BindRepeating(&StubSpeculationHost::BindUnsafe,
-                         WTF::Unretained(&speculation_host)));
+  broker.SetBinderForTesting(mojom::blink::SpeculationHost::Name_,
+                             BindRepeating(&StubSpeculationHost::BindUnsafe,
+                                           Unretained(&speculation_host)));
 
   for (StringView path : {"/baz", "/quux"}) {
     AddAnchor(*doc.body(), "https://example.com" + path);
@@ -3862,18 +3880,18 @@ TEST_F(DocumentRulesTest, RemoveWhileWaitingForStyle) {
   ::testing::StrictMock<base::MockCallback<base::RepeatingCallback<void(
       const Vector<mojom::blink::SpeculationCandidatePtr>&)>>>
       mock_callback;
-  EXPECT_CALL(mock_callback, Run(::testing::SizeIs(1)))
-      .WillOnce(::testing::Invoke([&]() { run_loop.Quit(); }));
+  EXPECT_CALL(mock_callback, Run(::testing::SizeIs(1))).WillOnce([&]() {
+    run_loop.Quit();
+  });
   speculation_host.SetCandidatesUpdatedCallback(mock_callback.Get());
 
   LocalFrame& frame = page_holder.GetFrame();
   Document& doc = page_holder.GetDocument();
   frame.GetSettings()->SetScriptEnabled(true);
   auto& broker = frame.DomWindow()->GetBrowserInterfaceBroker();
-  broker.SetBinderForTesting(
-      mojom::blink::SpeculationHost::Name_,
-      WTF::BindRepeating(&StubSpeculationHost::BindUnsafe,
-                         WTF::Unretained(&speculation_host)));
+  broker.SetBinderForTesting(mojom::blink::SpeculationHost::Name_,
+                             BindRepeating(&StubSpeculationHost::BindUnsafe,
+                                           Unretained(&speculation_host)));
   auto event_loop = frame.DomWindow()->GetAgent()->event_loop();
 
   // First, add the rule set and matching links. Style is not yet clean for the
@@ -3997,17 +4015,17 @@ TEST_F(SpeculationRuleSetTest, Eagerness) {
           AllOf(HasURL(kUrl4),
                 HasEagerness(blink::mojom::SpeculationEagerness::kEager)),
           AllOf(HasURL(kUrl5),
-                HasEagerness(blink::mojom::SpeculationEagerness::kEager)),
+                HasEagerness(blink::mojom::SpeculationEagerness::kImmediate)),
           AllOf(
               HasURL(kUrl6),
               HasEagerness(blink::mojom::SpeculationEagerness::kConservative)),
           AllOf(HasURL(kUrl7),
-                HasEagerness(blink::mojom::SpeculationEagerness::kEager)),
+                HasEagerness(blink::mojom::SpeculationEagerness::kImmediate)),
           AllOf(
               HasURL(kUrl8),
               HasEagerness(blink::mojom::SpeculationEagerness::kConservative)),
           AllOf(HasURL(kUrl9),
-                HasEagerness(blink::mojom::SpeculationEagerness::kEager))));
+                HasEagerness(blink::mojom::SpeculationEagerness::kImmediate))));
 }
 
 TEST_F(SpeculationRuleSetTest, InvalidUseOfEagerness1) {
@@ -4191,7 +4209,7 @@ TEST_F(SpeculationRuleSetTest, ConsoleWarningForNoVarySearchHintNotAString) {
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
   script->setAttribute(html_names::kTypeAttr, AtomicString("speculationrules"));
-  script->setText(
+  script->setTextWithoutTrustedTypes(
       R"({
     "prefetch": [{
         "source": "list",
@@ -4361,7 +4379,7 @@ TEST_F(SpeculationRuleSetTest, DocumentReportsSuccessMetric) {
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
   script->setAttribute(html_names::kTypeAttr, AtomicString("speculationrules"));
-  script->setText("{}");
+  script->setTextWithoutTrustedTypes("{}");
   document.head()->appendChild(script);
   histogram_tester.ExpectUniqueSample("Blink.SpeculationRules.LoadOutcome",
                                       SpeculationRulesLoadOutcome::kSuccess, 1);
@@ -4375,7 +4393,7 @@ TEST_F(SpeculationRuleSetTest, DocumentReportsParseErrorFromScript) {
   HTMLScriptElement* script =
       MakeGarbageCollected<HTMLScriptElement>(document, CreateElementFlags());
   script->setAttribute(html_names::kTypeAttr, AtomicString("speculationrules"));
-  script->setText("{---}");
+  script->setTextWithoutTrustedTypes("{---}");
   document.head()->appendChild(script);
   histogram_tester.ExpectUniqueSample(
       "Blink.SpeculationRules.LoadOutcome",
@@ -4474,7 +4492,7 @@ TEST_F(SpeculationRuleSetTest, InvalidTag) {
       })",
       KURL("https://example.com/"), execution_context());
   EXPECT_EQ(rule_set->error_type(),
-            SpeculationRuleSetErrorType::kInvalidRulesSkipped);
+            SpeculationRuleSetErrorType::kInvalidRulesetLevelTag);
   EXPECT_TRUE(rule_set->error_message().Contains("Tag value"))
       << rule_set->error_message();
 
@@ -4490,7 +4508,7 @@ TEST_F(SpeculationRuleSetTest, InvalidTag) {
                                           tag),
                            KURL("https://example.com/"), execution_context());
   EXPECT_EQ(rule_set->error_type(),
-            SpeculationRuleSetErrorType::kInvalidRulesSkipped);
+            SpeculationRuleSetErrorType::kInvalidRulesetLevelTag);
   EXPECT_TRUE(rule_set->error_message().Contains("Tag value"))
       << rule_set->error_message();
 }
@@ -4619,7 +4637,7 @@ TEST_F(SpeculationRuleSetTest, Crbug386547460) {
   Document& document = page_holder.GetDocument();
   page_holder.GetFrame().GetSettings()->SetScriptEnabled(true);
 
-  document.documentElement()->setInnerHTML(R"html(
+  document.documentElement()->SetInnerHTMLWithoutTrustedTypes(R"html(
     <head>
       <script></script>
     </head>
@@ -4630,7 +4648,7 @@ TEST_F(SpeculationRuleSetTest, Crbug386547460) {
   )html");
 
   document.scripts()->item(2);
-  document.body()->setOuterHTML("<body>42</body>");
+  document.body()->SetOuterHTMLWithoutTrustedTypes("<body>42</body>");
 }
 
 // Regression test for crbug.com/411367105.
@@ -4641,7 +4659,7 @@ TEST_F(DocumentRulesTest, DisplayLockedLinkForceUpdated) {
   StubSpeculationHost speculation_host;
   Document& document = page_holder.GetDocument();
 
-  document.body()->setInnerHTML(R"HTML(
+  document.body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <details id="test-details">
       <summary>Summary</summary>
       <div id="important-section"></div>

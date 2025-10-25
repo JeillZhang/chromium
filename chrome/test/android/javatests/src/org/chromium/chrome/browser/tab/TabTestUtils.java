@@ -45,7 +45,8 @@ public class TabTestUtils {
             @Nullable TabDelegateFactory delegateFactory,
             boolean initiallyHidden,
             TabState tabState,
-            boolean initializeRenderer) {
+            boolean initializeRenderer,
+            boolean isPinned) {
         ((TabImpl) tab)
                 .initialize(
                         parent,
@@ -56,7 +57,8 @@ public class TabTestUtils {
                         delegateFactory,
                         initiallyHidden,
                         tabState,
-                        initializeRenderer);
+                        initializeRenderer,
+                        isPinned);
     }
 
     /** Set the last hidden timestamp. */
@@ -151,18 +153,6 @@ public class TabTestUtils {
      */
     public static void restoreFieldsFromState(Tab tab, TabState state) {
         ((TabImpl) tab).restoreFieldsFromState(state);
-    }
-
-    /**
-     * Swap {@link WebContents} object being used in a tab.
-     * @param tab {@link Tab} object.
-     * @param webContents {@link WebContents} to swap in.
-     * @param didStartLoad Whether the content started loading.
-     * @param didFinishLoad Whether the content finished loading.
-     */
-    public static void swapWebContents(
-            Tab tab, WebContents webContents, boolean didStartLoad, boolean didFinishLoad) {
-        ((TabImpl) tab).swapWebContents(webContents, didStartLoad, didFinishLoad);
     }
 
     /**

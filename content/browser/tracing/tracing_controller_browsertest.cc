@@ -17,6 +17,7 @@
 #include "base/strings/pattern.h"
 #include "base/task/task_traits.h"
 #include "base/threading/thread_restrictions.h"
+#include "base/trace_event/trace_config.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromecast_buildflags.h"
@@ -30,7 +31,6 @@
 #include "content/shell/browser/shell.h"
 #include "content/test/test_content_browser_client.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "services/tracing/public/cpp/perfetto/trace_event_metadata_source.h"
 #include "services/tracing/public/cpp/tracing_features.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -39,33 +39,9 @@
 #include "chromeos/ash/components/system/statistics_provider.h"
 #endif
 
-using base::trace_event::RECORD_CONTINUOUSLY;
-using base::trace_event::RECORD_UNTIL_FULL;
 using base::trace_event::TraceConfig;
 
 namespace content {
-
-namespace {
-
-bool KeyEquals(const base::Value::Dict& dict,
-               const char* key_name,
-               const char* expected) {
-  const std::string* content = dict.FindString(key_name);
-  if (!content)
-    return false;
-  return *content == expected;
-}
-
-bool KeyNotEquals(const base::Value::Dict& dict,
-                  const char* key_name,
-                  const char* expected) {
-  const std::string* content = dict.FindString(key_name);
-  if (!content)
-    return false;
-  return *content != expected;
-}
-
-}  // namespace
 
 class TracingControllerTestEndpoint
     : public TracingController::TraceDataEndpoint {
@@ -122,10 +98,6 @@ class TracingControllerTest : public ContentBrowserTest {
 
   void Navigate(Shell* shell) {
     EXPECT_TRUE(NavigateToURL(shell, GetTestUrl("", "title1.html")));
-  }
-
-  std::optional<base::Value::Dict> GenerateMetadataDict() {
-    return std::move(metadata_);
   }
 
   void GetCategoriesDoneCallbackTest(base::OnceClosure quit_callback,
@@ -240,11 +212,6 @@ class TracingControllerTest : public ContentBrowserTest {
       scoped_refptr<TracingController::TraceDataEndpoint> trace_data_endpoint =
           TracingController::CreateStringEndpoint(std::move(callback));
 
-      metadata_ = base::Value::Dict().Set("not-whitelisted", "this_not_found");
-      tracing::TraceEventMetadataSource::GetInstance()->AddGeneratorFunction(
-          base::BindRepeating(&TracingControllerTest::GenerateMetadataDict,
-                              base::Unretained(this)));
-
       bool result =
           controller->StopTracing(trace_data_endpoint, /*agent_label=*/"",
                                   /*privacy_filtering_enabled=*/true);
@@ -329,17 +296,12 @@ class TracingControllerTest : public ContentBrowserTest {
   int enable_recording_done_callback_count_;
   int disable_recording_done_callback_count_;
   base::FilePath last_actual_recording_file_path_;
-  std::optional<base::Value::Dict> metadata_;
   std::unique_ptr<std::string> last_data_;
 };
 
 // Consistent failures on Android Asan https://crbug.com/1045519
 #if BUILDFLAG(IS_ANDROID) && defined(ADDRESS_SANITIZER)
 #define MAYBE_EnableAndStopTracing DISABLED_EnableAndStopTracing
-#define MAYBE_DisableRecordingStoresMetadata \
-  DISABLED_DisableRecordingStoresMetadata
-#define MAYBE_NotWhitelistedMetadataStripped \
-  DISABLED_NotWhitelistedMetadataStripped
 #define MAYBE_EnableAndStopTracingWithFilePath \
   DISABLED_EnableAndStopTracingWithFilePath
 #define MAYBE_EnableAndStopTracingWithCompression \
@@ -350,8 +312,6 @@ class TracingControllerTest : public ContentBrowserTest {
 #define MAYBE_ProcessesPresentInTrace DISABLED_ProcessesPresentInTrace
 #else
 #define MAYBE_EnableAndStopTracing EnableAndStopTracing
-#define MAYBE_DisableRecordingStoresMetadata DisableRecordingStoresMetadata
-#define MAYBE_NotWhitelistedMetadataStripped NotWhitelistedMetadataStripped
 #define MAYBE_EnableAndStopTracingWithFilePath EnableAndStopTracingWithFilePath
 #define MAYBE_EnableAndStopTracingWithCompression \
   EnableAndStopTracingWithCompression
@@ -377,66 +337,6 @@ IN_PROC_BROWSER_TEST_F(TracingControllerTest, GetCategories) {
 
 IN_PROC_BROWSER_TEST_F(TracingControllerTest, MAYBE_EnableAndStopTracing) {
   TestStartAndStopTracingString();
-}
-
-IN_PROC_BROWSER_TEST_F(TracingControllerTest,
-                       MAYBE_DisableRecordingStoresMetadata) {
-  TestStartAndStopTracingString();
-  // Check that a number of important keys exist in the metadata dictionary. The
-  // values are not checked to ensure the test is robust.
-  std::optional<base::Value> trace_json = base::JSONReader::Read(last_data());
-  ASSERT_TRUE(trace_json);
-  ASSERT_TRUE(trace_json->is_dict());
-  auto* metadata_json = trace_json->GetDict().FindDict("metadata");
-  ASSERT_TRUE(metadata_json);
-
-  std::string* network_type = metadata_json->FindString("network-type");
-  ASSERT_TRUE(network_type);
-  EXPECT_FALSE(network_type->empty());
-
-  std::string* user_agent = metadata_json->FindString("user-agent");
-  ASSERT_TRUE(user_agent);
-  EXPECT_FALSE(user_agent->empty());
-
-  std::string* os_name = metadata_json->FindString("os-name");
-  ASSERT_TRUE(os_name);
-  EXPECT_FALSE(os_name->empty());
-
-  std::string* command_line = metadata_json->FindString("command_line");
-  ASSERT_TRUE(command_line);
-  EXPECT_FALSE(command_line->empty());
-
-  std::string* trace_config = metadata_json->FindString("trace-config");
-  ASSERT_TRUE(trace_config);
-  EXPECT_EQ(TraceConfig().ToString(), *trace_config);
-
-#if BUILDFLAG(IS_CHROMEOS)
-  std::string* hardware_class = metadata_json->FindString("hardware-class");
-  ASSERT_TRUE(hardware_class);
-  EXPECT_EQ(*hardware_class, "test-hardware-class");
-#endif
-}
-
-IN_PROC_BROWSER_TEST_F(TracingControllerTest,
-                       MAYBE_NotWhitelistedMetadataStripped) {
-  TestStartAndStopTracingStringWithFilter();
-  // Check that a number of important keys exist in the metadata dictionary.
-  std::optional<base::Value> trace_json = base::JSONReader::Read(last_data());
-  ASSERT_TRUE(trace_json);
-  const base::Value::Dict* metadata_json =
-      trace_json->GetDict().FindDict("metadata");
-  ASSERT_TRUE(metadata_json);
-
-  EXPECT_TRUE(KeyNotEquals(*metadata_json, "cpu-brand", "__stripped__"));
-  EXPECT_TRUE(KeyNotEquals(*metadata_json, "network-type", "__stripped__"));
-  EXPECT_TRUE(KeyNotEquals(*metadata_json, "os-name", "__stripped__"));
-  EXPECT_TRUE(KeyNotEquals(*metadata_json, "user-agent", "__stripped__"));
-#if BUILDFLAG(IS_CHROMEOS)
-  EXPECT_TRUE(KeyNotEquals(*metadata_json, "hardware-class", "__stripped__"));
-#endif
-
-  // The following field is not whitelisted and is supposed to be stripped.
-  EXPECT_TRUE(KeyEquals(*metadata_json, "v8-version", "__stripped__"));
 }
 
 IN_PROC_BROWSER_TEST_F(TracingControllerTest,

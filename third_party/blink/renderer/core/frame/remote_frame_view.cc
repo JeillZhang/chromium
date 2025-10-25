@@ -8,6 +8,7 @@
 
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/trace_event/trace_event.h"
 #include "components/paint_preview/common/paint_preview_tracker.h"
 #include "printing/buildflags/buildflags.h"
 #include "third_party/blink/public/common/frame/frame_owner_element_type.h"
@@ -38,7 +39,6 @@
 namespace blink {
 
 BASE_FEATURE(kSkipUnnecessaryRemoteFrameGeometryPropagation,
-             "SkipUnnecessaryRemoteFrameGeometryPropagation",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 RemoteFrameView::RemoteFrameView(RemoteFrame* remote_frame)
@@ -103,11 +103,10 @@ void RemoteFrameView::DetachFromLayout() {
   SetAttached(false);
 }
 
-bool RemoteFrameView::UpdateViewportIntersectionsForSubtree(
+void RemoteFrameView::UpdateViewportIntersectionsForSubtree(
     unsigned parent_flags,
     ComputeIntersectionsContext&) {
   UpdateViewportIntersection(parent_flags, needs_occlusion_tracking_);
-  return needs_occlusion_tracking_;
 }
 
 void RemoteFrameView::SetViewportIntersection(
@@ -160,16 +159,16 @@ void RemoteFrameView::SetViewportIntersection(
   }
 }
 
-void RemoteFrameView::SetNeedsOcclusionTracking(bool needs_tracking) {
-  if (needs_occlusion_tracking_ == needs_tracking)
-    return;
-  needs_occlusion_tracking_ = needs_tracking;
-  if (needs_tracking) {
-    if (LocalFrameView* parent_view = ParentLocalRootFrameView()) {
-      parent_view->SetIntersectionObservationState(LocalFrameView::kRequired);
-      parent_view->ScheduleAnimation();
-    }
-  }
+void RemoteFrameView::UpdateIntersectionObserverStatus() {}
+
+bool RemoteFrameView::HasActiveIntersectionObservations() const {
+  // TODO(paint-dev): We don't propagate this information from the remote frame,
+  // so we err on the side of caution and assume 'true'.
+  return true;
+}
+
+bool RemoteFrameView::NeedsOcclusionTracking() const {
+  return needs_occlusion_tracking_;
 }
 
 gfx::Rect RemoteFrameView::ComputeCompositingRect() const {
@@ -405,6 +404,19 @@ void RemoteFrameView::Show() {
   SetSelfVisible(true);
   UpdateFrameVisibility(
       !last_intersection_state_.viewport_intersection.IsEmpty());
+}
+
+void RemoteFrameView::SetNeedsOcclusionTracking(bool needs_tracking) {
+  if (needs_occlusion_tracking_ == needs_tracking) {
+    return;
+  }
+  needs_occlusion_tracking_ = needs_tracking;
+  if (needs_tracking) {
+    if (LocalFrameView* parent_view = ParentLocalRootFrameView()) {
+      parent_view->SetIntersectionObservationState(LocalFrameView::kRequired);
+      parent_view->ScheduleAnimation();
+    }
+  }
 }
 
 void RemoteFrameView::ParentVisibleChanged() {

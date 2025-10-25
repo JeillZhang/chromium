@@ -24,7 +24,10 @@ AXPlatform* g_instance = nullptr;
 
 // static
 AXPlatform& AXPlatform::GetInstance() {
-  CHECK_NE(g_instance, nullptr);
+  CHECK_NE(g_instance, nullptr)
+      << "AXPlatform::GetInstance() called before AXPlatform was initialized "
+         "or destroyed. If you are in a browser test, you may need cleanup in "
+         "TearDownOnMainThread().";
   DCHECK_CALLED_ON_VALID_THREAD(g_instance->thread_checker_);
   return *g_instance;
 }
@@ -125,8 +128,6 @@ void AXPlatform::DisableActiveUiaProvider() {
   // for more info.
   HRESULT hr = ::UiaDisconnectAllProviders();
   DCHECK(SUCCEEDED(hr));
-
-  delegate_->OnUiaProviderDisabled();
 }
 
 bool AXPlatform::IsUiaProviderEnabled() const {
@@ -136,9 +137,14 @@ bool AXPlatform::IsUiaProviderEnabled() const {
              : (uia_provider_enablement_ == UiaProviderEnablement::kEnabled);
 }
 
-void AXPlatform::OnUiaProviderRequested(bool uia_provider_enabled) {
+void AXPlatform::SetUiaClientServiced(bool uia_client_serviced) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
-  delegate_->OnUiaProviderRequested(uia_provider_enabled);
+  has_serviced_uia_clients_ = uia_client_serviced;
+}
+
+bool AXPlatform::HasServicedUiaClients() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
+  return has_serviced_uia_clients_;
 }
 #endif  // BUILDFLAG(IS_WIN)
 

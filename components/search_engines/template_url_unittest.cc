@@ -1523,6 +1523,32 @@ TEST_F(TemplateURLTest, SuggestClient) {
 #endif
 }
 
+TEST_F(TemplateURLTest, ComposeboxSuggestClient) {
+  base::test::ScopedFeatureList features;
+  const std::string base_url_str("http://google.com/?");
+  const std::string query_params_str("client={google:suggestClient}");
+  const std::string full_url_str = base_url_str + query_params_str;
+  search_terms_data_.set_google_base_url(base_url_str);
+
+  TemplateURLData data;
+  data.SetURL(full_url_str);
+  TemplateURL url(data);
+  EXPECT_TRUE(url.url_ref().IsValid(search_terms_data_));
+  ASSERT_FALSE(url.url_ref().SupportsReplacement(search_terms_data_));
+  TemplateURLRef::SearchTermsArgs search_terms_args;
+
+  search_terms_args.request_source = RequestSource::NTP_COMPOSEBOX;
+  // Check that the URL is correct for `RequestSource::NTP_COMPOSEBOX`.
+  GURL result(
+      url.url_ref().ReplaceSearchTerms(search_terms_args, search_terms_data_));
+  ASSERT_TRUE(result.is_valid());
+  EXPECT_EQ("http://google.com/?client=chrome-omni", result.spec());
+  features.InitAndEnableFeature(omnibox::kComposeboxUsesChromeComposeClient);
+  result = GURL(
+      url.url_ref().ReplaceSearchTerms(search_terms_args, search_terms_data_));
+  EXPECT_EQ("http://google.com/?client=chrome-compose", result.spec());
+}
+
 TEST_F(TemplateURLTest, SuggestRequestIdentifier) {
   const std::string base_url_str("http://google.com/?");
   const std::string query_params_str("gs_ri={google:suggestRid}");
@@ -1549,6 +1575,13 @@ TEST_F(TemplateURLTest, SuggestRequestIdentifier) {
 #else
   EXPECT_EQ("http://google.com/?gs_ri=chrome-ext-ansg", result.spec());
 #endif
+
+  search_terms_args.request_source = RequestSource::NTP_COMPOSEBOX;
+  // Check that the URL is correct for `RequestSource::NTP_COMPOSEBOX`.
+  result = GURL(
+      url.url_ref().ReplaceSearchTerms(search_terms_args, search_terms_data_));
+  ASSERT_TRUE(result.is_valid());
+  EXPECT_EQ("http://google.com/?gs_ri=", result.spec());
 }
 
 TEST_F(TemplateURLTest, ZeroSuggestCacheDuration) {
@@ -2240,7 +2273,7 @@ TEST_F(TemplateURLTest, ContextualSearchParameters) {
   // event.
   TemplateURLRef::SearchTermsArgs::ContextualSearchParams params(
       2, 1, std::string(), 0, 0, false, std::string(), std::string(),
-      std::string(), std::string(), false);
+      std::string(), std::string(), false, false);
   search_terms_args.contextual_search_params = params;
   result = url.url_ref().ReplaceSearchTerms(search_terms_args,
                                             search_terms_data_);
@@ -2254,7 +2287,7 @@ TEST_F(TemplateURLTest, ContextualSearchParameters) {
   search_terms_args.contextual_search_params =
       TemplateURLRef::SearchTermsArgs::ContextualSearchParams(
           2, 2, "CH", 1657713458, 5, false, std::string(), std::string(),
-          std::string(), std::string(), false);
+          std::string(), std::string(), false, false);
   result =
       url.url_ref().ReplaceSearchTerms(search_terms_args, search_terms_data_);
 
@@ -2271,7 +2304,7 @@ TEST_F(TemplateURLTest, ContextualSearchParameters) {
   search_terms_args.contextual_search_params =
       TemplateURLRef::SearchTermsArgs::ContextualSearchParams(
           2, 1, std::string(), 0, 0, true, std::string(), std::string(),
-          std::string(), std::string(), false);
+          std::string(), std::string(), false, false);
   result =
       url.url_ref().ReplaceSearchTerms(search_terms_args, search_terms_data_);
   // Find our param.
@@ -2282,7 +2315,7 @@ TEST_F(TemplateURLTest, ContextualSearchParameters) {
   search_terms_args.contextual_search_params =
       TemplateURLRef::SearchTermsArgs::ContextualSearchParams(
           2, 1, std::string(), 0, 0, true, "es", "de", std::string(),
-          std::string(), false);
+          std::string(), false, false);
   result =
       url.url_ref().ReplaceSearchTerms(search_terms_args, search_terms_data_);
   // Find our params.
@@ -2295,7 +2328,7 @@ TEST_F(TemplateURLTest, ContextualSearchParameters) {
   search_terms_args.contextual_search_params =
       TemplateURLRef::SearchTermsArgs::ContextualSearchParams(
           2, 1, std::string(), 0, 0, true, std::string(), std::string(),
-          "es,de", std::string(), false);
+          "es,de", std::string(), false, false);
   result =
       url.url_ref().ReplaceSearchTerms(search_terms_args, search_terms_data_);
   // Find our param.  These may actually be URL encoded.
@@ -2306,7 +2339,7 @@ TEST_F(TemplateURLTest, ContextualSearchParameters) {
   search_terms_args.contextual_search_params =
       TemplateURLRef::SearchTermsArgs::ContextualSearchParams(
           2, 1, std::string(), 0, 0, true, std::string(), std::string(),
-          std::string(), "1RbCu", false);
+          std::string(), "1RbCu", false, false);
   result =
       url.url_ref().ReplaceSearchTerms(search_terms_args, search_terms_data_);
   // Find our param.
@@ -2317,12 +2350,22 @@ TEST_F(TemplateURLTest, ContextualSearchParameters) {
   search_terms_args.contextual_search_params =
       TemplateURLRef::SearchTermsArgs::ContextualSearchParams(
           2, 1, std::string(), 0, 0, true, std::string(), std::string(),
-          std::string(), std::string(), true);
+          std::string(), std::string(), true, false);
   result =
       url.url_ref().ReplaceSearchTerms(search_terms_args, search_terms_data_);
   // Find our param.
   size_t ctxsl_applylh = result.find("&ctxsl_applylh=1");
   EXPECT_NE(ctxsl_applylh, std::string::npos);
+
+  // Test use_snippet_as_subtitle.
+  search_terms_args.contextual_search_params =
+      TemplateURLRef::SearchTermsArgs::ContextualSearchParams(
+          2, 1, std::string(), 0, 0, true, std::string(), std::string(),
+          std::string(), std::string(), false, true);
+  result =
+      url.url_ref().ReplaceSearchTerms(search_terms_args, search_terms_data_);
+  size_t ctxs_usas = result.find("&ctxs_usas=1");
+  EXPECT_NE(ctxs_usas, std::string::npos);
 }
 
 TEST_F(TemplateURLTest, GenerateKeyword) {
@@ -2496,13 +2539,6 @@ TEST_F(TemplateURLTest, GenerateSearchURL) {
 }
 
 TEST_F(TemplateURLTest, GenerateURL_NoRegulatoryExtensions) {
-#if BUILDFLAG(IS_ANDROID)
-  // Disable the chrome_dse_attribution parameter from being added on Android.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      switches::kRemoveSearchEngineChoiceAttribution);
-#endif
-
   TemplateURLData data;
   data.SetURL("https://search?q={searchTerms}");
   data.suggestions_url = "https://suggest?q={searchTerms}";
@@ -2532,13 +2568,6 @@ TEST_F(TemplateURLTest, GenerateURL_NoRegulatoryExtensions) {
 }
 
 TEST_F(TemplateURLTest, GenerateURL_WithEmptyRegulatoryExtensions) {
-#if BUILDFLAG(IS_ANDROID)
-  // Disable the chrome_dse_attribution parameter from being added on Android.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      switches::kRemoveSearchEngineChoiceAttribution);
-#endif
-
   TemplateURLData::RegulatoryExtension default_ext{
       .variant = RegulatoryExtensionType::kDefault,
   };
@@ -2578,13 +2607,6 @@ TEST_F(TemplateURLTest, GenerateURL_WithEmptyRegulatoryExtensions) {
 }
 
 TEST_F(TemplateURLTest, GenerateURL_WithFullRegulatoryExtensions) {
-#if BUILDFLAG(IS_ANDROID)
-  // Disable the chrome_dse_attribution parameter from being added on Android.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      switches::kRemoveSearchEngineChoiceAttribution);
-#endif
-
   TemplateURLData::RegulatoryExtension default_ext{
       .variant = RegulatoryExtensionType::kDefault,
       .search_params = "default_search_param=123",
@@ -2655,13 +2677,6 @@ TEST_F(TemplateURLTest, GenerateURL_WithFullRegulatoryExtensions) {
 
 TEST_F(TemplateURLTest,
        ReplaceSearchTerms_NoRegulatoryExpansionForUnsupportedUrls) {
-#if BUILDFLAG(IS_ANDROID)
-  // Disable the chrome_dse_attribution parameter from being added on Android.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(
-      switches::kRemoveSearchEngineChoiceAttribution);
-#endif
-
   TemplateURLData::RegulatoryExtension default_ext{
       .variant = RegulatoryExtensionType::kDefault,
       .search_params = "default_search_param=123",
@@ -3072,6 +3087,68 @@ TEST_F(TemplateURLTest, GetBuiltinImageResourceId_FromCustomEngine) {
   TemplateURL t_url(data);
 
   EXPECT_EQ(t_url.GetBuiltinImageResourceId(), "IDR_DEFAULT_FAVICON");
+}
+
+TEST_F(TemplateURLTest, GetMarketingSnippet_Custom) {
+  std::u16string engine_name = u"My Custom Engine";
+  TemplateURLData custom_data;
+  custom_data.SetShortName(engine_name);
+  custom_data.SetKeyword(u"custom.com");
+  TemplateURL custom_url(custom_data);
+  EXPECT_NE(custom_url.GetMarketingSnippet().find(engine_name),
+            std::u16string::npos);
+}
+
+TEST_F(TemplateURLTest, GetBuiltinImageResourceId_YahooJpBranded) {
+  // Test relevant for this special case of prepopulated search engines data. If
+  // these preconditions turn out false, consider removing the test, and maybe
+  // the associated logic too.
+  ASSERT_EQ(TemplateURLPrepopulateData::yahoo_jp.id,
+            TemplateURLPrepopulateData::yahoo_fr.id);
+  ASSERT_NE(TemplateURLPrepopulateData::yahoo_jp.keyword,
+            TemplateURLPrepopulateData::yahoo_fr.keyword);
+  ASSERT_NE(TemplateURLPrepopulateData::yahoo_jp.base_builtin_resource_id,
+            TemplateURLPrepopulateData::yahoo_fr.base_builtin_resource_id);
+
+  TemplateURLData data;
+  data.prepopulate_id = TemplateURLPrepopulateData::yahoo_jp.id;
+  data.SetKeyword(TemplateURLPrepopulateData::yahoo_jp.keyword);
+  TemplateURL t_url(data);
+
+  if constexpr (kEnableBuiltinSearchProviderAssets) {
+    EXPECT_NE(
+        t_url.GetBuiltinImageResourceId().find(
+            TemplateURLPrepopulateData::yahoo_jp.base_builtin_resource_id),
+        std::u16string::npos);
+  } else {
+    EXPECT_EQ(t_url.GetBuiltinImageResourceId(), "IDR_DEFAULT_FAVICON");
+  }
+}
+
+TEST_F(TemplateURLTest, GetBuiltinImageResourceId_YahooFrBranded) {
+  // Test relevant for this special case of prepopulated search engines data. If
+  // these preconditions turn out false, consider removing the test, and maybe
+  // the associated logic too.
+  ASSERT_EQ(TemplateURLPrepopulateData::yahoo_jp.id,
+            TemplateURLPrepopulateData::yahoo_fr.id);
+  ASSERT_NE(TemplateURLPrepopulateData::yahoo_jp.keyword,
+            TemplateURLPrepopulateData::yahoo_fr.keyword);
+  ASSERT_NE(TemplateURLPrepopulateData::yahoo_jp.base_builtin_resource_id,
+            TemplateURLPrepopulateData::yahoo_fr.base_builtin_resource_id);
+
+  TemplateURLData data;
+  data.prepopulate_id = TemplateURLPrepopulateData::yahoo_fr.id;
+  data.SetKeyword(TemplateURLPrepopulateData::yahoo_fr.keyword);
+  TemplateURL t_url(data);
+
+  if constexpr (kEnableBuiltinSearchProviderAssets) {
+    EXPECT_NE(
+        t_url.GetBuiltinImageResourceId().find(
+            TemplateURLPrepopulateData::yahoo_fr.base_builtin_resource_id),
+        std::u16string::npos);
+  } else {
+    EXPECT_EQ(t_url.GetBuiltinImageResourceId(), "IDR_DEFAULT_FAVICON");
+  }
 }
 
 struct IsBetterThanEngineTestEngine {

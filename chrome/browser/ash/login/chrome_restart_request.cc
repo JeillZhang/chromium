@@ -35,6 +35,7 @@
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "chromeos/dbus/constants/dbus_switches.h"
 #include "components/account_id/account_id.h"
 #include "components/policy/core/common/policy_switches.h"
@@ -94,6 +95,7 @@ void DeriveCommandLine(const GURL& start_url,
 
   static const char* const kForwardSwitches[] = {
       sandbox::policy::switches::kDisableGpuSandbox,
+      sandbox::policy::switches::kDisableLandlockSandbox,
       sandbox::policy::switches::kDisableSeccompFilterSandbox,
       sandbox::policy::switches::kDisableSetuidSandbox,
       sandbox::policy::switches::kGpuSandboxAllowSysVShm,
@@ -128,17 +130,14 @@ void DeriveCommandLine(const GURL& start_url,
       ::switches::kEdgeTouchFiltering,
       ::switches::kHostWindowBounds,
       ::switches::kForceDeviceScaleFactor,
-      ::switches::kForceGpuMemAvailableMb,
       ::switches::kGpuStartupDialog,
       ::switches::kGpuSandboxStartEarly,
-      ::switches::kPpapiInProcess,
       ::switches::kRemoteDebuggingPort,
       ::switches::kRendererStartupDialog,
       ::switches::kSchedulerBoostUrgent,
       ::switches::kTouchDevices,
       ::switches::kTouchEventFeatureDetection,
       ::switches::kTopChromeTouchUi,
-      ::switches::kTraceToConsole,
       ::switches::kUIDisablePartialSwap,
 #if BUILDFLAG(USE_CRAS)
       ::switches::kUseCras,
@@ -181,6 +180,7 @@ void DeriveCommandLine(const GURL& start_url,
       blink::switches::kEnableRGBA4444Textures,
       blink::switches::kEnableRasterSideDarkModeForImages,
       blink::switches::kEnableZeroCopy,
+      blink::switches::kForceGpuMemAvailableMb,
       blink::switches::kGpuRasterizationMSAASampleCount,
       switches::kAshPowerButtonPosition,
       switches::kAshSideVolumeButtonPosition,
@@ -247,6 +247,7 @@ void DeriveFeatures(base::CommandLine* out_command_line) {
       &::features::kAccessibilityManifestV3EspeakNGTts,
       &::features::kAccessibilityManifestV3GoogleTts,
       &features::kAutoNightLight,
+      &chromeos::features::kFeatureManagementRoundedWindows,
       &ash::features::kSeamlessRefreshRateSwitching,
       &::features::kPluginVm,
       &display::features::kCtmColorManagement,

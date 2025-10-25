@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "base/barrier_callback.h"
 #include "base/cancelable_callback.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
@@ -20,7 +21,7 @@
 #include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
 #include "chrome/browser/safe_browsing/download_protection/download_request_maker.h"
 #include "components/prefs/pref_service.h"
-#include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
+#include "components/safe_browsing/content/browser/web_ui/web_ui_content_info_singleton.h"
 #include "components/safe_browsing/content/common/file_type_policies.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
@@ -359,6 +360,7 @@ void CheckClientDownloadRequestBase::OnRequestBuilt(
   }
 
 #if !BUILDFLAG(IS_ANDROID)
+  // TODO(chlily): Factor this out into delegate's modifications.
   if (is_enhanced_protection_ && token_fetcher_) {
     token_fetcher_->Start(base::BindOnce(
         &CheckClientDownloadRequestBase::OnGotAccessToken, GetWeakPtr()));
@@ -366,6 +368,37 @@ void CheckClientDownloadRequestBase::OnRequestBuilt(
   }
 #endif
 
+  StartModificationsFromDelegate();
+}
+
+void CheckClientDownloadRequestBase::StartModificationsFromDelegate() {
+  std::vector<PendingClientDownloadRequestModification> pending_modifications =
+      service_->delegate()->ProduceClientDownloadRequestModifications(
+          item(), Profile::FromBrowserContext(GetBrowserContext()));
+
+  const auto collect_modifications_repeating =
+      base::BarrierCallback<ClientDownloadRequestModification>(
+          pending_modifications.size(),
+          base::BindOnce(
+              &CheckClientDownloadRequestBase::ApplyModificationsAndSendRequest,
+              GetWeakPtr()));
+
+  // Kick off all the modifications.
+  for (auto& pending_modification : pending_modifications) {
+    // Make a separate copy of the BarrierCallback for each pending
+    // modification. They must each call their own copy of
+    // `collect_modifications_repeating` exactly once.
+    CollectModificationCallback collect_modification =
+        collect_modifications_repeating;
+    std::move(pending_modification).Run(std::move(collect_modification));
+  }
+}
+
+void CheckClientDownloadRequestBase::ApplyModificationsAndSendRequest(
+    std::vector<ClientDownloadRequestModification> modifications) {
+  for (auto& modification : modifications) {
+    std::move(modification).Run(client_download_request_.get());
+  }
   SendRequest();
 }
 
@@ -386,7 +419,8 @@ void CheckClientDownloadRequestBase::StartTimeout() {
 void CheckClientDownloadRequestBase::OnGotAccessToken(
     const std::string& access_token) {
   access_token_ = access_token;
-  SendRequest();
+
+  StartModificationsFromDelegate();
 }
 #endif
 
@@ -402,9 +436,6 @@ void CheckClientDownloadRequestBase::SendRequest() {
       skipped_certificate_allowlist_);
 
   CHECK(service_);
-
-  service_->delegate()->PreSerializeRequest(item(), *client_download_request_);
-
   if (!client_download_request_->SerializeToString(
           &client_download_request_data_)) {
     FinishRequest(DownloadCheckResult::UNKNOWN, REASON_INVALID_REQUEST_PROTO);
@@ -504,9 +535,10 @@ void CheckClientDownloadRequestBase::SendRequest() {
   // dropped and the |client_download_request_| object deleted.
   content::GetUIThreadTaskRunner({})->PostTask(
       FROM_HERE,
-      base::BindOnce(&WebUIInfoSingleton::AddToClientDownloadRequestsSent,
-                     base::Unretained(WebUIInfoSingleton::GetInstance()),
-                     std::move(client_download_request_)));
+      base::BindOnce(
+          &WebUIContentInfoSingleton::AddToClientDownloadRequestsSent,
+          base::Unretained(WebUIContentInfoSingleton::GetInstance()),
+          std::move(client_download_request_)));
 }
 
 void CheckClientDownloadRequestBase::OnURLLoaderComplete(
@@ -586,8 +618,8 @@ void CheckClientDownloadRequestBase::OnURLLoaderComplete(
     content::GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE,
         base::BindOnce(
-            &WebUIInfoSingleton::AddToClientDownloadResponsesReceived,
-            base::Unretained(WebUIInfoSingleton::GetInstance()),
+            &WebUIContentInfoSingleton::AddToClientDownloadResponsesReceived,
+            base::Unretained(WebUIContentInfoSingleton::GetInstance()),
             std::make_unique<ClientDownloadResponse>(response)));
 
     GetAdditionalPromptResult(response, &result, &reason, &token);
@@ -596,7 +628,7 @@ void CheckClientDownloadRequestBase::OnURLLoaderComplete(
       SetDownloadProtectionData(
           token, response.verdict(),
 #if !BUILDFLAG(IS_ANDROID)
-          WebUIInfoSingleton::GetInstance()
+          WebUIContentInfoSingleton::GetInstance()
               ->tailored_verdict_override()
               .override_value.value_or(response.tailored_verdict())
 #else

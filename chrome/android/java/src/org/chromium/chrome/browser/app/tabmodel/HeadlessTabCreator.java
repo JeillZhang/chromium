@@ -94,6 +94,7 @@ public class HeadlessTabCreator extends TabCreator implements NeedsTabModel {
     @Override
     public Tab createTabWithWebContents(
             @Nullable Tab parent,
+            boolean shouldPin,
             WebContents webContents,
             @TabLaunchType int type,
             GURL url,
@@ -104,5 +105,10 @@ public class HeadlessTabCreator extends TabCreator implements NeedsTabModel {
     @Override
     public @Nullable Tab createTabWithHistory(@Nullable Tab parent, int type) {
         throw new RuntimeException("Headless does not support live web contents.");
+    }
+
+    @Override
+    protected Profile getProfile() {
+        return mProfile;
     }
 }

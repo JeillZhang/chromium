@@ -13,11 +13,11 @@ import android.content.pm.ResolveInfo;
 import android.content.res.Resources;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
-import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 
 import androidx.annotation.IdRes;
@@ -25,6 +25,7 @@ import androidx.annotation.IntDef;
 import androidx.annotation.RequiresApi;
 
 import org.chromium.android_webview.AwContents;
+import org.chromium.android_webview.R;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.PackageManagerUtils;
 import org.chromium.base.PackageUtils;
@@ -61,11 +62,11 @@ public class SamsungSelectionActionMenuDelegate extends AutofillSelectionActionM
     // Writing toolkit
     private static final String ACTION_WRITING_TOOLKIT =
             "com.samsung.android.intent.action.WritingToolkit";
-    private static final String WRITING_TOOLKIT_HBD = "actionShowToolKitHbd";
+    private static final String WRITING_TOOLKIT_ACTION_SHOW_HBD = "actionShowToolKitHbd";
     private static final String WRITING_TOOLKIT_SUBJECT = "toolkitSubject";
     private static final String WRITING_TOOLKIT_IS_TEXT_EDITABLE = "isTextEditable";
     private static final String WRITING_TOOLKIT_URI = "honeyboard://writing-toolkit";
-    private static final int MAXIMUM_BUILD_VERSION_CODE_SUPPORTED = 36;
+    private static final int MAXIMUM_BUILD_VERSION_CODE_SUPPORTED = Build.VERSION_CODES.BAKLAVA;
     private static final int SCAN_TEXT_ID;
     private static final ComponentName WRITING_TOOLKIT_COMPONENT =
             new ComponentName(
@@ -75,6 +76,7 @@ public class SamsungSelectionActionMenuDelegate extends AutofillSelectionActionM
             "com.samsung.android.feature.SemFloatingFeature";
     private static final String AI_FEATURES_DISABLED_FLAG =
             "SEC_FLOATING_FEATURE_COMMON_DISABLE_NATIVE_AI";
+    private static final String WRITING_TOOLKIT_SELECTED_TEXT = "selectedText";
     private static @Nullable Boolean sIsManageAppsSupported;
     private static @Nullable Boolean sAiFeaturesDisabled;
 
@@ -107,15 +109,15 @@ public class SamsungSelectionActionMenuDelegate extends AutofillSelectionActionM
         SamsungDefaultItemOrder.WEB_SEARCH
     })
     public @interface SamsungDefaultItemOrder {
-        int WRITING_TOOLKIT = 1;
-        int CUT = 2;
-        int COPY = 3;
-        int PASTE = 4;
-        int TRANSLATE = 5;
-        int PASTE_AS_PLAIN_TEXT = 6;
-        int SELECT_ALL = 7;
-        int SHARE = 8;
-        int WEB_SEARCH = 9;
+        int WRITING_TOOLKIT = 0;
+        int CUT = 1;
+        int COPY = 2;
+        int PASTE = 3;
+        int TRANSLATE = 4;
+        int PASTE_AS_PLAIN_TEXT = 5;
+        int SELECT_ALL = 6;
+        int SHARE = 7;
+        int WEB_SEARCH = 8;
     }
 
     public SamsungSelectionActionMenuDelegate() {
@@ -135,7 +137,8 @@ public class SamsungSelectionActionMenuDelegate extends AutofillSelectionActionM
         for (SelectionMenuItem.Builder builder : menuItemBuilders) {
             int menuItemOrder = getMenuItemOrder(builder.mId);
             if (menuItemOrder == -1) continue;
-            builder.setOrderInCategory(menuItemOrder);
+            builder.setOrderAndCategory(
+                    menuItemOrder, SelectionMenuItem.ItemGroupOffset.DEFAULT_ITEMS);
         }
         // TODO(crbug.com/41485684) Rewrite to have content APIs which support moving menu
         // items within groups instead of filtering our and re-adding.
@@ -161,20 +164,26 @@ public class SamsungSelectionActionMenuDelegate extends AutofillSelectionActionM
                                     translateResolveInfo.loadLabel(
                                             ContextUtils.getApplicationContext()
                                                     .getPackageManager()))
-                            .setId(Menu.NONE)
+                            .setId(R.id.select_action_menu_translate)
+                            .setGroupId(org.chromium.content.R.id.select_action_menu_delegate_items)
                             .setIcon(null)
                             .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-                            .setOrderInCategory(SamsungDefaultItemOrder.TRANSLATE)
-                            .setClickListener(
-                                    getTranslationActionClickListener(
+                            .setOrderAndCategory(
+                                    SamsungDefaultItemOrder.TRANSLATE,
+                                    SelectionMenuItem.ItemGroupOffset.DEFAULT_ITEMS)
+                            .setIntent(
+                                    getTranslationActionIntent(
                                             selectedText, translateResolveInfo)));
         }
         if (shouldAddWritingToolkitMenu(selectedText, isSelectionPassword)) {
             menuItemBuilders.add(
                     new SelectionMenuItem.Builder(SCAN_TEXT_ID)
                             .setId(SCAN_TEXT_ID)
+                            .setGroupId(org.chromium.content.R.id.select_action_menu_delegate_items)
                             .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_ALWAYS)
-                            .setOrderInCategory(SamsungDefaultItemOrder.WRITING_TOOLKIT)
+                            .setOrderAndCategory(
+                                    SamsungDefaultItemOrder.WRITING_TOOLKIT,
+                                    SelectionMenuItem.ItemGroupOffset.DEFAULT_ITEMS)
                             .setIntent(
                                     createWritingToolkitIntent(selectedText, isSelectionReadOnly)));
         }
@@ -231,13 +240,14 @@ public class SamsungSelectionActionMenuDelegate extends AutofillSelectionActionM
         }
         List<SelectionMenuItem> additionalItemBuilderList = new ArrayList<>();
         additionalItemBuilderList.add(
-                new SelectionMenuItem.Builder(
-                                org.chromium.android_webview.R.string.actionbar_manage_apps)
-                        .setId(Menu.NONE)
+                new SelectionMenuItem.Builder(R.string.actionbar_manage_apps)
+                        .setId(R.id.select_action_menu_manage_apps)
+                        .setGroupId(org.chromium.content.R.id.select_action_menu_delegate_items)
                         .setIcon(null)
-                        .setOrderInCategory(Menu.CATEGORY_SECONDARY)
+                        .setOrderAndCategory(
+                                Menu.CATEGORY_SECONDARY,
+                                SelectionMenuItem.ItemGroupOffset.TEXT_PROCESSING_ITEMS)
                         .setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-                        .setClickListener(null)
                         .setIntent(createManageAppsIntent())
                         .build());
         return additionalItemBuilderList;
@@ -253,19 +263,19 @@ public class SamsungSelectionActionMenuDelegate extends AutofillSelectionActionM
     }
 
     private static int getMenuItemOrder(@IdRes int id) {
-        if (id == org.chromium.android_webview.R.id.select_action_menu_cut) {
+        if (id == R.id.select_action_menu_cut) {
             return SamsungDefaultItemOrder.CUT;
-        } else if (id == org.chromium.android_webview.R.id.select_action_menu_copy) {
+        } else if (id == R.id.select_action_menu_copy) {
             return SamsungDefaultItemOrder.COPY;
-        } else if (id == org.chromium.android_webview.R.id.select_action_menu_paste) {
+        } else if (id == R.id.select_action_menu_paste) {
             return SamsungDefaultItemOrder.PASTE;
-        } else if (id == org.chromium.android_webview.R.id.select_action_menu_select_all) {
+        } else if (id == R.id.select_action_menu_select_all) {
             return SamsungDefaultItemOrder.SELECT_ALL;
-        } else if (id == org.chromium.android_webview.R.id.select_action_menu_share) {
+        } else if (id == R.id.select_action_menu_share) {
             return SamsungDefaultItemOrder.SHARE;
-        } else if (id == org.chromium.android_webview.R.id.select_action_menu_paste_as_plain_text) {
+        } else if (id == R.id.select_action_menu_paste_as_plain_text) {
             return SamsungDefaultItemOrder.PASTE_AS_PLAIN_TEXT;
-        } else if (id == org.chromium.android_webview.R.id.select_action_menu_web_search) {
+        } else if (id == R.id.select_action_menu_web_search) {
             return SamsungDefaultItemOrder.WEB_SEARCH;
         }
         return -1;
@@ -306,52 +316,76 @@ public class SamsungSelectionActionMenuDelegate extends AutofillSelectionActionM
                 && !isSelectionPassword;
     }
 
-    private static View.OnClickListener getTranslationActionClickListener(
-            String selectedText, ResolveInfo info) {
-        return v -> {
-            String textForProcessing =
-                    (selectedText.length() >= MAX_SHARE_QUERY_LENGTH_BYTES)
-                            ? selectedText.substring(0, MAX_SHARE_QUERY_LENGTH_BYTES) + "…"
-                            : selectedText;
-            Intent intent =
-                    createProcessTextIntent()
-                            .setClassName(info.activityInfo.packageName, info.activityInfo.name)
-                            .putExtra(Intent.EXTRA_PROCESS_TEXT, textForProcessing);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(intent);
-        };
+    private static Intent getTranslationActionIntent(String selectedText, ResolveInfo info) {
+        String textForProcessing =
+                (selectedText.length() >= MAX_SHARE_QUERY_LENGTH_BYTES)
+                        ? selectedText.substring(0, MAX_SHARE_QUERY_LENGTH_BYTES) + "…"
+                        : selectedText;
+        Intent intent =
+                createProcessTextIntent()
+                        .setClassName(info.activityInfo.packageName, info.activityInfo.name)
+                        .putExtra(Intent.EXTRA_PROCESS_TEXT, textForProcessing);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        return intent;
     }
 
-    public static boolean handleMenuItemClick(
-            MenuItem item, WebContents webContents, ViewGroup containerView) {
-        if (!isWritingToolKitMenuItem(item)) return false;
-        SelectionPopupController selectionPopupController =
-                SelectionPopupController.fromWebContents(webContents);
-        selectionPopupController.setPreserveSelectionOnNextLossOfFocus(true);
-        prepareForWritingToolkit(containerView);
-        if (selectionPopupController.isFocusedNodeEditable()) {
+    @Override
+    public boolean handleMenuItemClick(
+            SelectionMenuItem item, WebContents webContents, @Nullable View containerView) {
+        if ((item.id == R.id.select_action_menu_translate
+                        || item.id == R.id.select_action_menu_manage_apps)
+                && item.intent != null) {
+            startActivity(item.intent);
+            return true;
+        }
+        if (isWritingToolKitMenuItem(item)) {
+            SelectionPopupController selectionPopupController =
+                    SelectionPopupController.fromWebContents(webContents);
+            selectionPopupController.setPreserveSelectionOnNextLossOfFocus(true);
+            Intent intent = item.intent;
+            launchWritingToolkit(containerView, intent, selectionPopupController);
             return true;
         }
 
-        Intent intent = item.getIntent();
-
-        assert intent != null : "Samsung menu item should have Intent.";
-        startActivity(intent);
-        return true;
+        // This may be an autofill menu item.
+        return super.handleMenuItemClick(item, webContents, containerView);
     }
 
-    private static boolean isWritingToolKitMenuItem(MenuItem item) {
-        return SCAN_TEXT_ID != 0 && item.getItemId() == SCAN_TEXT_ID;
+    private static boolean isWritingToolKitMenuItem(SelectionMenuItem item) {
+        return SCAN_TEXT_ID != 0 && item.id == SCAN_TEXT_ID;
     }
 
-    private static void prepareForWritingToolkit(View containerView) {
+    private static void launchWritingToolkit(
+            @Nullable View containerView,
+            @Nullable Intent intent,
+            SelectionPopupController selectionPopupController) {
         Context context = ContextUtils.getApplicationContext();
         InputMethodManager inputMethodManager =
                 (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
-        if (inputMethodManager != null) {
+        if (inputMethodManager == null || intent == null) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+            Bundle data = new Bundle();
+            String selectedText = intent.getStringExtra(WRITING_TOOLKIT_SUBJECT);
+            if (selectedText == null) selectedText = "";
+            data.putString(WRITING_TOOLKIT_SELECTED_TEXT, selectedText);
+            /**
+             * sendAppPrivateCommand API handles Writing Toolkit for both editable and non-editable
+             * fields from B-OS.
+             */
             inputMethodManager.sendAppPrivateCommand(
-                    containerView, WRITING_TOOLKIT_HBD, /* data= */ null);
+                    containerView, WRITING_TOOLKIT_ACTION_SHOW_HBD, data);
+            return;
         }
+        inputMethodManager.sendAppPrivateCommand(
+                containerView, WRITING_TOOLKIT_ACTION_SHOW_HBD, /* data= */ null);
+        /**
+         * sendAppPrivateCommand API handles Writing Toolkit for editable fields, eliminating the
+         * need for startActivity.
+         */
+        if (selectionPopupController.isFocusedNodeEditable()) {
+            return;
+        }
+        startActivity(intent);
     }
 
     private static Intent createWritingToolkitIntent(

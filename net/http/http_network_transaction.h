@@ -17,8 +17,8 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "build/buildflag.h"
-#include "crypto/ec_private_key.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/completion_repeating_callback.h"
 #include "net/base/net_error_details.h"
@@ -346,6 +346,10 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
 
   void RecordStreamRequestResult(int result);
 
+  // Called from DoCreateStreamComplete() to add trace event parameters.
+  void AddTraceParamsForStreamRequestResult(perfetto::EventContext ctx,
+                                            int result);
+
   void ProcessAltSvcHeader();
 
   // These values are persisted to logs. Entries should not be renumbered and
@@ -395,6 +399,8 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
   ProxyInfo proxy_info_;
 
   std::unique_ptr<HttpStreamRequest> stream_request_;
+  std::optional<HttpStreamRequest::CompletionDetails>
+      stream_request_completion_details_;
   std::unique_ptr<HttpStream> stream_;
 
   // True if we've validated the headers that the stream parser has returned.
@@ -465,7 +471,11 @@ class NET_EXPORT_PRIVATE HttpNetworkTransaction
 
   // Enable pooling to a SpdySession with matching IP and certificate
   // even if the SpdySessionKey is different.
-  bool enable_ip_based_pooling_ = true;
+  // While QUIC also has a notion of IP based pooling / connection aliasing,
+  // this field does not affect QUIC. `enable_alternative_services_` is always
+  // set to false when this field is, which disables QUIC. If that ever changes,
+  // this field should probably be wired up to QUIC sessions as well.
+  bool enable_ip_based_pooling_for_h2_ = true;
 
   // Enable using alternative services for the request.
   bool enable_alternative_services_ = true;

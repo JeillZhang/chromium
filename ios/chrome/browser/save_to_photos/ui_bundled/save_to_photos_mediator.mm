@@ -185,7 +185,7 @@ NSString* const kGooglePhotosAppURLScheme = @"googlephotos";
   // Memorize the account that was picked and whether to ask which account to
   // use every time.
   _prefService->SetString(prefs::kIosSaveToPhotosDefaultGaiaId,
-                          base::SysNSStringToUTF8(identity.gaiaID));
+                          identity.gaiaId.ToString());
   _prefService->SetBoolean(prefs::kIosSaveToPhotosSkipAccountPicker,
                            !askEveryTime);
 
@@ -314,20 +314,15 @@ NSString* const kGooglePhotosAppURLScheme = @"googlephotos";
   // If no default account can be used, present the account picker instead.
   AccountPickerConfiguration* configuration =
       [[AccountPickerConfiguration alloc] init];
-  if (IsSaveToPhotosTitleImprovementEnabled()) {
-    configuration.useBrandedTitle = YES;
+  configuration.useBrandedTitle = YES;
 #if BUILDFLAG(IOS_USE_BRANDED_SYMBOLS)
-    configuration.brandedSymbolName = kGoogleFullSymbol;
-    configuration.titleText = l10n_util::GetNSString(
-        IDS_IOS_SAVE_TO_PHOTOS_ACCOUNT_PICKER_GOOGLE_PHOTOS_TITLE);
+  configuration.brandedSymbolName = kGoogleFullSymbol;
+  configuration.titleText = l10n_util::GetNSString(
+      IDS_IOS_SAVE_TO_PHOTOS_ACCOUNT_PICKER_GOOGLE_PHOTOS_TITLE);
 #else
-    configuration.titleText = l10n_util::GetNSString(
-        IDS_IOS_SETTINGS_DOWNLOADS_SAVE_TO_PHOTOS_HEADER);
+  configuration.titleText =
+      l10n_util::GetNSString(IDS_IOS_SETTINGS_DOWNLOADS_SAVE_TO_PHOTOS_HEADER);
 #endif
-  } else {
-    configuration.titleText =
-        l10n_util::GetNSString(IDS_IOS_SAVE_TO_PHOTOS_ACCOUNT_PICKER_TITLE);
-  }
   NSString* imageSize = GetSizeString(_imageData.length);
   configuration.bodyText =
       l10n_util::GetNSStringF(IDS_IOS_SAVE_TO_PHOTOS_ACCOUNT_PICKER_BODY,
@@ -336,13 +331,8 @@ NSString* const kGooglePhotosAppURLScheme = @"googlephotos";
   configuration.submitButtonTitle =
       l10n_util::GetNSString(IDS_IOS_SAVE_TO_PHOTOS_ACCOUNT_PICKER_SUBMIT);
 
-  if (IsSaveToPhotosAccountPickerImprovementEnabled()) {
-    configuration.askEveryTimeSwitchLabelText = l10n_util::GetNSString(
-        IDS_IOS_SAVE_TO_PHOTOS_ACCOUNT_PICKER_THIS_ACCOUNT_EVERY_TIME);
-  } else {
-    configuration.askEveryTimeSwitchLabelText = l10n_util::GetNSString(
-        IDS_IOS_SAVE_TO_PHOTOS_ACCOUNT_PICKER_ASK_EVERY_TIME);
-  }
+  configuration.askEveryTimeSwitchLabelText = l10n_util::GetNSString(
+      IDS_IOS_SAVE_TO_PHOTOS_ACCOUNT_PICKER_THIS_ACCOUNT_EVERY_TIME);
   [self.delegate showAccountPickerWithConfiguration:configuration
                                    selectedIdentity:defaultIdentity];
 }
@@ -552,7 +542,7 @@ NSString* const kGooglePhotosAppURLScheme = @"googlephotos";
 
   // Otherwise, open the Photos app and hide Save to Photos.
   NSString* recentlyAddedURLString = [kGooglePhotosRecentlyAddedURLString
-      stringByAppendingString:_identity.gaiaID];
+      stringByAppendingString:_identity.gaiaId.ToNSString()];
   NSURL* photosURL = [NSURL URLWithString:recentlyAddedURLString];
   [UIApplication.sharedApplication
                 openURL:photosURL

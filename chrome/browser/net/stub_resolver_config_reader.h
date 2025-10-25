@@ -17,7 +17,6 @@
 #include "build/build_config.h"
 #include "chrome/browser/net/dns_over_https_config_source.h"
 #include "components/prefs/pref_change_registrar.h"
-#include "services/network/public/mojom/host_resolver.mojom-forward.h"
 
 class PrefRegistrySimple;
 class PrefService;
@@ -86,6 +85,17 @@ class StubResolverConfigReader {
   void SetOverrideDnsOverHttpsConfigSource(
       std::unique_ptr<DnsOverHttpsConfigSource> doh_source);
 
+#if BUILDFLAG(IS_WIN)
+  // Set flag for testing Zero Trust DNS scenario
+  static void SetZTDNSEnabledForTesting(bool is_ztdns_enabled_for_testing) {
+    is_ztdns_enabled_for_testing_ = is_ztdns_enabled_for_testing;
+  }
+
+  static bool IsZTDNSEnabledForTesting() {
+    return is_ztdns_enabled_for_testing_;
+  }
+#endif
+
  private:
   void OnParentalControlsDelayTimer();
 
@@ -132,6 +142,12 @@ class StubResolverConfigReader {
   // A nullopt indicates this value has not been determined yet.
   std::optional<bool> android_has_owner_ = std::nullopt;
 #endif
+
+#if BUILDFLAG(IS_WIN)
+  // Flag used for testing Zero Trust DNS scenario.
+  static bool is_ztdns_enabled_for_testing_;
+#endif
+
   base::WeakPtrFactory<StubResolverConfigReader> weak_factory_{this};
 };
 

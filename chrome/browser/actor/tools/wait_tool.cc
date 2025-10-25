@@ -9,20 +9,22 @@
 #include "base/functional/callback.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
+#include "chrome/browser/actor/actor_task.h"
 #include "chrome/browser/actor/tools/tool_callbacks.h"
 #include "chrome/common/actor/action_result.h"
+#include "components/tabs/public/tab_interface.h"
 
 namespace actor {
 
-namespace {
-
-constexpr base::TimeDelta kWaitTime = base::Seconds(3);
-
-}  // namespace
-
 bool WaitTool::no_delay_for_testing_ = false;
 
-WaitTool::WaitTool() = default;
+WaitTool::WaitTool(TaskId task_id,
+                   ToolDelegate& tool_delegate,
+                   base::TimeDelta wait_duration,
+                   tabs::TabHandle observe_tab_handle)
+    : Tool(task_id, tool_delegate),
+      wait_duration_(wait_duration),
+      observe_tab_handle_(observe_tab_handle) {}
 
 WaitTool::~WaitTool() = default;
 
@@ -35,7 +37,7 @@ void WaitTool::Invoke(InvokeCallback callback) {
       FROM_HERE,
       base::BindOnce(&WaitTool::OnDelayFinished, weak_ptr_factory_.GetWeakPtr(),
                      std::move(callback)),
-      no_delay_for_testing_ ? base::TimeDelta() : kWaitTime);
+      no_delay_for_testing_ ? base::TimeDelta() : wait_duration_);
 }
 
 std::string WaitTool::DebugString() const {
@@ -47,9 +49,23 @@ std::string WaitTool::JournalEvent() const {
 }
 
 std::unique_ptr<ObservationDelayController> WaitTool::GetObservationDelayer(
-    content::RenderFrameHost&) const {
+    std::optional<ObservationDelayController::PageStabilityConfig>
+        page_stability_config) {
   // Wait tool shouldn't delay observation aside from its own built-in delay.
   return nullptr;
+}
+
+void WaitTool::UpdateTaskBeforeInvoke(ActorTask& task,
+                                      InvokeCallback callback) const {
+  if (observe_tab_handle_ != tabs::TabHandle::Null()) {
+    task.ObserveTabOnce(observe_tab_handle_);
+  }
+
+  std::move(callback).Run(MakeOkResult());
+}
+
+tabs::TabHandle WaitTool::GetTargetTab() const {
+  return tabs::TabHandle::Null();
 }
 
 void WaitTool::OnDelayFinished(InvokeCallback callback) {

@@ -13,8 +13,8 @@
 #import "ios/chrome/browser/favicon/ui_bundled/favicon_attributes_provider.h"
 #import "ios/chrome/browser/favicon/ui_bundled/favicon_attributes_with_payload.h"
 #import "ios/chrome/browser/net/model/crurl.h"
-#import "ios/chrome/browser/omnibox/model/autocomplete_suggestion.h"
-#import "ios/chrome/browser/omnibox/model/suggest_action.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/autocomplete_suggestion.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/suggest_action.h"
 #import "ios/chrome/browser/omnibox/public/omnibox_constants.h"
 #import "ios/chrome/browser/omnibox/public/omnibox_popup_accessibility_identifier_constants.h"
 #import "ios/chrome/browser/omnibox/public/omnibox_ui_features.h"
@@ -28,12 +28,12 @@
 #import "ios/chrome/browser/omnibox/ui/popup/row/omnibox_popup_row_delegate.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
 #import "ios/chrome/browser/shared/ui/elements/self_sizing_table_view.h"
-#import "ios/chrome/browser/shared/ui/util/keyboard_observer_helper.h"
 #import "ios/chrome/browser/shared/ui/util/layout_guide_names.h"
 #import "ios/chrome/browser/shared/ui/util/rtl_geometry.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/shared/ui/util/util_swift.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/buttons/toolbar_configuration.h"
+#import "ios/chrome/browser/toolbar/ui_bundled/public/omnibox_position_util.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/common/ui/util/device_util.h"
@@ -127,14 +127,24 @@ const CGFloat kHeaderTopPadding = 16.0f;
 /// of.
 @property(nonatomic, readonly) UILayoutGuide* omniboxGuide;
 
+/// Whether to show the omnibox in the bottom when the popup is open.
+@property(nonatomic, assign) BOOL useBottomOmniboxInPopup;
+
 @end
 
-@implementation OmniboxPopupViewController
+@implementation OmniboxPopupViewController {
+  // The height of the bottom omnibox when attached to the keyboard.
+  CGFloat _keyboardAttachedBottomOmniboxHeight;
+  // The context in which the omnibox is presented.
+  OmniboxPresentationContext _presentationContext;
+}
 
 @synthesize omniboxGuide = _omniboxGuide;
 
-- (instancetype)init {
+- (instancetype)initWithPresentationContext:
+    (OmniboxPresentationContext)presentationContext {
   if ((self = [super initWithNibName:nil bundle:nil])) {
+    _presentationContext = presentationContext;
     _forwardsScrollEvents = YES;
     _preselectedMatchGroupIndex = 0;
     _visibleSuggestionCount = 0;
@@ -159,8 +169,6 @@ const CGFloat kHeaderTopPadding = 16.0f;
 }
 
 - (void)loadView {
-  // TODO(crbug.com/40866206): Check why largeIconService not available in
-  // incognito.
   if (self.largeIconService) {
     _carouselAttributeProvider = [[FaviconAttributesProvider alloc]
         initWithFaviconSize:kMaxTileFaviconSize
@@ -175,17 +183,6 @@ const CGFloat kHeaderTopPadding = 16.0f;
   self.tableView.dataSource = self;
   self.view = self.tableView;
 }
-
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (@available(iOS 17, *)) {
-    return;
-  }
-
-  [self updateUIOnTraitChange];
-}
-#endif
 
 - (void)toggleOmniboxDebuggerView {
   if (self.debugInfoViewController.viewIfLoaded.window) {
@@ -228,6 +225,15 @@ const CGFloat kHeaderTopPadding = 16.0f;
     _carouselCell.menuProvider = self.carouselMenuProvider;
   }
   return _carouselCell;
+}
+
+- (void)setUseBottomOmniboxInPopup:(BOOL)useBottomOmniboxInPopup {
+  if (_useBottomOmniboxInPopup == useBottomOmniboxInPopup) {
+    return;
+  }
+
+  _useBottomOmniboxInPopup = useBottomOmniboxInPopup;
+  [self.tableView reloadData];
 }
 
 #pragma mark - View lifecycle
@@ -287,11 +293,9 @@ const CGFloat kHeaderTopPadding = 16.0f;
   self.shouldUpdateVisibleSuggestionCount = YES;
   self.tableView.sectionHeaderTopPadding = 0;
 
-  if (@available(iOS 17, *)) {
-    NSArray<UITrait>* traits = TraitCollectionSetForTraits(nil);
-    [self registerForTraitChanges:traits
-                       withAction:@selector(updateUIOnTraitChange)];
-  }
+  NSArray<UITrait>* traits = TraitCollectionSetForTraits(nil);
+  [self registerForTraitChanges:traits
+                     withAction:@selector(updateUIOnTraitChange)];
 }
 
 - (void)viewDidAppear:(BOOL)animated {
@@ -359,6 +363,7 @@ const CGFloat kHeaderTopPadding = 16.0f;
   self.currentResult = result;
 
   [self.tableView reloadData];
+
   self.forwardsScrollEvents = YES;
   id<AutocompleteSuggestion> firstSuggestionOfPreselectedGroup =
       [self suggestionAtIndexPath:[NSIndexPath indexPathForRow:0
@@ -395,6 +400,12 @@ const CGFloat kHeaderTopPadding = 16.0f;
   }
   [self.mutator
       requestResultsWithVisibleSuggestionCount:self.visibleSuggestionCount];
+}
+
+- (void)setKeyboardAttachedBottomOmniboxHeight:
+    (CGFloat)keyboardAttachedBottomOmniboxHeight {
+  _keyboardAttachedBottomOmniboxHeight = keyboardAttachedBottomOmniboxHeight;
+  self.shouldUpdateVisibleSuggestionCount = YES;
 }
 
 #pragma mark - OmniboxKeyboardDelegate
@@ -910,6 +921,7 @@ const CGFloat kHeaderTopPadding = 16.0f;
 
       DCHECK(cell);
       DCHECK(configuration);
+      configuration.useBottomOmniboxInPopup = self.useBottomOmniboxInPopup;
       configuration.suggestion = suggestion;
       configuration.delegate = self;
       configuration.indexPath = indexPath;
@@ -919,6 +931,7 @@ const CGFloat kHeaderTopPadding = 16.0f;
       configuration.semanticContentAttribute = self.semanticContentAttribute;
       configuration.faviconRetriever = self.faviconRetriever;
       configuration.imageRetriever = self.imageRetriever;
+      configuration.presentationContext = _presentationContext;
 
       [cell setContentConfiguration:configuration];
       cell.backgroundConfiguration =
@@ -1009,15 +1022,10 @@ const CGFloat kHeaderTopPadding = 16.0f;
 #pragma mark - UIScrollViewDelegate
 
 - (void)scrollViewDidScroll:(UIScrollView*)scrollView {
-  // TODO(crbug.com/41325585): Default to the dragging check once it's been
-  // tested on trunk.
   if (!scrollView.dragging) {
     return;
   }
 
-  // TODO(crbug.com/40604984): The following call chain ultimately just
-  // dismisses the keyboard, but involves many layers of plumbing, and should be
-  // refactored.
   if (self.forwardsScrollEvents) {
     [self.mutator onScroll];
   }
@@ -1029,8 +1037,9 @@ const CGFloat kHeaderTopPadding = 16.0f;
 #pragma mark - Keyboard events
 
 - (void)keyboardDidChangeFrame:(NSNotification*)notification {
-  CGFloat keyboardHeight =
-      [KeyboardObserverHelper keyboardHeightInWindow:self.tableView.window];
+  CGRect keyboardFrame =
+      [notification.userInfo[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+  CGFloat keyboardHeight = keyboardFrame.size.height;
   if (self.keyboardHeight != keyboardHeight) {
     self.keyboardHeight = keyboardHeight;
     self.shouldUpdateVisibleSuggestionCount = YES;
@@ -1103,11 +1112,15 @@ const CGFloat kHeaderTopPadding = 16.0f;
   CGRect tableViewFrameInCurrentWindowCoordinateSpace =
       [self.tableView convertRect:self.tableView.bounds
                 toCoordinateSpace:self.tableView.window.coordinateSpace];
+  CGFloat bottomOccludedHeight =
+      self.keyboardHeight + _keyboardAttachedBottomOmniboxHeight;
   // Computes the visible area between the omnibox and the keyboard.
+  CGFloat tableViewTopContentOffset = -self.tableView.contentOffset.y;
   CGFloat visibleTableViewHeight =
       CGRectGetHeight(self.tableView.window.bounds) -
       tableViewFrameInCurrentWindowCoordinateSpace.origin.y -
-      self.keyboardHeight - self.tableView.contentInset.top;
+      bottomOccludedHeight - self.tableView.contentInset.top -
+      tableViewTopContentOffset;
   // Use font size to estimate the size of a omnibox search suggestion.
   CGFloat fontSizeHeight = [@"T" sizeWithAttributes:@{
                              NSFontAttributeName : [UIFont
@@ -1144,7 +1157,6 @@ const CGFloat kHeaderTopPadding = 16.0f;
   return carouselItems;
 }
 
-// TODO(crbug.com/40866206): Move to a mediator.
 - (void)fetchFaviconForCarouselItem:(CarouselItem*)carouselItem {
   __weak OmniboxPopupCarouselCell* weakCell = self.carouselCell;
   __weak CarouselItem* weakItem = carouselItem;
@@ -1184,7 +1196,10 @@ const CGFloat kHeaderTopPadding = 16.0f;
 // UITrait has been changed.
 - (void)updateUIOnTraitChange {
   [self updateBackgroundColor];
-  if (ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET) {
+
+  if (omnibox::ShouldFocusedOmniboxFollowSteadyStatePosition() ||
+      omnibox::ForceBottomOmniboxInEditState() ||
+      ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET) {
     [self.mutator onTraitCollectionChange];
   }
 }

@@ -96,8 +96,9 @@ PositionInFlatTree TextFragmentFinder::NextTextPosition(
       TextIteratorBehavior::Builder().SetEmitsSpaceForNbsp(true).Build();
   CharacterIteratorInFlatTree char_it(position, end_position, options);
   for (; char_it.length(); char_it.Advance(1)) {
-    if (!IsSpaceOrNewline(char_it.CharacterAt(0)))
+    if (!unicode::IsSpaceOrNewline(char_it.CharacterAt(0))) {
       return char_it.StartPosition();
+    }
   }
 
   return end_position;
@@ -113,8 +114,9 @@ PositionInFlatTree TextFragmentFinder::PreviousTextPosition(
       EphemeralRangeInFlatTree(max_position, position), options);
 
   for (; char_it.length(); char_it.Advance(1)) {
-    if (!IsSpaceOrNewline(char_it.CharacterAt(0)))
+    if (!unicode::IsSpaceOrNewline(char_it.CharacterAt(0))) {
       return char_it.EndPosition();
+    }
   }
 
   return max_position;
@@ -163,10 +165,10 @@ void TextFragmentFinder::FindMatchInRange(String search_text,
                                           bool word_end_bounded) {
   find_buffer_runner_->FindMatchInRange(
       search_range, search_text, FindOptions().SetCaseInsensitive(true),
-      WTF::BindOnce(&TextFragmentFinder::OnFindMatchInRangeComplete,
-                    WrapWeakPersistent(this), search_text,
-                    WrapWeakPersistent(search_range), word_start_bounded,
-                    word_end_bounded));
+      BindOnce(&TextFragmentFinder::OnFindMatchInRangeComplete,
+               WrapWeakPersistent(this), search_text,
+               WrapWeakPersistent(search_range), word_start_bounded,
+               word_end_bounded));
 }
 
 void TextFragmentFinder::FindPrefix() {

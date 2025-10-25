@@ -44,17 +44,12 @@ class RASTER_EXPORT RasterImplementationGLES : public RasterInterface {
 
   // Queries:
   // - GL_COMMANDS_ISSUED_CHROMIUM
-  // - GL_COMMANDS_ISSUED_TIMESTAMP_CHROMIUM
   // - GL_COMMANDS_COMPLETED_CHROMIUM
   void GenQueriesEXT(GLsizei n, GLuint* queries) override;
   void DeleteQueriesEXT(GLsizei n, const GLuint* queries) override;
   void BeginQueryEXT(GLenum target, GLuint id) override;
   void EndQueryEXT(GLenum target) override;
-  void QueryCounterEXT(GLuint id, GLenum target) override;
   void GetQueryObjectuivEXT(GLuint id, GLenum pname, GLuint* params) override;
-  void GetQueryObjectui64vEXT(GLuint id,
-                              GLenum pname,
-                              GLuint64* params) override;
 
   // Copies SharedImage if `supports_yuv_rgb_conversion` else copies textures.
   void CopySharedImage(const gpu::Mailbox& source_mailbox,
@@ -65,6 +60,10 @@ class RASTER_EXPORT RasterImplementationGLES : public RasterInterface {
                        GLint y,
                        GLsizei width,
                        GLsizei height) override;
+  void CopySharedImage(const gpu::Mailbox& source_mailbox,
+                       const gpu::Mailbox& dest_mailbox,
+                       const gfx::Rect& source_rect,
+                       const gfx::Rect& dest_rect) override;
 
   void WritePixels(const gpu::Mailbox& dest_mailbox,
                    int dst_x_offset,
@@ -97,13 +96,6 @@ class RASTER_EXPORT RasterImplementationGLES : public RasterInterface {
                       size_t* max_op_size_hint) override;
   void EndRasterCHROMIUM() override;
 
-  // Image decode acceleration.
-  SyncToken ScheduleImageDecode(base::span<const uint8_t> encoded_data,
-                                const gfx::Size& output_size,
-                                uint32_t transfer_cache_entry_id,
-                                const gfx::ColorSpace& target_color_space,
-                                bool needs_mips) override;
-
   void ReadbackARGBPixelsAsync(
       const gpu::Mailbox& source_mailbox,
       GLenum source_target,
@@ -112,7 +104,7 @@ class RASTER_EXPORT RasterImplementationGLES : public RasterInterface {
       const gfx::Point& source_starting_point,
       const SkImageInfo& dst_info,
       GLuint dst_row_bytes,
-      unsigned char* out,
+      base::span<uint8_t> out,
       base::OnceCallback<void(bool)> readback_done) override;
 
   void ReadbackYUVPixelsAsync(
@@ -122,11 +114,11 @@ class RASTER_EXPORT RasterImplementationGLES : public RasterInterface {
       const gfx::Rect& output_rect,
       bool vertically_flip_texture,
       int y_plane_row_stride_bytes,
-      unsigned char* y_plane_data,
+      base::span<uint8_t> y_plane_data,
       int u_plane_row_stride_bytes,
-      unsigned char* u_plane_data,
+      base::span<uint8_t> u_plane_data,
       int v_plane_row_stride_bytes,
-      unsigned char* v_plane_data,
+      base::span<uint8_t> v_plane_data,
       const gfx::Point& paste_location,
       base::OnceCallback<void()> release_mailbox,
       base::OnceCallback<void(bool)> readback_done) override;
@@ -138,21 +130,6 @@ class RASTER_EXPORT RasterImplementationGLES : public RasterInterface {
                            int src_y,
                            int plane_index,
                            void* dst_pixels) override;
-
-  // Raster via GrContext.
-  GLuint CreateAndConsumeForGpuRaster(const gpu::Mailbox& mailbox) override;
-  GLuint CreateAndConsumeForGpuRaster(
-      const scoped_refptr<gpu::ClientSharedImage>& shared_image) override;
-  void DeleteGpuRasterTexture(GLuint texture) override;
-  void BeginGpuRaster() override;
-  void EndGpuRaster() override;
-  void BeginSharedImageAccessDirectCHROMIUM(GLuint texture,
-                                            GLenum mode) override;
-  void EndSharedImageAccessDirectCHROMIUM(GLuint texture) override;
-
-  void InitializeDiscardableTextureCHROMIUM(GLuint texture) override;
-  void UnlockDiscardableTextureCHROMIUM(GLuint texture) override;
-  bool LockDiscardableTextureCHROMIUM(GLuint texture) override;
 
   void TraceBeginCHROMIUM(const char* category_name,
                           const char* trace_name) override;

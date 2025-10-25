@@ -15,11 +15,15 @@ import static org.junit.Assert.assertTrue;
 import static org.chromium.base.GarbageCollectionTestUtils.canBeGarbageCollected;
 import static org.chromium.base.test.transit.TransitAsserts.assertFinalDestination;
 import static org.chromium.chrome.browser.flags.ChromeFeatureList.ANDROID_ELEGANT_TEXT_HEIGHT;
+import static org.chromium.chrome.test.util.ChromeTabUtils.getIndexOnUiThread;
 
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
+import android.view.View;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 
+import androidx.recyclerview.widget.RecyclerView;
 import androidx.test.filters.MediumTest;
 
 import org.junit.Before;
@@ -28,21 +32,23 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.supplier.Supplier;
-import org.chromium.base.test.transit.CarryOn;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.RequiresRestart;
 import org.chromium.base.test.util.Restriction;
+import org.chromium.base.test.util.TestAnimations;
 import org.chromium.base.test.util.TestAnimations.EnableAnimations;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.ui.signin.signin_promo.SigninPromoCoordinator;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.R;
@@ -52,23 +58,32 @@ import org.chromium.chrome.test.transit.Journeys;
 import org.chromium.chrome.test.transit.hub.IncognitoTabSwitcherStation;
 import org.chromium.chrome.test.transit.hub.NewTabGroupDialogFacility;
 import org.chromium.chrome.test.transit.hub.RegularTabSwitcherStation;
+import org.chromium.chrome.test.transit.hub.TabGroupColorPickerFacility;
+import org.chromium.chrome.test.transit.hub.TabGroupDialogFacility;
 import org.chromium.chrome.test.transit.hub.TabSwitcherGroupCardFacility;
 import org.chromium.chrome.test.transit.hub.TabSwitcherListEditorFacility;
+import org.chromium.chrome.test.transit.hub.TabSwitcherStation;
 import org.chromium.chrome.test.transit.hub.UndoSnackbarFacility;
 import org.chromium.chrome.test.transit.ntp.IncognitoNewTabPageStation;
+import org.chromium.chrome.test.transit.ntp.RegularNewTabPageAppMenuFacility;
 import org.chromium.chrome.test.transit.ntp.RegularNewTabPageStation;
-import org.chromium.chrome.test.transit.page.PageStation;
+import org.chromium.chrome.test.transit.page.BasePageStation;
+import org.chromium.chrome.test.transit.page.CtaPageStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.transit.tabmodel.TabThumbnailsCapturedCarryOn;
 import org.chromium.chrome.test.util.ChromeRenderTestRule;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.tab_groups.TabGroupColorId;
+import org.chromium.mojo.system.Pair;
 import org.chromium.ui.base.PageTransition;
 
 import java.io.IOException;
 import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.function.Supplier;
 
 /** Tests for the {@link TabSwitcherLayout}. */
 @SuppressWarnings("ConstantConditions")
@@ -89,6 +104,14 @@ import java.util.concurrent.ExecutionException;
 public class TabSwitcherLayoutPTTest {
     private static final String TEST_URL = "/chrome/test/data/android/google.html";
 
+    // Used for testing the tab group colors.
+    // We only test the first and last color, since each color has 4 different test,
+    // causing 9 colors to run 36 different render tests.
+    public static final List<Pair<@TabGroupColorId Integer, String>> COLOR_ID_TO_STRING =
+            Arrays.asList(
+                    new Pair<>(TabGroupColorId.GREY, "grey"),
+                    new Pair<>(TabGroupColorId.ORANGE, "orange"));
+
     @Rule
     public AutoResetCtaTransitTestRule mCtaTestRule =
             ChromeTransitTestRules.autoResetCtaActivityRule();
@@ -96,7 +119,7 @@ public class TabSwitcherLayoutPTTest {
     @Rule
     public ChromeRenderTestRule mRenderTestRule =
             ChromeRenderTestRule.Builder.withPublicCorpus()
-                    .setRevision(9)
+                    .setRevision(11) // Update the empty thumbnail placeholder.
                     .setBugComponent(ChromeRenderTestRule.Component.UI_BROWSER_MOBILE_HUB)
                     .build();
 
@@ -112,25 +135,25 @@ public class TabSwitcherLayoutPTTest {
     }
 
     /** Enters the regular Tab Switcher, making sure all tabs have a thumbnail. */
-    private RegularTabSwitcherStation enterRegularHTSWithThumbnailChecking(
-            PageStation currentStation) {
-        RegularTabSwitcherStation tabSwitcherStation = currentStation.openRegularTabSwitcher();
-        CarryOn.pickUp(
-                new TabThumbnailsCapturedCarryOn(
-                        tabSwitcherStation.tabModelSelectorElement.get(), /* isIncognito= */ false),
-                /* trigger= */ null);
-        return tabSwitcherStation;
+    private RegularTabSwitcherStation enterRegularHtsWithThumbnailChecking(
+            CtaPageStation currentStation) {
+        return currentStation
+                .openRegularTabSwitcherAnd()
+                .pickUpCarryOnAnd(
+                        new TabThumbnailsCapturedCarryOn(
+                                currentStation.getTabModelSelector(), /* isIncognito= */ false))
+                .completeAndGet(RegularTabSwitcherStation.class);
     }
 
     /** Enters the Incognito Tab Switcher, making sure all tabs have a thumbnail. */
-    private IncognitoTabSwitcherStation enterIncognitoHTSWithThumbnailChecking(
-            PageStation currentStation) {
-        IncognitoTabSwitcherStation tabSwitcherStation = currentStation.openIncognitoTabSwitcher();
-        CarryOn.pickUp(
-                new TabThumbnailsCapturedCarryOn(
-                        tabSwitcherStation.tabModelSelectorElement.get(), /* isIncognito= */ true),
-                /* trigger= */ null);
-        return tabSwitcherStation;
+    private IncognitoTabSwitcherStation enterIncognitoHtsWithThumbnailChecking(
+            CtaPageStation currentStation) {
+        return currentStation
+                .openIncognitoTabSwitcherAnd()
+                .pickUpCarryOnAnd(
+                        new TabThumbnailsCapturedCarryOn(
+                                currentStation.getTabModelSelector(), /* isIncognito= */ true))
+                .completeAndGet(IncognitoTabSwitcherStation.class);
     }
 
     @Test
@@ -146,7 +169,7 @@ public class TabSwitcherLayoutPTTest {
                         mStartPage, 10, 0, "about:blank", WebPageStation::newBuilder);
         // Make sure all thumbnails are there before switching tabs.
         RegularTabSwitcherStation tabSwitcherStation =
-                enterRegularHTSWithThumbnailChecking(pageStation);
+                enterRegularHtsWithThumbnailChecking(pageStation);
         pageStation = tabSwitcherStation.selectTabAtIndex(0, WebPageStation.newBuilder());
 
         tabSwitcherStation = pageStation.openRegularTabSwitcher();
@@ -168,9 +191,9 @@ public class TabSwitcherLayoutPTTest {
         WebPageStation pageStation =
                 Journeys.prepareTabsWithThumbnails(
                         mStartPage, 10, 0, "about:blank", WebPageStation::newBuilder);
-        assertEquals(9, cta.getTabModelSelector().getCurrentModel().index());
+        assertEquals(9, getIndexOnUiThread(cta.getTabModelSelector().getCurrentModel()));
         RegularTabSwitcherStation tabSwitcherStation =
-                enterRegularHTSWithThumbnailChecking(pageStation);
+                enterRegularHtsWithThumbnailChecking(pageStation);
         // Make sure the grid tab switcher is scrolled down to show the selected tab.
         mRenderTestRule.render(cta.findViewById(R.id.pane_frame), "10_web_tabs-select_last");
 
@@ -195,7 +218,7 @@ public class TabSwitcherLayoutPTTest {
                         WebPageStation::newBuilder);
         // Make sure all thumbnails are there before switching tabs.
         RegularTabSwitcherStation tabSwitcherStation =
-                enterRegularHTSWithThumbnailChecking(pageStation);
+                enterRegularHtsWithThumbnailChecking(pageStation);
         pageStation = tabSwitcherStation.selectTabAtIndex(0, WebPageStation.newBuilder());
 
         tabSwitcherStation = pageStation.openRegularTabSwitcher();
@@ -221,12 +244,12 @@ public class TabSwitcherLayoutPTTest {
                         RegularNewTabPageStation::newBuilder);
         // Make sure all thumbnails are there before switching tabs.
         RegularTabSwitcherStation tabSwitcherStation =
-                enterRegularHTSWithThumbnailChecking(pageStation);
+                enterRegularHtsWithThumbnailChecking(pageStation);
         pageStation = tabSwitcherStation.selectTabAtIndex(0, RegularNewTabPageStation.newBuilder());
 
         tabSwitcherStation = pageStation.openRegularTabSwitcher();
 
-        mRenderTestRule.render(cta.findViewById(R.id.pane_frame), "3_native_tabs_v2");
+        mRenderTestRule.render(cta.findViewById(R.id.pane_frame), "3_native_tabs_v4");
 
         RegularNewTabPageStation previousPage =
                 tabSwitcherStation.leaveHubToPreviousTabViaBack(
@@ -250,7 +273,7 @@ public class TabSwitcherLayoutPTTest {
         assertTrue(cta.getCurrentTabModel().isIncognito());
         // Make sure all thumbnails are there before switching tabs.
         IncognitoTabSwitcherStation tabSwitcherStation =
-                enterIncognitoHTSWithThumbnailChecking(pageStation);
+                enterIncognitoHtsWithThumbnailChecking(pageStation);
         pageStation = tabSwitcherStation.selectTabAtIndex(0, WebPageStation.newBuilder());
         tabSwitcherStation = pageStation.openIncognitoTabSwitcher();
         ChromeRenderTestRule.sanitize(cta.findViewById(R.id.pane_frame));
@@ -264,33 +287,91 @@ public class TabSwitcherLayoutPTTest {
     @Test
     @MediumTest
     @Feature({"RenderTest"})
-    public void testRenderGrid_1TabGroup_ColorIcon() throws IOException {
+    @EnableFeatures(ChromeFeatureList.ANDROID_PINNED_TABS)
+    public void testRenderGrid_PinnedTabs() throws IOException {
         ChromeTabbedActivity cta = mCtaTestRule.getActivity();
-
-        WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
-        int firstTabId = firstPage.loadedTabElement.get().getId();
-        RegularNewTabPageStation secondPage = firstPage.openNewTabFast();
-        int secondTabId = secondPage.loadedTabElement.get().getId();
+        RegularNewTabPageStation pageStation =
+                Journeys.prepareTabsWithThumbnails(
+                        mStartPage,
+                        3,
+                        0,
+                        UrlConstants.NTP_URL,
+                        RegularNewTabPageStation::newBuilder);
         // Make sure all thumbnails are there before switching tabs.
-        RegularTabSwitcherStation tabSwitcher = enterRegularHTSWithThumbnailChecking(secondPage);
-        TabSwitcherListEditorFacility<RegularTabSwitcherStation> editor =
-                tabSwitcher.openAppMenu().clickSelectTabs();
-        editor = editor.addTabToSelection(0, firstTabId);
-        editor = editor.addTabToSelection(1, secondTabId);
+        RegularTabSwitcherStation tabSwitcherStation =
+                enterRegularHtsWithThumbnailChecking(pageStation);
 
-        NewTabGroupDialogFacility dialog = editor.openAppMenuWithEditor().groupTabs();
-        dialog = dialog.inputName("test_tab_group_name");
-        dialog = dialog.pickColor(TabGroupColorId.RED);
-        dialog.pressDone();
+        // Pin a tab.
+        pageStation = tabSwitcherStation.selectTabAtIndex(0, RegularNewTabPageStation.newBuilder());
+        RegularNewTabPageAppMenuFacility menu = pageStation.openAppMenu();
+        menu.pinTab();
 
-        ChromeRenderTestRule.sanitize(cta.findViewById(R.id.pane_frame));
-        SigninPromoCoordinator.disablePromoForTesting();
-        mRenderTestRule.render(
-                cta.findViewById(R.id.pane_frame), "1_tab_group_GTS_card_item_color_icon_v2");
+        tabSwitcherStation = pageStation.openRegularTabSwitcher();
 
-        secondPage =
-                tabSwitcher.leaveHubToPreviousTabViaBack(RegularNewTabPageStation.newBuilder());
-        assertFinalDestination(secondPage);
+        mRenderTestRule.render(cta.findViewById(R.id.pane_frame), "regular_pinned_tabs");
+
+        RegularNewTabPageStation previousPage =
+                tabSwitcherStation.leaveHubToPreviousTabViaBack(
+                        RegularNewTabPageStation.newBuilder());
+        assertFinalDestination(previousPage);
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    @EnableFeatures(ChromeFeatureList.ANDROID_PINNED_TABS)
+    @DisabledTest(message = "crbug.com/444244174")
+    public void testRenderGrid_PinnedTabs_Scrolled() throws IOException {
+        ChromeTabbedActivity cta = mCtaTestRule.getActivity();
+        RegularNewTabPageStation pageStation =
+                Journeys.prepareTabsWithThumbnails(
+                        mStartPage,
+                        18,
+                        0,
+                        UrlConstants.NTP_URL,
+                        RegularNewTabPageStation::newBuilder);
+        // Make sure all thumbnails are there before switching tabs.
+        RegularTabSwitcherStation tabSwitcherStation =
+                enterRegularHtsWithThumbnailChecking(pageStation);
+
+        // Pin two tabs.
+        pageStation = tabSwitcherStation.selectTabAtIndex(0, RegularNewTabPageStation.newBuilder());
+        RegularNewTabPageAppMenuFacility menu = pageStation.openAppMenu();
+        menu.pinTab();
+
+        tabSwitcherStation = pageStation.openRegularTabSwitcher();
+        pageStation = tabSwitcherStation.selectTabAtIndex(1, RegularNewTabPageStation.newBuilder());
+        menu = pageStation.openAppMenu();
+        menu.pinTab();
+
+        tabSwitcherStation = pageStation.openRegularTabSwitcher();
+
+        // Scroll to the bottom to make the pinned tab strip visible.
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    RecyclerView recyclerView = cta.findViewById(R.id.tab_list_recycler_view);
+                    recyclerView.scrollToPosition(recyclerView.getAdapter().getItemCount() - 1);
+                });
+        CriteriaHelper.pollUiThread(
+                () -> {
+                    RecyclerView recyclerView = cta.findViewById(R.id.tab_list_recycler_view);
+                    if (recyclerView.getScrollState() != RecyclerView.SCROLL_STATE_IDLE) {
+                        return false;
+                    }
+                    LinearLayout parent = (LinearLayout) recyclerView.getParent();
+                    View pinnedTabView = parent.getChildAt(0);
+                    return pinnedTabView != null
+                            && pinnedTabView.getVisibility() == View.VISIBLE
+                            && pinnedTabView.getAlpha() == 1.0f
+                            && pinnedTabView.getTranslationY() == 0f;
+                });
+
+        mRenderTestRule.render(cta.findViewById(R.id.pane_frame), "pinned_tabs_scrolled");
+
+        RegularNewTabPageStation previousPage =
+                tabSwitcherStation.leaveHubToPreviousTabViaBack(
+                        RegularNewTabPageStation.newBuilder());
+        assertFinalDestination(previousPage);
     }
 
     @Test
@@ -335,7 +416,8 @@ public class TabSwitcherLayoutPTTest {
 
     @Test
     @MediumTest
-    @EnableAnimations
+    @TestAnimations.EnableAnimations
+    @DisabledTest(message = "crbug.com/433892577 thumbnail capture is flaky")
     @RequiresRestart("Flaky on desktop (crbug.com/381679686), affects flake rate of other tests")
     public void testTabToGridAndBack_SoftCleanup_Ntp() {
         WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
@@ -427,9 +509,9 @@ public class TabSwitcherLayoutPTTest {
                         "Android.TabGroupParity.TabGroupCreationDialogResultAction", 1);
 
         // Open 2 tabs
-        int firstTabId = firstPage.loadedTabElement.get().getId();
+        int firstTabId = firstPage.loadedTabElement.value().getId();
         RegularNewTabPageStation secondPage = firstPage.openNewTabFast();
-        int secondTabId = secondPage.loadedTabElement.get().getId();
+        int secondTabId = secondPage.loadedTabElement.value().getId();
         RegularTabSwitcherStation tabSwitcher = secondPage.openRegularTabSwitcher();
 
         // Group both tabs
@@ -466,9 +548,9 @@ public class TabSwitcherLayoutPTTest {
                         .build();
 
         // Open 2 tabs
-        int firstTabId = firstPage.loadedTabElement.get().getId();
+        int firstTabId = firstPage.loadedTabElement.value().getId();
         RegularNewTabPageStation secondPage = firstPage.openNewTabFast();
-        int secondTabId = secondPage.loadedTabElement.get().getId();
+        int secondTabId = secondPage.loadedTabElement.value().getId();
         RegularTabSwitcherStation tabSwitcher = secondPage.openRegularTabSwitcher();
 
         // Group both tabs and edit group fields
@@ -499,9 +581,9 @@ public class TabSwitcherLayoutPTTest {
         WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
 
         // Open 2 tabs
-        int firstTabId = firstPage.loadedTabElement.get().getId();
+        int firstTabId = firstPage.loadedTabElement.value().getId();
         RegularNewTabPageStation secondPage = firstPage.openNewTabFast();
-        int secondTabId = secondPage.loadedTabElement.get().getId();
+        int secondTabId = secondPage.loadedTabElement.value().getId();
         RegularTabSwitcherStation tabSwitcher = secondPage.openRegularTabSwitcher();
 
         // Group both tabs
@@ -531,9 +613,9 @@ public class TabSwitcherLayoutPTTest {
         WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
 
         // Open 2 tabs
-        int firstTabId = firstPage.loadedTabElement.get().getId();
+        int firstTabId = firstPage.loadedTabElement.value().getId();
         RegularNewTabPageStation secondPage = firstPage.openNewTabFast();
-        int secondTabId = secondPage.loadedTabElement.get().getId();
+        int secondTabId = secondPage.loadedTabElement.value().getId();
         RegularTabSwitcherStation tabSwitcher = secondPage.openRegularTabSwitcher();
 
         // Group both tabs
@@ -565,9 +647,9 @@ public class TabSwitcherLayoutPTTest {
         WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
 
         // Open 2 tabs
-        int firstTabId = firstPage.loadedTabElement.get().getId();
+        int firstTabId = firstPage.loadedTabElement.value().getId();
         RegularNewTabPageStation secondPage = firstPage.openNewTabFast();
-        int secondTabId = secondPage.loadedTabElement.get().getId();
+        int secondTabId = secondPage.loadedTabElement.value().getId();
         RegularTabSwitcherStation tabSwitcher = secondPage.openRegularTabSwitcher();
 
         // Group both tabs
@@ -602,9 +684,9 @@ public class TabSwitcherLayoutPTTest {
         WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
 
         // Open 2 tabs
-        int firstTabId = firstPage.loadedTabElement.get().getId();
+        int firstTabId = firstPage.loadedTabElement.value().getId();
         RegularNewTabPageStation secondPage = firstPage.openNewTabFast();
-        int secondTabId = secondPage.loadedTabElement.get().getId();
+        int secondTabId = secondPage.loadedTabElement.value().getId();
         RegularTabSwitcherStation tabSwitcher = secondPage.openRegularTabSwitcher();
 
         // Group both tabs
@@ -634,9 +716,9 @@ public class TabSwitcherLayoutPTTest {
         WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
 
         // Open 2 tabs
-        int firstTabId = firstPage.loadedTabElement.get().getId();
+        int firstTabId = firstPage.loadedTabElement.value().getId();
         RegularNewTabPageStation secondPage = firstPage.openNewTabFast();
-        int secondTabId = secondPage.loadedTabElement.get().getId();
+        int secondTabId = secondPage.loadedTabElement.value().getId();
         RegularTabSwitcherStation tabSwitcher = secondPage.openRegularTabSwitcher();
 
         // Group both tabs
@@ -669,12 +751,12 @@ public class TabSwitcherLayoutPTTest {
         assertFinalDestination(ntp);
     }
 
-    private <T extends PageStation> T roundtripToHTSWithThumbnailChecks(
+    private <T extends CtaPageStation> T roundtripToHTSWithThumbnailChecks(
             T page,
-            Supplier<PageStation.Builder<T>> destinationBuiderFactory,
+            Supplier<BasePageStation.Builder<T>> destinationBuiderFactory,
             Runnable resetHTSStateOnUiThread,
             boolean canGarbageCollectBitmaps) {
-        RegularTabSwitcherStation tabSwitcher = enterRegularHTSWithThumbnailChecking(page);
+        RegularTabSwitcherStation tabSwitcher = enterRegularHtsWithThumbnailChecking(page);
 
         // TODO(crbug.com/324919909): Migrate this to a HubTabSwitcherCardFacility with a tab
         // thumbnail as a view element.
@@ -700,7 +782,7 @@ public class TabSwitcherLayoutPTTest {
             assertFalse(canBeGarbageCollected(mBitmap));
         }
 
-        tabSwitcher = enterRegularHTSWithThumbnailChecking(page);
+        tabSwitcher = enterRegularHtsWithThumbnailChecking(page);
         return tabSwitcher.leaveHubToPreviousTabViaBack(destinationBuiderFactory.get());
     }
 
@@ -708,10 +790,11 @@ public class TabSwitcherLayoutPTTest {
     @MediumTest
     public void testUrlUpdatedNotCrashing_ForTabNotInCurrentModel() throws Exception {
         WebPageStation regularPage = mCtaTestRule.startOnBlankPage();
-        Tab regularTab = regularPage.loadedTabElement.get();
+        Tab regularTab = regularPage.loadedTabElement.value();
         IncognitoNewTabPageStation incognitoPage = regularPage.openNewIncognitoTabFast();
-        Tab incognitoTab = incognitoPage.loadedTabElement.get();
-        IncognitoTabSwitcherStation incognitoTabSwitcherStation = incognitoPage.openIncognitoTabSwitcher();
+        Tab incognitoTab = incognitoPage.loadedTabElement.value();
+        IncognitoTabSwitcherStation incognitoTabSwitcherStation =
+                incognitoPage.openIncognitoTabSwitcher();
         // Load URL in Regular Model
         mCtaTestRule.loadUrlInTab(
                 mCtaTestRule.getTestServer().getURL(TEST_URL),
@@ -728,5 +811,112 @@ public class TabSwitcherLayoutPTTest {
 
         regularTabSwitcherStation.selectTabAtIndex(
                 0, WebPageStation.newBuilder().withExpectedUrlSubstring(TEST_URL));
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    @EnableFeatures({ChromeFeatureList.ANDROID_TAB_GROUPS_COLOR_UPDATE_GM3})
+    public void testRenderGrid_TabGroupColor_2TabsInGroup() throws IOException {
+        doTestRenderGrid_TabGroupColor_Parameterized(
+                /* isIncognito= */ false,
+                /* numTabsToGroup= */ 2,
+                "tab_group_color_2_tabs_in_group_");
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    @EnableFeatures({ChromeFeatureList.ANDROID_TAB_GROUPS_COLOR_UPDATE_GM3})
+    public void testRenderGrid_TabGroupColor_Incognito_2TabsInGroup() throws IOException {
+        doTestRenderGrid_TabGroupColor_Parameterized(
+                /* isIncognito= */ true,
+                /* numTabsToGroup= */ 2,
+                "tab_group_color_incognito_2_tabs_in_group_");
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    @EnableFeatures({ChromeFeatureList.ANDROID_TAB_GROUPS_COLOR_UPDATE_GM3})
+    public void testRenderGrid_TabGroupColor_5TabsInGroup() throws IOException {
+        doTestRenderGrid_TabGroupColor_Parameterized(
+                /* isIncognito= */ false,
+                /* numTabsToGroup= */ 5,
+                "tab_group_color_5_tabs_in_group_");
+    }
+
+    @Test
+    @MediumTest
+    @Feature({"RenderTest"})
+    @EnableFeatures({ChromeFeatureList.ANDROID_TAB_GROUPS_COLOR_UPDATE_GM3})
+    public void testRenderGrid_TabGroupColor_Incognito_5TabsInGroup() throws IOException {
+        doTestRenderGrid_TabGroupColor_Parameterized(
+                /* isIncognito= */ true,
+                /* numTabsToGroup= */ 5,
+                "tab_group_color_incognito_5_tabs_in_group_");
+    }
+
+    private void doTestRenderGrid_TabGroupColor_Parameterized(
+            boolean isIncognito, int numTabsToGroup, String renderIdPrefix) throws IOException {
+        List<Tab> tabsInGroup = new ArrayList<>();
+        TabSwitcherStation tabSwitcher;
+        WebPageStation pageStation;
+        ChromeTabbedActivity cta = mCtaTestRule.getActivity();
+
+        // 1. SETUP: Create the tabs and the initial group.
+        // We add an extra tab which will remain selected, allowing our tab group to show its color.
+        if (isIncognito) {
+            pageStation =
+                    Journeys.prepareTabsWithThumbnails(
+                            mStartPage,
+                            1,
+                            numTabsToGroup + 1,
+                            "about:blank",
+                            WebPageStation::newBuilder);
+            tabSwitcher = enterIncognitoHtsWithThumbnailChecking(pageStation);
+        } else {
+            pageStation =
+                    Journeys.prepareTabsWithThumbnails(
+                            mStartPage,
+                            numTabsToGroup + 1,
+                            0,
+                            "about:blank",
+                            WebPageStation::newBuilder);
+            tabSwitcher = enterRegularHtsWithThumbnailChecking(pageStation);
+        }
+        TabModel tabModel = tabSwitcher.getTabModel();
+        // Create the group.
+        for (int i = 0; i < numTabsToGroup; i++) {
+            int j = i;
+            tabsInGroup.add(ThreadUtils.runOnUiThreadBlocking(() -> tabModel.getTabAt(j)));
+        }
+        TabSwitcherGroupCardFacility tabGroupCard =
+                Journeys.mergeTabsToNewGroup(tabSwitcher, tabsInGroup);
+
+        SigninPromoCoordinator.disablePromoForTesting();
+
+        // 2. LOOP: Edit the group, pick a new color, run a render test.
+        for (Pair<Integer, String> colorMapping : COLOR_ID_TO_STRING) {
+            // Get inputs.
+            @TabGroupColorId int colorId = (int) colorMapping.first;
+            String colorName = (String) colorMapping.second;
+            // Edit group.
+            TabGroupDialogFacility<TabSwitcherStation> editDialog = tabGroupCard.clickCard();
+            TabGroupColorPickerFacility<TabSwitcherStation> colorPicker =
+                    editDialog.openColorPicker();
+            // Set color.
+            editDialog = colorPicker.selectColor(colorId);
+            editDialog.pressBackArrowToExit();
+
+            // Test
+            ChromeRenderTestRule.sanitize(cta.findViewById(R.id.pane_frame));
+            String renderId = renderIdPrefix + colorName;
+            mRenderTestRule.render(cta.findViewById(R.id.pane_frame), renderId);
+        }
+
+        // 3. CLEANUP: Leave the hub to the last active incognito tab.
+        pageStation = tabSwitcher.leaveHubToPreviousTabViaBack(WebPageStation.newBuilder());
+        assertFinalDestination(pageStation);
     }
 }

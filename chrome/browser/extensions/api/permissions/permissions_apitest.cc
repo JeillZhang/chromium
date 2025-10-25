@@ -5,6 +5,7 @@
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/android_buildflags.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
@@ -18,6 +19,7 @@
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/browser/extension_prefs.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/switches.h"
@@ -26,6 +28,8 @@
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/net/chrome_network_delegate.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -242,7 +246,7 @@ IN_PROC_BROWSER_TEST_F(PermissionsApiTest, OptionalPermissionsFileAccess) {
 // Tests loading of files or directory listings when an extension has file
 // access.
 IN_PROC_BROWSER_TEST_F(PermissionsApiTest, FileLoad) {
-#if BUILDFLAG(IS_DESKTOP_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
   // Enable access to arbitrary files via file: schema. Ordinarily Chrome on
   // Android blocks access to many directories, which affects the built-in
   // web server this test extension accesses.

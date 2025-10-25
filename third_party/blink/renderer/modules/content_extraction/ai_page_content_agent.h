@@ -1,4 +1,4 @@
-// Copyright 2024 The Chromium Authors
+// Copyright 2025 The Chromium Authors
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -59,6 +59,9 @@ class MODULES_EXPORT AIPageContentAgent final
   // LocalFrameView::LifecycleNotificationObserver overrides.
   void DidFinishPostLifecycleSteps(const LocalFrameView&) override;
 
+  String DumpContentNodeTreeForTest();
+  String DumpContentNodeForTest(Node* node);
+
  private:
   void GetAIPageContentSync(mojom::blink::AIPageContentOptionsPtr options,
                             GetAIPageContentCallback callback,
@@ -103,7 +106,7 @@ class MODULES_EXPORT AIPageContentAgent final
         const RecursionData& recursion_data);
     void AddPageInteractionInfo(const Document& document,
                                 mojom::blink::AIPageContent& page_content);
-    void AddFrameData(const LocalFrame& frame,
+    void AddFrameData(LocalFrame& frame,
                       mojom::blink::AIPageContentFrameData& frame_data);
     void AddFrameInteractionInfo(
         const LocalFrame& frame,
@@ -120,7 +123,7 @@ class MODULES_EXPORT AIPageContentAgent final
         mojom::blink::AIPageContentNodeInteractionInfo& interaction_info) const;
     void AddMetaData(
         const LocalFrame& frame,
-        WTF::Vector<mojom::blink::AIPageContentMetaPtr>& meta_data) const;
+        Vector<mojom::blink::AIPageContentMetaPtr>& meta_data) const;
     void AddNodeGeometry(
         const LayoutObject& object,
         mojom::blink::AIPageContentAttributes& attributes) const;
@@ -149,6 +152,10 @@ class MODULES_EXPORT AIPageContentAgent final
     // produce a ContentNode.
     base::flat_set<DOMNodeId> interactive_dom_node_ids_;
 
+    // If present, the node which is accessibility focused. This is used to
+    // determine which node to add geometry for in non-actionable mode.
+    DOMNodeId accessibility_focused_node_id_ = kInvalidDOMNodeId;
+
     const raw_ref<const mojom::blink::AIPageContentOptions> options_;
 
     base::flat_map<DOMNodeId, int32_t> dom_node_to_z_order_;
@@ -167,7 +174,7 @@ class MODULES_EXPORT AIPageContentAgent final
   // Already registered for lifetime notifications.
   bool is_registered_ = false;
   // Tasks to run when post lifecycle.
-  WTF::Vector<base::OnceClosure> async_extraction_tasks_;
+  Vector<base::OnceClosure> async_extraction_tasks_;
 };
 
 }  // namespace blink

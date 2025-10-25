@@ -34,9 +34,7 @@ import org.robolectric.ParameterizedRobolectricTestRunner;
 import org.robolectric.ParameterizedRobolectricTestRunner.Parameters;
 import org.robolectric.annotation.Config;
 
-import org.chromium.base.FeatureOverrides;
 import org.chromium.base.test.BaseRobolectricTestRule;
-import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.cc.input.OffsetTag;
@@ -56,7 +54,6 @@ import java.util.Arrays;
 import java.util.Collection;
 
 @RunWith(ParameterizedRobolectricTestRunner.class)
-@Features.EnableFeatures(ChromeFeatureList.BOTTOM_BROWSER_CONTROLS_REFACTOR)
 @Config(manifest = Config.NONE)
 public class EdgeToEdgeBottomChinMediatorTest {
     @Parameters
@@ -90,6 +87,8 @@ public class EdgeToEdgeBottomChinMediatorTest {
     @Before
     public void setUp() {
         mModel = new PropertyModel.Builder(EdgeToEdgeBottomChinProperties.ALL_KEYS).build();
+        // set a default height for testing.
+        doReturn(42).when(mEdgeToEdgeController).getSystemBottomInsetPx();
         mMediator =
                 new EdgeToEdgeBottomChinMediator(
                         mModel,
@@ -104,7 +103,14 @@ public class EdgeToEdgeBottomChinMediatorTest {
 
     @Test
     public void testInitialization() {
-        assertEquals(0, mModel.get(Y_OFFSET));
+        if (mIsTablet) {
+            assertEquals(
+                    "Should be initialized to the default height.",
+                    mModel.get(HEIGHT),
+                    mModel.get(Y_OFFSET));
+        } else {
+            assertEquals(0, mModel.get(Y_OFFSET));
+        }
 
         verify(mKeyboardVisibilityDelegate).addKeyboardVisibilityListener(eq(mMediator));
         verify(mLayoutManager).addObserver(eq(mMediator));
@@ -146,8 +152,6 @@ public class EdgeToEdgeBottomChinMediatorTest {
     @Test
     @DisableFeatures(ChromeFeatureList.BCIV_BOTTOM_CONTROLS)
     public void testUpdateColor_bciv_disabled() {
-        enableDispatchYOffset();
-
         // make view visible
         mModel.set(HEIGHT, DEFAULT_HEIGHT);
         mMediator.onBrowserControlsOffsetUpdate(0);
@@ -181,7 +185,6 @@ public class EdgeToEdgeBottomChinMediatorTest {
     @Test
     @EnableFeatures(ChromeFeatureList.BCIV_BOTTOM_CONTROLS)
     public void testUpdateColor_bciv_enabled() {
-        enableDispatchYOffset();
         OffsetTag offsetTag = OffsetTag.createRandom();
         mModel.set(OFFSET_TAG, offsetTag);
         mModel.set(HEIGHT, DEFAULT_HEIGHT);
@@ -212,8 +215,6 @@ public class EdgeToEdgeBottomChinMediatorTest {
 
     @Test
     public void testDividerColorChanges() {
-        enableDispatchYOffset();
-
         // make view visible
         mModel.set(HEIGHT, DEFAULT_HEIGHT);
         mMediator.onBrowserControlsOffsetUpdate(0);
@@ -417,8 +418,6 @@ public class EdgeToEdgeBottomChinMediatorTest {
     }
 
     @Test
-    @Features.EnableFeatures(
-            ChromeFeatureList.EDGE_TO_EDGE_SAFE_AREA_CONSTRAINT + ":scrollable_when_stacking/true")
     public void testUpdateSafeAreaConstraint_ScrollableWhenStacking_autoPage() {
         mMediator.onToEdgeChange(60, /* isDrawingToEdge= */ true, /* isPageOptInToEdge= */ false);
         mMediator.onSafeAreaConstraintChanged(true);
@@ -430,8 +429,6 @@ public class EdgeToEdgeBottomChinMediatorTest {
     }
 
     @Test
-    @Features.EnableFeatures(
-            ChromeFeatureList.EDGE_TO_EDGE_SAFE_AREA_CONSTRAINT + ":scrollable_when_stacking/true")
     public void testUpdateSafeAreaConstraint_ScrollableWhenStacking_optInPage() {
         mMediator.onToEdgeChange(60, /* isDrawingToEdge= */ true, /* isPageOptInToEdge= */ true);
         mMediator.onSafeAreaConstraintChanged(true);
@@ -444,8 +441,6 @@ public class EdgeToEdgeBottomChinMediatorTest {
 
     @Test
     public void testOnBrowserControlsOffsetUpdate() {
-        enableDispatchYOffset();
-
         mMediator.onBrowserControlsOffsetUpdate(0);
         assertEquals("The y-offset should be 0.", 0, mModel.get(Y_OFFSET));
 
@@ -498,12 +493,5 @@ public class EdgeToEdgeBottomChinMediatorTest {
             int bottomInset, boolean isDrawingToEdge, boolean isPageOptInToEdge) {
         doReturn(bottomInset).when(mEdgeToEdgeController).getSystemBottomInsetPx();
         mMediator.onToEdgeChange(bottomInset, isDrawingToEdge, isPageOptInToEdge);
-    }
-
-    private void enableDispatchYOffset() {
-        FeatureOverrides.newBuilder()
-                .enable(ChromeFeatureList.BOTTOM_BROWSER_CONTROLS_REFACTOR)
-                .param("disable_bottom_controls_stacker_y_offset", false)
-                .apply();
     }
 }

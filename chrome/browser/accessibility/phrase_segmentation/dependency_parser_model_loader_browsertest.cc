@@ -23,9 +23,8 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/metrics/content/subprocess_metrics_provider.h"
-#include "components/optimization_guide/core/model_util.h"
-#include "components/optimization_guide/core/optimization_guide_test_util.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/model_util.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -145,7 +144,7 @@ class DependencyParserModelLoaderBrowserTest
     // This script is render blocking in the HTML, but is intentionally slow.
     // This provides important time between commit and first layout for model
     // requests to make it to the renderer, reducing flakes.
-    if (request.GetURL().path() == "/slow-first-layout.js") {
+    if (request.GetURL().GetPath() == "/slow-first-layout.js") {
       std::unique_ptr<net::test_server::DelayedHttpResponse> resp =
           std::make_unique<net::test_server::DelayedHttpResponse>(
               base::Milliseconds(500));

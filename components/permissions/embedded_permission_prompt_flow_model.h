@@ -6,6 +6,7 @@
 #define COMPONENTS_PERMISSIONS_EMBEDDED_PERMISSION_PROMPT_FLOW_MODEL_H_
 
 #include <optional>
+#include <vector>
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -74,7 +75,7 @@ class EmbeddedPermissionPromptFlowModel {
 
   // Calculate the variant of given type based on the current state of browser
   // (content settings) and device (settings and policies).
-  Variant DeterminePromptVariant(ContentSetting setting,
+  Variant DeterminePromptVariant(PermissionSetting setting,
                                  const content_settings::SettingInfo& info,
                                  ContentSettingsType type);
 

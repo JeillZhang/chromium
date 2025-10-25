@@ -12,29 +12,33 @@
 #include <vector>
 
 #include "base/check.h"
-#include "base/debug/crash_logging.h"
+#include "base/containers/fixed_flat_set.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/raw_ref.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_split.h"
+#include "base/types/expected.h"
 #include "components/ip_protection/common/ip_protection_core.h"
 #include "components/ip_protection/common/ip_protection_data_types.h"
 #include "components/ip_protection/common/ip_protection_proxy_config_manager_impl.h"
 #include "components/ip_protection/common/ip_protection_telemetry.h"
 #include "components/ip_protection/common/ip_protection_token_manager_impl.h"
+#include "net/base/completion_once_callback.h"
 #include "net/base/features.h"
 #include "net/base/net_errors.h"
 #include "net/base/proxy_chain.h"
 #include "net/base/proxy_server.h"
-#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/schemeful_site.h"
 #include "net/base/url_util.h"
 #include "net/http/http_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "net/http/structured_headers.h"
 #include "net/proxy_resolution/proxy_info.h"
 #include "net/proxy_resolution/proxy_resolution_service.h"
 #include "net/proxy_resolution/proxy_retry_info.h"
+#include "url/gurl.h"
 
 namespace ip_protection {
 
@@ -58,16 +62,39 @@ ProxyResolutionResult IpProtectionProxyDelegate::ClassifyRequest(
             << ") - " << message;
   };
 
-  // Check eligibility of this request.
-  if (!ip_protection_core_->IsMdlPopulated()) {
-    vlog("proxy allow list not populated");
-    return ProxyResolutionResult::kMdlNotPopulated;
-  } else if (!ip_protection_core_->RequestShouldBeProxied(
-                 url, network_anonymization_key)) {
-    vlog("proxy allow list did not match");
-    return ProxyResolutionResult::kNoMdlMatch;
-  } else {
-    vlog("proxy allow list matched");
+  bool is_unconditional_match = false;
+  if (std::string domain_list_str =
+          net::features::kIpPrivacyUnconditionalProxyDomainList.Get();
+      !domain_list_str.empty()) {
+    std::vector<std::string> domain_list = base::SplitString(
+        domain_list_str, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+    std::optional<net::SchemefulSite> top_frame_site =
+        network_anonymization_key.GetTopFrameSite();
+    if (top_frame_site.has_value()) {
+      for (const auto& domain : domain_list) {
+        // SchemefulSite normalizes to eTLD+1 using the Public Suffix List.
+        std::string registrable_domain = top_frame_site->GetURL().GetHost();
+        if (registrable_domain == domain) {
+          vlog("unconditional proxy domain matched");
+          is_unconditional_match = true;
+          break;
+        }
+      }
+    }
+  }
+
+  if (!is_unconditional_match) {
+    // Check eligibility of this request.
+    if (!ip_protection_core_->IsMdlPopulated()) {
+      vlog("proxy allow list not populated");
+      return ProxyResolutionResult::kMdlNotPopulated;
+    } else if (!ip_protection_core_->RequestShouldBeProxied(
+                   url, network_anonymization_key)) {
+      vlog("proxy allow list did not match");
+      return ProxyResolutionResult::kNoMdlMatch;
+    } else {
+      vlog("proxy allow list matched");
+    }
   }
 
   result->set_is_mdl_match(true);
@@ -100,6 +127,10 @@ ProxyResolutionResult IpProtectionProxyDelegate::ClassifyRequest(
     return ProxyResolutionResult::kTokensNeverAvailable;
   } else if (!auth_tokens_are_available) {
     vlog("no auth token available from cache");
+    // Signal demand for both proxy layers. The respective token managers can
+    // determine whether a token fetch is ongoing or not.
+    ip_protection_core_->RecordTokenDemand(/*chain_index=*/0);
+    ip_protection_core_->RecordTokenDemand(/*chain_index=*/1);
     return ProxyResolutionResult::kTokensExhausted;
   }
 
@@ -108,6 +139,12 @@ ProxyResolutionResult IpProtectionProxyDelegate::ClassifyRequest(
       ip_protection_core_->HasTrackingProtectionException(
           network_anonymization_key.GetTopFrameSite()->GetURL())) {
     return ProxyResolutionResult::kHasSiteException;
+  }
+
+  // Require kIpPrivacyEnableIppPanelInDevTools to enable the bypass.
+  if (net::features::kIpPrivacyEnableIppPanelInDevTools.Get() &&
+      ip_protection_core_->IsProxyBypassed()) {
+    return ProxyResolutionResult::kBypassedByDevTools;
   }
 
   return ProxyResolutionResult::kAttemptProxy;
@@ -121,7 +158,13 @@ void IpProtectionProxyDelegate::OnResolveProxy(
     net::ProxyInfo* result) {
   ProxyResolutionResult resolution_result =
       ClassifyRequest(url, network_anonymization_key, result);
-  Telemetry().ProxyResolution(resolution_result);
+  // Don't emit the ProxyResolution metric if unconditional proxying is enabled,
+  // since it can skew common IPP analyses.
+  // TODO(crbug.com/447391924) - Rework this metric so we can support
+  // unconditional proxying as well.
+  if (net::features::kIpPrivacyUnconditionalProxyDomainList.Get().empty()) {
+    Telemetry().ProxyResolution(resolution_result);
+  }
 
   const std::optional<net::SchemefulSite>& top_frame_site =
       network_anonymization_key.GetTopFrameSite();
@@ -168,6 +211,29 @@ void IpProtectionProxyDelegate::OnResolveProxy(
             << ") - setting proxy list (before deprioritization) to "
             << proxy_list.ToDebugString();
   }
+
+  if (!net::features::kIpPrivacyDirectOnly.Get()) {
+    proxy_list.DeprioritizeBadProxyChains(proxy_retry_info,
+                                          /*remove_bad_proxy_chains=*/true);
+    if (proxy_list.IsEmpty()) {
+      return;
+    }
+    // Two cases are possible here:
+    //   1. All IPP Proxy Chains were marked as bad.
+    //   2. IPPCore returned no chains.
+    //
+    // In either case, using a proxy chain where is_for_ip_protection() is true
+    // is misleading since IPP is not used at all.
+    if (proxy_list.First().is_direct()) {
+      VLOG(3) << "IPPD::OnResolveProxy(" << url << ", "
+              << (top_frame_site.has_value() ? top_frame_site.value()
+                                             : net::SchemefulSite())
+              << ") - all proxy chains deprioritized: "
+              << proxy_list.ToDebugString();
+      return;
+    }
+  }
+
   result->OverrideProxyList(MergeProxyRules(result->proxy_list(), proxy_list));
   result->DeprioritizeBadProxyChains(proxy_retry_info);
   return;
@@ -209,44 +275,126 @@ void IpProtectionProxyDelegate::OnFallback(const net::ProxyChain& bad_chain,
   }
 }
 
-net::Error IpProtectionProxyDelegate::OnBeforeTunnelRequest(
+base::expected<net::HttpRequestHeaders, net::Error>
+IpProtectionProxyDelegate::OnBeforeTunnelRequest(
     const net::ProxyChain& proxy_chain,
-    size_t chain_index,
-    net::HttpRequestHeaders* extra_headers) {
+    size_t proxy_index,
+    OnBeforeTunnelRequestCallback callback) {
   auto vlog = [](std::string message) {
     VLOG(2) << "NSPD::OnBeforeTunnelRequest() - " << message;
   };
+  net::HttpRequestHeaders extra_headers;
   if (proxy_chain.is_for_ip_protection()) {
+    ip_protection_core_->RecordTokenDemand(proxy_index);
     std::optional<BlindSignedAuthToken> token =
-        ip_protection_core_->GetAuthToken(chain_index);
+        ip_protection_core_->GetAuthToken(proxy_index);
     if (token) {
       vlog("adding auth token");
       // The token value we have here is the full Authorization header value,
       // so we can add it verbatim.
-      extra_headers->SetHeader(net::HttpRequestHeaders::kAuthorization,
-                               std::move(token->token));
+      extra_headers.SetHeader(net::HttpRequestHeaders::kAuthorization,
+                              std::move(token->token));
     } else {
       vlog("no token available");
       // This is an unexpected circumstance, but does happen in the wild.
       // Rather than send the request to the proxy, which will reply with an
       // error, mark the connection as failed immediately.
-      return net::ERR_TUNNEL_CONNECTION_FAILED;
+      return base::unexpected(net::ERR_TUNNEL_CONNECTION_FAILED);
+    }
+    int experiment_arm = net::features::kIpPrivacyDebugExperimentArm.Get();
+    if (experiment_arm != 0) {
+      extra_headers.SetHeader("Ip-Protection-Debug-Experiment-Arm",
+                              base::NumberToString(experiment_arm));
     }
   } else {
     vlog("not for IP protection");
   }
-  int experiment_arm = net::features::kIpPrivacyDebugExperimentArm.Get();
-  if (experiment_arm != 0) {
-    extra_headers->SetHeader("Ip-Protection-Debug-Experiment-Arm",
-                             base::NumberToString(experiment_arm));
-  }
-  return net::OK;
+  return extra_headers;
 }
 
 net::Error IpProtectionProxyDelegate::OnTunnelHeadersReceived(
     const net::ProxyChain& proxy_chain,
-    size_t chain_index,
-    const net::HttpResponseHeaders& response_headers) {
+    size_t proxy_index,
+    const net::HttpResponseHeaders& response_headers,
+    net::CompletionOnceCallback callback) {
+  if (response_headers.response_code() == 200 ||
+      !proxy_chain.is_for_ip_protection()) {
+    return net::OK;
+  }
+
+  if (!base::FeatureList::IsEnabled(
+          net::features::kEnableIpPrivacyProxyAdvancedFallbackLogic)) {
+    return net::OK;
+  }
+
+  std::optional<std::string> proxy_status_header_value =
+      response_headers.GetNormalizedHeader("Proxy-Status");
+  if (!proxy_status_header_value) {
+    return net::OK;
+  }
+
+  std::optional<net::structured_headers::List> proxy_status_list =
+      net::structured_headers::ParseList(*proxy_status_header_value);
+  if (!proxy_status_list) {
+    return net::OK;
+  }
+
+  net::structured_headers::List parsed_list = proxy_status_list.value();
+  // For IP Protection there will only ever be one proxy server per connection,
+  // so there should only ever be one element in the list corresponding to that
+  // proxy server. Even for the connection to Proxy B, this request is not
+  // visible by Proxy A and thus the Proxy-Status header can't be modified by
+  // it.
+  if (parsed_list.size() != 1) {
+    return net::OK;
+  }
+  const net::structured_headers::ParameterizedMember& p_member = parsed_list[0];
+  // `p_member` can either be a single Item or an inner list, and we expect the
+  // format here for this Proxy-Status header to be considered valid.
+  if (p_member.member_is_inner_list) {
+    return net::OK;
+  }
+
+  bool error_is_dns_error = false;
+  bool rcode_is_nxdomain_or_nodata = false;
+  for (const auto& [name, item] : p_member.params) {
+    if (name == "error" && item.is_token()) {
+      static constexpr auto kDestinationErrors =
+          base::MakeFixedFlatSet<std::string_view>({
+              "destination_not_found",
+              "destination_unavailable",
+              "destination_ip_unroutable",
+              "connection_refused",
+              "connection_terminated",
+              "connection_timeout",
+              "proxy_loop_detected",
+          });
+      const std::string& error_val = item.GetString();
+      // These RFC 9209 errors indicate a destination-side problem.
+      // For these, we should NOT fall back.
+      if (kDestinationErrors.contains(error_val)) {
+        return net::ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION;
+      }
+      if (error_val == "dns_error") {
+        error_is_dns_error = true;
+      }
+      continue;
+    }
+
+    if (name == "rcode" && item.is_string()) {
+      const std::string& rcode_val = item.GetString();
+      if (rcode_val == "NXDOMAIN" || rcode_val == "NODATA") {
+        rcode_is_nxdomain_or_nodata = true;
+      }
+      continue;
+    }
+  }
+  if (error_is_dns_error && rcode_is_nxdomain_or_nodata) {
+    return net::ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION;
+  }
+
+  // If no specific destination error was found, we assume it's a proxy
+  // failure and should fall back.
   return net::OK;
 }
 
@@ -291,19 +439,11 @@ net::ProxyList IpProtectionProxyDelegate::MergeProxyRules(
 std::optional<std::string> IpProtectionProxyDelegate::GetPRTHeaderValue(
     const GURL& url,
     const net::SchemefulSite& top_frame_site) const {
-  if (!ip_protection_core_->IsProbabilisticRevealTokenAvailable() ||
-      !ip_protection_core_->ShouldRequestIncludeProbabilisticRevealToken(url)) {
+  if (!ip_protection_core_->ShouldRequestIncludeProbabilisticRevealToken(url)) {
     return std::nullopt;
   }
-  const std::string top_level =
-      net::registry_controlled_domains::GetDomainAndRegistry(
-          top_frame_site.GetURL(),
-          net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-  const std::string third_party =
-      net::registry_controlled_domains::GetDomainAndRegistry(
-          url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
   const std::optional<std::string> prt =
-      ip_protection_core_->GetProbabilisticRevealToken(top_level, third_party);
+      ip_protection_core_->GetProbabilisticRevealToken(url, top_frame_site);
   if (!prt.has_value()) {
     return std::nullopt;
   }
@@ -311,6 +451,18 @@ std::optional<std::string> IpProtectionProxyDelegate::GetPRTHeaderValue(
       std::move(prt).value(),
       net::structured_headers::Item::ItemType::kByteSequenceType);
   return net::structured_headers::SerializeItem(item);
+}
+
+void IpProtectionProxyDelegate::OnStreamCreationAttempted(
+    const net::ProxyChain& proxy_chain,
+    base::TimeDelta duration,
+    base::optional_ref<int> net_error) {
+  if (!proxy_chain.is_for_ip_protection()) {
+    return;
+  }
+
+  Telemetry().RecordStreamCreationAttemptedMetrics(proxy_chain, duration,
+                                                   net_error);
 }
 
 }  // namespace ip_protection

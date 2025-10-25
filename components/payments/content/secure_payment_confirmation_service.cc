@@ -8,7 +8,7 @@
 #include "base/feature_list.h"
 #include "base/memory/ref_counted_memory.h"
 #include "components/payments/content/browser_binding/browser_bound_key.h"
-#include "components/payments/content/payment_manifest_web_data_service.h"
+#include "components/payments/content/web_payments_web_data_service.h"
 #include "components/payments/core/features.h"
 #include "components/payments/core/secure_payment_confirmation_credential.h"
 #include "components/webauthn/core/browser/internal_authenticator.h"
@@ -43,11 +43,14 @@ void OnIsUserVerifyingPlatformAuthenticatorAvailable(
 SecurePaymentConfirmationService::SecurePaymentConfirmationService(
     content::RenderFrameHost& render_frame_host,
     mojo::PendingReceiver<mojom::SecurePaymentConfirmationService> receiver,
-    scoped_refptr<PaymentManifestWebDataService> web_data_service,
-    std::unique_ptr<webauthn::InternalAuthenticator> authenticator)
+    scoped_refptr<WebPaymentsWebDataService> web_data_service,
+    std::unique_ptr<webauthn::InternalAuthenticator> authenticator,
+    std::string browser_bound_key_store_keychain_access_group)
     : DocumentService(render_frame_host, std::move(receiver)),
       web_data_service_(web_data_service),
-      authenticator_(std::move(authenticator)) {}
+      authenticator_(std::move(authenticator)),
+      browser_bound_key_store_keychain_access_group_(
+          std::move(browser_bound_key_store_keychain_access_group)) {}
 
 SecurePaymentConfirmationService::~SecurePaymentConfirmationService() {
   Reset();
@@ -132,7 +135,9 @@ void SecurePaymentConfirmationService::StorePaymentCredential(
       web_data_service_->AddSecurePaymentConfirmationCredential(
           std::make_unique<SecurePaymentConfirmationCredential>(credential_id,
                                                                 rp_id, user_id),
-          /*consumer=*/this);
+          base::BindOnce(
+              &SecurePaymentConfirmationService::OnStorePaymentCredential,
+              weak_ptr_factory_.GetWeakPtr()));
 }
 
 void SecurePaymentConfirmationService::MakePaymentCredential(
@@ -147,7 +152,12 @@ void SecurePaymentConfirmationService::MakePaymentCredential(
     relying_party_id = options->relying_party.id;
     if (!passkey_browser_binder_) {
       if (scoped_refptr<BrowserBoundKeyStore> key_store =
-              GetBrowserBoundKeyStoreInstance()) {
+              GetBrowserBoundKeyStoreInstance(BrowserBoundKeyStore::Config {
+#if BUILDFLAG(IS_MAC)
+                .keychain_access_group =
+                    browser_bound_key_store_keychain_access_group_;
+#endif  // BUILDFLAG(IS_MAC)
+              })) {
         passkey_browser_binder_ = std::make_unique<PasskeyBrowserBinder>(
             key_store, web_data_service_);
       }
@@ -188,7 +198,7 @@ void SecurePaymentConfirmationService::SetPasskeyBrowserBinderForTesting(
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 
-void SecurePaymentConfirmationService::OnWebDataServiceRequestDone(
+void SecurePaymentConfirmationService::OnStorePaymentCredential(
     WebDataServiceBase::Handle h,
     std::unique_ptr<WDTypedResult> result) {
   if (state_ != State::kStoringCredential || !IsCurrentStateValid() ||
@@ -225,9 +235,9 @@ void SecurePaymentConfirmationService::OnAuthenticatorMakeCredential(
       response->payment =
           blink::mojom::AuthenticationExtensionsPaymentResponse::New();
       response->payment->browser_bound_signature = std::move(signature_output);
-      passkey_browser_binder_->BindKey(std::move(*browser_bound_key),
-                                       response->info->raw_id,
-                                       std::move(relying_party));
+      passkey_browser_binder_->BindKey(
+          std::move(*browser_bound_key), response->info->raw_id,
+          std::move(relying_party), /*last_used=*/std::nullopt);
     }
   }
 #endif

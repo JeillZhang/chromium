@@ -22,19 +22,26 @@ namespace coreml {
 class API_AVAILABLE(macos(14.4)) ContextImplCoreml final
     : public WebNNContextImpl {
  public:
-  ContextImplCoreml(mojo::PendingReceiver<mojom::WebNNContext> receiver,
-                    WebNNContextProviderImpl* context_provider,
-                    mojom::CreateContextOptionsPtr options);
+  ContextImplCoreml(
+      mojo::PendingReceiver<mojom::WebNNContext> receiver,
+      base::WeakPtr<WebNNContextProviderImpl> context_provider,
+      mojom::CreateContextOptionsPtr options,
+      gpu::CommandBufferId command_buffer_id,
+      std::unique_ptr<ScopedSequence> sequence,
+      scoped_refptr<gpu::MemoryTracker> memory_tracker,
+      scoped_refptr<base::SingleThreadTaskRunner> owning_task_runner,
+      gpu::SharedImageManager* shared_image_manager,
+      scoped_refptr<base::SingleThreadTaskRunner> main_task_runner);
 
   ContextImplCoreml(const WebNNContextImpl&) = delete;
   ContextImplCoreml& operator=(const ContextImplCoreml&) = delete;
-
-  ~ContextImplCoreml() override;
 
   // WebNNContextImpl:
   base::WeakPtr<WebNNContextImpl> AsWeakPtr() override;
 
  private:
+  ~ContextImplCoreml() override;
+
   void CreateGraphImpl(
       mojo::PendingAssociatedReceiver<mojom::WebNNGraph> receiver,
       mojom::GraphInfoPtr graph_info,
@@ -44,10 +51,15 @@ class API_AVAILABLE(macos(14.4)) ContextImplCoreml final
       base::flat_map<OperandId, WebNNTensorImpl*> constant_tensor_operands,
       CreateGraphImplCallback callback) override;
 
-  void CreateTensorImpl(
+  base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr>
+  CreateTensorImpl(mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
+                   mojom::TensorInfoPtr tensor_info) override;
+
+  base::expected<scoped_refptr<WebNNTensorImpl>, mojom::ErrorPtr>
+  CreateTensorFromSharedImageImpl(
       mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
       mojom::TensorInfoPtr tensor_info,
-      CreateTensorImplCallback callback) override;
+      std::unique_ptr<gpu::WebNNTensorRepresentation> representation) override;
 
   base::WeakPtrFactory<ContextImplCoreml> weak_factory_{this};
 };

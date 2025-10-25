@@ -11,35 +11,33 @@
 
 #include "base/files/file_path.h"
 #include "content/browser/indexed_db/instance/backing_store.h"
+#include "content/common/content_export.h"
 
 namespace content::indexed_db {
-
-struct IndexedDBDataLossInfo;
 
 namespace sqlite {
 
 class DatabaseConnection;
 
-class BackingStoreImpl : public BackingStore {
+class CONTENT_EXPORT BackingStoreImpl : public BackingStore {
  public:
-  static std::tuple<std::unique_ptr<BackingStore>,
-                    Status,
-                    IndexedDBDataLossInfo,
-                    bool /* is_disk_full */>
-  OpenAndVerify(base::FilePath data_path);
-
-  BackingStoreImpl(base::FilePath data_path);
+  // The store itself does not have any footprint on disk except a directory
+  // where SQLite DBs will be located, so creation cannot fail. `directory` is
+  // assumed to already exist.
+  BackingStoreImpl(base::FilePath directory,
+                   storage::mojom::BlobStorageContext& blob_storage_context);
   BackingStoreImpl(const BackingStoreImpl&) = delete;
   BackingStoreImpl& operator=(const BackingStoreImpl&) = delete;
   ~BackingStoreImpl() override;
 
   // BackingStore:
+  bool CanOpportunisticallyClose() const override;
   void TearDown(base::WaitableEvent* signal_on_destruction) override;
   void InvalidateBlobReferences() override;
   void StartPreCloseTasks(base::OnceClosure on_done) override;
   void StopPreCloseTasks() override;
   int64_t GetInMemorySize() const override;
-  StatusOr<std::vector<std::u16string>> GetDatabaseNames() override;
+  StatusOr<bool> DatabaseExists(std::u16string_view name) override;
   StatusOr<std::vector<blink::mojom::IDBNameAndVersionPtr>>
   GetDatabaseNamesAndVersions() override;
   StatusOr<std::unique_ptr<BackingStore::Database>> CreateOrOpenDatabase(
@@ -47,8 +45,28 @@ class BackingStoreImpl : public BackingStore {
   uintptr_t GetIdentifierForMemoryDump() override;
   void FlushForTesting() override;
 
+  void DestroyConnection(const std::u16string& name);
+
+  storage::mojom::BlobStorageContext& blob_storage_context() {
+    return *blob_storage_context_;
+  }
+
  private:
-  const base::FilePath data_path_;
+  friend class DatabaseConnectionTest;
+
+  bool in_memory() const { return directory_.empty(); }
+
+  // The directory where all databases for this backing store will live. When
+  // this is empty, the backing store lives in memory.
+  const base::FilePath directory_;
+
+  // This BlobStorageContext is owned by the BucketContext that owns `this`.
+  // The BlobStorageContext manages handles to web blobs (both coming from and
+  // being vended to the renderer). Despite this object's name, it does not
+  // store blobs. Those that are written into IndexedDB are stored in the SQLite
+  // DB.
+  raw_ref<storage::mojom::BlobStorageContext> blob_storage_context_;
+
   std::unordered_map<std::u16string, std::unique_ptr<DatabaseConnection>>
       open_connections_;
 };

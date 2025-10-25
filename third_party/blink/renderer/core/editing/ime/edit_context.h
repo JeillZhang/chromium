@@ -204,6 +204,7 @@ class CORE_EXPORT EditContext final : public EventTarget,
   // page that the selection has changed.
   void SetSelection(int start,
                     int end,
+                    bool sync_selection = true,
                     bool dispatch_text_update_event = false);
 
   // Sets rect_in_viewport to the surrounding rect, in physical pixels,
@@ -270,9 +271,11 @@ class CORE_EXPORT EditContext final : public EventTarget,
 
   bool HasValidCompositionBounds() const;
 
+  // Notify browser process to cancel the ongoing composition.
+  void CancelComposition();
   // Delete the characters in the existing composition range and end the
   // composition.
-  void CancelComposition();
+  void OnCancelComposition();
 
   void ClearCompositionState();
 

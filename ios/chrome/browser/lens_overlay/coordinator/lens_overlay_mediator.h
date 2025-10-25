@@ -9,7 +9,7 @@
 
 #import "ios/chrome/browser/lens_overlay/coordinator/lens_omnibox_client_delegate.h"
 #import "ios/chrome/browser/lens_overlay/coordinator/lens_result_page_mediator_delegate.h"
-#import "ios/chrome/browser/lens_overlay/ui/lens_overlay_bottom_sheet_presentation_delegate.h"
+#import "ios/chrome/browser/lens_overlay/ui/lens_overlay_bottom_sheet_presentation_commands.h"
 #import "ios/chrome/browser/lens_overlay/ui/lens_overlay_result_consumer.h"
 #import "ios/chrome/browser/lens_overlay/ui/lens_toolbar_mutator.h"
 #import "ios/chrome/browser/omnibox/ui/omnibox_focus_delegate.h"
@@ -20,6 +20,7 @@
 class LensOmniboxClient;
 @protocol LensOverlayCommands;
 @protocol LensOverlayMediatorDelegate;
+@class LensOverlayMetricsRecorder;
 @protocol LensToolbarConsumer;
 @class OmniboxCoordinator;
 class PrefService;
@@ -54,9 +55,12 @@ class WebStateList;
 /// Lens backend handler.
 @property(nonatomic, weak) id<ChromeLensOverlay> lensHandler;
 
-/// Presentation delegate for requesting bottom sheet resizing.
-@property(nonatomic, weak) id<LensOverlayBottomSheetPresentationDelegate>
-    presentationDelegate;
+/// Presentation commands for requesting bottom sheet resizing.
+@property(nonatomic, weak) id<LensOverlayBottomSheetPresentationCommands>
+    bottomSheetCommands;
+
+/// Utility for recoding Lens Overlay metrics.
+@property(nonatomic, weak) LensOverlayMetricsRecorder* metricsRecorder;
 
 /// TemplateURLService to observe default search engine change.
 @property(nonatomic, assign) TemplateURLService* templateURLService;
@@ -66,8 +70,6 @@ class WebStateList;
 /// Current lens result. Readonly.
 @property(nonatomic, strong, readonly) id<ChromeLensOverlayResult>
     currentLensResult;
-/// Number of tabs opened by the lens overlay during this session.
-@property(nonatomic, assign, readonly) NSInteger generatedTabCount;
 
 - (instancetype)initWithWebStateList:(WebStateList*)webStateList
                         profilePrefs:(const PrefService*)profilePrefs

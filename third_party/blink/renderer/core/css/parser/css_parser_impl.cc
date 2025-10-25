@@ -7,11 +7,14 @@
 #include <bitset>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "base/auto_reset.h"
 #include "base/compiler_specific.h"
 #include "base/cpu.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_union_urlpatterninit_usvstring.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_url_pattern_init.h"
 #include "third_party/blink/renderer/core/animation/timeline_offset.h"
 #include "third_party/blink/renderer/core/core_probes_inl.h"
 #include "third_party/blink/renderer/core/css/css_custom_ident_value.h"
@@ -29,6 +32,7 @@
 #include "third_party/blink/renderer/core/css/parser/css_lazy_parsing_state.h"
 #include "third_party/blink/renderer/core/css/parser/css_lazy_property_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_observer.h"
+#include "third_party/blink/renderer/core/css/parser/css_parser_token.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token_stream.h"
 #include "third_party/blink/renderer/core/css/parser/css_property_parser.h"
 #include "third_party/blink/renderer/core/css/parser/css_selector_parser.h"
@@ -39,6 +43,7 @@
 #include "third_party/blink/renderer/core/css/parser/media_query_parser.h"
 #include "third_party/blink/renderer/core/css/properties/css_parsing_utils.h"
 #include "third_party/blink/renderer/core/css/property_registry.h"
+#include "third_party/blink/renderer/core/css/style_rule.h"
 #include "third_party/blink/renderer/core/css/style_rule_counter_style.h"
 #include "third_party/blink/renderer/core/css/style_rule_font_feature_values.h"
 #include "third_party/blink/renderer/core/css/style_rule_font_palette_values.h"
@@ -54,6 +59,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame_ukm_aggregator.h"
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
+#include "third_party/blink/renderer/core/url_pattern/url_pattern.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/instrumentation/tracing/trace_event.h"
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
@@ -895,6 +901,8 @@ StyleRuleBase* CSSParserImpl::ConsumeAtRuleContents(
       return ConsumePageRule(stream);
     case CSSAtRuleID::kCSSAtRuleProperty:
       return ConsumePropertyRule(stream);
+    case CSSAtRuleID::kCSSAtRuleRoute:
+      return ConsumeRouteRule(stream, nesting_type, parent_rule_for_nesting);
     case CSSAtRuleID::kCSSAtRuleScope:
       return ConsumeScopeRule(stream, nesting_type, parent_rule_for_nesting);
     case CSSAtRuleID::kCSSAtRuleCounterStyle:
@@ -905,6 +913,8 @@ StyleRuleBase* CSSParserImpl::ConsumeAtRuleContents(
       return ConsumeMixinRule(stream);
     case CSSAtRuleID::kCSSAtRuleApplyMixin:
       return ConsumeApplyMixinRule(stream);
+    case CSSAtRuleID::kCSSAtRuleContents:
+      return ConsumeContentsRule(stream);
     case CSSAtRuleID::kCSSAtRulePositionTry:
       return ConsumePositionTryRule(stream);
     case CSSAtRuleID::kCSSAtRuleCharset:
@@ -942,6 +952,8 @@ StyleRuleBase* CSSParserImpl::ConsumeAtRuleContents(
     case CSSAtRuleID::kCSSAtRuleRightMiddle:
     case CSSAtRuleID::kCSSAtRuleRightBottom:
       return ConsumePageMarginRule(id, stream);
+    case CSSAtRuleID::kCSSAtRuleCustomMedia:
+      return ConsumeCustomMediaRule(stream);
     case CSSAtRuleID::kCSSAtRuleInvalid:
     case CSSAtRuleID::kCount:
       ConsumeErroneousAtRule(stream, id);
@@ -1669,7 +1681,8 @@ StyleRuleFontFeatureValues* CSSParserImpl::ConsumeFontFeatureValuesRule(
     CSSParserTokenStream& stream) {
   // Parse the prelude.
   wtf_size_t prelude_offset_start = stream.LookAheadOffset();
-  CSSValueList* family_list = css_parsing_utils::ConsumeFontFamily(stream);
+  CSSValueList* family_list =
+      css_parsing_utils::ConsumeFontFamily(stream, *context_);
   if (!family_list || !family_list->length()) {
     ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleFontFeatureValues);
     return nullptr;
@@ -1748,7 +1761,7 @@ StyleRuleFontFeatureValues* CSSParserImpl::ConsumeFontFeatureValuesRule(
   }
 
   Vector<AtomicString> families;
-  for (const auto family_entry : *family_list) {
+  for (const auto& family_entry : *family_list) {
     const CSSFontFamilyValue* family_value =
         DynamicTo<CSSFontFamilyValue>(*family_entry);
     if (!family_value) {
@@ -1881,6 +1894,121 @@ StyleRuleProperty* CSSParserImpl::ConsumePropertyRule(
     return nullptr;
   }
   return rule;
+}
+
+StyleRuleRoute* CSSParserImpl::ConsumeRouteRule(
+    CSSParserTokenStream& stream,
+    CSSNestingType nesting_type,
+    StyleRule* parent_rule_for_nesting) {
+  // Parse the prelude.
+  if (stream.Peek().GetType() != kLeftParenthesisToken) {
+    ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleRoute);
+    return nullptr;
+  }
+
+  wtf_size_t header_start_offset = stream.LookAheadOffset();
+
+  // TODO(crbug.com/436805487): Figure out where whitespace is allowed and not.
+  // And how about multiple routes in one rule?
+  //
+  // For now we only support this:
+  //
+  // @route <route-test-in-parens> { <rule-list> }
+  // <route-test-in-parens> =
+  //   ( <route-location> | <route-keyword> : <route-location> )
+  String route_name;
+  RoutePreposition preposition = RoutePreposition::kAt;
+  URLPattern* url_pattern = nullptr;
+
+  auto parse_url_pattern = [&] {
+    if (stream.Peek().GetType() != kFunctionToken ||
+        stream.Peek().Value() != "urlpattern") {
+      return false;
+    }
+
+    CSSParserTokenStream::BlockGuard function_guard(stream);
+    stream.ConsumeWhitespace();
+    if (stream.Peek().GetType() != kStringToken) {
+      return false;
+    }
+    const CSSParserToken& pattern = stream.ConsumeIncludingWhitespace();
+    if (pattern.GetType() == kBadStringToken || !stream.UncheckedAtEnd()) {
+      return false;
+    }
+
+    const Document& document = *context_->GetDocument();
+    V8URLPatternInput* url_pattern_input =
+        MakeGarbageCollected<V8URLPatternInput>(
+            pattern.Value().ToAtomicString());
+    url_pattern =
+        URLPattern::Create(document.GetExecutionContext()->GetIsolate(),
+                           url_pattern_input, document.Url(), IGNORE_EXCEPTION);
+    return true;
+  };
+
+  bool header_valid = [&]() {
+    CSSParserTokenStream::BlockGuard header_guard(stream);
+    if (stream.Peek().GetType() == kIdentToken) {
+      String first_string =
+          stream.ConsumeIncludingWhitespace().Value().ToString();
+      if (stream.Peek().GetType() == kColonToken) {
+        if (first_string == "at") {
+          preposition = RoutePreposition::kAt;
+        } else if (first_string == "from") {
+          preposition = RoutePreposition::kFrom;
+        } else if (first_string == "to") {
+          preposition = RoutePreposition::kTo;
+        } else {
+          return false;
+        }
+        stream.ConsumeIncludingWhitespace();
+        if (stream.Peek().GetType() == kIdentToken) {
+          route_name = stream.ConsumeIncludingWhitespace().Value().ToString();
+        } else if (!parse_url_pattern()) {
+          return false;
+        }
+        return stream.AtEnd();
+      }
+      if (stream.AtEnd()) {
+        route_name = first_string;
+        return true;
+      }
+    } else {
+      return parse_url_pattern();
+    }
+    return false;
+  }();
+
+  if (!header_valid) {
+    ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleRoute);
+    return nullptr;
+  }
+
+  if (!ConsumeEndOfPreludeForAtRuleWithBlock(stream,
+                                             CSSAtRuleID::kCSSAtRuleRoute)) {
+    return nullptr;
+  }
+
+  wtf_size_t header_end_offset = stream.LookAheadOffset();
+
+  // Parse the body.
+  CSSParserTokenStream::BlockGuard body_guard(stream);
+  if (observer_) {
+    observer_->StartRuleHeader(StyleRule::kRoute, header_start_offset);
+    observer_->EndRuleHeader(header_end_offset);
+    observer_->StartRuleBody(stream.Offset());
+  }
+
+  HeapVector<Member<StyleRuleBase>, 4> rules;
+  ConsumeRuleListOrNestedDeclarationList(stream, nesting_type,
+                                         parent_rule_for_nesting, &rules);
+
+  if (observer_) {
+    observer_->EndRuleBody(stream.Offset());
+  }
+
+  return MakeGarbageCollected<StyleRuleRoute>(route_name, url_pattern,
+                                              preposition, std::move(rules));
 }
 
 StyleRuleCounterStyle* CSSParserImpl::ConsumeCounterStyleRule(
@@ -2277,7 +2405,8 @@ StyleRuleFunction* CSSParserImpl::ConsumeFunctionRule(
   {
     CSSParserTokenStream::BlockGuard guard(stream);
     stream.ConsumeWhitespace();
-    parameters = ConsumeFunctionParameters(stream);
+    parameters =
+        ConsumeFunctionParameters(stream, /*accept_contents_parameter=*/false);
   }
   if (!parameters.has_value()) {
     ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleFunction);
@@ -2328,6 +2457,8 @@ StyleRuleFunction* CSSParserImpl::ConsumeFunctionRule(
 }
 
 StyleRuleMixin* CSSParserImpl::ConsumeMixinRule(CSSParserTokenStream& stream) {
+  wtf_size_t header_start = stream.LookAheadOffset();
+
   // @mixin must be top-level, and as such, we need to clear the arena
   // after we're done parsing it (like ConsumeStyleRule() does).
   if (in_nested_style_rule_) {
@@ -2339,62 +2470,207 @@ StyleRuleMixin* CSSParserImpl::ConsumeMixinRule(CSSParserTokenStream& stream) {
   std::unique_ptr<HeapVector<CSSSelector>, decltype(func_clear_arena)>
       scope_guard(&arena_, std::move(func_clear_arena));
 
-  // Parse the prelude; just a function token (the name).
-  if (stream.Peek().GetType() != kIdentToken) {
+  // Parse the prelude; just a function token (the name) and some arguments.
+  if (stream.Peek().GetType() != kFunctionToken) {
     ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleMixin);
     return nullptr;  // Parse error.
   }
-  AtomicString name =
-      stream.ConsumeIncludingWhitespace().Value().ToAtomicString();
+  AtomicString name = stream.Peek().Value().ToAtomicString();
   if (!name.StartsWith("--")) {
     ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleMixin);
     return nullptr;
   }
 
+  // Parse the argument list (which may be empty).
+  std::optional<HeapVector<StyleRuleFunction::Parameter>> parameters;
+  {
+    CSSParserTokenStream::BlockGuard guard(stream);
+    stream.ConsumeWhitespace();
+    parameters =
+        ConsumeFunctionParameters(stream, /*accept_contents_parameter=*/true);
+  }
+  if (!parameters.has_value()) {
+    ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleMixin);
+    return nullptr;
+  }
+  stream.ConsumeWhitespace();
+
+  // After the argument list, there should be nothing (there's no return value,
+  // unlike with functions).
   if (!ConsumeEndOfPreludeForAtRuleWithBlock(stream,
                                              CSSAtRuleID::kCSSAtRuleMixin)) {
     return nullptr;
   }
+  wtf_size_t header_end = stream.LookAheadOffset();
+
+  if (observer_) {
+    observer_->StartRuleHeader(StyleRule::kApplyMixin, header_start);
+    observer_->EndRuleHeader(header_end);
+  }
 
   // Parse the actual block.
+  StyleRule* fake_parent_rule;
+  {
+    base::AutoReset<bool> reset_in_nested_style_rule(&in_mixin_, true);
+    fake_parent_rule = ConsumeDeclarationListForMixins(stream);
+  }
+
+  // ConsumeDeclarationListForMixins() must have a fake parent rule in case
+  // there are any rules containing parent selectors (including raw
+  // declarations, as they are wrapped in an implicit nested block); however,
+  // StyleRuleMixin is a StyleRuleGroup and expects to own its rules itself.
+  // This means that even though fake_parent_rule is the parent pointed to by
+  // the selectors (and will be kept alive by them), it doesn't actually
+  // contain the child rules and isn't used for anything anymore. Once
+  // a mixin is actually used (in @apply), we clone all the rules and call
+  // Clone(), which changes all the parent references to @apply's parent.
+  fake_parent_rule->EnsureChildRules();
+  return MakeGarbageCollected<StyleRuleMixin>(
+      name, std::move(*parameters),
+      HeapVector{std::move(*fake_parent_rule->ChildRules())});
+}
+
+StyleRule* CSSParserImpl::ConsumeDeclarationListForMixins(
+    CSSParserTokenStream& stream) {
   CSSParserTokenStream::BlockGuard guard(stream);
 
-  // The destructor expects there to be at least one selector in the StyleRule.
-  CSSSelector dummy;
-  StyleRule* fake_parent_rule = StyleRule::Create(base::span_from_ref(dummy));
+  if (observer_) {
+    observer_->StartRuleBody(stream.Offset());
+  }
+
+  // When we encounter a declaration list, the selector of our fake parent rule
+  // will be _copied_, so it needs to be something sane; the implicit @nest rule
+  // gives us the behavior that we want.
+  CSSSelector dummy(/*parent_rule=*/nullptr, /*is_implicit=*/true);
+  dummy.SetLastInSelectorList(true);
+  dummy.SetLastInComplexSelector(true);
+
+  // We do not use the properties for anything, but we need a valid pointer
+  // or we will have a crash when we try to clone the rule during apply.
+  ImmutableCSSPropertyValueSet* empty_properties =
+      ImmutableCSSPropertyValueSet::Create({},
+                                           CSSParserMode::kHTMLStandardMode);
+
+  StyleRule* fake_parent_rule =
+      StyleRule::Create(base::span_from_ref(dummy), empty_properties);
   HeapVector<Member<StyleRuleBase>, 4> child_rules;
   ConsumeRuleListOrNestedDeclarationList(stream, CSSNestingType::kNesting,
                                          fake_parent_rule, &child_rules);
   for (StyleRuleBase* child_rule : child_rules) {
     fake_parent_rule->AddChildRule(child_rule);
   }
-  return MakeGarbageCollected<StyleRuleMixin>(name, fake_parent_rule);
+
+  if (observer_) {
+    observer_->EndRuleBody(stream.Offset());
+  }
+
+  return fake_parent_rule;
 }
 
 StyleRuleApplyMixin* CSSParserImpl::ConsumeApplyMixinRule(
     CSSParserTokenStream& stream) {
-  if (stream.Peek().GetType() != kIdentToken) {
+  wtf_size_t header_start = stream.LookAheadOffset();
+  if (stream.Peek().GetType() != kIdentToken &&
+      stream.Peek().GetType() != kFunctionToken) {
     ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleApplyMixin);
     return nullptr;  // Parse error.
   }
-  AtomicString name =
-      stream.ConsumeIncludingWhitespace().Value().ToAtomicString();
+  AtomicString name = stream.Peek().Value().ToAtomicString();
   if (!name.StartsWith("--")) {
     ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleApplyMixin);
     return nullptr;
   }
-  if (!ConsumeEndOfPreludeForAtRuleWithoutBlock(
-          stream, CSSAtRuleID::kCSSAtRuleApplyMixin)) {
-    return nullptr;
+
+  // Parse arguments, if any.
+  HeapVector<Member<CSSVariableData>> arguments;
+  if (stream.Peek().GetType() == kIdentToken) {
+    // @apply --name ...
+    stream.ConsumeIncludingWhitespace();
+  } else {
+    // @apply --name( ...
+    if (!CSSVariableParser::ConsumeMixinArguments(stream, *context_,
+                                                  arguments)) {
+      ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleApplyMixin);
+      return nullptr;
+    }
   }
-  return MakeGarbageCollected<StyleRuleApplyMixin>(name);
+
+  stream.EnsureLookAhead();
+  wtf_size_t header_end = stream.LookAheadOffset();
+  if (observer_) {
+    observer_->StartRuleHeader(StyleRule::kApplyMixin, header_start);
+    observer_->EndRuleHeader(header_end);
+  }
+
+  if (stream.AtEnd() || stream.UncheckedPeek().GetType() == kSemicolonToken) {
+    // No declarations block, just a semicolon (possibly implicit.
+    if (!stream.AtEnd()) {
+      stream.UncheckedConsume();  // kSemicolonToken
+    }
+    if (observer_) {
+      // Devtools expects to see a rule body for every rule; it is
+      // the trigger for actually inserting the rule. So we need to
+      // include a fake empty body here, or the indexing will be
+      // messed up when the NestedDeclarations rules arrive.
+      observer_->StartRuleBody(stream.Offset());
+      observer_->EndRuleBody(stream.Offset());
+    }
+    return MakeGarbageCollected<StyleRuleApplyMixin>(name, std::move(arguments),
+                                                     nullptr);
+  }
+
+  if (stream.UncheckedPeek().GetType() != kLeftBraceToken) {
+    ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleApplyMixin);
+    return nullptr;  // Parse error.
+  }
+
+  // Parse the @contents block.
+  StyleRule* fake_parent_rule_for_contents =
+      ConsumeDeclarationListForMixins(stream);
+  return MakeGarbageCollected<StyleRuleApplyMixin>(
+      name, std::move(arguments), fake_parent_rule_for_contents);
+}
+
+StyleRuleContentsStatement* CSSParserImpl::ConsumeContentsRule(
+    CSSParserTokenStream& stream) {
+  wtf_size_t header_start = stream.LookAheadOffset();
+  stream.ConsumeWhitespace();
+  if (stream.AtEnd()) {
+    // Implicit semicolon at end of block.
+    return MakeGarbageCollected<StyleRuleContentsStatement>(nullptr);
+  }
+  if (stream.UncheckedPeek().GetType() == kSemicolonToken) {
+    // No block, just a semicolon.
+    stream.UncheckedConsume();  // kSemicolonToken
+    return MakeGarbageCollected<StyleRuleContentsStatement>(nullptr);
+  }
+
+  if (stream.UncheckedPeek().GetType() != kLeftBraceToken) {
+    ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleContents);
+    return nullptr;  // Parse error.
+  }
+  wtf_size_t header_end = stream.LookAheadOffset();
+
+  if (observer_) {
+    observer_->StartRuleHeader(StyleRule::kContents, header_start);
+    observer_->EndRuleHeader(header_end);
+    observer_->StartRuleBody(stream.Offset());
+  }
+
+  // Parse the actual block.
+  StyleRule* fake_parent_rule = ConsumeDeclarationListForMixins(stream);
+  if (observer_) {
+    observer_->EndRuleBody(stream.Offset());
+  }
+  return MakeGarbageCollected<StyleRuleContentsStatement>(fake_parent_rule);
 }
 
 // Parse the parameters of a CSS function: Zero or more comma-separated
 // instances of [ <name> <type>? [ : <default-value> ]? ].
 // Returns the empty value on parse error.
 std::optional<HeapVector<StyleRuleFunction::Parameter>>
-CSSParserImpl::ConsumeFunctionParameters(CSSParserTokenStream& stream) {
+CSSParserImpl::ConsumeFunctionParameters(CSSParserTokenStream& stream,
+                                         bool accept_contents_parameter) {
   HeapVector<StyleRuleFunction::Parameter> parameters;
   bool first_parameter = true;
   for (;;) {
@@ -2404,36 +2680,59 @@ CSSParserImpl::ConsumeFunctionParameters(CSSParserTokenStream& stream) {
       // No arguments.
       break;
     }
-    if (stream.Peek().GetType() != kIdentToken) {
-      return {};  // Parse error.
-    }
-    String parameter_name = stream.Peek().Value().ToString();
-    if (!CSSVariableParser::IsValidVariableName(parameter_name)) {
-      return {};
-    }
-    stream.ConsumeIncludingWhitespace();
-
-    CSSSyntaxDefinition type = ConsumeFunctionType(stream).value_or(
-        CSSSyntaxDefinition::CreateUniversal());
-
-    CSSVariableData* default_value = nullptr;
-    if (stream.Peek().GetType() == kColonToken) {
+    if (accept_contents_parameter &&
+        stream.Peek().GetType() == kAtKeywordToken &&
+        stream.Peek().Value() == "contents") {
+      stream.ConsumeIncludingWhitespace();
+      parameters.push_back(StyleRuleFunction::Parameter{
+          "@contents", CSSSyntaxDefinition::CreateUniversal(),
+          /*default_value=*/nullptr});
+    } else {
+      if (stream.Peek().GetType() != kIdentToken) {
+        return {};  // Parse error.
+      }
+      String parameter_name = stream.Peek().Value().ToString();
+      if (!CSSVariableParser::IsValidVariableName(parameter_name)) {
+        return {};
+      }
       stream.ConsumeIncludingWhitespace();
 
-      // Note that this is a comma-containing production [1], and therefore
-      // the value may not contain commas until we support the {} wrapper
-      // defined by the spec.
-      // [1] https://drafts.csswg.org/css-values-5/#component-function-commas
-      bool important_ignored;
-      default_value = CSSVariableParser::ConsumeUnparsedDeclaration(
-          stream, /*allow_important_annotation=*/false,
-          /*is_animation_tainted=*/false,
-          /*must_contain_variable_reference=*/false, /*restricted_value=*/false,
-          /*comma_ends_declaration=*/true, important_ignored, *context_);
-    }
+      std::optional<CSSSyntaxDefinition> type = ConsumeFunctionType(stream);
 
-    parameters.push_back(StyleRuleFunction::Parameter{
-        parameter_name, std::move(type), default_value});
+      CSSVariableData* default_value = nullptr;
+      if (stream.Peek().GetType() == kColonToken) {
+        stream.ConsumeIncludingWhitespace();
+
+        // Note that this is a comma-containing production [1], and therefore
+        // the value may not contain commas until we support the {} wrapper
+        // defined by the spec.
+        // [1] https://drafts.csswg.org/css-values-5/#component-function-commas
+        bool important_ignored;
+        default_value = CSSVariableParser::ConsumeUnparsedDeclaration(
+            stream, /*allow_important_annotation=*/false,
+            /*is_animation_tainted=*/false,
+            /*must_contain_variable_reference=*/false,
+            /*restricted_value=*/false,
+            /*comma_ends_declaration=*/true, important_ignored, *context_);
+      }
+
+      // If a type and a default are both provided, the default must
+      // parse successfully according to that type.
+      //
+      // https://drafts.csswg.org/css-mixins-1/#function-rule
+      if (type.has_value() && default_value) {
+        if (!default_value->NeedsVariableResolution() &&
+            !type->Parse(default_value->OriginalText(), *context_,
+                         /*is_animation_tainted=*/false,
+                         /*is_attr_tainted=*/false)) {
+          return std::nullopt;
+        }
+      }
+
+      parameters.push_back(StyleRuleFunction::Parameter{
+          parameter_name, type.value_or(CSSSyntaxDefinition::CreateUniversal()),
+          default_value});
+    }
     if (stream.Peek().GetType() == kRightParenthesisToken) {
       // No more arguments.
       break;
@@ -2474,6 +2773,68 @@ StyleRuleKeyframe* CSSParserImpl::ConsumeKeyframeStyleRule(
       std::move(key_list),
       CreateCSSPropertyValueSet(parsed_properties_, kCSSKeyframeRuleMode,
                                 context_->GetDocument()));
+}
+
+namespace {
+
+// https://drafts.csswg.org/css-extensions-1/#typedef-extension-name
+bool IsValidExtensionName(const CSSParserToken& token) {
+  if (token.GetType() != kIdentToken) {
+    return false;
+  }
+  StringView value = token.Value();
+  return value.length() >= 2 && value[0] == '-' && value[1] == '-';
+}
+
+std::optional<bool> GetBooleanValue(const CSSParserToken& token) {
+  if (token.GetType() != kIdentToken) {
+    return std::nullopt;
+  }
+  if (token.Value() == "true") {
+    return true;
+  }
+  if (token.Value() == "false") {
+    return false;
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+StyleRuleCustomMedia* CSSParserImpl::ConsumeCustomMediaRule(
+    CSSParserTokenStream& stream) {
+  CSSParserTokenStream::Boundary boundary(stream, kSemicolonToken);
+  const CSSParserToken& name_token = stream.Peek();
+  if (!IsValidExtensionName(name_token)) {
+    ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleCustomMedia);
+    return nullptr;
+  }
+  String name = name_token.Value().ToString();
+  stream.ConsumeIncludingWhitespace();
+
+  std::optional<bool> bool_val = GetBooleanValue(stream.Peek());
+  if (bool_val.has_value()) {
+    stream.ConsumeIncludingWhitespace();
+    if (!stream.AtEnd()) {
+      ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleCustomMedia);
+      return nullptr;
+    }
+    return MakeGarbageCollected<StyleRuleCustomMedia>(
+        StyleRuleCustomMedia(AtomicString(name), *bool_val));
+  }
+
+  MediaQuerySet* media_query_set = MediaQueryParser::ParseMediaQuerySet(
+      stream, context_->GetExecutionContext());
+  if (!media_query_set) {
+    ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleCustomMedia);
+    return nullptr;
+  }
+  if (!stream.AtEnd()) {
+    ConsumeErroneousAtRule(stream, CSSAtRuleID::kCSSAtRuleCustomMedia);
+    return nullptr;
+  }
+  return MakeGarbageCollected<StyleRuleCustomMedia>(
+      StyleRuleCustomMedia(AtomicString(name), media_query_set));
 }
 
 StyleRule* CSSParserImpl::ConsumeStyleRule(CSSParserTokenStream& stream,
@@ -2805,7 +3166,8 @@ void CSSParserImpl::ConsumeRuleListOrNestedDeclarationList(
 namespace {
 
 AllowedRules AllowedNestedRules(StyleRule::RuleType parent_rule_type,
-                                bool in_nested_style_rule) {
+                                bool in_nested_style_rule,
+                                bool in_mixin) {
   switch (parent_rule_type) {
     case StyleRule::kScope:
       if (!in_nested_style_rule) {
@@ -2813,7 +3175,12 @@ AllowedRules AllowedNestedRules(StyleRule::RuleType parent_rule_type,
       }
       [[fallthrough]];
     case StyleRule::kStyle: {
-      return CSSParserImpl::kNestedGroupRules;
+      if (in_mixin) {
+        return CSSParserImpl::kNestedGroupRules |
+               AllowedRules{CSSAtRuleID::kCSSAtRuleContents};
+      } else {
+        return CSSParserImpl::kNestedGroupRules;
+      }
     }
     case StyleRule::kPage:
       return CSSParserImpl::kPageMarginRules;
@@ -2836,9 +3203,6 @@ StyleRuleBase* CSSParserImpl::ConsumeNestedRule(
     bool& invalid_rule_error) {
   // A nested style rule. Recurse into the parser; we need to move the parsed
   // properties out of the way while we're parsing the child rule, though.
-  // TODO(sesse): The spec says that any properties after a nested rule
-  // should be ignored. We don't support this yet.
-  // See https://github.com/w3c/csswg-drafts/issues/7501.
   HeapVector<CSSPropertyValue, 64> outer_parsed_properties;
   swap(parsed_properties_, outer_parsed_properties);
   StyleRuleBase* child;
@@ -2851,7 +3215,7 @@ StyleRuleBase* CSSParserImpl::ConsumeNestedRule(
   } else {
     child = ConsumeAtRuleContents(
         *id, stream,
-        AllowedNestedRules(parent_rule_type, in_nested_style_rule_),
+        AllowedNestedRules(parent_rule_type, in_nested_style_rule_, in_mixin_),
         nesting_type, parent_rule_for_nesting);
   }
   parsed_properties_ = std::move(outer_parsed_properties);

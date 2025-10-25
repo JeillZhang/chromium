@@ -744,6 +744,12 @@ bool BuildMockOfflineMetaInstaller(const std::string& appid,
   return RunVPythonCommand(create_meta_installer) == 0;
 }
 
+void CleanUpdateClientTempDirectories(UpdaterScope scope) {
+  EnumerateUpdateClientTempDirectories(scope, [](const base::FilePath& dir) {
+    EXPECT_TRUE(base::DeletePathRecursively(dir));
+  });
+}
+
 }  // namespace
 
 base::FilePath GetSetupExecutablePath() {
@@ -758,6 +764,7 @@ void Clean(UpdaterScope scope) {
   VLOG(0) << __func__;
 
   CleanProcesses();
+  CleanUpdateClientTempDirectories(scope);
 
   const HKEY root = UpdaterScopeToHKeyRoot(scope);
   for (const wchar_t* key : {CLIENT_STATE_KEY, CLIENTS_KEY, UPDATER_KEY}) {
@@ -860,8 +867,16 @@ void ExpectInstalled(UpdaterScope scope) {
                     CheckInstallationVersions::kCheckSxSOnly);
 }
 
+void ExpectCleanUpdateClientTempDirectories(UpdaterScope scope) {
+  ASSERT_NO_FATAL_FAILURE(EnumerateUpdateClientTempDirectories(
+      scope, [](const base::FilePath& dir) {
+        ADD_FAILURE() << "Directory not cleaned up: " << dir;
+      }));
+}
+
 void ExpectClean(UpdaterScope scope) {
   ExpectCleanProcesses();
+
   CheckInstallation(scope, CheckInstallationStatus::kCheckIsNotInstalled,
                     CheckInstallationVersions::kCheckActiveAndSxS);
 
@@ -2081,7 +2096,7 @@ void InstallApp(UpdaterScope scope,
             ERROR_SUCCESS);
   RegistrationRequest registration;
   registration.app_id = app_id;
-  registration.version = version;
+  registration.version = version.GetString();
   RegisterApp(scope, registration);
 }
 
@@ -2118,12 +2133,14 @@ void RunOfflineInstallOsNotSupported(UpdaterScope scope,
 void RunMockOfflineMetaInstall(UpdaterScope scope,
                                const std::string& app_id,
                                const base::Version& version,
+                               const std::string& tag,
                                const base::FilePath& installer_path,
                                const std::string& arguments,
                                bool is_silent_install,
                                const std::string& platform,
-                               int string_resource_id_to_find,
-                               const std::string& language,
+                               const std::string& installer_text,
+                               const bool always_launch_cmd,
+                               const int expected_exit_code,
                                bool expect_success) {
   if (installer_path.MatchesExtension(L".msi")) {
     ASSERT_EQ(scope, UpdaterScope::kSystem);
@@ -2163,20 +2180,13 @@ void RunMockOfflineMetaInstall(UpdaterScope scope,
       app_id, installer_path, manifest_path, output_metainstaller));
 
   // Trigger offline install.
-  ASSERT_NO_FATAL_FAILURE(InstallUpdaterAndApp(
-      scope, app_id, is_silent_install,
-      /*tag=*/
-      base::StrCat({"appguid=", app_id,
-                    "&needsadmin=", IsSystemInstall(scope) ? "true" : "false"}),
-      base::WideToUTF8(string_resource_id_to_find
-                           ? GetLocalizedString(string_resource_id_to_find,
-                                                base::UTF8ToWide(language))
-                           : std::wstring()),
-      /*always_launch_cmd=*/false,
-      /*verify_app_logo_loaded=*/false, expect_success,
-      /*wait_for_the_installer=*/true,
-      /*expected_exit_code=*/0,
-      /*additional_switches=*/{}, output_metainstaller));
+  ASSERT_NO_FATAL_FAILURE(
+      InstallUpdaterAndApp(scope, app_id, is_silent_install,
+                           /*tag=*/tag, installer_text, always_launch_cmd,
+                           /*verify_app_logo_loaded=*/false, expect_success,
+                           /*wait_for_the_installer=*/true, expected_exit_code,
+                           /*additional_switches=*/{}, output_metainstaller));
+  ASSERT_TRUE(WaitForUpdaterExit());
 }
 
 base::CommandLine MakeElevated(base::CommandLine command_line) {
@@ -2223,6 +2233,54 @@ void ExpectAppVersion(UpdaterScope scope,
                         GetAppClientStateKey(app_id).c_str(), Wow6432(KEY_READ))
           .ReadValue(kRegValuePV, &pv));
   EXPECT_EQ(base::SysUTF8ToWide(version.GetString()), pv);
+}
+
+void SetAppAllowsUsageStats(UpdaterScope scope,
+                            const std::string& identifier,
+                            bool allowed) {
+  base::win::RegKey key;
+  ASSERT_EQ(
+      key.Create(UpdaterScopeToHKeyRoot(scope),
+                 GetAppClientStateKey(identifier).c_str(), Wow6432(KEY_WRITE)),
+      ERROR_SUCCESS);
+  EXPECT_EQ(key.WriteValue(L"usagestats", static_cast<DWORD>(allowed)),
+            ERROR_SUCCESS);
+}
+
+void ClearAppAllowsUsageStats(UpdaterScope scope,
+                              const std::string& identifier) {
+  ASSERT_TRUE(DeleteRegKey(UpdaterScopeToHKeyRoot(scope),
+                           GetAppClientStateKey(identifier).c_str()));
+}
+
+void InstallScheduledTask(const std::string& task_name,
+                          bool use_task_subfolders) {
+  scoped_refptr<TaskScheduler> task_scheduler =
+      TaskScheduler::CreateInstance(UpdaterScope::kUser, use_task_subfolders);
+  ASSERT_TRUE(task_scheduler);
+
+  EXPECT_TRUE(task_scheduler->RegisterTask(
+      base::UTF8ToWide(task_name), base::UTF8ToWide(task_name),
+      base::CommandLine::FromString(L"C:\\temp\\temp.exe"),
+      TaskScheduler::TriggerType::TRIGGER_TYPE_HOURLY, false));
+}
+
+void IsScheduledTaskRegistered(const std::string& task_name,
+                               bool use_task_subfolders) {
+  scoped_refptr<TaskScheduler> task_scheduler =
+      TaskScheduler::CreateInstance(UpdaterScope::kUser, use_task_subfolders);
+  ASSERT_TRUE(task_scheduler);
+
+  EXPECT_TRUE(task_scheduler->IsTaskRegistered(base::UTF8ToWide(task_name)));
+}
+
+void DeleteScheduledTask(const std::string& task_name,
+                         bool use_task_subfolders) {
+  scoped_refptr<TaskScheduler> task_scheduler =
+      TaskScheduler::CreateInstance(UpdaterScope::kUser, use_task_subfolders);
+  ASSERT_TRUE(task_scheduler);
+
+  EXPECT_TRUE(task_scheduler->DeleteTask(base::UTF8ToWide(task_name)));
 }
 
 }  // namespace updater::test

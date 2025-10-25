@@ -26,17 +26,11 @@
 
 namespace base {
 
-BASE_FEATURE(kSchedUtilHints,
-             "SchedUtilHints",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kSchedUtilHints, base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kSetThreadBgForBgProcess,
-             "SetThreadBgForBgProcess",
-             FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kSetThreadBgForBgProcess, FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kSetRtForDisplayThreads,
-             "SetRtForDisplayThreads",
-             FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kSetRtForDisplayThreads, FEATURE_DISABLED_BY_DEFAULT);
 namespace {
 
 CrossProcessPlatformThreadDelegate* g_cross_process_platform_thread_delegate =
@@ -184,6 +178,7 @@ void SetThreadLatencySensitivity(ProcessId process_id,
     case ThreadType::kDefault:
       break;
     case ThreadType::kDisplayCritical:
+    case ThreadType::kInteractive:
       // Compositing and display critical threads need a boost for consistent 60
       // fps.
       [[fallthrough]];
@@ -231,12 +226,20 @@ void SetThreadLatencySensitivity(ProcessId process_id,
 
 // Get the type by reading through kThreadTypeToNiceValueMap
 std::optional<ThreadType> GetThreadTypeForNiceValue(int nice_value) {
-  for (auto i : internal::kThreadTypeToNiceValueMap) {
-    if (nice_value == i.nice_value) {
-      return i.thread_type;
-    }
+  switch (nice_value) {
+    case 10:
+      return ThreadType::kBackground;
+    case 2:
+      return ThreadType::kUtility;
+    case 0:
+      return ThreadType::kDefault;
+    case -8:
+      return ThreadType::kDisplayCritical;
+    case -10:
+      return ThreadType::kRealtimeAudio;
+    default:
+      return std::nullopt;
   }
-  return std::nullopt;
 }
 
 std::optional<int> GetNiceValueForThreadId(PlatformThreadId thread_id) {
@@ -283,6 +286,7 @@ void SetThreadRTPrioFromType(ProcessId process_id,
       policy = SCHED_RR;
       break;
     case ThreadType::kDisplayCritical:
+    case ThreadType::kInteractive:
       if (!PlatformThreadChromeOS::IsDisplayThreadsRtFeatureEnabled()) {
         return;
       }

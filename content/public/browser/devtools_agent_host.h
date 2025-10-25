@@ -19,8 +19,6 @@
 #include "content/public/browser/devtools_agent_host_client.h"
 #include "content/public/browser/devtools_agent_host_observer.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "services/network/public/mojom/network_context.mojom-forward.h"
-#include "services/network/public/mojom/url_loader_factory.mojom-forward.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -60,6 +58,7 @@ class CONTENT_EXPORT DevToolsAgentHost
   static const char kTypeOther[];
   static const char kTypeAuctionWorklet[];
   static const char kTypeAssistiveTechnology[];
+  static const char kTypeBrowserUI[];
   // File descriptor used by DevTools remote debugging pipe handler
   // to read and write protocol messages.
   static constexpr int kReadFD = 3;
@@ -197,6 +196,10 @@ class CONTENT_EXPORT DevToolsAgentHost
   // Returns the DevTools token of this window's opener, or empty string if no
   // opener.
   virtual std::string GetOpenerFrameId() = 0;
+
+  // Returns the DevTools token of this frame's parent, or empty string if
+  // this host is not a frame or is a main frame.
+  virtual std::string GetParentFrameId() = 0;
 
   // Returns web contents instance for this host if any.
   virtual WebContents* GetWebContents() = 0;

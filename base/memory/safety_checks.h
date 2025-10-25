@@ -5,6 +5,8 @@
 #ifndef BASE_MEMORY_SAFETY_CHECKS_H_
 #define BASE_MEMORY_SAFETY_CHECKS_H_
 
+#include <stdint.h>
+
 #include <new>
 #include <type_traits>
 
@@ -65,7 +67,7 @@ namespace internal {
 enum class MemorySafetyCheck : uint32_t {
   kNone = 0,
   kForcePartitionAlloc = (1u << 0),
-  // Enables |FreeFlags::kSchedulerLoopQuarantine|.
+  // Enables |FreeFlags::kSchedulerLoopQuarantineForAdvancedMemorySafetyChecks|.
   // Requires PA-E.
   kSchedulerLoopQuarantine = (1u << 1),
 };
@@ -117,7 +119,8 @@ constexpr partition_alloc::AllocFlags GetAllocFlags(MemorySafetyCheck checks) {
 constexpr partition_alloc::FreeFlags GetFreeFlags(MemorySafetyCheck checks) {
   auto flags = partition_alloc::FreeFlags::kNone;
   if (static_cast<bool>(checks & MemorySafetyCheck::kSchedulerLoopQuarantine)) {
-    flags |= partition_alloc::FreeFlags::kSchedulerLoopQuarantine;
+    flags |= partition_alloc::FreeFlags::
+        kSchedulerLoopQuarantineForAdvancedMemorySafetyChecks;
   }
   return flags;
 }
@@ -316,6 +319,11 @@ NOINLINE void HandleMemorySafetyCheckedOperatorDelete(
 // to know which point at execution it goes wrong.
 BASE_EXPORT void CheckHeapIntegrity(const void* ptr);
 
+// The function here is called right before crashing with
+// `DoubleFreeOrCorruptionDetected()`. We provide an address for the slot start
+// to the function, and it may use that for debugging purpose.
+void SetDoubleFreeOrCorruptionDetectedFn(void (*fn)(uintptr_t));
+
 // Utility class to exclude deallocation from optional safety checks when an
 // instance is on the stack. Can be applied to performance critical functions.
 class BASE_EXPORT ScopedSafetyChecksExclusion {
@@ -331,6 +339,18 @@ class BASE_EXPORT ScopedSafetyChecksExclusion {
       opt_out_scheduler_loop_quarantine_;
 #endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 };
+
+#if PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
+using base::allocator::SchedulerLoopQuarantineScanPolicyUpdater;
+using base::allocator::ScopedSchedulerLoopQuarantineDisallowScanlessPurge;
+#else
+class SchedulerLoopQuarantineScanPolicyUpdater {
+ public:
+  ALWAYS_INLINE void DisallowScanlessPurge() {}
+  ALWAYS_INLINE void AllowScanlessPurge() {}
+};
+class ScopedSchedulerLoopQuarantineDisallowScanlessPurge {};
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC_AS_MALLOC)
 
 }  // namespace base
 

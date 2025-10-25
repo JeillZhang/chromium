@@ -32,6 +32,7 @@
 #include "cc/resources/ui_resource_request.h"
 #include "cc/trees/begin_main_frame_trace_id.h"
 #include "cc/trees/browser_controls_params.h"
+#include "cc/trees/layer_tree_host_client.h"
 #include "cc/trees/presentation_time_callback_buffer.h"
 #include "cc/trees/render_frame_metadata.h"
 #include "cc/trees/swap_promise.h"
@@ -91,6 +92,7 @@ struct CC_EXPORT CommitState {
   float bottom_controls_shown_ratio = 0.f;
   float device_scale_factor = 1.f;
   float external_page_scale_factor = 1.f;
+  float load_progress = 0.f;
   float max_page_scale_factor = 1.f;
   float min_page_scale_factor = 1.f;
   float page_scale_factor = 1.f;
@@ -128,6 +130,8 @@ struct CC_EXPORT CommitState {
   bool new_local_surface_id_request = false;
   bool next_commit_forces_recalculate_raster_scales = false;
   bool next_commit_forces_redraw = false;
+  PropertyChangeForcesCommitCriteria property_change_forces_commit_criteria =
+      PropertyChangeForcesCommitCriteria::kNone;
   BeginMainFrameTraceId trace_id{0};
   EventMetrics::List event_metrics;
 

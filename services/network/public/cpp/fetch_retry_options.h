@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/component_export.h"
+#include "base/time/time.h"
 #include "services/network/public/mojom/fetch_retry_options.mojom-shared.h"
 
 namespace network {
@@ -36,6 +37,7 @@ struct COMPONENT_EXPORT(NETWORK_CPP_FETCH_RETRY_OPTIONS) FetchRetryOptions {
   std::optional<base::TimeDelta> max_age;
   bool retry_after_unload = false;
   bool retry_non_idempotent = false;
+  bool retry_only_if_server_unreached = false;
 };
 
 }  // namespace network

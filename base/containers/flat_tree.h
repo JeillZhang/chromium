@@ -18,7 +18,6 @@
 
 #include "base/check.h"
 #include "base/compiler_specific.h"
-#include "base/containers/span.h"
 #include "base/memory/raw_ptr_exclusion.h"
 
 namespace base {
@@ -27,7 +26,7 @@ namespace base {
 // flat_tree in case the underlying container is already sorted and has no
 // duplicate elements.
 struct sorted_unique_t {
-  constexpr explicit sorted_unique_t() = default;
+  constexpr sorted_unique_t() = default;
 };
 inline constexpr sorted_unique_t sorted_unique;
 
@@ -250,12 +249,6 @@ class flat_tree {
     requires(std::input_iterator<InputIterator>)
   void insert(InputIterator first, InputIterator last);
 
-  // PRECONDITIONS: `first` and  `last` must be iterators into the
-  // same object, with `first` less than or equal to `last`.
-  template <class InputIteratorPtr>
-  UNSAFE_BUFFER_USAGE void insert(InputIteratorPtr* first,
-                                  InputIteratorPtr* last);
-
   // Inserts the all values from the `range` into the current tree.
   template <class Range>
     requires(std::ranges::input_range<Range>)
@@ -356,7 +349,7 @@ class flat_tree {
   // Implementation note: currently we use operator==() and operator<() on
   // std::vector, because they have the same contract we need, so we use them
   // directly for brevity and in case it is more optimal than calling equal()
-  // and lexicograhpical_compare(). If the underlying container type is changed,
+  // and lexicographical_compare(). If the underlying container type is changed,
   // this code may need to be modified.
 
   void swap(flat_tree& other) noexcept;
@@ -370,6 +363,28 @@ class flat_tree {
   }
 
   friend void swap(flat_tree& lhs, flat_tree& rhs) noexcept { lhs.swap(rhs); }
+
+  // This type should be hashable by Abseil if the contained type(s) are.
+  template <typename H>
+    requires requires(H h, const value_type& value) {
+      { H::combine(std::move(h), value) } -> std::same_as<H>;
+    }
+  friend H AbslHashValue(H h, const flat_tree& tree) {
+    // Usually Container is contiguous, which allows us to use a faster hash
+    // algorithm.
+    if constexpr (std::ranges::contiguous_range<Container>) {
+      auto size = std::ranges::size(tree.body_);
+      return H::combine(H::combine_contiguous(
+                            std::move(h), std::ranges::data(tree.body_), size),
+                        size);
+    }
+
+    for (const auto& value : tree) {
+      h = H::combine(std::move(h), value);
+    }
+    h = H::combine(std::move(h), tree.size());
+    return h;
+  }
 
  protected:
   // Emplaces a new item into the tree that is known not to be in it. This
@@ -758,19 +773,6 @@ auto flat_tree<Key, GetKeyFromValue, KeyCompare, Container>::insert(
       .first;
 }
 
-// PRECONDITIONS: `first` and  `last` must be iterators into the
-// same object, with `first` less than or equal to `last`.
-template <class Key, class GetKeyFromValue, class KeyCompare, class Container>
-template <class InputIteratorPtr>
-UNSAFE_BUFFER_USAGE void
-flat_tree<Key, GetKeyFromValue, KeyCompare, Container>::insert(
-    InputIteratorPtr* input_begin,
-    InputIteratorPtr* input_end) {
-  // SAFETY: The caller must ensure the pointers are a valid pair.
-  auto s = UNSAFE_BUFFERS(base::span(input_begin, input_end));
-  insert(s.begin(), s.end());
-}
-
 template <class Key, class GetKeyFromValue, class KeyCompare, class Container>
 template <class InputIterator>
   requires(std::input_iterator<InputIterator>)
@@ -820,8 +822,7 @@ template <class Range>
   requires(std::ranges::input_range<Range>)
 void flat_tree<Key, GetKeyFromValue, KeyCompare, Container>::insert_range(
     Range&& range) {
-  // SAFETY: A range should return a valid begin/end even if they are pointers.
-  UNSAFE_BUFFERS(insert(std::ranges::begin(range), std::ranges::end(range)));
+  insert(std::ranges::begin(range), std::ranges::end(range));
 }
 
 template <class Key, class GetKeyFromValue, class KeyCompare, class Container>

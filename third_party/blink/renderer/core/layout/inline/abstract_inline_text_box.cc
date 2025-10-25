@@ -11,7 +11,6 @@
 #include "third_party/blink/renderer/core/layout/inline/inline_cursor.h"
 #include "third_party/blink/renderer/core/layout/logical_box_fragment.h"
 #include "third_party/blink/renderer/platform/fonts/character_range.h"
-#include "third_party/blink/renderer/platform/fonts/shaping/shape_result_buffer.h"
 #include "third_party/blink/renderer/platform/fonts/shaping/shape_result_view.h"
 #include "third_party/blink/renderer/platform/text/text_break_iterator.h"
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
@@ -398,7 +397,7 @@ void AbstractInlineTextBox::GetWordBoundariesForText(
     return;
   }
 
-  TextBreakIterator* it = WordBreakIterator(text, 0, text.length());
+  TextBreakIterator* it = WordBreakIterator(text);
   if (!it) {
     return;
   }
@@ -438,7 +437,7 @@ void AbstractInlineTextBox::GetWordBoundariesForText(
       //
       // At beginning of text, or right after an alphanumeric character or a
       // character that cannot be a word break.
-      if (offset == 0 || WTF::unicode::IsAlphanumeric(text[offset - 1]) ||
+      if (offset == 0 || unicode::IsAlphanumeric(text[offset - 1]) ||
           !IsWordBreak(text[offset - 1])) {
         if (word_start) {
           words.emplace_back(*word_start, offset);

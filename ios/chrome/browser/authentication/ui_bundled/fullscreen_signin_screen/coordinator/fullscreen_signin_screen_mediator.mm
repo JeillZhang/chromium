@@ -30,6 +30,8 @@
 #import "ios/chrome/browser/policy/model/policy_util.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
+#import "ios/chrome/browser/signin/model/authentication_service_observer_bridge.h"
+#import "ios/chrome/browser/signin/model/constants.h"
 #import "ios/chrome/browser/signin/model/system_identity.h"
 #import "ios/chrome/browser/sync/model/enterprise_utils.h"
 
@@ -47,6 +49,7 @@ enum class SigninScreenState {
 
 @interface FullscreenSigninScreenMediator () <
     AuthenticationFlowDelegate,
+    AuthenticationServiceObserving,
     IdentityManagerObserverBridgeDelegate> {
 }
 
@@ -79,6 +82,11 @@ enum class SigninScreenState {
   // State of the sign-in screen.
   SigninScreenState _screenState;
   ChangeProfileContinuationProvider _changeProfileContinuationProvider;
+  BOOL _signinInProgress;
+
+  // Observer for auth service status changes.
+  std::unique_ptr<AuthenticationServiceObserverBridge>
+      _authServiceObserverBridge;
 }
 
 - (instancetype)
@@ -109,6 +117,9 @@ enum class SigninScreenState {
     _accountManagerService = accountManagerService;
     _authenticationService = authenticationService;
     _identityManager = identityManager;
+    _authServiceObserverBridge =
+        std::make_unique<AuthenticationServiceObserverBridge>(
+            authenticationService, self);
     _identityManagerObserver =
         std::make_unique<signin::IdentityManagerObserverBridge>(
             _identityManager, self);
@@ -151,17 +162,18 @@ enum class SigninScreenState {
 }
 
 - (void)dealloc {
-  DCHECK(!_accountManagerService);
-  DCHECK(!_authenticationService);
-  DCHECK(!_identityManager);
-  DCHECK(!self.localPrefService);
-  DCHECK(!self.prefService);
-  DCHECK(!self.syncService);
+  CHECK(!_accountManagerService, base::NotFatalUntil::M145);
+  CHECK(!_authenticationService, base::NotFatalUntil::M145);
+  CHECK(!_identityManager, base::NotFatalUntil::M145);
+  CHECK(!self.localPrefService, base::NotFatalUntil::M145);
+  CHECK(!self.prefService, base::NotFatalUntil::M145);
+  CHECK(!self.syncService, base::NotFatalUntil::M145);
 }
 
 - (void)disconnect {
   _consumer = nil;
   _delegate = nil;
+  _authServiceObserverBridge.reset();
   _accountManagerService = nullptr;
   _authenticationService = nullptr;
   _identityManager = nullptr;
@@ -173,6 +185,8 @@ enum class SigninScreenState {
 
 - (void)startSignInWithAuthenticationFlow:
     (AuthenticationFlow*)authenticationFlow {
+  CHECK(!_signinInProgress, base::NotFatalUntil::M145);
+  _signinInProgress = YES;
   [self userAttemptedToSignin];
   RecordMetricsReportingDefaultState();
 
@@ -180,7 +194,7 @@ enum class SigninScreenState {
   // signed-in.
   CHECK(!_authenticationService->HasPrimaryIdentity(
             signin::ConsentLevel::kSignin),
-        base::NotFatalUntil::M140);
+        base::NotFatalUntil::M145);
   [self.consumer setUIEnabled:NO];
   authenticationFlow.delegate = self;
   [authenticationFlow startSignIn];
@@ -304,10 +318,15 @@ enum class SigninScreenState {
 
 #pragma mark - AuthenticationFlowDelegate
 
-- (void)authenticationFlowDidSignInInSameProfileWithResult:
-    (SigninCoordinatorResult)result {
+- (void)
+    authenticationFlowDidSignInInSameProfileWithCancelationReason:
+        (signin_ui::CancelationReason)cancelationReason
+                                                         identity:
+                                                             (id<SystemIdentity>)
+                                                                 identity {
+  _signinInProgress = NO;
   [self.consumer setUIEnabled:YES];
-  if (result != SigninCoordinatorResultSuccess) {
+  if (cancelationReason != signin_ui::CancelationReason::kNotCanceled) {
     return;
   }
   [self.logger logSigninCompletedWithResult:SigninCoordinatorResultSuccess
@@ -315,15 +334,16 @@ enum class SigninScreenState {
   [self.delegate fullscreenSigninScreenMediatorDidFinishSignin:self];
 }
 
-- (ChangeProfileContinuation)authenticationFlowWillChangeProfile {
-  return _changeProfileContinuationProvider.Run();
+- (void)authenticationFlowWillSwitchProfileWithReadyCompletion:
+    (ReadyForProfileSwitchingCompletion)readyCompletion {
+  std::move(readyCompletion).Run(_changeProfileContinuationProvider.Run());
 }
 
 #pragma mark - Private
 
 - (bool)selectedIdentityIsValid {
   if (self.selectedIdentity) {
-    GaiaId gaia(self.selectedIdentity.gaiaID);
+    GaiaId gaia(self.selectedIdentity.gaiaId);
     return base::Contains(_identityManager->GetAccountsOnDevice(), gaia,
                           [](const AccountInfo& info) { return info.gaia; });
   }
@@ -331,14 +351,8 @@ enum class SigninScreenState {
 }
 
 - (void)updateConsumerIdentity {
-  switch (_authenticationService->GetServiceStatus()) {
-    case AuthenticationService::ServiceStatus::SigninForcedByPolicy:
-    case AuthenticationService::ServiceStatus::SigninAllowed:
-      break;
-    case AuthenticationService::ServiceStatus::SigninDisabledByUser:
-    case AuthenticationService::ServiceStatus::SigninDisabledByPolicy:
-    case AuthenticationService::ServiceStatus::SigninDisabledByInternal:
-      return;
+  if (!_authenticationService->SigninEnabled()) {
+    return;
   }
   id<SystemIdentity> selectedIdentity = self.selectedIdentity;
   if (!selectedIdentity) {
@@ -369,6 +383,7 @@ enum class SigninScreenState {
 // asynchronously when the management status if retrieved and the identity is
 // managed.
 - (BOOL)isIdentityKnownToBeManaged:(id<SystemIdentity>)identity {
+  CHECK(identity, base::NotFatalUntil::M147);
   if (std::optional<BOOL> managed = IsIdentityManaged(identity);
       managed.has_value()) {
     return managed.value();
@@ -383,7 +398,7 @@ enum class SigninScreenState {
   return NO;
 }
 
-#pragma mark -  IdentityManagerObserver
+#pragma mark -  IdentityManagerObserverBridgeDelegate
 
 - (void)onAccountsOnDeviceChanged {
   if (![self selectedIdentityIsValid]) {
@@ -396,6 +411,30 @@ enum class SigninScreenState {
   id<SystemIdentity> identity =
       _accountManagerService->GetIdentityOnDeviceWithGaiaID(info.gaia);
   [self handleIdentityUpdated:identity];
+}
+
+- (void)onPrimaryAccountChanged:
+    (const signin::PrimaryAccountChangeEvent&)event {
+  if (_signinInProgress) {
+    return;
+  }
+  CoreAccountInfo primaryAccount =
+      _identityManager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
+  if (!primaryAccount.IsEmpty()) {
+    // Signed in from a different surface, dismiss the current dialog.
+    [self.delegate fullscreenSigninScreenMediatorWantsToBeDismissed:self];
+  }
+}
+
+#pragma mark - AuthenticationServiceObserving
+
+- (void)onServiceStatusChanged {
+  if (_authenticationService->GetServiceStatus() !=
+      AuthenticationService::ServiceStatus::SigninForcedByPolicy) {
+    // Signin is now disabled, so the consistency default account must be
+    // stopped.
+    [self.delegate fullscreenSigninScreenMediatorWantsToBeDismissed:self];
+  }
 }
 
 @end

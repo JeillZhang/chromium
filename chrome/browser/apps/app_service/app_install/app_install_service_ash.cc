@@ -32,7 +32,7 @@
 #include "components/user_manager/user_manager.h"
 #include "net/base/url_util.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 namespace apps {
 
@@ -141,10 +141,9 @@ void AppInstallServiceAsh::InstallApp(
     case PackageType::kWeb:
     case PackageType::kWebsite: {
       // Observe for `anchor_window` being destroyed during async work.
-      std::unique_ptr<views::NativeWindowTracker> anchor_window_tracker;
+      std::unique_ptr<ui::NativeWindowTracker> anchor_window_tracker;
       if (anchor_window) {
-        anchor_window_tracker =
-            views::NativeWindowTracker::Create(*anchor_window);
+        anchor_window_tracker = ui::NativeWindowTracker::Create(*anchor_window);
       }
 
       FetchAppInstallData(
@@ -232,7 +231,7 @@ void AppInstallServiceAsh::ShowDialogAndInstall(
     AppInstallSurface surface,
     PackageId expected_package_id,
     std::optional<gfx::NativeWindow> anchor_window,
-    std::unique_ptr<views::NativeWindowTracker> anchor_window_tracker,
+    std::unique_ptr<ui::NativeWindowTracker> anchor_window_tracker,
     base::OnceCallback<void(AppInstallResult)> callback,
     base::expected<AppInstallData, QueryError> data) {
   gfx::NativeWindow parent =

@@ -12,6 +12,7 @@
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
@@ -26,6 +27,7 @@
 #include "cc/slim/layer_tree.h"
 #include "cc/slim/surface_layer.h"
 #include "components/viz/common/features.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "content/browser/gpu/compositor_util.h"
 #include "content/browser/renderer_host/browser_compositor_ios.h"
 #include "content/browser/renderer_host/dip_util.h"
@@ -160,7 +162,8 @@ class RenderWidgetHostViewBrowserTest : public ContentBrowserTest {
 
   // Callback when using CopyFromSurface() API.
   void FinishCopyFromSurface(base::OnceClosure quit_closure,
-                             const SkBitmap& bitmap) {
+                             const viz::CopyOutputBitmapWithMetadata& result) {
+    const SkBitmap& bitmap = result.bitmap;
     ++callback_invoke_count_;
     if (!bitmap.drawsNothing())
       ++frames_captured_;
@@ -394,13 +397,26 @@ IN_PROC_BROWSER_TEST_F(NoCompositingRenderWidgetHostViewBrowserTest,
   // is maintained as the fallback. The DelegatedFrameHost should have not have
   // a valid active viz::LocalSurfaceId until the first surface after navigation
   // has been embedded.
+  //
+  // However, if the navigation involves a change of RenderFrameHosts the
+  // surface will be evicted when committing the new RenderFrameHost (see also
+  // ` DelegatedFrameHostAndroid::ClearFallbackSurfaceForCommitPending()`).
   rwhva = static_cast<RenderWidgetHostViewAndroid*>(rwhvb);
   dfh = rwhva->delegated_frame_host_for_testing();
-  EXPECT_TRUE(dfh->HasPrimarySurface());
-  EXPECT_FALSE(dfh->IsPrimarySurfaceEvicted());
-  EXPECT_EQ(initial_local_surface_id,
-            dfh->content_layer()->surface_id().local_surface_id());
-  EXPECT_FALSE(dfh->SurfaceId().local_surface_id().is_valid());
+
+  if (ShouldCreateNewHostForAllFrames()) {
+    EXPECT_FALSE(dfh->HasPrimarySurface());
+    EXPECT_TRUE(dfh->IsPrimarySurfaceEvicted());
+    EXPECT_NE(initial_local_surface_id,
+              dfh->content_layer()->surface_id().local_surface_id());
+    EXPECT_TRUE(dfh->SurfaceId().local_surface_id().is_valid());
+  } else {
+    EXPECT_TRUE(dfh->HasPrimarySurface());
+    EXPECT_FALSE(dfh->IsPrimarySurfaceEvicted());
+    EXPECT_EQ(initial_local_surface_id,
+              dfh->content_layer()->surface_id().local_surface_id());
+    EXPECT_FALSE(dfh->SurfaceId().local_surface_id().is_valid());
+  }
 #endif
 
   // Showing the view should lead to a new surface being embedded.
@@ -494,7 +510,10 @@ IN_PROC_BROWSER_TEST_F(NoCompositingRenderWidgetHostViewBrowserTest,
   EXPECT_FALSE(dfh->HasPrimarySurface());
   EXPECT_TRUE(dfh->IsPrimarySurfaceEvicted());
   EXPECT_FALSE(dfh->content_layer()->surface_id().is_valid());
-  EXPECT_FALSE(dfh->SurfaceId().local_surface_id().is_valid());
+  // However, if the navigation involves a change of RenderFrameHosts (and thus
+  // RenderWidgetViewHosts) a new surface is embedded (see comment a bit above).
+  EXPECT_EQ(ShouldCreateNewHostForAllFrames(),
+            dfh->SurfaceId().local_surface_id().is_valid());
 #endif
 
   // Showing the view should lead to a new surface being embedded.
@@ -676,13 +695,21 @@ IN_PROC_BROWSER_TEST_F(BFCachedRenderWidgetHostViewBrowserTest,
   }
 }
 
+// TODO(crbug.com/345980824): This test is flaky on some Linux builders.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_BFCachedPageResizedWhileHiddenShouldNotHavePreservedFallback \
+  DISABLED_BFCachedPageResizedWhileHiddenShouldNotHavePreservedFallback
+#else
+#define MAYBE_BFCachedPageResizedWhileHiddenShouldNotHavePreservedFallback \
+  BFCachedPageResizedWhileHiddenShouldNotHavePreservedFallback
+#endif
 // Same as the above test, except we resize the viewport while the page is in
 // BFCache. The net effect is that we will NOT be using the last surface as
 // the fallback for BFCache activation because resizing always regenerates a
 // new ID as the fallback.
 IN_PROC_BROWSER_TEST_F(
     BFCachedRenderWidgetHostViewBrowserTest,
-    BFCachedPageResizedWhileHiddenShouldNotHavePreservedFallback) {
+    MAYBE_BFCachedPageResizedWhileHiddenShouldNotHavePreservedFallback) {
   ASSERT_TRUE(embedded_test_server()->Start());
   ASSERT_TRUE(
       NavigateToURL(shell(), embedded_test_server()->GetURL("/title1.html")));
@@ -1161,7 +1188,9 @@ class CompositingRenderWidgetHostViewBrowserTestTabCapture
         allowable_error_(0),
         test_url_("data:text/html,<!doctype html>") {}
 
-  void VerifyResult(base::OnceClosure quit_callback, const SkBitmap& bitmap) {
+  void VerifyResult(base::OnceClosure quit_callback,
+                    const viz::CopyOutputBitmapWithMetadata& result) {
+    const SkBitmap& bitmap = result.bitmap;
     if (bitmap.drawsNothing()) {
       readback_result_ = READBACK_FAILED;
       std::move(quit_callback).Run();
@@ -1772,10 +1801,11 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewPresentationFeedbackBrowserTest,
 #endif  // !BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_ANDROID)
-void CheckSurfaceRangeRemovedAfterCopy(viz::SurfaceRange range,
-                                       CompositorImpl* compositor,
-                                       base::RepeatingClosure resume_test,
-                                       const SkBitmap& btimap) {
+void CheckSurfaceRangeRemovedAfterCopy(
+    viz::SurfaceRange range,
+    CompositorImpl* compositor,
+    base::RepeatingClosure resume_test,
+    const viz::CopyOutputBitmapWithMetadata& result) {
   // The surface range is removed first when the browser receives the result
   // of the copy request. Then the result callback (including this function) is
   // run.
@@ -1849,8 +1879,10 @@ IN_PROC_BROWSER_TEST_F(RenderWidgetHostViewCopyFromSurfaceBrowserTest,
 
 namespace {
 
-void AssertSnapshotIsPureWhite(base::RepeatingClosure resume_test,
-                               const SkBitmap& snapshot) {
+void AssertSnapshotIsPureWhite(
+    base::RepeatingClosure resume_test,
+    const viz::CopyOutputBitmapWithMetadata& result) {
+  const SkBitmap snapshot = result.bitmap;
   for (int r = 0; r < snapshot.height(); ++r) {
     for (int c = 0; c < snapshot.width(); ++c) {
       ASSERT_EQ(snapshot.getColor(c, r), SK_ColorWHITE);

@@ -10,6 +10,14 @@
 
 namespace {
 
+NSString* const kShareExtensionForMultiprofileKey =
+    @"ShareExtensionForMultiprofileKey";
+
+NSString* const kConfirmationButtonSwapOrderKey =
+    @"ConfirmationButtonSwapOrderKey";
+
+NSString* const kFieldTrialValueKey = @"FieldTrialValue";
+
 void ClearAppGroupFolder(NSString* app_group) {
   if (!app_group) {
     return;
@@ -56,6 +64,60 @@ NSString* UserDefaultsStringForKey(NSString* key, NSString* default_value) {
   NSString* string = [app_group::GetGroupUserDefaults() stringForKey:key];
   // Returns the string if it is non nil. Returns `default_value` otherwise.
   return string ?: default_value;
+}
+
+BOOL MultiProfileShareExtensionEnabled() {
+  NSUserDefaults* shared_defaults = app_group::GetGroupUserDefaults();
+
+  NSDictionary* field_trial_values = [shared_defaults
+      dictionaryForKey:app_group::kChromeExtensionFieldTrialPreference];
+  if (!field_trial_values ||
+      ![field_trial_values isKindOfClass:[NSDictionary class]]) {
+    return NO;
+  }
+
+  NSDictionary* share_extension_pref =
+      field_trial_values[kShareExtensionForMultiprofileKey];
+  if (!share_extension_pref ||
+      ![share_extension_pref isKindOfClass:[NSDictionary class]]) {
+    return NO;
+  }
+
+  NSNumber* share_extension_mim_value =
+      share_extension_pref[kFieldTrialValueKey];
+  if (!share_extension_mim_value ||
+      ![share_extension_mim_value isKindOfClass:[NSNumber class]]) {
+    return NO;
+  }
+
+  return [share_extension_mim_value boolValue];
+}
+
+BOOL IsConfirmationButtonSwapOrderEnabled() {
+  NSUserDefaults* shared_defaults = app_group::GetGroupUserDefaults();
+
+  NSDictionary* field_trial_values = [shared_defaults
+      dictionaryForKey:app_group::kChromeExtensionFieldTrialPreference];
+  if (!field_trial_values ||
+      ![field_trial_values isKindOfClass:[NSDictionary class]]) {
+    return NO;
+  }
+
+  NSDictionary* confirmation_button_pref =
+      field_trial_values[kConfirmationButtonSwapOrderKey];
+  if (!confirmation_button_pref ||
+      ![confirmation_button_pref isKindOfClass:[NSDictionary class]]) {
+    return NO;
+  }
+
+  NSNumber* confirmation_button_value =
+      confirmation_button_pref[kFieldTrialValueKey];
+  if (!confirmation_button_value ||
+      ![confirmation_button_value isKindOfClass:[NSNumber class]]) {
+    return NO;
+  }
+
+  return [confirmation_button_value boolValue];
 }
 
 }  // namespace app_group

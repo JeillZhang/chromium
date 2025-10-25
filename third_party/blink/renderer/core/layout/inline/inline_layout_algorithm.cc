@@ -17,6 +17,7 @@
 #include "third_party/blink/renderer/core/layout/disable_layout_side_effects_scope.h"
 #include "third_party/blink/renderer/core/layout/floats_utils.h"
 #include "third_party/blink/renderer/core/layout/fragmentation_utils.h"
+#include "third_party/blink/renderer/core/layout/inline/fit_text_utils.h"
 #include "third_party/blink/renderer/core/layout/inline/initial_letter_utils.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_box_state.h"
 #include "third_party/blink/renderer/core/layout/inline/inline_break_token.h"
@@ -262,6 +263,7 @@ InlineLayoutAlgorithm::~InlineLayoutAlgorithm() = default;
 // Prepare InlineLayoutStateStack for a new line.
 void InlineLayoutAlgorithm::PrepareBoxStates(
     const LineInfo& line_info,
+    bool should_scale_line_height,
     const InlineBreakToken* break_token) {
 #if EXPENSIVE_DCHECKS_ARE_ON()
   is_box_states_from_context_ = false;
@@ -277,7 +279,7 @@ void InlineLayoutAlgorithm::PrepareBoxStates(
   // If the previous line was ::first-line, always rebuild because box states
   // have ::first-line styles.
   const InlineItems& items = line_info.ItemsData().items;
-  if (!break_token->UseFirstLineStyle()) {
+  if (!break_token->UseFirstLineStyle() && !apply_fit_text_) {
     box_states_ = context_->BoxStatesIfValidForItemIndex(
         items, break_token->StartItemIndex());
     if (box_states_) {
@@ -291,7 +293,7 @@ void InlineLayoutAlgorithm::PrepareBoxStates(
   // If not, rebuild the box states for the break token.
   box_states_ = context_->ResetBoxStates();
   LogicalLineBuilder(Node(), GetConstraintSpace(), nullptr, box_states_,
-                     context_)
+                     context_, should_scale_line_height)
       .RebuildBoxStates(line_info, 0u, break_token->StartItemIndex());
 }
 
@@ -306,16 +308,20 @@ static LayoutUnit AdjustLineOffsetForHanging(LineInfo* line_info) {
 }
 
 #if EXPENSIVE_DCHECKS_ARE_ON()
-void InlineLayoutAlgorithm::CheckBoxStates(const LineInfo& line_info) const {
+void InlineLayoutAlgorithm::CheckBoxStates(
+    const LineInfo& line_info,
+    bool should_scale_line_height) const {
   if (!is_box_states_from_context_) {
     return;
   }
   InlineLayoutStateStack rebuilt;
-  LogicalLineBuilder(Node(), GetConstraintSpace(), nullptr, &rebuilt, context_)
+  LogicalLineBuilder(Node(), GetConstraintSpace(), nullptr, &rebuilt, context_,
+                     should_scale_line_height)
       .RebuildBoxStates(line_info, 0u, GetBreakToken()->StartItemIndex());
   LogicalLineItems& line_box = context_->AcquireTempLogicalLineItems();
-  rebuilt.OnBeginPlaceItems(Node(), line_info.LineStyle(), baseline_type_,
-                            quirks_mode_, &line_box);
+  rebuilt.OnBeginPlaceItems(Node(), line_info.LineStyle(), line_info.Results(),
+                            baseline_type_, quirks_mode_,
+                            should_scale_line_height, &line_box);
   DCHECK(box_states_);
   box_states_->CheckSame(rebuilt);
   context_->ReleaseTempLogicalLineItems(line_box);
@@ -323,20 +329,20 @@ void InlineLayoutAlgorithm::CheckBoxStates(const LineInfo& line_info) const {
 #endif
 
 ALWAYS_INLINE InlineLayoutAlgorithm::LineClampState
-InlineLayoutAlgorithm::GetLineClampState(const LineInfo* line_info,
-                                         LayoutUnit line_box_height) const {
+InlineLayoutAlgorithm::GetLineClampState(const LineInfo* line_info) const {
   const ConstraintSpace& space = GetConstraintSpace();
   LineClampData line_clamp_data = space.GetLineClampData();
-  if (!line_info->IsBlockInInline() && line_clamp_data.IsAtClampPoint()) {
-    if (RuntimeEnabledFeatures::CSSLineClampLineBreakingEllipsisEnabled()) {
-      return LineClampState::kLineClampEllipsis;
-    }
-    return LineClampState::kTextOverflowEllipsis;
-  }
   if (line_clamp_data.ShouldHideForPaint()) {
     return LineClampState::kHide;
   }
-  if (!line_info->IsBlockInInline() && line_info->HasOverflow() &&
+  if (!(line_info && line_info->IsBlockInInline()) &&
+      line_clamp_data.IsAtClampPoint()) {
+    if (!RuntimeEnabledFeatures::CSSLineClampEnabled() ||
+        Style().BlockEllipsis() == EBlockEllipsis::kAuto) [[likely]] {
+      return LineClampState::kLineClampEllipsis;
+    }
+  }
+  if (line_info && !line_info->IsBlockInInline() && line_info->HasOverflow() &&
       node_.GetLayoutBlockFlow()->ShouldTruncateOverflowingText()) {
     return LineClampState::kTextOverflowEllipsis;
   }
@@ -346,6 +352,7 @@ InlineLayoutAlgorithm::GetLineClampState(const LineInfo* line_info,
 
 void InlineLayoutAlgorithm::CreateLine(const LineLayoutOpportunity& opportunity,
                                        LineInfo* line_info,
+                                       bool should_scale_line_height,
                                        LogicalLineContainer* line_container) {
   LogicalLineItems* line_box = &line_container->BaseLine();
   // Apply justification before placing items, because it affects size/position
@@ -356,7 +363,8 @@ void InlineLayoutAlgorithm::CreateLine(const LineLayoutOpportunity& opportunity,
   line_container->Shrink();
 
   LogicalLineBuilder line_builder(Node(), GetConstraintSpace(), GetBreakToken(),
-                                  box_states_, context_);
+                                  box_states_, context_,
+                                  should_scale_line_height);
   line_builder.CreateLine(line_info, line_box, this);
 
   const LayoutUnit hang_width = line_info->HangWidth();
@@ -374,9 +382,10 @@ void InlineLayoutAlgorithm::CreateLine(const LineLayoutOpportunity& opportunity,
   // metrics, so that is has a height.
   if (line_info->HasLineEvenIfEmpty() || !box_states_->RubyColumnList().empty())
       [[unlikely]] {
+    // No scaling because of no text.
     box_states_->LineBoxState().EnsureTextMetrics(
         line_info->LineStyle(), *box_states_->LineBoxState().font,
-        baseline_type_);
+        baseline_type_, FitTextBlockScale::kFixed);
   } else if (line_builder.InitialLetterItemResult() &&
              box_states_->LineBoxState().metrics.IsEmpty()) [[unlikely]] {
     box_states_->LineBoxState().metrics = FontHeight();
@@ -395,6 +404,15 @@ void InlineLayoutAlgorithm::CreateLine(const LineLayoutOpportunity& opportunity,
           .PlaceLines(*line_box, line_box_metrics)
           .AddLinesTo(*line_container);
       annotation_metrics = calculator.AnnotationMetrics();
+
+      if (RuntimeEnabledFeatures::TextEmphasisWithRubyEnabled()) {
+        for (const auto& column : column_list) {
+          for (wtf_size_t i = 0; i < column->size; ++i) {
+            (*line_box)[column->start_index + i].annotation_metrics =
+                column->annotation_metrics;
+          }
+        }
+      }
     }
     line_info->SetAnnotationBlockStartAdjustment(SetAnnotationOverflow(
         *line_info, *line_box, line_box_metrics, annotation_metrics));
@@ -403,11 +421,16 @@ void InlineLayoutAlgorithm::CreateLine(const LineLayoutOpportunity& opportunity,
   // Truncate the line if:
   //  - 'text-overflow: ellipsis' is set and we *aren't* a line-clamp context.
   //  - If we've reached the line-clamp limit.
-  const LineClampState line_clamp_state =
-      GetLineClampState(line_info, line_box_metrics.LineHeight());
-  if (line_clamp_state == LineClampState::kTextOverflowEllipsis) [[unlikely]] {
+  const LineClampState line_clamp_state = GetLineClampState(line_info);
+  if (line_clamp_state == LineClampState::kTextOverflowEllipsis ||
+      (line_clamp_state == LineClampState::kLineClampEllipsis &&
+       !RuntimeEnabledFeatures::CSSLineClampLineBreakingEllipsisEnabled()))
+      [[unlikely]] {
     DCHECK(!line_info->IsBlockInInline());
-    LineTruncator truncator(*line_info);
+    LineTruncator truncator(
+        *line_info,
+        /*is_ellipsis_caused_by_line_clamp=*/line_clamp_state ==
+            LineClampState::kLineClampEllipsis);
     auto* input =
         DynamicTo<HTMLInputElement>(node_.GetLayoutBlockFlow()->GetNode());
     if (input && input->ShouldApplyMiddleEllipsis()) {
@@ -501,7 +524,7 @@ void InlineLayoutAlgorithm::CreateLine(const LineLayoutOpportunity& opportunity,
   if (line_builder.HasRelativePositionedItems()) {
     PlaceRelativePositionedItems(GetConstraintSpace(), line_box);
   }
-  for (auto annotation_line : line_container->AnnotationLineList()) {
+  for (const auto& annotation_line : line_container->AnnotationLineList()) {
     PlaceRelativePositionedItems(GetConstraintSpace(),
                                  annotation_line.line_items);
   }
@@ -541,9 +564,8 @@ void InlineLayoutAlgorithm::CreateLine(const LineLayoutOpportunity& opportunity,
       space.ShouldTextBoxTrimFragmentainerEnd() ||
       space.ShouldTextBoxTrimInsideWhenLineClamp()) [[unlikely]] {
     LineClampData line_clamp_data = space.GetLineClampData();
-    bool is_truncated =
-        line_clamp_data.IsAtClampPoint() ||
-        line_clamp_data.state == LineClampData::kMeasureLinesUntilBfcOffset;
+    bool is_truncated = line_clamp_data.IsAtClampPoint() ||
+                        line_clamp_data.IsMeasureUntilBfcOffset();
     ApplyTextBoxTrim(*line_info, is_truncated);
   }
 
@@ -1003,24 +1025,30 @@ bool InlineLayoutAlgorithm::AddAnyClearanceAfterLine(
   return true;
 }
 
-LayoutUnit InlineLayoutAlgorithm::SetupLineClampEllipsis() {
+// static
+InlineLayoutAlgorithm::LineClampEllipsis
+InlineLayoutAlgorithm::ShapeLineClampEllipsis(const InlineNode& node) {
   DCHECK(RuntimeEnabledFeatures::CSSLineClampLineBreakingEllipsisEnabled());
-  const Font* font = node_.Style().GetFont();
+  const Font* font = node.Style().GetFont();
   const SimpleFontData* font_data = font->PrimaryFont();
   DCHECK(font_data);
   String ellipsis_text =
-      font_data && font_data->GlyphForCharacter(kHorizontalEllipsisCharacter)
-          ? String(base::span_from_ref(kHorizontalEllipsisCharacter))
+      font_data && font_data->GlyphForCharacter(uchar::kHorizontalEllipsis)
+          ? String(base::span_from_ref(uchar::kHorizontalEllipsis))
           : String(u"...");
   HarfBuzzShaper shaper(ellipsis_text);
-  const ShapeResult* shape_result = shaper.Shape(font, Node().BaseDirection());
+  const ShapeResult* shape_result = shaper.Shape(font, node.BaseDirection());
   DCHECK(shape_result);
 
-  FontHeight text_metrics = font_data->GetFontMetrics().GetFontHeight(
-      Node().Style().GetFontBaseline());
+  FontHeight text_metrics =
+      font_data->GetFontMetrics().GetFontHeight(node.Style().GetFontBaseline());
 
-  line_clamp_ellipsis_.emplace(ellipsis_text, shape_result, text_metrics);
-  return shape_result->SnappedWidth();
+  return LineClampEllipsis(ellipsis_text, shape_result, text_metrics);
+}
+
+LayoutUnit InlineLayoutAlgorithm::SetupLineClampEllipsis() {
+  line_clamp_ellipsis_.emplace(ShapeLineClampEllipsis(Node()));
+  return line_clamp_ellipsis_->shape_result->SnappedWidth();
 }
 
 const LayoutResult* InlineLayoutAlgorithm::Layout() {
@@ -1104,6 +1132,8 @@ const LayoutResult* InlineLayoutAlgorithm::Layout() {
     container_builder_.SetIsLineForParallelFlow();
   }
 
+  apply_fit_text_ = ShouldApplyFitText(Node());
+
   FragmentItemsBuilder* const items_builder = context_->ItemsBuilder();
   DCHECK(items_builder);
   LogicalLineContainer* const line_container =
@@ -1169,7 +1199,7 @@ const LayoutResult* InlineLayoutAlgorithm::Layout() {
                                column_spanner_path_, &GetExclusionSpace());
       line_break_strategy.SetupLineBreaker(context_, line_breaker);
       if (RuntimeEnabledFeatures::CSSLineClampLineBreakingEllipsisEnabled() &&
-          constraint_space.GetLineClampData().IsAtClampPoint()) {
+          GetLineClampState(nullptr) == LineClampState::kLineClampEllipsis) {
         LayoutUnit ellipsis_width = SetupLineClampEllipsis();
         line_breaker.SetLineClampEllipsisWidth(ellipsis_width);
       }
@@ -1292,9 +1322,25 @@ const LayoutResult* InlineLayoutAlgorithm::Layout() {
       // to overflow in that case.
     }
 
-    PrepareBoxStates(line_info, break_token);
+    bool should_scale_line_height = false;
+    if (apply_fit_text_) {
+      if (context_->IsMeasuringScale()) {
+        // No fit-text handling here. We call MeasurePerBlockScale() later.
+      } else if (ParagraphScale scale = context_->MeasuredScale();
+                 scale.scale != 1.0f) {
+        should_scale_line_height =
+            LineFitter(Node(), &line_info)
+                .FitLine(scale.scale, scale.additional_paint_time_scale);
+      } else {
+        should_scale_line_height =
+            LineFitter(Node(), &line_info).MeasureAndFitLine();
+      }
+    }
 
-    CreateLine(line_opportunity, &line_info, line_container);
+    PrepareBoxStates(line_info, should_scale_line_height, break_token);
+
+    CreateLine(line_opportunity, &line_info, should_scale_line_height,
+               line_container);
     is_line_created = true;
     is_end_paragraph = line_info.IsEndParagraph();
 
@@ -1420,12 +1466,11 @@ const LayoutResult* InlineLayoutAlgorithm::Layout() {
         end_margin_strut_ = MarginStrut();
 
         if (lines_until_clamp_) {
-          if (constraint_space.GetLineClampData().state ==
-              LineClampData::kClampByLines) {
+          if (constraint_space.GetLineClampData().IsClampByLines()) {
             *lines_until_clamp_ = *lines_until_clamp_ - 1;
           } else {
-            DCHECK_EQ(constraint_space.GetLineClampData().state,
-                      LineClampData::kMeasureLinesUntilBfcOffset);
+            DCHECK(
+                constraint_space.GetLineClampData().IsMeasureUntilBfcOffset());
             *lines_until_clamp_ = *lines_until_clamp_ + 1;
           }
         }
@@ -1528,11 +1573,10 @@ InlineLayoutAlgorithm::DoesRemainderFitInLineWithoutEllipsis(
     if (item.IsForcedLineBreak() || item.Type() == InlineItem::kBlockInInline) {
       return false;
     } else if (item.Type() == InlineItem::kText ||
-               item.Type() == InlineItem::kControl ||
-               item.Type() == InlineItem::kBidiControl) {
+               item.Type() == InlineItem::kControl) {
       if (breakpoint_status != kHasBreakpoints &&
           item.Type() == InlineItem::kControl &&
-          text[item.StartOffset()] == kZeroWidthSpaceCharacter) {
+          text[item.StartOffset()] == uchar::kZeroWidthSpace) {
         breakpoint_status = kHasBreakpoints;
       }
       if (current.text_offset == item.EndOffset()) {
@@ -1542,9 +1586,18 @@ InlineLayoutAlgorithm::DoesRemainderFitInLineWithoutEllipsis(
 
       const ShapeResult* shape_result = item.TextShapeResult();
       DCHECK(shape_result);
-      const ShapeResultView& shape_result_view = *ShapeResultView::Create(
-          shape_result, current.text_offset, item.EndOffset());
-      LayoutUnit width = shape_result_view.SnappedWidth().ClampNegativeToZero();
+      LayoutUnit width = shape_result->SnappedWidth().ClampNegativeToZero();
+      if (current.text_offset != item.StartOffset()) {
+        // When subpixel positioning is enabled, a ShapeResultView from the
+        // start to an offset, plus another from the offset to the end, don't
+        // necessarily add up to the same width as the original ShapeResult.
+        // In this case, the view that was added into the line was up to
+        // `current.text_offset`, so we subtract that width.
+        const ShapeResultView& shape_result_view = *ShapeResultView::Create(
+            shape_result, item.StartOffset(), current.text_offset);
+        width =
+            (width - shape_result_view.SnappedWidth()).ClampNegativeToZero();
+      }
       remaining_width -= width;
       switch (item.EndCollapseType()) {
         case InlineItem::kNotCollapsible:
@@ -1586,8 +1639,10 @@ InlineLayoutAlgorithm::DoesRemainderFitInLineWithoutEllipsis(
       if (bmp_width) {
         can_hang_or_collapse = LayoutUnit();
       }
-    } else if (item.Type() == InlineItem::kOutOfFlowPositioned) {
-      // Doesn't affect the line layout.
+    } else if (item.Type() == InlineItem::kBidiControl ||
+               item.Type() == InlineItem::kOutOfFlowPositioned) {
+      // These items don't add line width or affect whitespace
+      // hanging/collapsing.
     } else {
       DCHECK(item.Type() == InlineItem::kAtomicInline ||
              item.Type() == InlineItem::kFloating ||

@@ -13,6 +13,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
 #include "base/scoped_observation.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_action_dispatcher.h"
 #include "chrome/browser/extensions/extension_management.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -24,10 +25,13 @@
 #include "extensions/browser/permissions_manager.h"
 #include "extensions/common/extension.h"
 
-class Browser;
 class PrefService;
 class Profile;
 class ExtensionsContainer;
+
+#if !BUILDFLAG(IS_ANDROID)
+class BrowserWindowInterface;
+#endif
 
 namespace extensions {
 class ExtensionActionManager;
@@ -92,8 +96,10 @@ class ToolbarActionsModel
   // Convenience function to get the ToolbarActionsModel for a Profile.
   static ToolbarActionsModel* Get(Profile* profile);
 
+#if !BUILDFLAG(IS_ANDROID)
   // Returns whether actions can be shown in the toolbar for `browser`.
-  static bool CanShowActionsInToolbar(const Browser& browser);
+  static bool CanShowActionsInToolbar(const BrowserWindowInterface& browser);
+#endif
 
   // Adds or removes an observer.
   void AddObserver(Observer* observer);
@@ -138,6 +144,9 @@ class ToolbarActionsModel
   void OnReady();
 
   // ExtensionRegistryObserver:
+  void OnExtensionInstalled(content::BrowserContext* browser_context,
+                            const extensions::Extension* extension,
+                            bool is_update) override;
   void OnExtensionLoaded(content::BrowserContext* browser_context,
                          const extensions::Extension* extension) override;
   void OnExtensionUnloaded(content::BrowserContext* browser_context,

@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
 
 #include "chrome/browser/ash/printing/zeroconf_printer_detector.h"
 
@@ -406,14 +402,14 @@ class ZeroconfPrinterDetectorImpl : public ZeroconfPrinterDetector {
   // Requires that printers_lock_ be held.
   std::vector<DetectedPrinter> GetPrintersLocked() {
     printers_lock_.AssertAcquired();
-    std::map<std::string, DetectedPrinter> unified;
+    std::map<std::string_view, DetectedPrinter> unified;
     // The order in which we look through these maps defines priority -- earlier
     // service types in this list will be used preferentially over later ones.
     // This depends on the fact that map::insert will fail if the entry already
     // exists.
     for (const char* service_type : kServiceNames) {
       for (const auto& entry : printers_[service_type]) {
-        unified.insert({entry.first, entry.second});
+        unified.emplace(entry.first, entry.second);
       }
     }
     std::vector<DetectedPrinter> ret;

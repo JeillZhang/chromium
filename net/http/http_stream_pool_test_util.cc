@@ -4,14 +4,19 @@
 
 #include "net/http/http_stream_pool_test_util.h"
 
+#include "base/location.h"
+#include "base/task/sequenced_task_runner.h"
+#include "base/test/bind.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/connection_endpoint_metadata.h"
 #include "net/base/features.h"
+#include "net/base/load_timing_internal_info.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_stream_pool.h"
 #include "net/http/http_stream_pool_attempt_manager.h"
 #include "net/http/http_stream_pool_group.h"
 #include "net/http/http_stream_pool_job.h"
+#include "net/log/net_log_util.h"
 #include "net/log/net_log_with_source.h"
 #include "net/socket/socket_test_util.h"
 #include "net/socket/stream_socket.h"
@@ -24,7 +29,7 @@ namespace net {
 
 namespace {
 
-IPEndPoint MakeIPEndPoint(std::string_view addr, uint16_t port = 80) {
+IPEndPoint MakeIPEndPoint(std::string_view addr, uint16_t port) {
   return IPEndPoint(*IPAddress::FromIPLiteral(addr), port);
 }
 
@@ -158,7 +163,7 @@ int FakeServiceEndpointRequest::Start(Delegate* delegate) {
   return resolution_.start_result();
 }
 
-const std::vector<ServiceEndpoint>&
+base::span<const ServiceEndpoint>
 FakeServiceEndpointRequest::GetEndpointResults() {
   return resolution_.endpoints();
 }
@@ -261,13 +266,13 @@ ServiceEndpointBuilder::~ServiceEndpointBuilder() = default;
 
 ServiceEndpointBuilder& ServiceEndpointBuilder::add_v4(std::string_view addr,
                                                        uint16_t port) {
-  endpoint_.ipv4_endpoints.emplace_back(MakeIPEndPoint(addr));
+  endpoint_.ipv4_endpoints.emplace_back(MakeIPEndPoint(addr, port));
   return *this;
 }
 
 ServiceEndpointBuilder& ServiceEndpointBuilder::add_v6(std::string_view addr,
                                                        uint16_t port) {
-  endpoint_.ipv6_endpoints.emplace_back(MakeIPEndPoint(addr));
+  endpoint_.ipv6_endpoints.emplace_back(MakeIPEndPoint(addr, port));
   return *this;
 }
 
@@ -291,6 +296,12 @@ ServiceEndpointBuilder& ServiceEndpointBuilder::set_alpns(
 ServiceEndpointBuilder& ServiceEndpointBuilder::set_ech_config_list(
     std::vector<uint8_t> ech_config_list) {
   endpoint_.metadata.ech_config_list = std::move(ech_config_list);
+  return *this;
+}
+
+ServiceEndpointBuilder& ServiceEndpointBuilder::set_trust_anchor_ids(
+    std::vector<std::vector<uint8_t>> trust_anchor_ids) {
+  endpoint_.metadata.trust_anchor_ids = std::move(trust_anchor_ids);
   return *this;
 }
 
@@ -393,11 +404,17 @@ HttpStreamKey GroupIdToHttpStreamKey(
 void WaitForAttemptManagerComplete(
     HttpStreamPool::AttemptManager* attempt_manager) {
   base::RunLoop run_loop;
-  attempt_manager->SetOnCompleteCallbackForTesting(run_loop.QuitClosure());
+  attempt_manager->SetOnCompleteCallbackForTesting(
+      base::BindLambdaForTesting([&]() {
+        // Add an extra PostTask to let any already posted tasks complete.
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, run_loop.QuitClosure());
+      }));
   run_loop.Run();
 }
 
-TestJobDelegate::TestJobDelegate(std::optional<HttpStreamKey> stream_key) {
+TestJobDelegate::TestJobDelegate(std::optional<HttpStreamKey> stream_key)
+    : flow_(NetLogWithSourceToFlow(net_log_)) {
   if (stream_key.has_value()) {
     key_builder_.from_key(*stream_key);
   } else {
@@ -415,9 +432,11 @@ void TestJobDelegate::CreateAndStartJob(HttpStreamPool& pool) {
   job_->Start();
 }
 
-void TestJobDelegate::OnStreamReady(HttpStreamPool::Job* job,
-                                    std::unique_ptr<HttpStream> stream,
-                                    NextProto negotiated_protocol) {
+void TestJobDelegate::OnStreamReady(
+    HttpStreamPool::Job* job,
+    std::unique_ptr<HttpStream> stream,
+    NextProto negotiated_protocol,
+    std::optional<SessionSource> session_source) {
   negotiated_protocol_ = negotiated_protocol;
   SetResult(OK);
 }
@@ -435,7 +454,7 @@ TestJobDelegate::allowed_bad_certs() const {
   return allowed_bad_certs_;
 }
 
-bool TestJobDelegate::enable_ip_based_pooling() const {
+bool TestJobDelegate::enable_ip_based_pooling_for_h2() const {
   return true;
 }
 
@@ -443,8 +462,8 @@ bool TestJobDelegate::enable_alternative_services() const {
   return true;
 }
 
-bool TestJobDelegate::is_http1_allowed() const {
-  return true;
+NextProtoSet TestJobDelegate::allowed_alpns() const {
+  return NextProtoSet::All();
 }
 
 const ProxyInfo& TestJobDelegate::proxy_info() const {
@@ -453,6 +472,10 @@ const ProxyInfo& TestJobDelegate::proxy_info() const {
 
 const NetLogWithSource& TestJobDelegate::net_log() const {
   return net_log_;
+}
+
+const perfetto::Flow& TestJobDelegate::flow() const {
+  return flow_;
 }
 
 void TestJobDelegate::OnStreamFailed(HttpStreamPool::Job* job,

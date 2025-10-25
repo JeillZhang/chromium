@@ -1,5 +1,6 @@
 use crate::syntax::instantiate::NamedImplKey;
 use crate::syntax::resolve::Resolution;
+use crate::syntax::types::ConditionalImpl;
 use crate::syntax::{Impl, Lifetimes};
 use proc_macro2::TokenStream;
 use quote::ToTokens;
@@ -11,23 +12,23 @@ pub(crate) struct ImplGenerics<'a> {
 }
 
 pub(crate) struct TyGenerics<'a> {
-    key: NamedImplKey<'a>,
+    key: &'a NamedImplKey<'a>,
     explicit_impl: Option<&'a Impl>,
     resolve: Resolution<'a>,
 }
 
 pub(crate) fn split_for_impl<'a>(
-    key: NamedImplKey<'a>,
-    explicit_impl: Option<&'a Impl>,
+    key: &'a NamedImplKey<'a>,
+    conditional_impl: &ConditionalImpl<'a>,
     resolve: Resolution<'a>,
 ) -> (ImplGenerics<'a>, TyGenerics<'a>) {
     let impl_generics = ImplGenerics {
-        explicit_impl,
+        explicit_impl: conditional_impl.explicit_impl,
         resolve,
     };
     let ty_generics = TyGenerics {
         key,
-        explicit_impl,
+        explicit_impl: conditional_impl.explicit_impl,
         resolve,
     };
     (impl_generics, ty_generics)

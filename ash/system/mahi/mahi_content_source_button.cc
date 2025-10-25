@@ -29,7 +29,6 @@
 #include "ui/views/border.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/button/label_button.h"
-#include "ui/views/metadata/view_factory_internal.h"
 
 namespace ash {
 
@@ -96,7 +95,7 @@ void MahiContentSourceButton::OpenContentSourcePage() {
   }
 
   // Opens or switches to the URL.
-  NewWindowDelegate::GetPrimary()->OpenUrl(
+  NewWindowDelegate::GetInstance()->OpenUrl(
       content_source_url_, NewWindowDelegate::OpenUrlFrom::kUserInteraction,
       NewWindowDelegate::Disposition::kSwitchToTab);
 }

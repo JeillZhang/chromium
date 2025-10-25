@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
+#include <utility>
 
 #include "ash/constants/ash_constants.h"
 #include "ash/constants/ash_features.h"
@@ -27,18 +29,24 @@
 #include "chromeos/ash/components/boca/proto/bundle.pb.h"
 #include "chromeos/ash/components/boca/proto/roster.pb.h"
 #include "chromeos/ash/components/boca/proto/session.pb.h"
+#include "chromeos/ash/components/boca/screen_presenter_factory.h"
 #include "chromeos/ash/components/boca/session_api/constants.h"
 #include "chromeos/ash/components/boca/session_api/get_session_request.h"
 #include "chromeos/ash/components/boca/session_api/session_client_impl.h"
 #include "chromeos/ash/components/boca/session_api/student_heartbeat_request.h"
 #include "chromeos/ash/components/boca/session_api/update_student_activities_request.h"
+#include "chromeos/ash/components/boca/session_api/upload_token_request.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_constants.h"
 #include "chromeos/ash/components/boca/spotlight/spotlight_frame_consumer.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_remoting_client_manager.h"
+#include "chromeos/ash/components/boca/student_screen_presenter.h"
+#include "chromeos/ash/components/boca/teacher_screen_presenter.h"
 #include "chromeos/services/network_config/public/cpp/cros_network_config_util.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/user_manager/user_manager.h"
 #include "google_apis/common/api_error_codes.h"
-#include "remoting/client/common/remoting_client.h"
+#include "remoting/proto/audio.pb.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/message_center/message_center.h"
@@ -54,14 +62,22 @@ const net::BackoffEntry::Policy kStudentHeartbeatBackoffPolicy = {
     .maximum_backoff_ms = base::Seconds(90).InMilliseconds(),
     .entry_lifetime_ms = -1,
     .always_use_initial_delay = false};
+
+bool IsScreenSharingEnabled() {
+  return features::IsBocaScreenSharingStudentEnabled() ||
+         features::IsBocaScreenSharingTeacherEnabled();
+}
 }  // namespace
 
-BocaSessionManager::BocaSessionManager(SessionClientImpl* session_client_impl,
-                                       const PrefService* pref_service,
-                                       AccountId account_id,
-                                       bool is_producer)
+BocaSessionManager::BocaSessionManager(
+    SessionClientImpl* session_client_impl,
+    const PrefService* pref_service,
+    AccountId account_id,
+    bool is_producer,
+    std::unique_ptr<SpotlightRemotingClientManager> remoting_client_manager)
     : is_producer_(is_producer),
       account_id_(std::move(account_id)),
+      remoting_client_manager_(std::move(remoting_client_manager)),
       pref_service_(pref_service),
       session_client_impl_(std::move(session_client_impl)),
       student_heartbeat_retry_backoff_{&kStudentHeartbeatBackoffPolicy} {
@@ -114,10 +130,6 @@ BocaSessionManager::~BocaSessionManager() {
   }
 }
 
-void BocaSessionManager::Reset() {
-  spotlight_token_fetcher_ = nullptr;
-}
-
 void BocaSessionManager::Observer::OnSessionMetadataUpdated(
     const std::string& session_id) {}
 
@@ -146,6 +158,8 @@ void BocaSessionManager::Observer::OnAppReloaded() {}
 void BocaSessionManager::Observer::OnConsumerActivityUpdated(
     const std::map<std::string, ::boca::StudentStatus>& activities) {}
 
+void BocaSessionManager::Observer::OnReceiverInvalidation() {}
+
 void BocaSessionManager::OnNetworkStateChanged(
     chromeos::network_config::mojom::NetworkStatePropertiesPtr network_state) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -162,6 +176,11 @@ void BocaSessionManager::OnNetworkStateChanged(
       // flipped from offline to online.
       is_network_connected_ = true;
       LoadCurrentSession(/*from_polling=*/false);
+      if (IsScreenSharingEnabled()) {
+        for (auto& observer : observers_) {
+          observer.OnReceiverInvalidation();
+        }
+      }
     }
   } else {
     is_network_connected_ = false;
@@ -395,38 +414,104 @@ BocaSessionManager::SodaStatus BocaSessionManager::GetSodaStatus() {
   return SodaStatus::kUninstalled;
 }
 
-void BocaSessionManager::StartCrdClientForTeacher(
+void BocaSessionManager::StartCrdClient(
+    std::string crd_connection_code,
     base::OnceClosure done_callback,
     SpotlightFrameConsumer::FrameReceivedCallback frame_received_callback,
-    std::string connection_code) {
+    SpotlightCrdStateUpdatedCallback crd_state_callback) {
   CHECK(ash::features::IsBocaSpotlightRobotRequesterEnabled());
-  CHECK_EQ(connection_code.length(), 12u);
 
-  if (remoting_client_) {
-    LOG(WARNING) << "[Boca] Tried to initiate a Spotight session while another "
-                    "was in progress";
-    return;
-  }
-  frame_consumer_ = std::make_unique<SpotlightFrameConsumer>(
-      std::move(frame_received_callback));
-  remoting_client_ = std::make_unique<remoting::RemotingClient>(
-      std::move(done_callback), frame_consumer_.get(),
-      BocaAppClient::Get()->GetURLLoaderFactory());
-  FetchSpotlightOAuthToken(
-      base::BindOnce(&BocaSessionManager::StartCrdSessionForTeacherInternal,
-                     weak_factory_.GetWeakPtr(), std::move(connection_code)));
+  remoting_client_manager_->StartCrdClient(
+      crd_connection_code, std::move(done_callback),
+      std::move(frame_received_callback),
+      /* audio_packet_received_callback= */ base::DoNothing(),
+      std::move(crd_state_callback));
 }
 
-void BocaSessionManager::EndSpotlightSession() {
-  if (remoting_client_) {
-    remoting_client_->StopSession();
-    remoting_client_.reset();
-    frame_consumer_.reset();
-  }
+void BocaSessionManager::EndSpotlightSession(
+    base::OnceClosure on_stopped_callback) {
+  CHECK(ash::features::IsBocaSpotlightRobotRequesterEnabled());
+  remoting_client_manager_->StopCrdClient(std::move(on_stopped_callback));
 }
 
 std::string BocaSessionManager::GetDeviceRobotEmail() {
-  return spotlight_token_fetcher_->GetDeviceRobotEmail();
+  CHECK(ash::features::IsBocaSpotlightRobotRequesterEnabled());
+  return remoting_client_manager_->GetDeviceRobotEmail();
+}
+
+void BocaSessionManager::UploadToken(
+    const std::string& fcm_token,
+    base::OnceCallback<void(bool)> on_token_uploaded_cb) {
+  auto request = std::make_unique<UploadTokenRequest>(
+      session_client_impl_->sender(),
+      BocaAppClient::Get()->GetSchoolToolsServerBaseUrl(),
+      account_id_.GetGaiaId(), fcm_token,
+      base::BindOnce(&BocaSessionManager::OnTokenUploadResult,
+                     weak_factory_.GetWeakPtr(),
+                     std::move(on_token_uploaded_cb)));
+  session_client_impl_->UploadToken(std::move(request));
+}
+
+void BocaSessionManager::OnInvalidationReceived(const std::string& payload) {
+  constexpr std::string_view kReceiverInvalidation = "GetKioskReceiver";
+  if (IsScreenSharingEnabled() && payload == kReceiverInvalidation) {
+    for (auto& observer : observers_) {
+      observer.OnReceiverInvalidation();
+    }
+    return;
+  }
+  // TODO(crbug.com/354769102): Potentially validate FCM payload before
+  // dispatching. And implement a thread-safe approach to skip loading when
+  // there is already active loading in progress.
+
+  // FCM message will be delivered even user not logged in. But
+  // LoadCurrentSession has a validation to skip load if the current active user
+  // doesn't match the profile user.
+  LoadCurrentSession(/*from_polling=*/false);
+}
+
+void BocaSessionManager::SetScreenPresenterFactory(
+    std::unique_ptr<ScreenPresenterFactory> screen_presenter_factory) {
+  screen_presenter_factory_ = std::move(screen_presenter_factory);
+}
+
+StudentScreenPresenter* BocaSessionManager::GetStudentScreenPresenter() {
+  return student_screen_presenter_.get();
+}
+
+TeacherScreenPresenter* BocaSessionManager::GetTeacherScreenPresenter() {
+  if (!screen_presenter_factory_ ||
+      !ash::features::IsBocaScreenSharingTeacherEnabled()) {
+    return nullptr;
+  }
+  if (!teacher_screen_presenter_) {
+    teacher_screen_presenter_ =
+        screen_presenter_factory_->CreateTeacherScreenPresenter(
+            BocaAppClient::Get()->GetDeviceId());
+  }
+  return teacher_screen_presenter_.get();
+}
+
+std::optional<std::string> BocaSessionManager::GetStudentActiveDeviceId(
+    std::string_view student_id) {
+  if (!current_session_) {
+    return std::nullopt;
+  }
+  auto it = current_session_->student_statuses().find(student_id);
+  if (it == current_session_->student_statuses().end()) {
+    return std::nullopt;
+  }
+  for (const auto& [device_id, device] : it->second.devices()) {
+    if (device.state() == ::boca::StudentDevice::ACTIVE) {
+      return device_id;
+    }
+  }
+  return std::nullopt;
+}
+
+void BocaSessionManager::CleanupPresenters() {
+  student_screen_presenter_.reset();
+  teacher_screen_presenter_.reset();
 }
 
 void BocaSessionManager::LoadInitialNetworkState() {
@@ -529,6 +614,13 @@ void BocaSessionManager::NotifySessionUpdate() {
 
   if (!IsSessionActive(previous_session_.get()) &&
       IsSessionActive(current_session_.get())) {
+    if (ash::features::IsBocaScreenSharingStudentEnabled() &&
+        screen_presenter_factory_) {
+      student_screen_presenter_ =
+          screen_presenter_factory_->CreateStudentScreenPresenter(
+              current_session_->session_id(), current_session_->teacher(),
+              BocaAppClient::Get()->GetDeviceId());
+    }
     for (auto& observer : observers_) {
       VLOG(1) << "[Boca] notifying session started";
       StartSessionPolling(/*in_session=*/true);
@@ -638,7 +730,7 @@ void BocaSessionManager::NotifyConsumerActivityUpdate() {
     return;
   }
 
-  auto current_activity = current_session_->student_statuses();
+  auto& current_activity = current_session_->student_statuses();
 
   if (!previous_session_ && current_activity.empty()) {
     return;
@@ -653,12 +745,11 @@ void BocaSessionManager::NotifyConsumerActivityUpdate() {
     return;
   }
 
-  auto previous_activity = previous_session_->student_statuses();
-  for (auto status : current_activity) {
-    auto key = status.first;
-    if (!previous_activity.contains(key) ||
-        (previous_activity.at(key).SerializeAsString() !=
-         status.second.SerializeAsString())) {
+  auto& previous_activity = previous_session_->student_statuses();
+  for (auto& [key, value] : current_activity) {
+    if (auto it = previous_activity.find(key);
+        it == previous_activity.end() ||
+        it->second.SerializeAsString() != value.SerializeAsString()) {
       for (auto& observer : observers_) {
         observer.OnConsumerActivityUpdated(
             std::map<std::string, ::boca::StudentStatus>(
@@ -819,24 +910,13 @@ void BocaSessionManager::CloseAllCaptions() {
   }
 }
 
-void BocaSessionManager::StartCrdSessionForTeacherInternal(
-    std::string connection_code,
-    std::optional<std::string> oauth_token) {
-  if (!oauth_token.has_value() || oauth_token->empty()) {
-    LOG(ERROR) << "[Boca] Failed to retrieve OAuth token for Spotlight";
-    return;
+void BocaSessionManager::OnTokenUploadResult(
+    base::OnceCallback<void(bool)> on_token_uploaded_cb,
+    base::expected<bool, google_apis::ApiErrorCode> result) {
+  if (!result.has_value()) {
+    boca::RecordUploadTokenErrorCode(result.error());
   }
-  VLOG(1) << "[Boca] Starting CRD client for teacher";
-  remoting_client_->StartSession(
-      connection_code,
-      {oauth_token.value(), spotlight_token_fetcher_->GetDeviceRobotEmail()});
-}
-
-void BocaSessionManager::FetchSpotlightOAuthToken(
-    SpotlightOAuthTokenFetcher::OAuthTokenCallback callback) {
-  CHECK(spotlight_token_fetcher_);
-
-  spotlight_token_fetcher_->Start(std::move(callback));
+  std::move(on_token_uploaded_cb).Run(result.has_value());
 }
 
 }  // namespace ash::boca

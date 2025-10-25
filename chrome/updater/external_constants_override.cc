@@ -4,12 +4,14 @@
 
 #include "chrome/updater/external_constants_override.h"
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "base/base64.h"
 #include "base/check.h"
 #include "base/containers/flat_map.h"
 #include "base/files/file_path.h"
@@ -57,8 +59,8 @@ std::vector<GURL> GURLVectorFromStringList(
 // tests. To reduce the program's utility as a mule, crash if there is a
 // non-localhost override.
 GURL CheckURL(const GURL& url) {
-  CHECK(url.is_empty() || url.host() == "localhost" ||
-        url.host() == "127.0.0.1" || url.host() == "not_exist")
+  CHECK(url.is_empty() || url.GetHost() == "localhost" ||
+        url.GetHost() == "127.0.0.1" || url.GetHost() == "not_exist")
       << "Illegal URL override: " << url;
   return url;
 }
@@ -197,6 +199,21 @@ crx_file::VerifierFormat ExternalConstantsOverrider::CrxVerifierFormat() const {
       crx_format_verifier_value->GetInt());
 }
 
+std::optional<std::vector<uint8_t>>
+ExternalConstantsOverrider::CrxPublicKeyHash() const {
+  if (!override_values_.contains(kDevOverrideKeyCrxPublicKeyHash)) {
+    return next_provider_->CrxPublicKeyHash();
+  }
+
+  const base::Value* value =
+      override_values_.Find(kDevOverrideKeyCrxPublicKeyHash);
+  CHECK(value->is_string())
+      << "Unexpected type of override[" << kDevOverrideKeyCrxPublicKeyHash
+      << "]: " << base::Value::GetTypeName(value->type());
+  return value->GetString().empty() ? std::nullopt
+                                    : base::Base64Decode(value->GetString());
+}
+
 base::TimeDelta ExternalConstantsOverrider::MinimumEventLoggingCooldown()
     const {
   if (!override_values_.contains(
@@ -214,20 +231,34 @@ base::TimeDelta ExternalConstantsOverrider::MinimumEventLoggingCooldown()
   return base::Seconds(minimum_event_logging_cooldown_seconds->GetInt());
 }
 
-std::optional<std::string>
+std::optional<EventLoggingPermissionProvider>
 ExternalConstantsOverrider::GetEventLoggingPermissionProvider() const {
   if (!override_values_.contains(
-          kDevOverrideKeyEventLoggingPermissionProvider)) {
+          kDevOverrideKeyEventLoggingPermissionProviderAppId)) {
     return next_provider_->GetEventLoggingPermissionProvider();
   }
 
-  const base::Value* event_logging_permission_provider =
-      override_values_.Find(kDevOverrideKeyEventLoggingPermissionProvider);
-  CHECK(event_logging_permission_provider->is_string())
+  EventLoggingPermissionProvider provider;
+
+  const base::Value* app_id =
+      override_values_.Find(kDevOverrideKeyEventLoggingPermissionProviderAppId);
+  CHECK(app_id->is_string())
       << "Unexpected type of override["
-      << kDevOverrideKeyEventLoggingPermissionProvider << "]: "
-      << base::Value::GetTypeName(event_logging_permission_provider->type());
-  return event_logging_permission_provider->GetString();
+      << kDevOverrideKeyEventLoggingPermissionProviderAppId
+      << "]: " << base::Value::GetTypeName(app_id->type());
+  provider.app_id = app_id->GetString();
+
+#if BUILDFLAG(IS_MAC)
+  const base::Value* directory_name = override_values_.Find(
+      kDevOverrideKeyEventLoggingPermissionProviderDirectoryName);
+  CHECK(directory_name->is_string())
+      << "Unexpected type of override["
+      << kDevOverrideKeyEventLoggingPermissionProviderDirectoryName
+      << "]: " << base::Value::GetTypeName(directory_name->type());
+  provider.directory_name = directory_name->GetString();
+#endif
+
+  return provider;
 }
 
 base::Value::Dict ExternalConstantsOverrider::DictPolicies() const {

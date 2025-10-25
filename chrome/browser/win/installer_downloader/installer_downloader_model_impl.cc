@@ -30,12 +30,41 @@
 
 namespace installer_downloader {
 
+namespace {
+
+// Indicates that the download reason why a download failed.
+//
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused. If entries are added, kMaxValue
+// should be updated. Keep in sync with the
+// InstallerDownloaderFailureReason UMA enum defined in
+// //tools/metrics/histograms/metadata/windows/enums.xml.
+//
+// LINT.IfChange(InstallerDownloaderFailureReason)
+enum class InstallerDownloaderFailureReason {
+  kInterrupted = 0,
+  kCancelled = 1,
+  kDestroyed = 2,
+
+  kMaxValue = kDestroyed,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/windows/enums.xml:InstallerDownloaderFailureReason)
+
+void RecordDownloadFailureReason(InstallerDownloaderFailureReason reason) {
+  base::UmaHistogramEnumeration("Windows.InstallerDownloader.FailureReason",
+                                reason);
+}
+
+}  // namespace
+
 class InstallerDownloaderObserver final
     : public download::DownloadItem::Observer {
  public:
   InstallerDownloaderObserver(download::DownloadItem* item,
+                              base::FilePath expected_path,
                               CompletionCallback completion_callback)
-      : completion_callback_(std::move(completion_callback)) {
+      : completion_callback_(std::move(completion_callback)),
+        expected_path_(expected_path) {
     observation_.Observe(item);
   }
 
@@ -47,8 +76,14 @@ class InstallerDownloaderObserver final
   void OnDownloadUpdated(download::DownloadItem* item) override {
     CHECK_EQ(observation_.GetSource(), item);
 
-    switch (item->GetState()) {
+    const auto state = item->GetState();
+    switch (state) {
       case download::DownloadItem::COMPLETE:
+        // Did DownloadManager keep exactly the path we requested?
+        base::UmaHistogramBoolean(
+            "Windows.InstallerDownloader.DestinationMatches",
+            item->GetTargetFilePath() == expected_path_);
+
         // `this` is deleted by `completion_callback_`, so nothing below this
         // point may access it.
         std::move(completion_callback_).Run(/*succeeded=*/true);
@@ -57,6 +92,10 @@ class InstallerDownloaderObserver final
         break;
       case download::DownloadItem::INTERRUPTED:
       case download::DownloadItem::CANCELLED:
+        RecordDownloadFailureReason(
+            state == download::DownloadItem::INTERRUPTED
+                ? InstallerDownloaderFailureReason::kInterrupted
+                : InstallerDownloaderFailureReason::kCancelled);
         // `this` is deleted by `completion_callback_`, so nothing below this
         // point may access it.
         std::move(completion_callback_).Run(/*succeeded=*/false);
@@ -68,6 +107,7 @@ class InstallerDownloaderObserver final
 
   void OnDownloadDestroyed(download::DownloadItem* item) override {
     CHECK_EQ(observation_.GetSource(), item);
+    RecordDownloadFailureReason(InstallerDownloaderFailureReason::kDestroyed);
     std::move(completion_callback_).Run(/*succeeded=*/false);
   }
 
@@ -75,6 +115,9 @@ class InstallerDownloaderObserver final
                           download::DownloadItem::Observer>
       observation_{this};
   CompletionCallback completion_callback_;
+
+  // Stores the expected destination path of the downloaded file.
+  const base::FilePath expected_path_;
 };
 
 InstallerDownloaderModelImpl::InstallerDownloaderModelImpl(
@@ -163,6 +206,8 @@ void InstallerDownloaderModelImpl::IncrementShowCount() {
   local_state->SetInteger(
       prefs::kInstallerDownloaderInfobarShowCount,
       local_state->GetInteger(prefs::kInstallerDownloaderInfobarShowCount) + 1);
+  local_state->SetTime(prefs::kInstallerDownloaderInfobarLastShowTime,
+                       base::Time::Now());
 }
 
 void InstallerDownloaderModelImpl::PreventFutureDisplay() {
@@ -185,21 +230,22 @@ void InstallerDownloaderModelImpl::OnInstallerDownloadCreated(
   // If `reason` is anything other than NONE (or we never got a DownloadItem)
   // will be treated as a failure.
   if (reason != download::DOWNLOAD_INTERRUPT_REASON_NONE || !item) {
+    // Records the interrupt reason to a sparse histogram. This is preferred for
+    // enums with many possible values, where not all may be emitted.
+    base::UmaHistogramSparse("Windows.InstallerDownloader.InterruptReason",
+                             static_cast<int>(reason));
     std::move(completion_callback).Run(/*succeeded=*/false);
     return;
   }
-
-  // Did DownloadManager keep exactly the path we requested?
-  base::UmaHistogramBoolean("Windows.InstallerDownloader.DestinationMatches",
-                            item->GetFullPath() == expected_path);
 
   // The InstallerDownloaderController that hold this model is a browser global
   // feature. Therefore, it is safe to use base::Unretained here.
   installer_downloader_observer_ =
       std::make_unique<InstallerDownloaderObserver>(
-          item, base::BindOnce(
-                    &InstallerDownloaderModelImpl::OnInstallerDownloadFinished,
-                    base::Unretained(this), std::move(completion_callback)));
+          item, expected_path,
+          base::BindOnce(
+              &InstallerDownloaderModelImpl::OnInstallerDownloadFinished,
+              base::Unretained(this), std::move(completion_callback)));
 }
 
 void InstallerDownloaderModelImpl::OnInstallerDownloadFinished(

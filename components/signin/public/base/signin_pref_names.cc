@@ -7,11 +7,6 @@
 namespace prefs {
 
 #if BUILDFLAG(IS_CHROMEOS)
-// A boolean pref - should unauthenticated user should be logged out
-// automatically. Default value is false.
-const char kForceLogoutUnauthenticatedUserEnabled[] =
-    "profile.force_logout_unauthenticated_user_enabled";
-
 // An integer property indicating the state of account id migration from
 // email to gaia id for the the profile.  See account_tracker_service.h
 // for possible values.
@@ -44,9 +39,9 @@ const char kGaiaCookieHash[] = "gaia_cookie.hash";
 const char kGaiaCookieChangedTime[] = "gaia_cookie.changed_time";
 
 // The last time that periodic reporting occured, to allow us to report as close
-// to once per intended interval as possible, through restarts. Stored as a
-// double that should be converted into base::Time.
-const char kGaiaCookiePeriodicReportTime[] = "gaia_cookie.periodic_report_time";
+// to once per intended interval as possible, through restarts.
+const char kGaiaCookiePeriodicReportTime[] =
+    "gaia_cookie.periodic_report_time_2";
 
 // Typically contains an obfuscated gaiaid. Some platforms may have
 // an email stored in this preference instead. This is transitional and will
@@ -74,12 +69,6 @@ const char kGoogleServicesLastSyncingUsername[] =
 // signed-in users, no matter whether they were syncing or not.
 const char kGoogleServicesLastSignedInUsername[] =
     "google.services.last_signed_in_username";
-
-// Holds a copy of what `kGoogleServicesLastSyncingGaiaId` contained before it
-// was updated to contain the latest value, which happens when the Sync consent
-// is granted.
-const char kGoogleServicesSecondLastSyncingGaiaId[] =
-    "google.services.second_last_gaia_id";
 
 // Device id scoped to single signin. This device id will be regenerated if user
 // signs out and signs back in. When refresh token is requested for this user it
@@ -112,11 +101,6 @@ const char kSignedInWithCredentialProvider[] =
 
 // Boolean which stores if the user is allowed to signin to chrome.
 const char kSigninAllowed[] = "signin.allowed";
-
-// Contains last |ListAccounts| data which corresponds to Gaia cookies encoded
-// in jspb.
-const char kGaiaCookieLastListAccountsData[] =
-    "gaia_cookie.last_list_accounts_data";
 
 // Contains last |ListAccounts| data which corresponds to Gaia cookies in
 // base64-encoded protobuf.
@@ -153,6 +137,11 @@ const char kRestrictAccountsToPatterns[] =
 // multi profiles but not exposed to the user, so we should treat this setting
 // as affecting all profiles.
 const char kSigninAllowedOnDevice[] = "signin.allowed_on_device";
+
+// TODO(crbug.com/424385780): Update this comment.
+// Integer that represents the value of BrowserSigninPolicy. Values are defined
+// in ios/chrome/browser/policy/model/policy_util.h.
+const char kBrowserSigninPolicy[] = "signin.browser_signin_policy";
 #endif  // BUILDFLAG(IS_IOS)
 
 // Boolean which indicates if the user is allowed to sign into Chrome on the
@@ -204,5 +193,18 @@ const char kPrefsThemesSearchEnginesAccountStorageEnabled[] =
 // policy. More details can be found at BoundSessionCredentialsEnabled.yaml.
 const char kBoundSessionCredentialsEnabled[] =
     "signin.bound_session_credentials_enabled";
+
+// A boolean that is true if the primary account was set after the
+// sync-to-signin migration, where Sync is deprecated. This value is not cleared
+// on signout.
+//
+// This pref is used to provide a different welcome experience for various
+// groups of users. If false (signed in before the migration) and if the user:
+//   - did not have Sync enabled,
+//   - was not migrated from DICe,
+// they are shown an In-Product Help (IPH) bubble explaining the new benefits.
+// Otherwise, other UIs are used to inform the user of the benefits.
+const char kPrimaryAccountSetAfterSigninMigration[] =
+    "signin.primary_account_set_after_signin_migration";
 
 }  // namespace prefs

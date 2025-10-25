@@ -12,8 +12,7 @@
 namespace features {
 
 BASE_FEATURE(kIdentifiabilityStudyMetaExperiment,
-             "IdentifiabilityStudyMetaExperiment",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 const base::FeatureParam<double>
     kIdentifiabilityStudyMetaExperimentActivationProbability = {
@@ -24,9 +23,7 @@ const base::FeatureParam<double>
         &kIdentifiabilityStudyMetaExperiment, "ActivationProbability",
         kIdentifiabilityStudyMetaExperimentDefaultActivationProbability};
 
-BASE_FEATURE(kIdentifiabilityStudy,
-             "IdentifiabilityStudy",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kIdentifiabilityStudy, base::FEATURE_DISABLED_BY_DEFAULT);
 
 const base::FeatureParam<int> kIdentifiabilityStudyGeneration = {
     &kIdentifiabilityStudy, "Gen", 0};

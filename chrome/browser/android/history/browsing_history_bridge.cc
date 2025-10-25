@@ -44,15 +44,14 @@ BrowsingHistoryBridge::BrowsingHistoryBridge(JNIEnv* env,
 
 BrowsingHistoryBridge::~BrowsingHistoryBridge() = default;
 
-void BrowsingHistoryBridge::Destroy(JNIEnv*, const JavaParamRef<jobject>&) {
+void BrowsingHistoryBridge::Destroy(JNIEnv*) {
   delete this;
 }
 
 void BrowsingHistoryBridge::QueryHistory(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& j_result_obj,
-    jstring j_query,
+    const base::android::JavaRef<jstring>& j_query,
     const JavaParamRef<jstring>& j_app_id,
     jboolean j_host_only) {
   j_query_result_obj_.Reset(env, j_result_obj);
@@ -60,6 +59,7 @@ void BrowsingHistoryBridge::QueryHistory(
 
   history::QueryOptions options;
   options.max_count = kMaxQueryCount;
+  options.policy_for_404_visits = history::VisitQuery404sPolicy::kExclude404s;
   options.duplicate_policy = history::QueryOptions::REMOVE_DUPLICATES_PER_DAY;
   options.host_only = j_host_only;
   if (j_app_id) {
@@ -71,7 +71,6 @@ void BrowsingHistoryBridge::QueryHistory(
 
 void BrowsingHistoryBridge::QueryHistoryContinuation(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& j_result_obj) {
   DCHECK(query_history_continuation_);
   j_query_result_obj_.Reset(env, j_result_obj);
@@ -80,7 +79,6 @@ void BrowsingHistoryBridge::QueryHistoryContinuation(
 
 void BrowsingHistoryBridge::GetAllAppIds(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& j_result_obj) {
   j_app_ids_result_obj_.Reset(env, j_result_obj);
   browsing_history_service_->GetAllAppIds();
@@ -100,8 +98,7 @@ void BrowsingHistoryBridge::OnGetAllAppIds(
 
 void BrowsingHistoryBridge::GetLastVisitToHostBeforeRecentNavigations(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    jstring j_host_name,
+    const base::android::JavaRef<jstring>& j_host_name,
     const JavaParamRef<jobject>& jcallback) {
   browsing_history_service_->GetLastVisitToHostBeforeRecentNavigations(
       base::android::ConvertJavaStringToUTF8(env, j_host_name),
@@ -119,11 +116,11 @@ void BrowsingHistoryBridge::OnQueryComplete(
   for (const BrowsingHistoryService::HistoryEntry& entry : results) {
     // TODO(twellington): Move the domain logic to BrowsingHistoryServce so it
     // can be shared with ContentBrowsingHistoryDriver.
-    std::u16string domain = url_formatter::IDNToUnicode(entry.url.host());
+    std::u16string domain = url_formatter::IDNToUnicode(entry.url.GetHost());
     // When the domain is empty, use the scheme instead. This allows for a
     // sensible treatment of e.g. file: URLs when group by domain is on.
     if (domain.empty())
-      domain = base::UTF8ToUTF16(entry.url.scheme() + ":");
+      domain = base::UTF8ToUTF16(entry.url.GetScheme() + ":");
 
     // This relies on |all_timestamps| being a sorted data structure.
     int64_t most_recent_java_timestamp =
@@ -153,7 +150,6 @@ void BrowsingHistoryBridge::OnQueryComplete(
 
 void BrowsingHistoryBridge::MarkItemForRemoval(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
     const JavaParamRef<jobject>& j_url,
     const JavaParamRef<jstring>& j_app_id,
     const JavaParamRef<jlongArray>& j_native_timestamps) {
@@ -173,8 +169,7 @@ void BrowsingHistoryBridge::MarkItemForRemoval(
   items_to_remove_.push_back(entry);
 }
 
-void BrowsingHistoryBridge::RemoveItems(JNIEnv* env,
-                                        const JavaParamRef<jobject>& obj) {
+void BrowsingHistoryBridge::RemoveItems(JNIEnv* env) {
   browsing_history_service_->RemoveVisits(items_to_remove_);
   items_to_remove_.clear();
 }

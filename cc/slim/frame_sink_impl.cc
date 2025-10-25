@@ -16,6 +16,7 @@
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/typed_macros.h"
 #include "build/build_config.h"
+#include "cc/base/features.h"
 #include "cc/slim/constants.h"
 #include "cc/slim/delayed_scheduler.h"
 #include "cc/slim/frame_sink_impl_client.h"
@@ -28,6 +29,7 @@
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/client/shared_image_interface.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/skia/include/core/SkAlphaType.h"
 #include "third_party/skia/include/gpu/ganesh/GrTypes.h"
 #include "ui/gfx/buffer_types.h"
@@ -56,6 +58,7 @@ FrameSinkImpl::FrameSinkImpl(
       pending_compositor_frame_sink_associated_remote_(
           std::move(compositor_frame_sink_associated_remote)),
       pending_client_receiver_(std::move(client_receiver)),
+      client_receiver_(std::in_place_type<Receiver>, this),
       context_provider_(std::move(context_provider)),
       io_thread_id_(io_thread_id) {
   scheduler_->Initialize(this);
@@ -76,6 +79,9 @@ FrameSinkImpl::~FrameSinkImpl() {
     resource_provider_.RemoveImportedResource(uploaded_resource_id);
   }
   resource_provider_.ShutdownAndReleaseAllResources();
+  if (context_provider_) {
+    context_provider_->RemoveObserver(this);
+  }
 }
 
 void FrameSinkImpl::SetLocalSurfaceId(
@@ -105,7 +111,21 @@ bool FrameSinkImpl::BindToClient(FrameSinkImplClient* client) {
       std::move(pending_compositor_frame_sink_associated_remote_));
   frame_sink_remote_.set_disconnect_handler(
       base::BindOnce(&FrameSinkImpl::OnContextLost, base::Unretained(this)));
-  client_receiver_.Bind(std::move(pending_client_receiver_), task_runner_);
+
+  if (mojo::IsDirectReceiverSupported() &&
+      base::FeatureList::IsEnabled(features::kSlimDirectReceiverIpc)) {
+    client_receiver_.emplace<DirectReceiver>(mojo::DirectReceiverKey{}, this);
+  }
+
+  std::visit(
+      absl::Overload{[&](Receiver& receiver) {
+                       receiver.Bind(std::move(pending_client_receiver_),
+                                     task_runner_);
+                     },
+                     [&](DirectReceiver& receiver) {
+                       receiver.Bind(std::move(pending_client_receiver_));
+                     }},
+      client_receiver_);
 
   frame_sink_ = frame_sink_remote_.get();
 
@@ -318,7 +338,8 @@ bool FrameSinkImpl::DoBeginFrame(const viz::BeginFrameArgs& begin_frame_args) {
 
     resource_provider_.PrepareSendToParent(
         std::move(viz_resource_ids).extract(), &frame.resource_list,
-        context_provider_.get());
+        context_provider_ ? context_provider_->SharedImageInterface()
+                          : nullptr);
 
     bool send_new_hit_test_region_list = false;
     if (!hit_test_region_list_ ||

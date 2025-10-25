@@ -5,6 +5,7 @@
 #include "net/cert/signed_tree_head.h"
 
 #include <algorithm>
+#include <array>
 #include <ostream>
 #include <string>
 #include <tuple>
@@ -19,7 +20,7 @@ SignedTreeHead::SignedTreeHead() = default;
 
 SignedTreeHead::SignedTreeHead(
     Version version,
-    const base::Time& timestamp,
+    base::Time timestamp,
     uint64_t tree_size,
     base::span<const uint8_t, kSthRootHashLength> sha256_root_hash,
     const DigitallySigned& signature,
@@ -42,8 +43,7 @@ void PrintTo(const SignedTreeHead& sth, std::ostream* os) {
         << "\t\"version\": " << sth.version << ",\n"
         << "\t\"timestamp\": " << sth.timestamp << ",\n"
         << "\t\"tree_size\": " << sth.tree_size << ",\n"
-        << "\t\"sha256_root_hash\": \""
-        << base::HexEncode(sth.sha256_root_hash, kSthRootHashLength)
+        << "\t\"sha256_root_hash\": \"" << base::HexEncode(sth.sha256_root_hash)
         << "\",\n\t\"log_id\": \"" << base::HexEncode(sth.log_id) << "\"\n"
         << "}";
 }

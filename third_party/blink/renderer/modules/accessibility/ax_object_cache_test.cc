@@ -374,7 +374,7 @@ class AXViewTransitionTest : public testing::Test {
   }
 
   void SetHtmlInnerHTML(const String& content) {
-    GetDocument().body()->setInnerHTML(content);
+    GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(content);
     UpdateAllLifecyclePhasesForTest();
   }
 
@@ -525,6 +525,16 @@ TEST_F(AccessibilityEnabledLaterTest, CSSAnchorPositioning) {
             positioned_object);
   EXPECT_EQ(GetAXObjectCache().GetAnchorForPositionedObject(positioned_object),
             anchor);
+}
+
+TEST_F(AccessibilityTest, CanvasWithContentVisibilityAutoShouldNotCrash) {
+  // Test that canvas fallback content with content-visibility: auto
+  // doesn't cause display lock crashes when accessibility is enabled.
+  SetBodyInnerHTML(R"HTML(
+    <canvas style="content-visibility: auto;">
+      <div>Canvas fallback content</div>
+    </canvas>
+  )HTML");
 }
 
 }  // namespace blink

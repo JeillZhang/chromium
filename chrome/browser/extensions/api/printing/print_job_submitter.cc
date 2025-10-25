@@ -34,7 +34,7 @@
 #include "printing/print_settings.h"
 #include "printing/printing_utils.h"
 #include "third_party/skia/include/codec/SkCodec.h"
-#include "third_party/skia/include/codec/SkPngDecoder.h"
+#include "third_party/skia/include/codec/SkPngRustDecoder.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
@@ -43,7 +43,7 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/skia_span_util.h"
-#include "ui/views/native_window_tracker.h"
+#include "ui/native_window_tracker/native_window_tracker.h"
 
 namespace extensions {
 
@@ -100,7 +100,7 @@ PrintJobSubmitter::PrintJobSubmitter(
       callback_(std::move(callback)) {
   DCHECK(extension);
   if (native_window)
-    native_window_tracker_ = views::NativeWindowTracker::Create(native_window);
+    native_window_tracker_ = ui::NativeWindowTracker::Create(native_window);
 }
 
 PrintJobSubmitter::~PrintJobSubmitter() = default;
@@ -210,9 +210,10 @@ void PrintJobSubmitter::OnPdfReadAndFlattened(
 void PrintJobSubmitter::OnImageDataRead(std::string data,
                                         int64_t /*blob_total_size*/) {
   // Note: `data` must outlive `image_data` and `codec`.
-  sk_sp<SkData> image_data =
-      gfx::MakeSkDataFromSpanWithoutCopy(base::as_byte_span(data));
-  std::unique_ptr<SkCodec> codec = SkPngDecoder::Decode(image_data, nullptr);
+  std::unique_ptr<SkMemoryStream> image_data = std::make_unique<SkMemoryStream>(
+      gfx::MakeSkDataFromSpanWithoutCopy(base::as_byte_span(data)));
+  std::unique_ptr<SkCodec> codec =
+      SkPngRustDecoder::Decode(std::move(image_data), nullptr);
   if (!codec) {
     LOG(WARNING) << "Failed to decode PNG";
     FireErrorCallback(kInvalidData);

@@ -81,6 +81,7 @@ constexpr auto kKnownSettings = base::MakeFixedFlatSet<std::string_view>({
     kDeviceActivityHeartbeatCollectionRateMs,
     kDeviceActivityHeartbeatEnabled,
     kDeviceAllowedBluetoothServices,
+    kDeviceBluetoothJustWorksPairingEnabled,
     kDeviceAutoUpdateTimeRestrictions,
     kDeviceCrostiniArcAdbSideloadingAllowed,
     kDeviceDisabled,
@@ -117,6 +118,7 @@ constexpr auto kKnownSettings = base::MakeFixedFlatSet<std::string_view>({
     kDeviceSecondFactorAuthenticationMode,
     kDeviceUnaffiliatedCrostiniAllowed,
     kDeviceUserInitiatedFirmwareUpdatesEnabled,
+    kDeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled,
     kDeviceWebBasedAttestationAllowedUrls,
     kDeviceWiFiAllowed,
     kDisplayRotationDefault,
@@ -1307,6 +1309,13 @@ void DecodeGenericPolicies(const em::ChromeDeviceSettingsProto& policy,
     new_values_cache->SetValue(kDeviceAllowedBluetoothServices,
                                base::Value(std::move(list)));
   }
+  if (policy.has_devicebluetoothjustworkspairingenabled()) {
+    base::Value::List list;
+    const em::BooleanPolicyProto& container(
+        policy.devicebluetoothjustworkspairingenabled());
+    new_values_cache->SetValue(kDeviceBluetoothJustWorksPairingEnabled,
+                               base::Value(container.value()));
+  }
 
   if (policy.has_device_scheduled_reboot()) {
     const em::DeviceScheduledRebootProto& scheduled_reboot_policy =
@@ -1368,6 +1377,16 @@ void DecodeGenericPolicies(const em::ChromeDeviceSettingsProto& policy,
     if (container.has_value()) {
       new_values_cache->SetValue(kDeviceUserInitiatedFirmwareUpdatesEnabled,
                                  base::Value(container.value()));
+    }
+  }
+
+  if (policy.has_deviceuserinitiatedflexsystemfirmwareupdatesenabled()) {
+    const em::BooleanPolicyProto& container(
+        policy.deviceuserinitiatedflexsystemfirmwareupdatesenabled());
+    if (container.has_value()) {
+      new_values_cache->SetValue(
+          kDeviceUserInitiatedFlexSystemFirmwareUpdatesEnabled,
+          base::Value(container.value()));
     }
   }
 
@@ -1714,7 +1733,7 @@ void DeviceSettingsProvider::UpdateAndProceedStoring() {
 
 bool DeviceSettingsProvider::UpdateFromService() {
   bool settings_loaded = false;
-  base::UmaHistogramEnumeration("Enterprise.DeviceSettings.UpdatedStatus",
+  base::UmaHistogramEnumeration("Enterprise.DeviceSettings.UpdatedStatus2",
                                 device_settings_service_->status());
   switch (device_settings_service_->status()) {
     case DeviceSettingsService::STORE_SUCCESS: {
@@ -1741,6 +1760,9 @@ bool DeviceSettingsProvider::UpdateFromService() {
         break;
       [[fallthrough]];
     case DeviceSettingsService::STORE_KEY_UNAVAILABLE:
+    case DeviceSettingsService::STORE_KEY_UNAVAILABLE_NOT_INITIALIZED:
+    case DeviceSettingsService::STORE_KEY_UNAVAILABLE_NOT_LOCKED:
+    case DeviceSettingsService::STORE_KEY_UNAVAILABLE_MANAGED:
       if (user_manager::UserManager::Get()->GetOwnerEmail().has_value()) {
         // On the consumer owned device Chrome is responsible for generating a
         // new key and/or policy if they are missing (which happens after the

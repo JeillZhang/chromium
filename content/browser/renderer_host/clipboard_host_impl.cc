@@ -15,11 +15,13 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/notreached.h"
+#include "base/numerics/byte_conversions.h"
 #include "base/pickle.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/types/optional_util.h"
+#include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "content/browser/file_system/browser_file_system_helper.h"
 #include "content/browser/file_system_access/file_system_access_manager_impl.h"
@@ -34,7 +36,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/drop_data.h"
-#include "ipc/ipc_message.h"
+#include "crypto/hmac.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "skia/ext/skia_utils_base.h"
@@ -158,9 +160,25 @@ ClipboardHostImpl::~ClipboardHostImpl() {
 
 void ClipboardHostImpl::GetSequenceNumber(ui::ClipboardBuffer clipboard_buffer,
                                           GetSequenceNumberCallback callback) {
-  std::move(callback).Run(
-      ui::Clipboard::GetForCurrentThread()->GetSequenceNumber(
-          clipboard_buffer));
+  const ui::ClipboardSequenceNumberToken seqno =
+      ui::Clipboard::GetForCurrentThread()->GetSequenceNumber(clipboard_buffer);
+  const base::UnguessableToken& salt =
+      static_cast<StoragePartitionImpl*>(
+          render_frame_host().GetProcess()->GetStoragePartition())
+          ->GetPartitionUUIDPerStorageKey(render_frame_host().GetStorageKey());
+
+  // Generate a per-partition sequence number derived from the overall
+  // clipboard sequence number, using HMAC-SHA256 with the domain-string
+  // "clipboard-change-id-", that is:
+  //   HMAC_SHA256(seqno, "clipboard-change-id-"||uuid)
+  const std::array result = crypto::hmac::SignSha256(
+      seqno.value().AsBytes(), base::as_byte_span(base::StrCat(
+                                   {"clipboard-change-id-", salt.ToString()})));
+
+  const base::span result_span(result);
+  std::move(callback).Run(absl::MakeUint128(
+      base::U64FromLittleEndian(result_span.first<8>()),
+      base::U64FromLittleEndian(result_span.subspan<8, 8>())));
 }
 
 void ClipboardHostImpl::ReadAvailableTypes(
@@ -170,29 +188,39 @@ void ClipboardHostImpl::ReadAvailableTypes(
   auto* clipboard = ui::Clipboard::GetForCurrentThread();
   auto data_endpoint = CreateDataEndpoint();
 
-  // ReadAvailableTypes() returns 'text/uri-list' if either files are provided,
-  // or if it was set as a custom web type. If it is set because files are
-  // available, do not include other types such as text/plain which contain the
-  // full path on some platforms (http://crbug.com/1214108). But do not exclude
-  // other types when it is set as a custom web type (http://crbug.com/1241671).
-  bool file_type_only =
-      clipboard->IsFormatAvailable(ui::ClipboardFormatType::FilenamesType(),
-                                   clipboard_buffer, data_endpoint.get());
+  // If an enterprise Data Controls rule modified the clipboard, get the last
+  // replaced clipboard types instead.
+  if (auto policy_types =
+          static_cast<RenderFrameHostImpl&>(render_frame_host())
+              .GetClipboardTypesIfPolicyApplied(
+                  clipboard->GetSequenceNumber(clipboard_buffer))) {
+    types = std::move(*policy_types);
+  } else {
+    // ReadAvailableTypes() returns 'text/uri-list' if either files are
+    // provided, or if it was set as a custom web type. If it is set because
+    // files are available, do not include other types such as text/plain which
+    // contain the full path on some platforms (http://crbug.com/1214108). But
+    // do not exclude other types when it is set as a custom web type
+    // (http://crbug.com/1241671).
+    bool file_type_only =
+        clipboard->IsFormatAvailable(ui::ClipboardFormatType::FilenamesType(),
+                                     clipboard_buffer, data_endpoint.get());
 
 #if BUILDFLAG(IS_CHROMEOS)
-  // ChromeOS FilesApp must include the custom 'fs/sources', etc data for
-  // paste that it put on the clipboard during copy (b/271078230).
-  if (render_frame_host().GetMainFrame()->GetLastCommittedURL().SchemeIs(
-          kChromeUIScheme)) {
-    file_type_only = false;
-  }
+    // ChromeOS FilesApp must include the custom 'fs/sources', etc data for
+    // paste that it put on the clipboard during copy (crbug.com/271078230).
+    if (render_frame_host().GetMainFrame()->GetLastCommittedURL().SchemeIs(
+            kChromeUIScheme)) {
+      file_type_only = false;
+    }
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
-  if (file_type_only) {
-    types = {ui::kMimeTypeUriList16};
-  } else {
-    clipboard->ReadAvailableTypes(clipboard_buffer, data_endpoint.get(),
-                                  &types);
+    if (file_type_only) {
+      types = {ui::kMimeTypeUriList16};
+    } else {
+      clipboard->ReadAvailableTypes(clipboard_buffer, data_endpoint.get(),
+                                    &types);
+    }
   }
   std::move(callback).Run(types);
 }
@@ -765,12 +793,21 @@ void ClipboardHostImpl::OnCopyAllowedResult(
 
 std::unique_ptr<ui::DataTransferEndpoint>
 ClipboardHostImpl::CreateDataEndpoint() {
-  if (!render_frame_host().GetMainFrame()->GetLastCommittedURL().is_valid()) {
+  auto* render_frame_host_main_frame = render_frame_host().GetMainFrame();
+  auto source_url = render_frame_host_main_frame->GetLastCommittedURL();
+  if (!source_url.is_valid()) {
     return nullptr;
   }
 
+  if (auto maybe_url = GetContentClient()
+                           ->browser()
+                           ->MaybeOverrideSourceURLForClipboardAccess(
+                               render_frame_host_main_frame, source_url)) {
+    source_url = *maybe_url;
+  }
+
   return std::make_unique<ui::DataTransferEndpoint>(
-      render_frame_host().GetMainFrame()->GetLastCommittedURL(),
+      source_url,
       ui::DataTransferEndpointOptions{
           .notify_if_restricted =
               render_frame_host().HasTransientUserActivation(),

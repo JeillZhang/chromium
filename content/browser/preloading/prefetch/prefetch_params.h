@@ -6,15 +6,14 @@
 #define CONTENT_BROWSER_PRELOADING_PREFETCH_PREFETCH_PARAMS_H_
 
 #include <optional>
-#include <string_view>
 
 #include "base/time/time.h"
-#include "content/browser/preloading/prefetch/prefetch_type.h"
 #include "content/common/content_export.h"
-#include "third_party/blink/public/mojom/speculation_rules/speculation_rules.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
+
+class PrefetchType;
 
 // The url of the tunnel proxy.
 CONTENT_EXPORT GURL PrefetchProxyHost(const GURL& default_proxy_url);
@@ -47,9 +46,6 @@ base::TimeDelta PrefetchTimeoutDuration();
 // The maximum body length allowed to be prefetched for mainframe responses in
 // bytes.
 size_t PrefetchMainframeBodyLengthLimit();
-
-// Whether idle sockets should be closed after every prefetch.
-bool PrefetchCloseIdleSockets();
 
 // Whether a spare renderer should be started after prefetching.
 bool PrefetchStartsSpareRenderer();
@@ -101,6 +97,7 @@ int PrefetchCanaryCheckRetries();
 // If the value is zero or less, then a navigation can be blocked indefinitely.
 CONTENT_EXPORT base::TimeDelta PrefetchBlockUntilHeadTimeout(
     const PrefetchType& prefetch_type,
+    bool should_disable_block_until_head_timeout,
     bool is_nav_prerender);
 
 // Gets the histogram suffix for the given `prefetch_type` and
@@ -113,17 +110,13 @@ CONTENT_EXPORT std::string GetMetricsSuffixTriggerTypeAndEagerness(
     const PrefetchType prefetch_type,
     const std::optional<std::string>& embedder_histogram_suffix);
 
-// Returns the max number of eager prefetches allowed.
-size_t MaxNumberOfEagerPrefetchesPerPage();
-// Returns the max number of non-eager prefetches allowed.
-size_t MaxNumberOfNonEagerPrefetchesPerPage();
+// The max number of immediate prefetches allowed.
+inline constexpr size_t kMaxNumberOfImmediatePrefetchesPerPage = 50;
+// The max number of non-immediate prefetches allowed.
+inline constexpr size_t kMaxNumberOfNonImmediatePrefetchesPerPage = 2;
 
 // Returns true if NIK prefetch scope is enabled. See crbug.com/1502326
 bool PrefetchNIKScopeEnabled();
-
-// Returns true if browser-initiated prefetch is enabled.
-// Please see crbug.com/40946257 for more details.
-bool PrefetchBrowserInitiatedTriggersEnabled();
 
 size_t GetPrefetchDataPipeTeeBodySizeLimit();
 

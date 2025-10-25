@@ -12,6 +12,7 @@
 #include "components/password_manager/core/browser/credential_manager_logger.h"
 #include "components/password_manager/core/browser/credential_manager_pending_request_task.h"
 #include "components/password_manager/core/browser/credential_manager_utils.h"
+#include "components/password_manager/core/browser/features/password_features.h"
 #include "components/password_manager/core/browser/form_fetcher_impl.h"
 #include "components/password_manager/core/browser/form_saver.h"
 #include "components/password_manager/core/browser/leak_detection/leak_detection_request_utils.h"
@@ -112,6 +113,17 @@ void CredentialManagerImpl::Get(CredentialMediationRequirement mediation,
     CredentialManagerLogger(client_->GetCurrentLogManager())
         .LogRequestCredential(GetOrigin(), mediation, federations);
   }
+
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+  // Return an empty credential if there is an active actor task.
+  if (client_->IsActorTaskActive()) {
+    std::move(callback).Run(CredentialManagerError::SUCCESS, CredentialInfo());
+    LogCredentialManagerGetResult(
+        metrics_util::CredentialManagerGetResult::kNone, mediation);
+    return;
+  }
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+
   if (pending_request_ || !store) {
     // Callback error.
     std::move(callback).Run(

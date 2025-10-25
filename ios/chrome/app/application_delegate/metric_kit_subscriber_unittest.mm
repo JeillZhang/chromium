@@ -20,6 +20,7 @@
 #import "components/crash/core/app/crashpad.h"
 #import "components/crash/core/common/reporter_running_ios.h"
 #import "ios/chrome/app/application_delegate/mock_metrickit_metric_payload.h"
+#import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 #import "third_party/crashpad/crashpad/client/crash_report_database.h"
 #import "third_party/ocmock/OCMock/OCMock.h"
@@ -220,6 +221,5 @@ TEST_F(MetricKitSubscriberTest, SaveDiagnosticReport) {
   result_data =
       [result_data decompressedDataUsingAlgorithm:NSDataCompressionAlgorithmZlib
                                             error:&error];
-  ASSERT_NE(result_data, nil);
-  EXPECT_EQ(memcmp([data bytes], [result_data bytes], data.length), 0);
+  EXPECT_NSEQ(data, result_data);
 }

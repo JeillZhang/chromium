@@ -4,30 +4,44 @@
 
 #import "ios/chrome/browser/home_customization/coordinator/home_customization_coordinator.h"
 
-#import "components/image_fetcher/core/image_fetcher_service.h"
+#import "base/feature_list.h"
+#import "components/image_fetcher/ios/ios_image_data_fetcher_wrapper.h"
+#import "components/prefs/pref_service.h"
+#import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
 #import "ios/chrome/browser/discover_feed/model/discover_feed_visibility_browser_agent.h"
+#import "ios/chrome/browser/google/model/google_logo_service_factory.h"
+#import "ios/chrome/browser/home_customization/coordinator/home_customization_background_configuration_mediator.h"
 #import "ios/chrome/browser/home_customization/coordinator/home_customization_background_picker_action_sheet_coordinator.h"
 #import "ios/chrome/browser/home_customization/coordinator/home_customization_delegate.h"
 #import "ios/chrome/browser/home_customization/coordinator/home_customization_mediator.h"
+#import "ios/chrome/browser/home_customization/model/home_background_customization_service.h"
+#import "ios/chrome/browser/home_customization/model/home_background_customization_service_factory.h"
+#import "ios/chrome/browser/home_customization/model/user_uploaded_image_manager_factory.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_background_color_picker_view_controller.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_background_picker_presentation_delegate.h"
-#import "ios/chrome/browser/home_customization/ui/home_customization_color_palette_provider.h"
-#import "ios/chrome/browser/home_customization/ui/home_customization_color_palette_util.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_discover_view_controller.h"
-#import "ios/chrome/browser/home_customization/ui/home_customization_logo_vendor_provider.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_magic_stack_view_controller.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_main_view_controller.h"
+#import "ios/chrome/browser/home_customization/ui/home_customization_search_engine_logo_mediator_provider.h"
 #import "ios/chrome/browser/home_customization/utils/home_customization_constants.h"
 #import "ios/chrome/browser/image_fetcher/model/image_fetcher_service_factory.h"
-#import "ios/chrome/browser/ntp/ui_bundled/logo_vendor.h"
+#import "ios/chrome/browser/ntp/search_engine_logo/mediator/search_engine_logo_mediator.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_color_palette_util.h"
+#import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
 #import "ios/chrome/browser/shared/coordinator/alert/action_sheet_coordinator.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
+#import "ios/chrome/browser/shared/model/prefs/pref_names.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_browser_agent.h"
 #import "ios/chrome/browser/url_loading/model/url_loading_params.h"
-#import "ios/public/provider/chrome/browser/ui_utils/ui_utils_api.h"
+#import "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace {
+
+// Enables the liquid glass effect for the home customization menu background.
+BASE_FEATURE(kHomeCustomizationLiquidGlassBackground,
+             base::FEATURE_ENABLED_BY_DEFAULT);
 
 // The height of the menu's initial detent, which roughly represents a header
 // and 3 cells.
@@ -41,11 +55,26 @@ CGFloat const kSheetCornerRadius = 30;
 @interface HomeCustomizationCoordinator () <
     UISheetPresentationControllerDelegate,
     HomeCustomizationBackgroundPickerPresentationDelegate,
-    HomeCustomizationLogoVendorProvider,
-    HomeCustomizationColorPaletteProvider> {
+    HomeCustomizationSearchEngineLogoMediatorProvider> {
   // Displays the background picker action sheet.
   HomeCustomizationBackgroundPickerActionSheetCoordinator*
       _backgroundPickerActionSheetCoordinator;
+
+  // Holds strong references to all active SearchEngineLogoMediator instances.
+  // This ensures that each mediator remains alive long enough to complete its
+  // asynchronous fetch callbacks, preventing mediators from being deallocated
+  // before their configuration requests return.
+  NSMutableDictionary<NSString*, SearchEngineLogoMediator*>*
+      _activeSearchEngineLogoMediator;
+
+  // The Background customization service for getting current and recently used
+  // backgrounds.
+  raw_ptr<HomeBackgroundCustomizationService, DanglingUntriaged>
+      _backgroundService;
+
+  // The mediator for background configuration generation and interactions.
+  HomeCustomizationBackgroundConfigurationMediator*
+      _backgroundConfigurationMediator;
 }
 
 // The main page of the customization menu.
@@ -67,6 +96,7 @@ CGFloat const kSheetCornerRadius = 30;
 // other, each representing a submenu.
 // This property points to the view controller that is at the base of the stack.
 @property(nonatomic, weak) UIViewController* firstPageViewController;
+
 // This property points to the view controller that is at the top of the stack.
 @property(nonatomic, weak) UIViewController* currentPageViewController;
 
@@ -77,15 +107,34 @@ CGFloat const kSheetCornerRadius = 30;
 #pragma mark - ChromeCoordinator
 
 - (void)start {
-  image_fetcher::ImageFetcherService* imageFetcherService =
-      ImageFetcherServiceFactory::GetForProfile(self.browser->GetProfile());
+  _activeSearchEngineLogoMediator = [NSMutableDictionary dictionary];
+  _backgroundService =
+      HomeBackgroundCustomizationServiceFactory::GetForProfile(self.profile);
 
   _mediator = [[HomeCustomizationMediator alloc]
                      initWithPrefService:self.profile->GetPrefs()
       discoverFeedVisibilityBrowserAgent:DiscoverFeedVisibilityBrowserAgent::
                                              FromBrowser(self.browser)
-                     imageFetcherService:imageFetcherService];
+                         shoppingService:commerce::ShoppingServiceFactory::
+                                             GetForProfile(self.profile)];
   _mediator.navigationDelegate = self;
+
+  if (IsNTPBackgroundCustomizationEnabled() &&
+      !_backgroundService->IsCustomizationDisabledOrColorManagedByPolicy()) {
+    UserUploadedImageManager* userUploadedImageManager =
+        UserUploadedImageManagerFactory::GetForProfile(self.profile);
+    image_fetcher::ImageFetcherService* imageFetcherService =
+        ImageFetcherServiceFactory::GetForProfile(self.profile);
+    image_fetcher::ImageFetcher* imageFetcher =
+        imageFetcherService->GetImageFetcher(
+            image_fetcher::ImageFetcherConfig::kDiskCacheOnly);
+    _backgroundConfigurationMediator =
+        [[HomeCustomizationBackgroundConfigurationMediator alloc]
+            initWithBackgroundCustomizationService:_backgroundService
+                                      imageFetcher:imageFetcher
+                        homeBackgroundImageService:nil
+                          userUploadedImageManager:userUploadedImageManager];
+  }
 
   // The Customization menu consists of a stack of presenting view controllers.
   // Since the `baseViewController` is at the root of this stack, it is set as
@@ -96,12 +145,16 @@ CGFloat const kSheetCornerRadius = 30;
 }
 
 - (void)stop {
+  [_backgroundConfigurationMediator saveCurrentTheme];
+
   [self.baseViewController dismissViewControllerAnimated:YES completion:nil];
 
+  [self dismissBackgroundPickerActionSheet];
+
+  _mediator = nil;
   _mainViewController = nil;
   _magicStackViewController = nil;
   _discoverViewController = nil;
-  _mediator = nil;
 
   [super stop];
 }
@@ -111,6 +164,7 @@ CGFloat const kSheetCornerRadius = 30;
 - (void)updateMenuData {
   if (self.mainViewController) {
     [self.mediator configureMainPageData];
+    [_backgroundConfigurationMediator loadRecentlyUsedBackgroundConfigurations];
   }
 
   if (self.magicStackViewController) {
@@ -144,21 +198,7 @@ CGFloat const kSheetCornerRadius = 30;
 }
 
 - (void)dismissMenuPage {
-  // If the page being dismissed is the first page of the stack, then the entire
-  // menu should be dismissed. Otherwise, dismiss the topmost page and update
-  // the currently visible page.
-  if (self.currentPageViewController == self.firstPageViewController) {
-    [self.delegate dismissCustomizationMenu];
-  } else {
-    [self.currentPageViewController dismissViewControllerAnimated:YES
-                                                       completion:nil];
-    self.currentPageViewController =
-        self.currentPageViewController.presentingViewController;
-
-    // The presented page was closed, so the presenting page should become
-    // interactable.
-    self.currentPageViewController.view.accessibilityViewIsModal = YES;
-  }
+  [self dismissCurrentPageBySwipe:NO presentationController:nil];
 }
 
 - (void)navigateToURL:(GURL)URL {
@@ -171,7 +211,8 @@ CGFloat const kSheetCornerRadius = 30;
 
 - (void)presentationControllerDidDismiss:
     (UIPresentationController*)presentationController {
-  [self dismissMenuPage];
+  [self dismissCurrentPageBySwipe:YES
+           presentationController:presentationController];
   [self dismissBackgroundPickerActionSheet];
 }
 
@@ -179,6 +220,18 @@ CGFloat const kSheetCornerRadius = 30;
 
 // Creates a view controller for a page in the menu.
 - (UIViewController*)createMenuPage:(CustomizationMenuPage)page {
+  auto detentResolver = ^CGFloat(
+      id<UISheetPresentationControllerDetentResolutionContext> context) {
+    return kInitialDetentHeight;
+  };
+  UISheetPresentationControllerDetent* initialDetent =
+      [UISheetPresentationControllerDetent
+          customDetentWithIdentifier:kBottomSheetDetentIdentifier
+                            resolver:detentResolver];
+  NSMutableArray<UISheetPresentationControllerDetent*>* detents = [@[
+    initialDetent,
+  ] mutableCopy];
+
   UIViewController* menuPage;
 
   // Create view controller for the `page` and configure it with the mediator.
@@ -188,11 +241,30 @@ CGFloat const kSheetCornerRadius = 30;
           [[HomeCustomizationMainViewController alloc] init];
       self.mainViewController.backgroundPickerPresentationDelegate = self;
       self.mainViewController.mutator = _mediator;
-      self.mainViewController.logoVendorProvider = self;
-      self.mainViewController.colorPaletteProvider = self;
+      self.mainViewController.customizationMutator =
+          _backgroundConfigurationMediator;
+      self.mainViewController.searchEngineLogoMediatorProvider = self;
+      self.mainViewController.customizationDisabledByPolicy =
+          _backgroundService->IsCustomizationDisabledOrColorManagedByPolicy();
       self.mediator.mainPageConsumer = self.mainViewController;
+      _backgroundConfigurationMediator.consumer = self.mainViewController;
       [self.mediator configureMainPageData];
+      [_backgroundConfigurationMediator
+          loadRecentlyUsedBackgroundConfigurations];
       menuPage = self.mainViewController;
+
+      __weak __typeof(self) weakSelf = self;
+      auto expandedDetentResolver = ^CGFloat(
+          id<UISheetPresentationControllerDetentResolutionContext> context) {
+        return [weakSelf detentHeightForMainViewControllerExpanded];
+      };
+
+      UISheetPresentationControllerDetent* expandedDetent =
+          [UISheetPresentationControllerDetent
+              customDetentWithIdentifier:kBottomSheetExpandedDetentIdentifier
+                                resolver:expandedDetentResolver];
+      [detents addObject:expandedDetent];
+
       break;
     }
     case CustomizationMenuPage::kMagicStack: {
@@ -220,6 +292,13 @@ CGFloat const kSheetCornerRadius = 30;
   // Configure the navigation controller.
   UINavigationController* navigationController =
       [[UINavigationController alloc] initWithRootViewController:menuPage];
+
+  if (@available(iOS 26, *)) {
+    if (base::FeatureList::IsEnabled(kHomeCustomizationLiquidGlassBackground)) {
+      menuPage.view.backgroundColor = [UIColor clearColor];
+    }
+  }
+
   navigationController.modalPresentationStyle = UIModalPresentationFormSheet;
 
   // Configure the presentation controller with a custom initial detent.
@@ -229,21 +308,12 @@ CGFloat const kSheetCornerRadius = 30;
   presentationController.preferredCornerRadius = kSheetCornerRadius;
   presentationController.delegate = self;
 
-  auto detentResolver = ^CGFloat(
-      id<UISheetPresentationControllerDetentResolutionContext> context) {
-    return kInitialDetentHeight;
-  };
-  UISheetPresentationControllerDetent* initialDetent =
-      [UISheetPresentationControllerDetent
-          customDetentWithIdentifier:kBottomSheetDetentIdentifier
-                            resolver:detentResolver];
-  presentationController.detents = @[
-    initialDetent,
-  ];
+  presentationController.detents = detents;
+  presentationController.prefersScrollingExpandsWhenScrolledToEdge = NO;
   presentationController.selectedDetentIdentifier =
       kBottomSheetDetentIdentifier;
   presentationController.largestUndimmedDetentIdentifier =
-      kBottomSheetDetentIdentifier;
+      presentationController.detents.lastObject.identifier;
 
   return navigationController;
 }
@@ -254,29 +324,103 @@ CGFloat const kSheetCornerRadius = 30;
   _backgroundPickerActionSheetCoordinator = nil;
 }
 
+// Handles the dismissal of the current menu page, either explicitly for a tap
+// on the dismiss button or implicitly for a swipe to dismiss gesture.
+- (void)dismissCurrentPageBySwipe:(BOOL)bySwipe
+           presentationController:
+               (UIPresentationController*)presentationController {
+  // If the page being dismissed is the first page of the stack, then the entire
+  // menu should be dismissed. Otherwise, dismiss the topmost page and update
+  // the currently visible page.
+  if (self.currentPageViewController == self.firstPageViewController) {
+    [self.delegate dismissCustomizationMenu];
+  } else {
+    // If the dismissal was not triggered natively (e.g., a swipe gesture), the
+    // view controller should be dismissed programmatically.
+    if (!bySwipe) {
+      [self.currentPageViewController dismissViewControllerAnimated:YES
+                                                         completion:nil];
+      self.currentPageViewController =
+          self.currentPageViewController.presentingViewController;
+    } else {
+      self.currentPageViewController =
+          presentationController.presentingViewController;
+    }
+
+    // The presenting page should become interactable for voiceover.
+    self.currentPageViewController.view.accessibilityViewIsModal = YES;
+  }
+}
+
+- (CGFloat)detentHeightForMainViewControllerExpanded {
+  CGFloat height = self.mainViewController.viewContentHeight;
+  return (height < kInitialDetentHeight)
+             ? UISheetPresentationControllerDetentInactive
+             : height;
+}
+
 #pragma mark - HomeCustomizationBackgroundPickerPresentationDelegate
 
-- (void)showBackgroundPickerOptions {
+- (void)showBackgroundPickerOptionsFromSourceView:(UIView*)sourceView {
   _backgroundPickerActionSheetCoordinator =
       [[HomeCustomizationBackgroundPickerActionSheetCoordinator alloc]
           initWithBaseViewController:self.mainViewController
-                             browser:self.browser];
-
+                             browser:self.browser
+                          sourceView:sourceView];
+  _backgroundPickerActionSheetCoordinator.presentationDelegate = self;
+  _backgroundPickerActionSheetCoordinator.searchEngineLogoMediatorProvider =
+      self;
   [_backgroundPickerActionSheetCoordinator start];
+  // Disable customization interactions while the background picker views are
+  // open so the user can't choose a new background from the main menu while in
+  // the process of dismissing the picker views.
+  self.mainViewController.backgroundCustomizationUserInteractionEnabled = NO;
+  self.currentPageViewController.view.accessibilityElementsHidden = YES;
 }
 
-#pragma mark - HomeCustomizationLogoVendorProvider
-
-- (id<LogoVendor>)provideLogoVendor {
-  return ios::provider::CreateLogoVendor(
-      self.browser, self.browser->GetWebStateList()->GetActiveWebState());
+- (void)dismissBackgroundPicker {
+  [self.delegate dismissCustomizationMenu];
 }
 
-#pragma mark - HomeCustomizationColorPaletteProvider
+- (void)cancelBackgroundPicker {
+  // Reenable interaction when the picker is canceled, as the main menu is now
+  // active again.
+  self.mainViewController.backgroundCustomizationUserInteractionEnabled = YES;
+  self.currentPageViewController.view.accessibilityElementsHidden = NO;
 
-- (HomeCustomizationColorPaletteConfiguration*)provideColorPaletteFromSeedColor:
-    (UIColor*)seedColor {
-  return CreateColorPaletteConfigurationFromSeedColor(seedColor);
+  [self dismissBackgroundPickerActionSheet];
+}
+
+#pragma mark - HomeCustomizationSearchEngineLogoMediator
+
+- (SearchEngineLogoMediator*)provideSearchEngineLogoMediatorForKey:
+    (NSString*)key {
+  SearchEngineLogoMediator* searchEngineLogoMediator =
+      _activeSearchEngineLogoMediator[key];
+  if (!searchEngineLogoMediator) {
+    ProfileIOS* profile = self.browser->GetProfile();
+    web::WebState* webState =
+        self.browser->GetWebStateList()->GetActiveWebState();
+    TemplateURLService* templateURLService =
+        ios::TemplateURLServiceFactory::GetForProfile(profile);
+    GoogleLogoService* logoService =
+        GoogleLogoServiceFactory::GetForProfile(profile);
+    UrlLoadingBrowserAgent* URLLoadingBrowserAgent =
+        UrlLoadingBrowserAgent::FromBrowser(self.browser);
+    scoped_refptr<network::SharedURLLoaderFactory> sharedURLLoaderFactory =
+        profile->GetSharedURLLoaderFactory();
+    BOOL offTheRecord = profile->IsOffTheRecord();
+    searchEngineLogoMediator = [[SearchEngineLogoMediator alloc]
+              initWithWebState:webState
+            templateURLService:templateURLService
+                   logoService:logoService
+        URLLoadingBrowserAgent:URLLoadingBrowserAgent
+        sharedURLLoaderFactory:sharedURLLoaderFactory
+                  offTheRecord:offTheRecord];
+    _activeSearchEngineLogoMediator[key] = searchEngineLogoMediator;
+  }
+
+  return searchEngineLogoMediator;
 }
 
 @end

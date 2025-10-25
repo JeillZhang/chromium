@@ -7,9 +7,9 @@
 
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
-#include "content/browser/web_contents/web_contents_impl.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/permission_controller.h"
+#include "content/public/browser/permission_result.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver_set.h"
 #include "services/device/public/mojom/geolocation.mojom.h"
@@ -35,8 +35,7 @@ class GeolocationServiceImplContext {
       const GeolocationServiceImplContext&) = delete;
 
   ~GeolocationServiceImplContext();
-  using PermissionCallback =
-      base::OnceCallback<void(blink::mojom::PermissionStatus)>;
+  using PermissionCallback = base::OnceCallback<void(PermissionResult)>;
   void RequestPermission(RenderFrameHost* render_frame_host,
                          bool user_gesture,
                          PermissionCallback callback);
@@ -44,8 +43,8 @@ class GeolocationServiceImplContext {
  private:
   bool has_pending_permission_request_ = false;
 
-  void HandlePermissionStatus(PermissionCallback callback,
-                              blink::mojom::PermissionStatus permission_status);
+  void HandlePermissionResult(PermissionCallback callback,
+                              PermissionResult permission_result);
 
   base::WeakPtrFactory<GeolocationServiceImplContext> weak_factory_{this};
 };
@@ -72,22 +71,21 @@ class CONTENT_EXPORT GeolocationServiceImpl
       bool user_gesture,
       CreateGeolocationCallback callback) override;
 
-  void HandlePermissionStatusChange(
-      blink::mojom::PermissionStatus permission_status);
+  void HandlePermissionResultChange(PermissionResult permission_result);
 
   void OnDisconnected();
 
  private:
   // Creates the Geolocation Service.
-  void CreateGeolocationWithPermissionStatus(
+  void CreateGeolocationWithPermissionResult(
       mojo::PendingReceiver<device::mojom::Geolocation> receiver,
       CreateGeolocationCallback callback,
-      blink::mojom::PermissionStatus permission_status);
+      PermissionResult permission_result);
 
   void IncrementActivityCount();
   void DecrementActivityCount();
 
-  raw_ptr<device::mojom::GeolocationContext, DanglingUntriaged>
+  const raw_ptr<device::mojom::GeolocationContext, DanglingUntriaged>
       geolocation_context_;
 
   // Used to subscribe to permission status changes.

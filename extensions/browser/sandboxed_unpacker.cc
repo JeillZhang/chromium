@@ -85,7 +85,7 @@ base::FilePath NormalizeFilePath(const base::FilePath& path) {
 }
 
 // Work horse for FindWritableTempLocation. Creates a temp file in the folder
-// tries to normalize the path.
+// and tries to normalize the path.
 bool VerifyWritableTempLocation(base::FilePath* temp_dir) {
   if (temp_dir->empty()) {
     return false;
@@ -97,18 +97,10 @@ bool VerifyWritableTempLocation(base::FilePath* temp_dir) {
     return false;
   }
 
-  // NormalizeFilePath requires a non-empty file, so write some data.
-  // If you change the exit points of this function please make sure all
-  // exit points delete this temp file!
-  if (!base::WriteFile(temp_file, ".")) {
-    base::DeleteFile(temp_file);
-    return false;
-  }
-
-  *temp_dir = NormalizeFilePath(temp_file).DirName();
   // Clean up the temp file.
   base::DeleteFile(temp_file);
 
+  *temp_dir = NormalizeFilePath(*temp_dir);
   return true;
 }
 
@@ -133,9 +125,9 @@ bool FindWritableTempLocation(const base::FilePath& extensions_dir,
   if (VerifyWritableTempLocation(temp_dir)) {
     return true;
   }
-  // Neither paths is link free chances are good installation will fail.
-  LOG(ERROR) << "Both the %TEMP% folder and the profile seem to be on "
-             << "remote drives or read-only. Installation can not complete!";
+  // Neither path is writable, installation will fail.
+  LOG(ERROR) << "Both the %TEMP% folder and the profile seem to be read-only. "
+                "Installation can not complete!";
   return false;
 }
 
@@ -510,15 +502,18 @@ void SandboxedUnpacker::ReadManifestDone(
     return;
   }
 
-  std::string error_msg;
+  // TODO(crbug.com/41317803): Continue removing std::string errors and
+  // replacing with std::u16string.
+  std::u16string utf16_error;
   scoped_refptr<Extension> extension(
       Extension::Create(extension_root_, location_, *dict, creation_flags_,
-                        extension_id_, &error_msg));
+                        extension_id_, &utf16_error));
   if (!extension) {
-    ReportUnpackExtensionFailed(error_msg);
+    ReportUnpackExtensionFailed(base::UTF16ToUTF8(utf16_error));
     return;
   }
 
+  std::string error_msg;
   std::vector<InstallWarning> warnings;
   if (!file_util::ValidateExtension(extension.get(), &error_msg, &warnings)) {
     ReportUnpackExtensionFailed(error_msg);
@@ -559,13 +554,14 @@ void SandboxedUnpacker::UnpackExtensionSucceeded(base::Value::Dict manifest) {
     return;
   }
 
+  std::u16string utf16_error;
   extension_ =
       Extension::Create(extension_root_, location_, final_manifest.value(),
-                        Extension::REQUIRE_KEY | creation_flags_, &utf8_error);
+                        Extension::REQUIRE_KEY | creation_flags_, &utf16_error);
 
   if (!extension_.get()) {
     ReportFailure(SandboxedUnpackerFailureReason::INVALID_MANIFEST,
-                  u"Manifest is invalid: " + ASCIIToUTF16(utf8_error));
+                  u"Manifest is invalid: " + utf16_error);
     return;
   }
 
@@ -1060,7 +1056,8 @@ void SandboxedUnpacker::ParseJsonFile(const base::FilePath& path) {
   }
 
   base::JSONReader::Result result =
-      base::JSONReader::ReadAndReturnValueWithError(contents);
+      base::JSONReader::ReadAndReturnValueWithError(
+          contents, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   ReadManifestDone(std::move(result).transform_error(
       [](const base::JSONReader::Error& error) { return error.ToString(); }));
 }

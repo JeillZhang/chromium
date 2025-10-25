@@ -25,7 +25,8 @@ FakeTransaction::FakeTransaction(
 
 FakeTransaction::~FakeTransaction() = default;
 
-Status FakeTransaction::CommitPhaseOne(BlobWriteCallback callback) {
+Status FakeTransaction::CommitPhaseOne(BlobWriteCallback callback,
+                                       SerializeFsaCallback /*unused*/) {
   return std::move(callback).Run(
       BlobWriteResult::kRunPhaseTwoAndReturnResult,
       storage::mojom::WriteBlobToFileResult::kSuccess);
@@ -37,8 +38,8 @@ Status FakeTransaction::CommitPhaseTwo() {
 
 void FakeTransaction::Rollback() {}
 
-void FakeTransaction::Begin(std::vector<PartitionedLock> locks) {
-  wrapped_transaction_->Begin(std::move(locks));
+Status FakeTransaction::Begin(std::vector<PartitionedLock> locks) {
+  return wrapped_transaction_->Begin(std::move(locks));
 }
 
 Status FakeTransaction::SetDatabaseVersion(int64_t version) {
@@ -128,19 +129,12 @@ Status FakeTransaction::PutIndexDataForRecord(
                                                      key, record);
 }
 
-StatusOr<blink::IndexedDBKey> FakeTransaction::GetPrimaryKeyViaIndex(
+StatusOr<blink::IndexedDBKey> FakeTransaction::GetFirstPrimaryKeyForIndexKey(
     int64_t object_store_id,
     int64_t index_id,
     const blink::IndexedDBKey& key) {
-  return wrapped_transaction_->GetPrimaryKeyViaIndex(object_store_id, index_id,
-                                                     key);
-}
-
-StatusOr<blink::IndexedDBKey> FakeTransaction::KeyExistsInIndex(
-    int64_t object_store_id,
-    int64_t index_id,
-    const blink::IndexedDBKey& key) {
-  return wrapped_transaction_->KeyExistsInIndex(object_store_id, index_id, key);
+  return wrapped_transaction_->GetFirstPrimaryKeyForIndexKey(object_store_id,
+                                                             index_id, key);
 }
 
 StatusOr<std::unique_ptr<indexed_db::BackingStore::Cursor>>
@@ -196,8 +190,10 @@ FakeTransaction::OpenIndexCursor(int64_t object_store_id,
 }
 
 blink::mojom::IDBValuePtr FakeTransaction::BuildMojoValue(
-    IndexedDBValue value) {
-  return wrapped_transaction_->BuildMojoValue(std::move(value));
+    IndexedDBValue value,
+    DeserializeFsaCallback deserialize_fsa_handle) {
+  return wrapped_transaction_->BuildMojoValue(
+      std::move(value), std::move(deserialize_fsa_handle));
 }
 
 }  // namespace content::indexed_db

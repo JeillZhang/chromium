@@ -9,27 +9,40 @@
 #include <sstream>
 #include <string_view>
 
+#include "base/feature_list.h"
 #include "base/path_service.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/timer/timer.h"
-#include "chrome/browser/glic/glic_enabling.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
+#include "chrome/browser/actor/actor_keyed_service.h"
+#include "chrome/browser/actor/ui/actor_ui_state_manager_interface.h"
 #include "chrome/browser/glic/glic_pref_names.h"
 #include "chrome/browser/glic/host/glic.mojom.h"
 #include "chrome/browser/glic/host/glic_cookie_synchronizer.h"
 #include "chrome/browser/glic/host/glic_page_handler.h"
 #include "chrome/browser/glic/host/host.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/service/glic_instance_coordinator_impl.h"
+#include "chrome/browser/glic/service/glic_instance_impl.h"
 #include "chrome/browser/glic/test_support/glic_test_environment.h"
 #include "chrome/browser/glic/test_support/glic_test_util.h"
 #include "chrome/browser/glic/test_support/interactive_test_util.h"
 #include "chrome/browser/glic/widget/glic_view.h"
 #include "chrome/browser/glic/widget/glic_widget.h"
 #include "chrome/browser/glic/widget/glic_window_controller.h"
+#include "chrome/browser/glic/widget/glic_window_controller_impl.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_occlusion_tracker.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/interaction/browser_elements.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
@@ -37,11 +50,19 @@
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "chrome/test/user_education/interactive_feature_promo_test.h"
 #include "components/feature_engagement/public/feature_constants.h"
+#include "components/tabs/public/tab_interface.h"
+#include "content/public/browser/web_contents.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/interaction/element_identifier.h"
 #include "ui/base/interaction/interactive_test.h"
 #include "ui/events/test/event_generator.h"
+#include "ui/views/interaction/element_tracker_views.h"
 #include "url/gurl.h"
 #include "url/url_util.h"
+
+namespace glic {
+class GlicWindowControllerImpl;
+}
 
 namespace glic::test {
 
@@ -54,11 +75,19 @@ extern const InteractiveBrowserTestApi::DeepQuery kPathToGuestPanel;
 template <typename T>
   requires(std::derived_from<T, InProcessBrowserTest> &&
            std::derived_from<T, InteractiveBrowserTestApi>)
-class InteractiveGlicTestT : public T {
+class InteractiveGlicTestMixin : public T {
  public:
   // Determines whether this is an attached or detached Glic window.
+  // WARNING: This is no longer very meaningful, and should be replaced. These
+  // do not provide the ability to open glic as a floating window when in
+  // multi-instance mode. See the comments just below.
   enum GlicWindowMode {
+    // Opens glic by pressing the Glic button on the browser.
+    // In multi-instance, this means it will open glic as a side panel.
+    // Otherwise, glic is opened as a floating window.
     kAttached,
+    // Opens glic by calling ShowDetachedForTesting() on the window controller.
+    // There may not be a good reason for using this.
     kDetached,
   };
 
@@ -76,9 +105,10 @@ class InteractiveGlicTestT : public T {
   // Constructor that takes `FieldTrialParams` and a
   // `GlicTestEnvironmentConfig`, then forwards the rest of the args.
   template <typename... Args>
-  explicit InteractiveGlicTestT(const base::FieldTrialParams& glic_params,
-                                const GlicTestEnvironmentConfig& glic_config,
-                                Args&&... args)
+  explicit InteractiveGlicTestMixin(
+      const base::FieldTrialParams& glic_params,
+      const GlicTestEnvironmentConfig& glic_config,
+      Args&&... args)
       : T(std::forward<Args>(args)...), glic_test_environment_(glic_config) {
     features_.InitWithFeaturesAndParameters(
         {{features::kGlic, glic_params},
@@ -89,23 +119,23 @@ class InteractiveGlicTestT : public T {
   }
 
   // Default constructor (no forwarded args or field trial parameters).
-  InteractiveGlicTestT()
-      : InteractiveGlicTestT(base::FieldTrialParams(),
-                             GlicTestEnvironmentConfig()) {}
+  InteractiveGlicTestMixin()
+      : InteractiveGlicTestMixin(base::FieldTrialParams(),
+                                 GlicTestEnvironmentConfig()) {}
 
-  explicit InteractiveGlicTestT(const base::FieldTrialParams& glic_params)
-      : InteractiveGlicTestT(glic_params, GlicTestEnvironmentConfig()) {}
+  explicit InteractiveGlicTestMixin(const base::FieldTrialParams& glic_params)
+      : InteractiveGlicTestMixin(glic_params, GlicTestEnvironmentConfig()) {}
 
   // Constructor with no field trial params; all arguments are forwarded to the
   // base class.
   template <typename Arg, typename... Args>
     requires(!std::same_as<base::FieldTrialParams, std::remove_cvref_t<Arg>>)
-  explicit InteractiveGlicTestT(Arg&& arg, Args&&... args)
-      : InteractiveGlicTestT(base::FieldTrialParams(),
-                             std::forward<Arg>(arg),
-                             std::forward<Args>(args)...) {}
+  explicit InteractiveGlicTestMixin(Arg&& arg, Args&&... args)
+      : InteractiveGlicTestMixin(base::FieldTrialParams(),
+                                 std::forward<Arg>(arg),
+                                 std::forward<Args>(args)...) {}
 
-  ~InteractiveGlicTestT() override = default;
+  ~InteractiveGlicTestMixin() override = default;
 
   void SetUpBrowserContextKeyedServices(
       content::BrowserContext* context) override {
@@ -113,16 +143,25 @@ class InteractiveGlicTestT : public T {
   }
 
   void SetUpOnMainThread() override {
+    LOG(INFO) << "InteractiveGlicTest: setting up base fixture";
     T::SetUpOnMainThread();
+    instance_tracker_.SetProfile(T::GetProfile());
+    LOG(INFO) << "InteractiveGlicTest: setting up";
 
     Test::embedded_test_server()->ServeFilesFromDirectory(
+        base::PathService::CheckedGet(base::DIR_ASSETS)
+            .AppendASCII("gen/chrome/test/data/webui/glic/"));
+    Test::embedded_https_test_server().ServeFilesFromDirectory(
         base::PathService::CheckedGet(base::DIR_ASSETS)
             .AppendASCII("gen/chrome/test/data/webui/glic/"));
 
     Test::embedded_test_server()->ServeFilesFromSourceDirectory(
         "chrome/test/data/webui/glic/");
+    Test::embedded_https_test_server().ServeFilesFromSourceDirectory(
+        "chrome/test/data/webui/glic/");
 
-    ASSERT_TRUE(Test::embedded_test_server()->Start());
+    ASSERT_TRUE(test_server_handle_ =
+                    Test::embedded_test_server()->StartAndReturnHandle());
 
     // Need to set this here rather than in SetUpCommandLine because we need to
     // use the embedded test server to get the right URL and it's not started
@@ -150,9 +189,14 @@ class InteractiveGlicTestT : public T {
     guest_url_ = Test::embedded_test_server()->GetURL(path.str());
     command_line->AppendSwitchASCII(::switches::kGlicGuestURL,
                                     guest_url_.spec());
+    GURL fre_url = glic_fre_url_.value_or(
+        Test::embedded_test_server()->GetURL("/glic/test_client/fre.html"));
+    command_line->AppendSwitchASCII(switches::kGlicFreURL, fre_url.spec());
+    LOG(INFO) << "InteractiveGlicTest: done setting up";
   }
 
   void TearDownOnMainThread() override {
+    instance_tracker_.SetProfile(nullptr);
     T::TearDownOnMainThread();
   }
 
@@ -161,7 +205,55 @@ class InteractiveGlicTestT : public T {
   }
 
   auto WaitForAndInstrumentGlic(GlicInstrumentMode instrument_mode) {
+    if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+      return WaitForAndInstrumentGlicMultiInstance(instrument_mode);
+    }
     return WaitForAndInstrumentGlic(instrument_mode, window_controller());
+  }
+
+  auto WaitForAndInstrumentGlicMultiInstance(
+      GlicInstrumentMode instrument_mode) {
+    Api::MultiStep steps;
+    switch (instrument_mode) {
+      case GlicInstrumentMode::kHostAndContents:
+        steps = Api::Steps(
+            Api::UninstrumentWebContents(kGlicContentsElementId, false),
+            Api::UninstrumentWebContents(kGlicHostElementId, false),
+            Api::InAnyContext(
+                Api::Steps(Api::InstrumentNonTabWebView(kGlicHostElementId,
+                                                        kGlicViewElementId),
+                           Api::InstrumentInnerWebContents(
+                               kGlicContentsElementId, kGlicHostElementId, 0),
+                           Api::Log("Waiting for Glic web contents ready"),
+                           Api::WaitForWebContentsReady(kGlicContentsElementId),
+                           Api::Log("Glic web contents is ready"))),
+            Api::PollUntil(
+                [&]() -> bool {
+                  GlicInstance* instance = GetGlicInstanceImpl();
+                  if (!instance) {
+                    LOG(ERROR) << "No glic instance for "
+                               << instance_tracker_.DescribeGlicTracking();
+                    return false;
+                  }
+                  if (!instance->IsShowing()) {
+                    LOG(ERROR) << "Glic not showing";
+                    return false;
+                  }
+                  if (!instance->host().IsReady()) {
+                    LOG(ERROR) << "Glic host not ready";
+                    return false;
+                  }
+                  return true;
+                },
+                "Glic not ready"));
+        break;
+      case GlicInstrumentMode::kNone:
+        // no-op.
+        break;
+      default:
+        NOTREACHED();
+    }
+    return steps;
   }
 
   // Ensures that the WebContents for some combination of glic host and contents
@@ -224,30 +316,88 @@ class InteractiveGlicTestT : public T {
     // NOTE: The use of "Api::" here is required because this is a template
     // class with weakly-specified base class; it is not necessary in derived
     // test classes.
-    auto steps = Api::Steps(
-        EnsureGlicWindowState("window must be closed in order to open it",
-                              GlicWindowController::State::kClosed),
-        // Technically, this toggles the window, but we've already ensured that
-        // it's closed.
-        ToggleGlicWindow(window_mode),
-        WaitForAndInstrumentGlic(instrument_mode));
+    auto steps =
+        Api::Steps(Api::Log("Opening glic window"), CheckGlicIsClosed(),
+                   // Technically, this toggles the window, but we've
+                   // already ensured that it's closed.
+                   ToggleGlicWindow(window_mode),
+                   WaitForAndInstrumentGlic(instrument_mode));
     Api::AddDescriptionPrefix(steps, "OpenGlicWindow");
     return steps;
+  }
+
+  auto OpenGlicFloatingWindow(GlicInstrumentMode instrument_mode =
+                                  GlicInstrumentMode::kHostAndContents) {
+    if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+      auto steps = Api::Steps(Api::Do([&]() {
+                                GetInstanceCoordinator().Toggle(
+                                    /*browser=*/nullptr, true,
+                                    mojom::InvocationSource::kOsButton,
+                                    /*prompt_suggestion=*/std::nullopt);
+                              }),
+                              WaitForAndInstrumentGlic(instrument_mode));
+      Api::AddDescriptionPrefix(steps, "OpenGlicFloatingWindow");
+      return steps;
+    } else {
+      return OpenGlicWindow(GlicWindowMode::kDetached, instrument_mode);
+    }
   }
 
   // Toggles Glic through one of the entrypoints.
   // Does not wait for Glic to open or close, tests using this should check for
   // the correct window state after toggling.
   auto ToggleGlicWindow(GlicWindowMode window_mode) {
+    if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+      return Api::PressButton(kGlicButtonElementId)
+          .SetContext(BrowserElements::From(browser())->GetContext());
+    }
     switch (window_mode) {
       case GlicWindowMode::kAttached:
         return Api::PressButton(kGlicButtonElementId)
-            .SetContext(
-                ui::ElementContext(browser()->TopContainer()->GetWidget()));
+            .SetContext(BrowserElements::From(browser())->GetContext());
       case GlicWindowMode::kDetached:
         return Api::Do(
             [this] { window_controller().ShowDetachedForTesting(); });
     }
+  }
+
+  // Toggles Glic through a specific InvocationSource.
+  auto ToggleGlicWindowFromSource(GlicWindowMode window_mode,
+                                  ui::ElementIdentifier element_id,
+                                  mojom::InvocationSource invocation_source) {
+    switch (window_mode) {
+      case GlicWindowMode::kAttached:
+        return Api::PressButton(element_id);
+      case GlicWindowMode::kDetached:
+        return Api::Do([this, invocation_source] {
+          window_controller().Toggle(browser(), false, invocation_source,
+                                     /*prompt_suggestion=*/std::nullopt);
+        });
+    }
+  }
+
+  // Close the glic panel, regardless of the current state. Unlike
+  // `CloseGlicWindow()`, this will close the window even if the glic client is
+  // not connected, and will do nothing if the window is already closed.
+  auto CloseGlic() {
+    return Api::Do([&]() {
+      if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+        GlicUiEmbedder* embedder = GetGlicUiEmbedder();
+        if (embedder) {
+          embedder->Close();
+        }
+      } else {
+        window_controller().Close();
+      }
+    });
+  }
+
+  auto ClickWebuiCloseButton() {
+    auto steps = Api::Steps(
+        Api::WaitForElementVisible(kGlicHostElementId, {"body"}),
+        Api::ExecuteJsAt(
+            kGlicHostElementId, {".close-button"}, "(el)=>el.click()",
+            InteractiveBrowserTestApi::ExecuteJsMode::kWaitForCompletion));
   }
 
   // Ensures a mock glic button is present and then clicks it. Works even if the
@@ -287,19 +437,17 @@ class InteractiveGlicTestT : public T {
     // NOTE: The use of "Api::" here is required because this is a template
     // class with weakly-specified base class; it is not necessary in derived
     // test classes.
-    auto steps = Api::InAnyContext(Api::Steps(
-        EnsureGlicWindowState("cannot close window if it is not open",
-                              GlicWindowController::State::kOpen),
-        ClickMockGlicElement(kPathToMockGlicCloseButton),
-        Api::WaitForHide(kGlicViewElementId)));
+    auto steps =
+        Api::InAnyContext(Api::Steps(CheckGlicWindowIsOpen(), CloseGlic(),
+                                     Api::WaitForHide(kGlicViewElementId)));
     Api::AddDescriptionPrefix(steps, "CloseGlicWindow");
     return steps;
   }
 
   auto SimulateAcceleratorPress(const ui::Accelerator& accelerator) {
     return Api::Do([this, accelerator] {
-      gfx::NativeWindow target_window =
-          window_controller().GetGlicWidget()->GetNativeWindow();
+      CHECK(GetGlicWidget());
+      gfx::NativeWindow target_window = GetGlicWidget()->GetNativeWindow();
 #if (USE_AURA)
       ui::test::EventGenerator event_generator(target_window->GetRootWindow(),
                                                target_window);
@@ -313,22 +461,36 @@ class InteractiveGlicTestT : public T {
   }
 
   auto CheckControllerHasWidget(bool expect_widget) {
-    return Api::CheckResult(
-        [this]() { return window_controller().GetGlicWidget() != nullptr; },
-        expect_widget, "CheckControllerHasWidget");
+    return Api::CheckResult([this]() { return GetGlicWidget() != nullptr; },
+                            expect_widget, "CheckControllerHasWidget");
   }
 
   auto CheckControllerShowing(bool expect_showing) {
     return Api::CheckResult(
-        [this]() { return window_controller().IsShowing(); }, expect_showing,
-        "CheckControllerShowing");
+        [this]() {
+          if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+            return GetGlicUiEmbedder() && GetGlicUiEmbedder()->IsShowing();
+          } else {
+            return GetWindowControllerImpl().IsShowing();
+          }
+        },
+        expect_showing, "CheckControllerShowing");
   }
 
   auto CheckControllerWidgetMode(GlicWindowMode mode) {
     return Api::CheckResult(
         [this]() {
-          return window_controller().IsAttached() ? GlicWindowMode::kAttached
-                                                  : GlicWindowMode::kDetached;
+          if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+            if (!GetGlicInstance()) {
+              return GlicWindowMode::kAttached;
+            }
+            return GetGlicInstance()->IsAttached() ? GlicWindowMode::kAttached
+                                                   : GlicWindowMode::kDetached;
+          } else {
+            return GetWindowControllerImpl().IsAttached()
+                       ? GlicWindowMode::kAttached
+                       : GlicWindowMode::kDetached;
+          }
         },
         mode, "CheckControllerWidgetMode");
   }
@@ -337,8 +499,9 @@ class InteractiveGlicTestT : public T {
                                        bool expect_within_area) {
     return Api::CheckResult(
         [this, point]() {
-          return window_controller().GetGlicView()->IsPointWithinDraggableArea(
-              point);
+          return GetWindowControllerImpl()
+              .GetGlicViewForTesting()
+              ->IsPointWithinDraggableArea(point);
         },
         expect_within_area,
         "CheckPointIsWithinDraggableArea_" + point.ToString());
@@ -355,27 +518,25 @@ class InteractiveGlicTestT : public T {
     auto expected_size = glic::GlicWidget::GetInitialSize();
     expected_size.SetToMax(size);
     return Api::CheckResult(
-        [this]() {
-          return window_controller().GetGlicWidget()->GetMinimumSize();
-        },
-        expected_size, "CheckWidgetMinimumSize");
-  }
-
-  auto ExpectUserCanResize(bool expect_resize) {
-    return Api::CheckResult(
-        [this]() {
-          return window_controller()
-              .GetGlicWidget()
-              ->widget_delegate()
-              ->CanResize();
-        },
-        expect_resize, "ExpectUserCanResize");
+        [this]() { return GetGlicWidget()->GetMinimumSize(); }, expected_size,
+        "CheckWidgetMinimumSize");
   }
 
   auto CheckTabCount(int expected_count) {
     return Api::CheckResult(
         [this] { return browser()->tab_strip_model()->GetTabCount(); },
         expected_count, "CheckTabCount");
+  }
+
+  auto CheckOcclusionTracked(bool expect_is_tracked) {
+    return Api::CheckResult(
+        [this]() {
+          return base::Contains(PictureInPictureWindowManager::GetInstance()
+                                    ->GetOcclusionTracker()
+                                    ->GetPictureInPictureWidgetsForTesting(),
+                                GetGlicWidget());
+        },
+        expect_is_tracked, "CheckOcclusionTracked");
   }
 
   auto Wait(base::TimeDelta timeout) {
@@ -391,13 +552,31 @@ class InteractiveGlicTestT : public T {
         Api::WaitForState(glic::test::internal::kDelayState, true));
   }
 
+  auto WaitForCanResizeEnabled(bool enabled) {
+    return Api::Steps(
+        Api::ObserveState(internal::kGlicWindowControllerResizeState,
+                          std::ref(window_controller())),
+        Api::Log("WaitForCanResize: ", enabled ? "true" : "false"),
+        Api::WaitForState(internal::kGlicWindowControllerResizeState, enabled),
+        Api::StopObservingState(internal::kGlicWindowControllerResizeState));
+  }
+
   content::RenderFrameHost* FindGlicGuestMainFrame() {
-    for (GlicPageHandler* handler : host().GetPageHandlersForTesting()) {
+    Host* host = GetHost();
+    if (!host) {
+      return nullptr;
+    }
+    for (GlicPageHandler* handler : GetHost()->GetPageHandlersForTesting()) {
       if (handler->GetGuestMainFrame()) {
         return handler->GetGuestMainFrame();
       }
     }
     return nullptr;
+  }
+
+  content::WebContents* FindGlicWebUIContents() {
+    Host* host = GetHost();
+    return host ? host->webui_contents() : nullptr;
   }
 
   glic::GlicTestEnvironment& glic_test_environment() {
@@ -406,6 +585,75 @@ class InteractiveGlicTestT : public T {
 
   glic::GlicTestEnvironmentService& glic_test_service() {
     return *glic_test_environment_.GetService(browser()->GetProfile());
+  }
+
+  // Send a task state update to show the actor task icon in the tab strip.
+  void StartTaskAndShowActorTaskIcon() {
+    auto actor_service = actor::ActorKeyedService::Get(browser()->GetProfile());
+    actor::TaskId task_id = actor_service->CreateTask();
+    actor::ui::StartTask start_task_event(task_id);
+    actor_service->GetActorUiStateManager()->OnUiEvent(start_task_event);
+  }
+
+  void ReloadGlicWebui() {
+    Host* host = GetHost();
+    CHECK(host);
+    host->Reload();
+  }
+
+  void DisableWarming() {
+    if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+      GetInstanceCoordinator().SetWarmingEnabledForTesting(false);
+    } else {
+      // Not supported for single-instance, as warming is disabled by feature
+      // flag.
+    }
+  }
+
+  // Same as `Api::AddInstrumentedTab()`, but also opens a side panel from the
+  // currently tracked instance if the Multi-Instance flag is enabled.
+  InteractiveBrowserTestApi::MultiStep AddInstrumentedTabAndOpenSidePanel(
+      ui::ElementIdentifier id,
+      GURL url,
+      std::optional<int> at_index = std::nullopt) {
+    auto steps = Api::Steps(
+        Api::InstrumentNextTab(id),
+        Api::WithElement(
+            ui::test::internal::kInteractiveTestPivotElementId,
+            base::BindLambdaForTesting([this, url,
+                                        at_index](ui::TrackedElement* el) {
+              Browser* const browser_ptr = browser();
+              CHECK(browser_ptr) << "No browser";
+              CHECK(GetHost());
+              NavigateParams navigate_params(
+                  browser_ptr, url, ui::PageTransition::PAGE_TRANSITION_TYPED);
+              navigate_params.tabstrip_index = at_index.value_or(-1);
+              navigate_params.disposition =
+                  WindowOpenDisposition::NEW_FOREGROUND_TAB;
+              navigate_params.opener =
+                  GetHost()->webui_contents()->GetPrimaryMainFrame();
+              CHECK(Navigate(&navigate_params));
+            })),
+        Api::WaitForWebContentsReady(id),
+        Api::WithElement(
+            id, base::BindLambdaForTesting([this](ui::TrackedElement* el) {
+              auto* const web_el = el->AsA<TrackedElementWebContents>();
+              CHECK(web_el);
+              content::WebContents* contents = web_el->owner()->web_contents();
+              tabs::TabInterface* tab =
+                  tabs::TabModel::MaybeGetFromContents(contents);
+              CHECK(tab) << "Could not find a tab for the new WebContents.";
+
+              if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+                // Show the Glic side panel in the newly created tab.
+                GetGlicInstanceImpl()->Show(ShowOptions::ForSidePanel(*tab));
+              }
+            })));
+    Api::AddDescriptionPrefix(
+        steps, base::StringPrintf("AddInstrumentedTabWithOpener( %s, %s, %d, )",
+                                  id.GetName().c_str(), url.spec().c_str(),
+                                  at_index.value_or(-1)));
+    return steps;
   }
 
  protected:
@@ -418,7 +666,89 @@ class InteractiveGlicTestT : public T {
     return glic_service()->window_controller();
   }
 
-  Host& host() { return glic_service()->host(); }
+  GlicWindowControllerImpl& GetWindowControllerImpl() {
+    CHECK(!base::FeatureList::IsEnabled(features::kGlicMultiInstance));
+    return static_cast<GlicWindowControllerImpl&>(
+        glic_service()->window_controller());
+  }
+
+  GlicInstanceCoordinatorImpl& GetInstanceCoordinator() {
+    CHECK(base::FeatureList::IsEnabled(features::kGlicMultiInstance));
+    return static_cast<GlicInstanceCoordinatorImpl&>(
+        glic_service()->window_controller());
+  }
+
+  GlicInstanceImpl* GetGlicInstanceImpl() {
+    CHECK(base::FeatureList::IsEnabled(features::kGlicMultiInstance));
+    return static_cast<GlicInstanceImpl*>(GetGlicInstance());
+  }
+
+  GlicUiEmbedder* GetGlicUiEmbedder() {
+    GlicInstanceImpl* instance = GetGlicInstanceImpl();
+    if (!instance) {
+      return nullptr;
+    }
+    return instance->GetEmbedderForTab(browser()->GetActiveTabInterface());
+  }
+
+  views::View* GetGlicView() {
+    if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+      GlicUiEmbedder* embedder = GetGlicUiEmbedder();
+      if (!embedder) {
+        return nullptr;
+      }
+      return embedder->GetView().get();
+    }
+    return GetWindowControllerImpl().GetGlicViewForTesting();
+  }
+
+  views::Widget* GetGlicWidget() {
+    if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+      GlicUiEmbedder* embedder = GetGlicUiEmbedder();
+      if (!embedder) {
+        return nullptr;
+      }
+      auto* view = embedder->GetView().get();
+      if (!view) {
+        return nullptr;
+      }
+      return view->GetWidget();
+    }
+    return window_controller().GetGlicWidget();
+  }
+
+  Host* GetHost() {
+    GlicInstance* instance = GetGlicInstance();
+    if (!instance) {
+      return nullptr;
+    }
+    return &instance->host();
+  }
+
+  auto CheckGlicWindowIsOpen() {
+    if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+      return Api::CheckResult(
+          [this]() {
+            views::View* view = GetGlicView();
+            return view && view->GetVisible();
+          },
+          "glic panel must be open");
+    }
+    return EnsureGlicWindowState("glic window must be open",
+                                 GlicWindowController::State::kOpen);
+  }
+  auto CheckGlicIsClosed() {
+    if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+      return Api::CheckResult(
+          [this]() {
+            views::View* view = GetGlicView();
+            return !view || !view->GetVisible();
+          },
+          "glic panel must be closed");
+    }
+    return EnsureGlicWindowState("glic window must be closed",
+                                 GlicWindowController::State::kClosed);
+  }
 
   template <typename... M>
   auto EnsureGlicWindowState(const std::string& desc, M&&... matchers) {
@@ -441,9 +771,11 @@ class InteractiveGlicTestT : public T {
     return guest_url_;
   }
 
-  // `InteractiveGlicTestT` is configured to operate a single browser, but it
-  // can change which browser it operates. This changes the browser to be used
-  // in functions of `InteractiveGlicTestT`.
+  void SetGlicFreUrlOverride(const GURL& url) { glic_fre_url_ = url; }
+
+  // `InteractiveGlicTestMixin` is configured to operate a single browser, but
+  // it can change which browser it operates. This changes the browser to be
+  // used in functions of `InteractiveGlicTestMixin`.
   void SetActiveBrowser(Browser* browser) {
     active_browser_ = browser->AsWeakPtr();
   }
@@ -460,6 +792,34 @@ class InteractiveGlicTestT : public T {
     }
   }
 
+  // Glic tracking functions. By default, this fixture applies operations toward
+  // the glic instance in tab 0. You can change this behavior by calling one of
+  // these functions.
+
+  // Have all glic instance operations linked to a glic instance with this ID.
+  void TrackGlicInstanceWithId(InstanceId id) {
+    instance_tracker_.TrackGlicInstanceWithId(id);
+  }
+
+  // Track the glic instance at a specific tab index.
+  void TrackGlicInstanceWithTabIndex(int index) {
+    instance_tracker_.TrackGlicInstanceWithTabIndex(index);
+  }
+
+  // Track the glic instance at this tab.
+  void TrackGlicInstanceWithTabHandle(tabs::TabInterface::Handle handle) {
+    instance_tracker_.TrackGlicInstanceWithTabHandle(handle);
+  }
+
+  void TrackFloatingGlicInstance() {
+    instance_tracker_.TrackFloatingGlicInstance();
+  }
+
+  // Returns the currently tracked glic instance.
+  GlicInstance* GetGlicInstance() {
+    return instance_tracker_.GetGlicInstance();
+  }
+
  private:
   // Because of limitations in the template system, calls to base class methods
   // that are guaranteed by the `requires` clause must still be scoped. These
@@ -467,8 +827,14 @@ class InteractiveGlicTestT : public T {
   using Api = InteractiveBrowserTestApi;
   using Test = InProcessBrowserTest;
 
+  // These determine which glic instance is tracked by this class. This affects
+  // many functions in this fixture. Only one will be present at a time.
+  GlicInstanceTracker instance_tracker_;
+  std::optional<GURL> glic_fre_url_;
+
   base::WeakPtr<Browser> active_browser_;
   glic::GlicTestEnvironment glic_test_environment_;
+  net::test_server::EmbeddedTestServerHandle test_server_handle_;
   // This is the default test file. Tests can override with a different path.
   std::string glic_page_path_ = "/glic/test_client/index.html";
   GURL guest_url_;
@@ -479,14 +845,14 @@ class InteractiveGlicTestT : public T {
 };
 
 // For most tests, you can alias or inherit from this instead of deriving your
-// own `InteractiveGlicTestT<...>`.
-using InteractiveGlicTest = InteractiveGlicTestT<InteractiveBrowserTest>;
+// own `InteractiveGlicTestMixin<...>`.
+using InteractiveGlicTest = InteractiveGlicTestMixin<InteractiveBrowserTest>;
 
 // For testing IPH associated with glic - i.e. help bubbles that anchor in the
 // chrome browser rather than showing up in the glic content itself - inherit
 // from this.
 using InteractiveGlicFeaturePromoTest =
-    InteractiveGlicTestT<InteractiveFeaturePromoTest>;
+    InteractiveGlicTestMixin<InteractiveFeaturePromoTest>;
 
 }  // namespace glic::test
 

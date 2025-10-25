@@ -30,6 +30,7 @@
 #include "chromecast/media/common/base/decoder_config_logging.h"
 #include "media/base/audio_buffer.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/cdm_context.h"
 #include "media/base/channel_layout.h"
 #include "media/base/decoder_buffer.h"
@@ -288,8 +289,8 @@ class CastAudioDecoderImpl : public CastAudioDecoder {
       // Data in an AudioBus is already in planar float format; just copy each
       // channel into the result buffer in order.
       float* ptr = reinterpret_cast<float*>(result->writable_data());
-      for (int c = 0; c < bus->channels(); ++c) {
-        std::copy_n(bus->channel(c), num_frames, ptr);
+      for (auto channel : bus->AllChannels()) {
+        std::copy_n(channel.data(), num_frames, ptr);
         ptr += num_frames;
       }
     } else {

@@ -11,7 +11,6 @@
 #include "base/functional/callback_forward.h"
 #include "base/values.h"
 #include "components/sync/base/data_type.h"
-#include "components/sync/base/sync_mode.h"
 #include "components/sync/base/sync_stop_metadata_fate.h"
 #include "components/sync/engine/configure_reason.h"
 #include "components/sync/model/type_entities_count.h"
@@ -49,7 +48,6 @@ class DataTypeManager {
   struct ConfigureResult {
     ConfigureStatus status = ABORTED;
     DataTypeSet requested_types;
-    SyncMode sync_mode = SyncMode::kFull;
   };
 
   virtual ~DataTypeManager() = default;
@@ -86,9 +84,6 @@ class DataTypeManager {
   // started again. No-op if the type's state didn't actually change.
   virtual void DataTypePreconditionChanged(DataType type) = 0;
 
-  // Resets all data type error state.
-  virtual void ResetDataTypeErrors() = 0;
-
   virtual void PurgeForMigration(DataTypeSet undesired_types) = 0;
 
   // Synchronously stops all registered data types. If called after Configure()
@@ -105,10 +100,9 @@ class DataTypeManager {
   // not tied to sync-the-feature).
   virtual DataTypeSet GetDataTypesForTransportOnlyMode() const = 0;
 
-  // Get the set of current active data types (those chosen or configured by the
-  // user which have not also encountered a runtime error). Note that during
-  // configuration, this will the the empty set. Once the configuration
-  // completes the set will be updated.
+  // Get the set of current active data types, as reported by their controllers.
+  // Note that this may, in some edge cases, temporarily include types that are
+  // not enabled/chosen by the user.
   virtual DataTypeSet GetActiveDataTypes() const = 0;
 
   // Returns the datatypes that are stopped, with or without having cleared

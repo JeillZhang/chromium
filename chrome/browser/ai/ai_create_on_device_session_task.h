@@ -5,10 +5,11 @@
 #ifndef CHROME_BROWSER_AI_AI_CREATE_ON_DEVICE_SESSION_TASK_H_
 #define CHROME_BROWSER_AI_AI_CREATE_ON_DEVICE_SESSION_TASK_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/state_transitions.h"
 #include "chrome/browser/ai/ai_context_bound_object.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
-#include "components/optimization_guide/core/optimization_guide_model_executor.h"
+#include "components/optimization_guide/core/model_execution/on_device_capability.h"
 #include "services/on_device_model/public/cpp/capabilities.h"
 
 // A base class for tasks which create an on-device session.
@@ -38,12 +39,10 @@ class CreateOnDeviceSessionTask
   void Cancel();
 
   virtual void OnFinish(
-      std::unique_ptr<
-          optimization_guide::OptimizationGuideModelExecutor::Session>
-          session) = 0;
+      std::unique_ptr<optimization_guide::OnDeviceSession> session);
 
   virtual void UpdateSessionConfigParams(
-      optimization_guide::SessionConfigParams* config_params) {}
+      optimization_guide::SessionConfigParams* config_params);
 
  private:
   // The state of `CreateOnDeviceSessionTask`.
@@ -82,12 +81,9 @@ class CreateOnDeviceSessionTask
   void OnGetEligibility(
       optimization_guide::OnDeviceModelEligibilityReason eligibility);
 
-  std::unique_ptr<optimization_guide::OptimizationGuideModelExecutor::Session>
-  StartSession();
+  std::unique_ptr<optimization_guide::OnDeviceSession> StartSession();
 
-  void Finish(
-      std::unique_ptr<
-          optimization_guide::OptimizationGuideModelExecutor::Session> session);
+  void Finish(std::unique_ptr<optimization_guide::OnDeviceSession> session);
 
   OptimizationGuideKeyedService* GetOptimizationGuideService();
 

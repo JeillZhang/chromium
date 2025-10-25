@@ -58,7 +58,6 @@
 #include "chrome/browser/ash/guest_os/guest_os_registry_service.h"
 #include "chrome/browser/ash/guest_os/guest_os_registry_service_factory.h"
 #include "chrome/browser/ash/login/demo_mode/demo_mode_dimensions.h"
-#include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/policy/core/device_local_account.h"
 #include "chrome/browser/ash/policy/core/reporting_user_tracker.h"
 #include "chrome/browser/ash/policy/status_collector/enterprise_activity_storage.h"
@@ -70,15 +69,16 @@
 #include "chrome/browser/crash_upload_list/crash_upload_list.h"
 #include "chrome/browser/policy/profile_policy_connector.h"
 #include "chrome/browser/ui/webui/ash/settings/pages/storage/device_storage_util.h"
-#include "chrome/common/channel_info.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/audio/cras_audio_handler.h"
+#include "chromeos/ash/components/channel/channel_info.h"
 #include "chromeos/ash/components/dbus/attestation/attestation_client.h"
 #include "chromeos/ash/components/dbus/attestation/interface.pb.h"
 #include "chromeos/ash/components/dbus/hermes/hermes_euicc_client.h"
 #include "chromeos/ash/components/dbus/hermes/hermes_manager_client.h"
 #include "chromeos/ash/components/dbus/spaced/spaced_client.h"
 #include "chromeos/ash/components/dbus/update_engine/update_engine_client.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/ash/components/disks/disk_mount_manager.h"
 #include "chromeos/ash/components/login/login_state/login_state.h"
 #include "chromeos/ash/components/network/device_state.h"
@@ -196,16 +196,18 @@ std::vector<em::VolumeInfo> GetVolumeInfo(
       continue;
     }
 
-    int64_t free_size = base::SysInfo::AmountOfFreeDiskSpace(mount_path);
-    int64_t total_size = base::SysInfo::AmountOfTotalDiskSpace(mount_path);
-    if (free_size < 0 || total_size < 0) {
+    std::optional<int64_t> free_size =
+        base::SysInfo::AmountOfFreeDiskSpace(mount_path);
+    std::optional<int64_t> total_size =
+        base::SysInfo::AmountOfTotalDiskSpace(mount_path);
+    if (!free_size.has_value() || !total_size.has_value()) {
       LOG(ERROR) << "Unable to get volume status for " << mount_point;
       continue;
     }
     em::VolumeInfo info;
     info.set_volume_id(mount_point);
-    info.set_storage_total(total_size);
-    info.set_storage_free(free_size);
+    info.set_storage_total(*total_size);
+    info.set_storage_free(*free_size);
     result.push_back(info);
   }
   return result;
@@ -375,30 +377,30 @@ em::DiskLifetimeEstimation ReadDiskLifeTimeEstimation() {
 em::StatefulPartitionInfo ReadStatefulPartitionInfo() {
   em::StatefulPartitionInfo spi;
   const base::FilePath statefulPartitionPath(kStatefulPartitionPath);
-  const int64_t available_space =
+  const auto available_space =
       base::SysInfo::AmountOfFreeDiskSpace(statefulPartitionPath);
-  const int64_t total_space =
+  const auto total_space =
       base::SysInfo::AmountOfTotalDiskSpace(statefulPartitionPath);
 
-  if (available_space == -1) {
+  if (!available_space) {
     LOG(ERROR) << "ReadStatefulPartitionInfo failed fetching available space.";
     return spi;
   }
 
-  if (total_space == -1) {
+  if (!total_space) {
     LOG(ERROR) << "ReadStatefulPartitionInfo failed fetching total space.";
     return spi;
   }
 
-  spi.set_available_space(available_space);
-  spi.set_total_space(total_space);
+  spi.set_available_space(*available_space);
+  spi.set_total_space(*total_space);
   return spi;
 }
 
 // Collects all the display related information.
 void GetDisplayStatus(em::GraphicsStatus* graphics_status) {
   const std::vector<display::Display> displays =
-      display::Screen::GetScreen()->GetAllDisplays();
+      display::Screen::Get()->GetAllDisplays();
   for (const auto& display : displays) {
     em::DisplayInfo* display_info = graphics_status->add_displays();
     display_info->set_resolution_width(display.GetSizeInPixel().width());
@@ -493,10 +495,6 @@ int ConvertWifiSignalStrength(int signal_strength) {
   //
   // To convert back to dBm, we use the inverse of the function above to yield
   // a clamped dBm value in the range of -88 to -44dBm.
-  //
-  // TODO(atwilson): Tunnel the raw dBm signal strength from Shill instead of
-  // doing the conversion here so we can report non-clamped values
-  // (crbug.com/463334).
   DCHECK_GT(signal_strength, 0);
   DCHECK_LE(signal_strength, 100);
   return (signal_strength - 200) * 11 / 25;
@@ -692,6 +690,8 @@ em::TpmVersionInfo_GscVersion ConvertTpmGscDevice(
       return em::TpmVersionInfo::GSC_VERSION_CR50;
     case tpm_manager::GscDevice::GSC_DEVICE_DT:
       return em::TpmVersionInfo::GSC_VERSION_TI50;
+    case tpm_manager::GscDevice::GSC_DEVICE_NT:
+      return em::TpmVersionInfo::GSC_VERSION_NT;
   }
 
   NOTREACHED();
@@ -2336,7 +2336,7 @@ bool DeviceStatusCollector::GetVersionInfo(
     em::DeviceStatusReportRequest* status) {
   status->set_os_version(os_version_);
   status->set_browser_version(std::string(version_info::GetVersionNumber()));
-  status->set_channel(ConvertToProtoChannel(chrome::GetChannel()));
+  status->set_channel(ConvertToProtoChannel(ash::GetChannel()));
 
   // TODO(b/144081278): Remove when resolved.
   // When firmware version is not fetched, report error instead.
@@ -2353,6 +2353,15 @@ bool DeviceStatusCollector::GetVersionInfo(
   tpm_version_info->set_vendor_specific(tpm_version_reply_.vendor_specific());
   tpm_version_info->set_gsc_version(
       ConvertTpmGscDevice(tpm_version_reply_.gsc_device()));
+
+  const std::optional<std::string_view> kernel_key_version =
+      statistics_provider_->GetMachineStatistic(ash::system::kKernelKeyVersion);
+  if (kernel_key_version.has_value()) {
+    tpm_version_info->set_kernel_key_version(kernel_key_version.value());
+  } else {
+    LOG(WARNING) << "Failed to retrieve kernel key version";
+  }
+
   return true;
 }
 
@@ -2572,12 +2581,13 @@ bool DeviceStatusCollector::GetUsers(em::DeviceStatusReportRequest* status) {
 bool DeviceStatusCollector::GetMemoryInfo(
     em::DeviceStatusReportRequest* status) {
   status->clear_system_ram_free_infos();
-  status->set_system_ram_total(base::SysInfo::AmountOfPhysicalMemory());
+  status->set_system_ram_total(
+      base::SysInfo::AmountOfPhysicalMemory().InBytes());
 
   for (const MemoryUsage& usage : memory_usage_) {
     em::SystemFreeRamInfo* system_ram_free_info =
         status->add_system_ram_free_infos();
-    system_ram_free_info->set_size_in_bytes(usage.bytes_of_ram_free);
+    system_ram_free_info->set_size_in_bytes(usage.bytes_of_ram_free.InBytes());
     system_ram_free_info->set_timestamp(
         usage.timestamp.InMillisecondsSinceUnixEpoch());
   }
@@ -2759,7 +2769,7 @@ bool DeviceStatusCollector::GetDeviceBootMode(
 
 bool DeviceStatusCollector::GetDemoModeDimensions(
     em::DeviceStatusReportRequest* status) {
-  bool anything_reported = ash::DemoSession::IsDeviceInDemoMode();
+  bool anything_reported = ash::demo_mode::IsDeviceInDemoMode();
   if (anything_reported) {
     *status->mutable_demo_mode_dimensions() =
         ash::demo_mode::GetDemoModeDimensions();

@@ -16,6 +16,9 @@ namespace features {
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kAllowContentInitiatedDataUrlNavigations);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kAndroidDownloadableFontsMatching);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kAndroidDragDropOopif);
+#if BUILDFLAG(IS_WIN)
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kArabicDigitSubstitution);
+#endif
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kAvoidUnnecessaryBeforeUnloadCheckSync);
 // Please check the code comment on
 // ContentBrowserClient::SupportsAvoidUnnecessaryBeforeUnloadCheckSync() in the
@@ -59,14 +62,20 @@ CONTENT_EXPORT BASE_DECLARE_FEATURE(kCodeCacheDeletionWithoutFilter);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kCommittedOriginEnforcements);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kCommittedOriginTracking);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kCriticalClientHint);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kDelayRfhDestructionsOnUnloadAndDetach);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kDocumentPolicyNegotiation);
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kEnableDevToolsJsErrorReporting);
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kEnforceSameDocumentOriginInvariants);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kEmbeddingRequiresOptIn);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kExperimentalContentSecurityPolicyFeatures);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kFedCmUseOtherAccountAndLabelsNewSyntax);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kFedCmSameSiteLax);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kFedCmNonStringToken);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kFedCmWellKnownEndpointValidation);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kFedCmPreservePortsForTesting);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kFedCmErrorAttribute);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kFilterInstalledAppsWebAppMatching);
 #if BUILDFLAG(IS_WIN)
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kFilterInstalledAppsWinMatching);
@@ -95,24 +104,42 @@ CONTENT_EXPORT BASE_DECLARE_FEATURE(kHidePastePopupOnGSB);
 #endif
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kHoldbackDebugReasonStringRemoval);
 
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kIgnoreDuplicateNavsOnlyWithUserGesture);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kInMemoryCodeCache);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kInterestGroupUpdateIfOlderThan);
 #if BUILDFLAG(IS_MAC)
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kIOSurfaceCapturer);
 #endif
-#if BUILDFLAG(IS_ANDROID)
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kRendererProcessLimitOnAndroid);
-CONTENT_EXPORT BASE_DECLARE_FEATURE_PARAM(size_t,
-                                          kRendererProcessLimitOnAndroidCount);
-#endif
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kKeepChildProcessAfterIPCReset);
+
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kLocalNetworkAccessForWorkers);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kLocalNetworkAccessForWorkersWarningOnly);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kLocalNetworkAccessForNavigations);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(
+    kLocalNetworkAccessForNavigationsWarningOnly);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kLocalNetworkAccessForSubframeNavigations);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(
+    kLocalNetworkAccessForSubframeNavigationsWarningOnly);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(
+    kLocalNetworkAccessForFencedFrameNavigations);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(
+    kLocalNetworkAccessForFencedFrameNavigationsWarningOnly);
+
+CONTENT_EXPORT BASE_DECLARE_FEATURE(
+    kMainFrameProcessReuseAllowDevToolsAttached);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kMainFrameProcessReuseAllowIPAndLocalhost);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kMediaDevicesSystemMonitorCache);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kMediaStreamTrackTransfer);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kMojoDedicatedThread);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kMultipleSpareRPHs);
 CONTENT_EXPORT BASE_DECLARE_FEATURE_PARAM(size_t, kMultipleSpareRPHsCount);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kNavigationThrottleRegistryAttributeCache);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kNavigationThrottleRunner2);
 #if !BUILDFLAG(IS_ANDROID)
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kPermissionsPolicyVerificationInContent);
 #endif
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchCookieIndices);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kPrefetchDevtoolsUserAgentOverride);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kPreloadingConfig);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(
     kPrerenderMoreCorrectSpeculativeRFHCreation);
@@ -132,11 +159,17 @@ enum class ProgressiveAccessibilityMode {
 CONTENT_EXPORT BASE_DECLARE_FEATURE_PARAM(ProgressiveAccessibilityMode,
                                           kProgressiveAccessibilityModeParam);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kReloadHiddenTabsWithCrashedSubframes);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kReusePrerenderingProcessForMainFrames);
 #if BUILDFLAG(IS_ANDROID)
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kRestrictOrientationLockToPhones);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kContinueGestureOnLosingFocus);
 #endif
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kRemoveRendererProcessLimit);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kRendererCancellationThrottleImprovements);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(
+    kResumeNavigationWithSpeculativeRFHProcessGone);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(
+    kPartitionAllocSchedulerLoopQuarantineTaskObserverForBrowserUIThread);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kSendBeaconThrowForBlobWithNonSimpleType);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(
     kServiceWorkerAvoidMainThreadForInitialization);
@@ -145,13 +178,13 @@ CONTENT_EXPORT BASE_DECLARE_FEATURE(
 CONTENT_EXPORT extern const base::FeatureParam<std::string>
     kServiceWorkerBypassFetchHandlerBypassedHashStrings;
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kServiceWorkerSrcdocSupport);
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kServiceWorkerStaticRouterRaceRequestFix);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(
     kServiceWorkerStaticRouterStartServiceWorker);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kServiceWorkerClientUrlIsCreationUrl);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kSkipEarlyCommitPendingForCrashedFrame);
-#if BUILDFLAG(IS_WIN)
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kSkipGrantAccessToDataPathIfAlreadySet);
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kSkipRedundantNavigationStateNotification);
+#if BUILDFLAG(IS_ANDROID)
+CONTENT_EXPORT BASE_DECLARE_FEATURE(kStrictHighRankProcessLRU);
 #endif
 #if BUILDFLAG(IS_MAC)
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kTextInputClient);
@@ -160,6 +193,10 @@ CONTENT_EXPORT extern const base::FeatureParam<base::TimeDelta>
 #endif
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kTouchpadOverscrollHistoryNavigation);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kTrustedTypesFromLiteral);
+#if BUILDFLAG(IS_WIN)
+CONTENT_EXPORT BASE_DECLARE_FEATURE(
+    kUpdateDirectManipulationHelperOnParentChange);
+#endif
 #if BUILDFLAG(IS_MAC)
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kValidateNetworkServiceProcessIdentity);
 #endif
@@ -171,9 +208,9 @@ CONTENT_EXPORT BASE_DECLARE_FEATURE(kWebOTPAssertionFeaturePolicy);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kWebUIInProcessResourceLoading);
 CONTENT_EXPORT BASE_DECLARE_FEATURE(kLimitCrossOriginNonActivatedPaintHolding);
 
-CONTENT_EXPORT BASE_DECLARE_FEATURE(kDisallowRasterInterfaceWithoutSkiaBackend);
-
 // Please keep features in alphabetical order.
+
+CONTENT_EXPORT bool IsEnforceSameDocumentOriginInvariantsEnabled();
 
 }  // namespace features
 

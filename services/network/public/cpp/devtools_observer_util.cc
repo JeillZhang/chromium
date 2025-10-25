@@ -20,7 +20,8 @@ mojom::URLResponseHeadDevToolsInfoPtr ExtractDevToolsInfo(
       head.alternate_protocol_usage, head.was_fetched_via_spdy,
       head.service_worker_response_source,
       head.service_worker_router_info.Clone(), head.ssl_info,
-      head.remote_endpoint, head.emitted_extra_info);
+      head.remote_endpoint, head.emitted_extra_info,
+      head.proxy_chain.is_for_ip_protection());
 }
 
 mojom::URLRequestDevToolsInfoPtr ExtractDevToolsInfo(
@@ -29,7 +30,7 @@ mojom::URLRequestDevToolsInfoPtr ExtractDevToolsInfo(
       request.method, request.url, request.priority, request.referrer_policy,
       request.trust_token_params ? request.trust_token_params->Clone()
                                  : nullptr,
-      request.has_user_gesture, request.resource_type);
+      request.has_user_gesture, request.resource_type, request.is_ad_tagged);
 }
 
 }  // namespace network

@@ -5,8 +5,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_MODULES_AI_LANGUAGE_MODEL_H_
 #define THIRD_PARTY_BLINK_RENDERER_MODULES_AI_LANGUAGE_MODEL_H_
 
+#include <variant>
+
 #include "base/types/pass_key.h"
 #include "third_party/blink/public/mojom/ai/ai_language_model.mojom-blink.h"
+#include "third_party/blink/public/mojom/ai/ai_manager.mojom-blink.h"
 #include "third_party/blink/public/mojom/ai/model_streaming_responder.mojom-blink-forward.h"
 #include "third_party/blink/renderer/bindings/core/v8/idl_types.h"
 #include "third_party/blink/renderer/bindings/core/v8/script_promise.h"
@@ -59,7 +62,7 @@ class LanguageModel final : public EventTarget, public ExecutionContextClient {
       ExceptionState& exception_state);
   static ScriptPromise<V8Availability> availability(
       ScriptState* script_state,
-      const LanguageModelCreateCoreOptions* options,
+      LanguageModelCreateCoreOptions* options,
       ExceptionState& exception_state);
   static ScriptPromise<IDLNullable<LanguageModelParams>> params(
       ScriptState* script_state,
@@ -93,10 +96,20 @@ class LanguageModel final : public EventTarget, public ExecutionContextClient {
                                      ExceptionState& exception_state);
   void destroy(ScriptState* script_state, ExceptionState& exception_state);
 
+  static void ExecuteAvailability(
+      HeapMojoRemote<mojom::blink::AIManager>& ai_manager_remote,
+      const LanguageModelCreateCoreOptions* options,
+      mojom::blink::AILanguageModelSamplingParamsPtr resolved_sampling_params,
+      base::OnceCallback<void(mojom::blink::ModelAvailabilityCheckResult)>
+          callback);
   HeapMojoRemote<mojom::blink::AILanguageModel>& GetAILanguageModelRemote();
   scoped_refptr<base::SequencedTaskRunner> GetTaskRunner();
 
  private:
+  void ResolvePromiseOnComplete(
+      ScriptPromiseResolver<IDLString>* resolver,
+      const String& response,
+      mojom::blink::ModelExecutionContextInfoPtr context_info);
   void OnResponseComplete(
       mojom::blink::ModelExecutionContextInfoPtr context_info);
   void OnQuotaOverflow();
@@ -111,14 +124,14 @@ class LanguageModel final : public EventTarget, public ExecutionContextClient {
       on_device_model::mojom::blink::ResponseConstraintPtr constraint,
       mojo::PendingRemote<mojom::blink::ModelStreamingResponder>
           pending_responder,
-      WTF::Vector<mojom::blink::AILanguageModelPromptPtr> prompts);
+      Vector<mojom::blink::AILanguageModelPromptPtr> prompts);
 
   // Helper to make AILanguageModelProxy::MeasureInputUsage compatible with
   // ConvertPromptInputsToMojo callback.
   void ExecuteMeasureInputUsage(
       ScriptPromiseResolver<IDLDouble>* resolver,
       AbortSignal* signal,
-      WTF::Vector<mojom::blink::AILanguageModelPromptPtr> prompts);
+      Vector<mojom::blink::AILanguageModelPromptPtr> prompts);
 
   // Validates and processed prompt input and returns the processed constraints.
   // Returns std::nullopt on failure.
@@ -133,7 +146,7 @@ class LanguageModel final : public EventTarget, public ExecutionContextClient {
   uint32_t top_k_ = 0;
   float temperature_ = 0.0;
   // Prompt types supported by the language model in this session.
-  WTF::HashSet<mojom::blink::AILanguageModelPromptType> input_types_;
+  HashSet<mojom::blink::AILanguageModelPromptType> input_types_;
 
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
   HeapMojoRemote<mojom::blink::AILanguageModel> language_model_remote_;

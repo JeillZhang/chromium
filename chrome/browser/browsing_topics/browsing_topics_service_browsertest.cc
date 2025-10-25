@@ -28,9 +28,9 @@
 #include "components/content_settings/browser/page_specific_content_settings.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/test_optimization_guide_model_provider.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
-#include "components/optimization_guide/core/test_optimization_guide_model_provider.h"
 #include "components/optimization_guide/proto/page_topics_model_metadata.pb.h"
 #include "components/privacy_sandbox/privacy_sandbox_attestations/privacy_sandbox_attestations.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
@@ -243,7 +243,8 @@ class BrowsingTopicsBrowserTestBase : public MixinBasedInProcessBrowserTest {
       const net::test_server::HttpRequest& request) {
     auto topics_header = request.headers.find("Sec-Browsing-Topics");
     if (topics_header != request.headers.end()) {
-      request_path_topics_map_[request.GetURL().path()] = topics_header->second;
+      request_path_topics_map_[request.GetURL().GetPath()] =
+          topics_header->second;
     }
   }
 
@@ -1010,7 +1011,7 @@ IN_PROC_BROWSER_TEST_F(BrowsingTopicsBrowserTest, TopicsAPI_ObserveBehavior) {
 
     EXPECT_EQ(api_usage_contexts[1].hashed_main_frame_host,
               HashMainFrameHostForStorage(
-                  https_server_.GetURL("a.test", "/").host()));
+                  https_server_.GetURL("a.test", "/").GetHost()));
     EXPECT_EQ(api_usage_contexts[1].hashed_context_domain,
               GetHashedDomain("b.test"));
 
@@ -1387,9 +1388,9 @@ IN_PROC_BROWSER_TEST_P(
   EXPECT_EQ(api_usage_contexts[0].hashed_main_frame_host,
             HashMainFrameHostForStorage("foo1.com"));
   EXPECT_EQ(api_usage_contexts[0].hashed_context_domain, HashedDomain(1));
-  EXPECT_EQ(
-      api_usage_contexts[1].hashed_main_frame_host,
-      HashMainFrameHostForStorage(https_server_.GetURL("b.test", "/").host()));
+  EXPECT_EQ(api_usage_contexts[1].hashed_main_frame_host,
+            HashMainFrameHostForStorage(
+                https_server_.GetURL("b.test", "/").GetHost()));
   EXPECT_EQ(api_usage_contexts[1].hashed_context_domain,
             GetHashedDomain("b.test"));
 
@@ -1474,9 +1475,9 @@ IN_PROC_BROWSER_TEST_P(
   std::vector<ApiUsageContext> api_usage_contexts =
       content::GetBrowsingTopicsApiUsage(browsing_topics_site_data_manager());
   EXPECT_EQ(api_usage_contexts.size(), 2u);
-  EXPECT_EQ(
-      api_usage_contexts[0].hashed_main_frame_host,
-      HashMainFrameHostForStorage(https_server_.GetURL("b.test", "/").host()));
+  EXPECT_EQ(api_usage_contexts[0].hashed_main_frame_host,
+            HashMainFrameHostForStorage(
+                https_server_.GetURL("b.test", "/").GetHost()));
   EXPECT_EQ(api_usage_contexts[0].hashed_context_domain,
             GetHashedDomain("a.test"));
   EXPECT_EQ(api_usage_contexts[1].hashed_main_frame_host,
@@ -1500,9 +1501,9 @@ IN_PROC_BROWSER_TEST_P(
     content::EvalJsResult result = EvalJs(
         web_contents()->GetPrimaryMainFrame(),
         content::JsReplace("fetch($1, {browsingTopics: true})", resource_url));
-    EXPECT_THAT(result.error,
-                testing::HasSubstr("browsingTopics: Topics operations are only "
-                                   "available in secure contexts."));
+    EXPECT_THAT(result, content::EvalJsResult::ErrorIs(testing::HasSubstr(
+                            "browsingTopics: Topics operations are only "
+                            "available in secure contexts.")));
   } else {
     EXPECT_TRUE(ExecJsWithBrowsingTopicsTrue(resource_url));
   }
@@ -1630,14 +1631,14 @@ IN_PROC_BROWSER_TEST_P(BrowsingTopicsSubresourceRequestTest,
   std::vector<ApiUsageContext> api_usage_contexts =
       content::GetBrowsingTopicsApiUsage(browsing_topics_site_data_manager());
   EXPECT_EQ(api_usage_contexts.size(), 3u);
-  EXPECT_EQ(
-      api_usage_contexts[0].hashed_main_frame_host,
-      HashMainFrameHostForStorage(https_server_.GetURL("b.test", "/").host()));
+  EXPECT_EQ(api_usage_contexts[0].hashed_main_frame_host,
+            HashMainFrameHostForStorage(
+                https_server_.GetURL("b.test", "/").GetHost()));
   EXPECT_EQ(api_usage_contexts[0].hashed_context_domain,
             GetHashedDomain("c.test"));
-  EXPECT_EQ(
-      api_usage_contexts[1].hashed_main_frame_host,
-      HashMainFrameHostForStorage(https_server_.GetURL("b.test", "/").host()));
+  EXPECT_EQ(api_usage_contexts[1].hashed_main_frame_host,
+            HashMainFrameHostForStorage(
+                https_server_.GetURL("b.test", "/").GetHost()));
   EXPECT_EQ(api_usage_contexts[1].hashed_context_domain,
             GetHashedDomain("a.test"));
   EXPECT_EQ(api_usage_contexts[2].hashed_main_frame_host,
@@ -1724,9 +1725,9 @@ IN_PROC_BROWSER_TEST_P(
   std::vector<ApiUsageContext> api_usage_contexts =
       content::GetBrowsingTopicsApiUsage(browsing_topics_site_data_manager());
   EXPECT_EQ(api_usage_contexts.size(), 2u);
-  EXPECT_EQ(
-      api_usage_contexts[0].hashed_main_frame_host,
-      HashMainFrameHostForStorage(https_server_.GetURL("b.test", "/").host()));
+  EXPECT_EQ(api_usage_contexts[0].hashed_main_frame_host,
+            HashMainFrameHostForStorage(
+                https_server_.GetURL("b.test", "/").GetHost()));
   EXPECT_EQ(api_usage_contexts[0].hashed_context_domain,
             GetHashedDomain("c.test"));
   EXPECT_EQ(api_usage_contexts[1].hashed_main_frame_host,
@@ -1908,9 +1909,9 @@ IN_PROC_BROWSER_TEST_F(BrowsingTopicsBrowserTest,
   std::vector<ApiUsageContext> api_usage_contexts =
       content::GetBrowsingTopicsApiUsage(browsing_topics_site_data_manager());
   EXPECT_EQ(api_usage_contexts.size(), 2u);
-  EXPECT_EQ(
-      api_usage_contexts[0].hashed_main_frame_host,
-      HashMainFrameHostForStorage(https_server_.GetURL("b.test", "/").host()));
+  EXPECT_EQ(api_usage_contexts[0].hashed_main_frame_host,
+            HashMainFrameHostForStorage(
+                https_server_.GetURL("b.test", "/").GetHost()));
   EXPECT_EQ(api_usage_contexts[0].hashed_context_domain,
             GetHashedDomain("a.test"));
   EXPECT_EQ(api_usage_contexts[1].hashed_main_frame_host,
@@ -1992,9 +1993,9 @@ IN_PROC_BROWSER_TEST_F(BrowsingTopicsBrowserTest,
   std::vector<ApiUsageContext> api_usage_contexts =
       content::GetBrowsingTopicsApiUsage(browsing_topics_site_data_manager());
   EXPECT_EQ(api_usage_contexts.size(), 2u);
-  EXPECT_EQ(
-      api_usage_contexts[0].hashed_main_frame_host,
-      HashMainFrameHostForStorage(https_server_.GetURL("b.test", "/").host()));
+  EXPECT_EQ(api_usage_contexts[0].hashed_main_frame_host,
+            HashMainFrameHostForStorage(
+                https_server_.GetURL("b.test", "/").GetHost()));
   EXPECT_EQ(api_usage_contexts[0].hashed_context_domain,
             GetHashedDomain("a.test"));
   EXPECT_EQ(api_usage_contexts[1].hashed_main_frame_host,
@@ -2183,14 +2184,14 @@ IN_PROC_BROWSER_TEST_F(BrowsingTopicsBrowserTest,
   std::vector<ApiUsageContext> api_usage_contexts =
       content::GetBrowsingTopicsApiUsage(browsing_topics_site_data_manager());
   EXPECT_EQ(api_usage_contexts.size(), 3u);
-  EXPECT_EQ(
-      api_usage_contexts[0].hashed_main_frame_host,
-      HashMainFrameHostForStorage(https_server_.GetURL("b.test", "/").host()));
+  EXPECT_EQ(api_usage_contexts[0].hashed_main_frame_host,
+            HashMainFrameHostForStorage(
+                https_server_.GetURL("b.test", "/").GetHost()));
   EXPECT_EQ(api_usage_contexts[0].hashed_context_domain,
             GetHashedDomain("c.test"));
-  EXPECT_EQ(
-      api_usage_contexts[1].hashed_main_frame_host,
-      HashMainFrameHostForStorage(https_server_.GetURL("b.test", "/").host()));
+  EXPECT_EQ(api_usage_contexts[1].hashed_main_frame_host,
+            HashMainFrameHostForStorage(
+                https_server_.GetURL("b.test", "/").GetHost()));
   EXPECT_EQ(api_usage_contexts[1].hashed_context_domain,
             GetHashedDomain("a.test"));
   EXPECT_EQ(api_usage_contexts[2].hashed_main_frame_host,
@@ -2849,9 +2850,9 @@ IN_PROC_BROWSER_TEST_P(
   std::vector<ApiUsageContext> api_usage_contexts =
       content::GetBrowsingTopicsApiUsage(browsing_topics_site_data_manager());
   EXPECT_EQ(api_usage_contexts.size(), 2u);
-  EXPECT_EQ(
-      api_usage_contexts[0].hashed_main_frame_host,
-      HashMainFrameHostForStorage(https_server_.GetURL("b.test", "/").host()));
+  EXPECT_EQ(api_usage_contexts[0].hashed_main_frame_host,
+            HashMainFrameHostForStorage(
+                https_server_.GetURL("b.test", "/").GetHost()));
   EXPECT_EQ(api_usage_contexts[0].hashed_context_domain,
             GetHashedDomain("a.test"));
   EXPECT_EQ(api_usage_contexts[1].hashed_main_frame_host,

@@ -12,7 +12,6 @@
 #include "base/test/scoped_feature_list.h"
 #include "components/omnibox/browser/actions/omnibox_action.h"
 #include "components/omnibox/browser/actions/omnibox_action_in_suggest.h"
-#include "components/omnibox/browser/actions/omnibox_answer_action.h"
 #include "components/omnibox/browser/actions/omnibox_pedal.h"
 #include "components/omnibox/browser/actions/omnibox_pedal_concepts.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
@@ -599,23 +598,6 @@ TEST_F(AutocompleteMatchTest, UpgradeMatchWithPropertiesFrom) {
   EXPECT_EQ(history_match.type, AutocompleteMatchType::HISTORY_TITLE);
   EXPECT_EQ(history_match.contents, u"propagate");
   EXPECT_EQ(history_match.inline_autocompletion, u"preserve");
-
-  omnibox::RichAnswerTemplate answer_template;
-  omnibox::SuggestionEnhancement* enhancement =
-      answer_template.mutable_enhancements()->add_enhancements();
-  enhancement->set_display_text("Similar and opposite words");
-  AutocompleteMatch match_with_answer_actions(
-      search_provider.get(), 400, true, AutocompleteMatchType::SEARCH_SUGGEST);
-  match_with_answer_actions.actions.push_back(
-      base::MakeRefCounted<OmniboxAnswerAction>(
-          std::move(*enhancement), TemplateURLRef::SearchTermsArgs(),
-          omnibox::ANSWER_TYPE_DICTIONARY));
-  AutocompleteMatch match_with_no_answer_actions(
-      search_provider.get(), 400, true,
-      AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED);
-  match_with_no_answer_actions.UpgradeMatchWithPropertiesFrom(
-      match_with_answer_actions);
-  EXPECT_EQ(0u, match_with_no_answer_actions.actions.size());
 }
 
 TEST_F(AutocompleteMatchTest, MergeScoringSignals) {
@@ -1041,10 +1023,13 @@ TEST_F(AutocompleteMatchTest, RearrangeActionsInSuggest) {
       new FakeAutocompleteProvider(AutocompleteProvider::Type::TYPE_SEARCH);
   const OmniboxAction::LabelStrings dummy_labels(u"", u"", u"", u"");
 
-  using ActionType = omnibox::ActionInfo::ActionType;
-  constexpr auto CALL = omnibox::ActionInfo_ActionType_CALL;
-  constexpr auto NAV = omnibox::ActionInfo_ActionType_DIRECTIONS;
-  constexpr auto REVS = omnibox::ActionInfo_ActionType_REVIEWS;
+  using ActionType = omnibox::SuggestTemplateInfo::TemplateAction::ActionType;
+  constexpr auto CALL =
+      omnibox::SuggestTemplateInfo_TemplateAction_ActionType_CALL;
+  constexpr auto NAV =
+      omnibox::SuggestTemplateInfo_TemplateAction_ActionType_DIRECTIONS;
+  constexpr auto REVS =
+      omnibox::SuggestTemplateInfo_TemplateAction_ActionType_REVIEWS;
 
   struct FilterOmniboxActionsTestData {
     std::string test_name;
@@ -1076,10 +1061,10 @@ TEST_F(AutocompleteMatchTest, RearrangeActionsInSuggest) {
 
     // Populate match with requested actions.
     for (auto& action_type : test_case.types_to_add) {
-      omnibox::ActionInfo info;
-      info.set_action_type(action_type);
+      omnibox::SuggestTemplateInfo::TemplateAction action;
+      action.set_action_type(action_type);
       match.actions.push_back(base::MakeRefCounted<OmniboxActionInSuggest>(
-          std::move(info), std::nullopt));
+          std::move(action), std::nullopt));
     }
 
     match.FilterAndSortActionsInSuggest();
@@ -1114,8 +1099,8 @@ TEST_F(AutocompleteMatchTest, ValidateGetVectorIcons) {
 
     if (match.type == AutocompleteMatchType::STARTER_PACK) {
       // All STARTER_PACK suggestions should have non-empty vector icons.
-      for (int starter_pack_id = TemplateURLStarterPackData::kBookmarks;
-           starter_pack_id != TemplateURLStarterPackData::kMaxStarterPackID;
+      for (int starter_pack_id = template_url_starter_pack_data::kBookmarks;
+           starter_pack_id != template_url_starter_pack_data::kMaxStarterPackId;
            starter_pack_id++) {
         TemplateURLData turl_data;
         turl_data.starter_pack_id = starter_pack_id;
@@ -1126,7 +1111,7 @@ TEST_F(AutocompleteMatchTest, ValidateGetVectorIcons) {
     } else if (match.type == AutocompleteMatchType::SEARCH_SUGGEST_TAIL ||
                match.type == AutocompleteMatchType::HISTORY_EMBEDDINGS_ANSWER ||
                (match.type == AutocompleteMatchType::NULL_RESULT_MESSAGE &&
-                !match.IsIPHSuggestion())) {
+                !match.IsIphSuggestion())) {
       // SEARCH_SUGGEST_TAIL and non-IPH NULL_RESULT_MESSAGE suggestions use an
       // empty vector icon.
       EXPECT_TRUE(match.GetVectorIcon(/*is_bookmark=*/false).is_empty());
@@ -1158,4 +1143,22 @@ TEST_F(AutocompleteMatchTest, IsClipboardType) {
         AutocompleteMatch::IsClipboardType((AutocompleteMatchType::Type)type),
         clipboard_types.contains(type));
   }
+}
+
+TEST_F(AutocompleteMatchTest, HasLensSearchAction) {
+  AutocompleteMatch match;
+  EXPECT_FALSE(match.HasLensSearchAction());
+
+  match.suggest_template = omnibox::SuggestTemplateInfo();
+  EXPECT_FALSE(match.HasLensSearchAction());
+
+  auto* action = match.suggest_template->add_action_suggestions();
+  action->set_action_type(
+      omnibox::SuggestTemplateInfo_TemplateAction_ActionType_DIRECTIONS);
+  EXPECT_FALSE(match.HasLensSearchAction());
+
+  action = match.suggest_template->add_action_suggestions();
+  action->set_action_type(
+      omnibox::SuggestTemplateInfo_TemplateAction_ActionType_CHROME_LENS);
+  EXPECT_TRUE(match.HasLensSearchAction());
 }

@@ -10,6 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/values.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_constants.h"
 #include "chrome/browser/extensions/api/browsing_data/browsing_data_api.h"
@@ -17,6 +18,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "components/browsing_data/content/browsing_data_helper.h"
 #include "components/browsing_data/core/browsing_data_utils.h"
+#include "components/browsing_data/core/features.h"
 #include "components/browsing_data/core/pref_names.h"
 #include "components/history/core/common/pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -57,6 +59,11 @@ const char kRemoveEverythingArguments[] =
 class BrowsingDataApiTest : public ExtensionServiceTestBase {
  protected:
   void SetUp() override {
+#if !BUILDFLAG(IS_ANDROID)
+    scoped_feature_list_.InitAndEnableFeature(
+        browsing_data::features::kDbdRevampDesktop);
+#endif  // !BUILDFLAG(IS_ANDROID)
+
     ExtensionServiceTestBase::SetUp();
     InitializeEmptyExtensionService();
 
@@ -288,7 +295,7 @@ class BrowsingDataApiTest : public ExtensionServiceTestBase {
   void VerifyFilterBuilder(const std::string& options,
                            content::BrowsingDataFilterBuilder* filter_builder) {
     delegate()->ExpectCall(
-        base::Time::UnixEpoch(), base::Time::Max(),
+        base::Time(), base::Time::Max(),
         content::BrowsingDataRemover::DATA_TYPE_LOCAL_STORAGE, UNPROTECTED_WEB,
         filter_builder);
     auto function = base::MakeRefCounted<BrowsingDataRemoveFunction>();
@@ -304,6 +311,9 @@ class BrowsingDataApiTest : public ExtensionServiceTestBase {
  private:
   raw_ptr<content::BrowsingDataRemover> remover_;
   content::MockBrowsingDataRemoverDelegate delegate_;
+#if !BUILDFLAG(IS_ANDROID)
+  base::test::ScopedFeatureList scoped_feature_list_;
+#endif  // !BUILDFLAG(IS_ANDROID)
 };
 
 }  // namespace
@@ -433,7 +443,7 @@ TEST_F(BrowsingDataApiTest, BrowsingDataRemovalInputFromSettings) {
   prefs->SetBoolean(browsing_data::prefs::kDeleteCookies, false);
   prefs->SetBoolean(browsing_data::prefs::kDeleteFormData, false);
   prefs->SetBoolean(browsing_data::prefs::kDeleteHostedAppsData, false);
-  prefs->SetBoolean(browsing_data::prefs::kDeletePasswords, false);
+  prefs->SetBoolean(browsing_data::prefs::kDeletePasswords, true);
   uint64_t expected_mask = content::BrowsingDataRemover::DATA_TYPE_CACHE |
                            content::BrowsingDataRemover::DATA_TYPE_DOWNLOADS |
                            chrome_browsing_data_remover::DATA_TYPE_HISTORY;
@@ -517,8 +527,7 @@ TEST_F(BrowsingDataApiTest, SettingsFunctionSimple) {
                             0,
                             content::BrowsingDataRemover::DATA_TYPE_DOWNLOADS);
   SetPrefsAndVerifySettings(chrome_browsing_data_remover::DATA_TYPE_PASSWORDS,
-                            0,
-                            chrome_browsing_data_remover::DATA_TYPE_PASSWORDS);
+                            0, 0);
   SetBasicPrefsAndVerifySettings(content::BrowsingDataRemover::DATA_TYPE_CACHE,
                                  0,
                                  content::BrowsingDataRemover::DATA_TYPE_CACHE);
@@ -607,7 +616,7 @@ TEST_F(BrowsingDataApiTest, RemoveCookiesWithFilter) {
   auto filter_builder = content::BrowsingDataFilterBuilder::Create(
       content::BrowsingDataFilterBuilder::Mode::kPreserve);
   filter_builder->AddRegisterableDomain("example.com");
-  delegate()->ExpectCall(base::Time::UnixEpoch(), base::Time::Max(),
+  delegate()->ExpectCall(base::Time(), base::Time::Max(),
                          content::BrowsingDataRemover::DATA_TYPE_COOKIES,
                          UNPROTECTED_WEB, filter_builder.get());
 
@@ -626,7 +635,7 @@ TEST_F(BrowsingDataApiTest, RemoveCookiesAndStorageWithFilter) {
   auto filter_builder1 = content::BrowsingDataFilterBuilder::Create(
       content::BrowsingDataFilterBuilder::Mode::kDelete);
   filter_builder1->AddRegisterableDomain("example.com");
-  delegate()->ExpectCall(base::Time::UnixEpoch(), base::Time::Max(),
+  delegate()->ExpectCall(base::Time(), base::Time::Max(),
                          content::BrowsingDataRemover::DATA_TYPE_COOKIES,
                          UNPROTECTED_WEB, filter_builder1.get());
 
@@ -634,7 +643,7 @@ TEST_F(BrowsingDataApiTest, RemoveCookiesAndStorageWithFilter) {
       content::BrowsingDataFilterBuilder::Mode::kDelete);
   filter_builder2->AddOrigin(
       url::Origin::Create(GURL("http://www.example.com")));
-  delegate()->ExpectCall(base::Time::UnixEpoch(), base::Time::Max(),
+  delegate()->ExpectCall(base::Time(), base::Time::Max(),
                          content::BrowsingDataRemover::DATA_TYPE_LOCAL_STORAGE,
                          UNPROTECTED_WEB, filter_builder2.get());
 

@@ -12,23 +12,19 @@
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/permissions/permissions_test_util.h"
+#include "chrome/browser/omnibox/autocomplete_controller_emitter_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
-#include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/location_bar/location_bar.h"
-#include "chrome/browser/ui/view_ids.h"
-#include "chrome/test/base/interactive_test_utils.h"
+#include "chrome/browser/ui/omnibox/omnibox_controller.h"
+#include "chrome/browser/ui/omnibox/omnibox_edit_model.h"
+#include "chrome/browser/ui/omnibox/omnibox_view.h"
+#include "chrome/test/base/autocomplete_change_observer.h"
 #include "chrome/test/base/search_test_utils.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
+#include "components/omnibox/browser/autocomplete_controller_emitter.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_result.h"
-#include "components/omnibox/browser/omnibox_controller.h"
-#include "components/omnibox/browser/omnibox_edit_model.h"
-#include "components/omnibox/browser/omnibox_view.h"
 #include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/search_engines/template_url_service.h"
 #include "content/public/test/browser_test.h"
@@ -45,14 +41,26 @@
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/image/image_unittest_util.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/android/omnibox/autocomplete_controller_android.h"
+#else
+#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/location_bar/location_bar.h"
+#include "chrome/browser/ui/view_ids.h"
+#include "chrome/test/base/interactive_test_utils.h"
+#include "chrome/test/base/ui_test_utils.h"
+#endif
+
 namespace extensions {
 
 namespace {
 
 using base::ASCIIToUTF16;
 using metrics::OmniboxEventProto;
-using ui_test_utils::WaitForAutocompleteDone;
 
+#if !BUILDFLAG(IS_ANDROID)
 void InputKeys(Browser* browser, const std::vector<ui::KeyboardCode>& keys) {
   for (auto key : keys) {
     // Note that sending key presses can be flaky at times.
@@ -64,6 +72,7 @@ void InputKeys(Browser* browser, const std::vector<ui::KeyboardCode>& keys) {
 LocationBar* GetLocationBar(Browser* browser) {
   return browser->window()->GetLocationBar();
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 std::u16string AutocompleteResultAsString(const AutocompleteResult& result) {
   std::string output(base::StringPrintf("{%" PRIuS "} ", result.size()));
@@ -130,11 +139,25 @@ class OmniboxApiTestBase : public ExtensionApiTest {
         TemplateURLServiceFactory::GetForProfile(profile()));
   }
 
+#if BUILDFLAG(IS_ANDROID)
+  AutocompleteController* GetAutocompleteController() {
+    return AutocompleteControllerAndroid::Factory::GetForProfile(profile())
+        ->autocomplete_controller_for_test();
+  }
+
+  void WaitForAutocompleteDone() {
+    AutocompleteController* controller = GetAutocompleteController();
+    while (!controller->done()) {
+      AutocompleteChangeObserver(profile()).Wait();
+    }
+  }
+#else
   // Helper functions to retrieve the AutocompleteController for the Browser
   // created with the test (`browser()`) or a specific supplied `browser`.
   AutocompleteController* GetAutocompleteController() {
     return GetAutocompleteControllerForBrowser(browser());
   }
+
   AutocompleteController* GetAutocompleteControllerForBrowser(
       Browser* browser) {
     return GetLocationBar(browser)
@@ -142,6 +165,11 @@ class OmniboxApiTestBase : public ExtensionApiTest {
         ->controller()
         ->autocomplete_controller();
   }
+
+  void WaitForAutocompleteDone() {
+    ui_test_utils::WaitForAutocompleteDone(browser());
+  }
+#endif  // BUILDFLAG(IS_ANDROID)
 };
 
 class OmniboxApiTest : public OmniboxApiTestBase,
@@ -154,6 +182,9 @@ class OmniboxApiTest : public OmniboxApiTestBase,
 INSTANTIATE_TEST_SUITE_P(ServiceWorker,
                          OmniboxApiTest,
                          testing::Values(ContextType::kServiceWorker));
+
+// Desktop Android only supports service worker.
+#if !BUILDFLAG(IS_ANDROID)
 INSTANTIATE_TEST_SUITE_P(PersistentBackground,
                          OmniboxApiTest,
                          testing::Values(ContextType::kPersistentBackground));
@@ -163,6 +194,7 @@ using OmniboxApiBackgroundPageTest = OmniboxApiTest;
 INSTANTIATE_TEST_SUITE_P(All,
                          OmniboxApiBackgroundPageTest,
                          testing::Values(ContextType::kNone));
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace
 
@@ -208,7 +240,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, MAYBE_SendSuggestions) {
     AutocompleteInput input(u"alph", metrics::OmniboxEventProto::NTP,
                             ChromeAutocompleteSchemeClassifier(profile()));
     autocomplete_controller->Start(input);
-    WaitForAutocompleteDone(browser());
+    WaitForAutocompleteDone();
     EXPECT_TRUE(autocomplete_controller->done());
 
     // Now, peek into the controller to see if it has the results we expect.
@@ -228,7 +260,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, MAYBE_SendSuggestions) {
   AutocompleteInput input(u"alpha input", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   // Now, peek into the controller to see if it has the results we expect.
@@ -294,6 +326,9 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, MAYBE_SendSuggestions) {
   }
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+// TODO(crbug.com/405219624): Port these tests to desktop Android. Most require
+// access to the Views location bar, which is not available on Android.
 IN_PROC_BROWSER_TEST_P(OmniboxApiTest, OnInputEntered) {
   constexpr char kManifest[] =
       R"({
@@ -332,8 +367,9 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, OnInputEntered) {
     AutocompleteInput input(input_string, metrics::OmniboxEventProto::NTP,
                             ChromeAutocompleteSchemeClassifier(profile()));
     autocomplete_controller->Start(input);
-    omnibox_view->model()->OpenSelection(base::TimeTicks(), disposition);
-    WaitForAutocompleteDone(browser());
+    omnibox_view->model()->OpenSelectionForTesting(base::TimeTicks(),
+                                                   disposition);
+    WaitForAutocompleteDone();
   };
 
   send_input(u"alpha current tab", WindowOpenDisposition::CURRENT_TAB);
@@ -404,7 +440,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, IncognitoSplitMode) {
         u"alpha input", metrics::OmniboxEventProto::NTP,
         ChromeAutocompleteSchemeClassifier(incognito_profile));
     incognito_controller->Start(input);
-    WaitForAutocompleteDone(incognito_browser);
+    ui_test_utils::WaitForAutocompleteDone(incognito_browser);
     EXPECT_TRUE(incognito_controller->done());
   }
 
@@ -439,7 +475,10 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, IncognitoSplitMode) {
                             metrics::OmniboxEventProto::NTP,
                             ChromeAutocompleteSchemeClassifier(profile()));
     GetAutocompleteController()->Start(input);
-    GetLocationBar(browser())->GetOmniboxView()->model()->OpenSelection();
+    GetLocationBar(browser())
+        ->GetOmniboxView()
+        ->model()
+        ->OpenSelectionForTesting();
   }
   {
     AutocompleteInput input(
@@ -449,7 +488,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, IncognitoSplitMode) {
     GetLocationBar(incognito_browser)
         ->GetOmniboxView()
         ->model()
-        ->OpenSelection();
+        ->OpenSelectionForTesting();
   }
 
   EXPECT_TRUE(on_the_record_listener.WaitUntilSatisfied());
@@ -479,7 +518,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiBackgroundPageTest, MAYBE_PopupStaysClosed) {
   omnibox_view->OnBeforePossibleChange();
   omnibox_view->SetUserText(u"kw comman");
   omnibox_view->OnAfterPossibleChange(true);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
   EXPECT_TRUE(omnibox_view->model()->PopupIsOpen());
 
@@ -494,8 +533,8 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiBackgroundPageTest, MAYBE_PopupStaysClosed) {
   AutocompleteInput input(u"kw command", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  location_bar->GetOmniboxView()->model()->OpenSelection();
-  WaitForAutocompleteDone(browser());
+  location_bar->GetOmniboxView()->model()->OpenSelectionForTesting();
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
   // This checks that the keyword provider (via javascript)
   // gets told to navigate to the string "command".
@@ -551,7 +590,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, MAYBE_DeleteOmniboxSuggestionResult) {
   AutocompleteInput input(u"alpha input", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   // Peek into the controller to see if it has the results we expect.
@@ -652,7 +691,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest,
 
   // Input "kw d", triggering the extension, and then wait for suggestions.
   InputKeys(browser(), {ui::VKEY_K, ui::VKEY_W, ui::VKEY_SPACE, ui::VKEY_D});
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   // We expect two suggestions from the extension in addition to the regular
@@ -690,7 +729,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest,
   InputKeys(browser(), {ui::VKEY_K, ui::VKEY_W, ui::VKEY_SPACE, ui::VKEY_BACK,
                         ui::VKEY_D});
 
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   // Peek into the controller to see if it has the results we expect.  Since
@@ -710,6 +749,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest,
               result.match_at(1).provider->type());
   }
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 IN_PROC_BROWSER_TEST_P(OmniboxApiTest, SetDefaultSuggestionFailures) {
   constexpr char kManifest[] =
@@ -771,6 +811,9 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, SetDefaultSuggestionFailures) {
   ASSERT_TRUE(RunExtensionTest(test_dir.UnpackedPath(), {}, {})) << message_;
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+// TODO(crbug.com/405219624): Port these tests to desktop Android. Most require
+// access to the Views location bar, which is not available on Android.
 // Flaky on Linux TSan. https://crbug.com/1304694
 #if (BUILDFLAG(IS_LINUX) && defined(THREAD_SANITIZER))
 #define MAYBE_SetDefaultSuggestion DISABLED_SetDefaultSuggestion
@@ -811,7 +854,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, MAYBE_SetDefaultSuggestion) {
   // trigger the extension.
   InputKeys(browser(), {ui::VKEY_W, ui::VKEY_O, ui::VKEY_R, ui::VKEY_D,
                         ui::VKEY_SPACE, ui::VKEY_D});
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   const AutocompleteResult& result = autocomplete_controller->result();
@@ -878,7 +921,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, MAYBE_PassEmptySuggestions) {
   // Enter "alpha d" into the omnibox to trigger the extension.
   InputKeys(browser(), {ui::VKEY_A, ui::VKEY_L, ui::VKEY_P, ui::VKEY_H,
                         ui::VKEY_A, ui::VKEY_SPACE, ui::VKEY_D});
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   {
@@ -900,7 +943,7 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, MAYBE_PassEmptySuggestions) {
   // extension should still be receiving input.
   InputKeys(browser(), {ui::VKEY_BACK});
 
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   {
@@ -920,8 +963,19 @@ IN_PROC_BROWSER_TEST_P(OmniboxApiTest, MAYBE_PassEmptySuggestions) {
               result.match_at(1).provider->type());
   }
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 class UnscopedOmniboxApiTest : public OmniboxApiTestBase {
+ public:
+  UnscopedOmniboxApiTest() {
+    // TODO(crbug.com/441102004): Update UnscopedExtensionZeroSuggest to support
+    //   kAiModeOmniboxEntryPoint.
+    scoped_feature_list_.InitWithFeatures(
+        {extensions_features::kExperimentalOmniboxLabs},
+        {omnibox::kAiModeOmniboxEntryPoint});
+  }
+
+ private:
   void SetUpOnMainThread() override {
     OmniboxApiTestBase::SetUpOnMainThread();
     // Prevent the stop timer from killing the hints fetch early, which might
@@ -930,8 +984,7 @@ class UnscopedOmniboxApiTest : public OmniboxApiTestBase {
         base::Seconds(30));
   }
 
-  base::test::ScopedFeatureList scoped_feature_list_{
-      extensions_features::kExperimentalOmniboxLabs};
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest,
@@ -1018,6 +1071,9 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest,
       turl_service->GetUnscopedModeExtensionIds().contains(extension_id));
 }
 
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+// TODO(crbug.com/405219624): Port these tests to desktop Android. Most require
+// access to the Views location bar, which is not available on Android.
 IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest, UnscopedSendSuggestions) {
   constexpr char kManifest[] =
       R"({
@@ -1055,7 +1111,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest, UnscopedSendSuggestions) {
   AutocompleteInput input(u"input", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   const AutocompleteResult& result = autocomplete_controller->result();
@@ -1144,7 +1200,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest, UnscopedDeleteSuggestions) {
   AutocompleteInput input(u"input", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   const AutocompleteResult& result = autocomplete_controller->result();
@@ -1240,7 +1296,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest, OnInputEntered) {
   AutocompleteInput input(u"sending input", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   ASSERT_TRUE(autocomplete_controller->done());
 
   LocationBar* location_bar = GetLocationBar(browser());
@@ -1253,8 +1309,8 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest, OnInputEntered) {
 
   // Select the suggestion created by the extension, which will trigger the
   // `onInputEntered` event.
-  omnibox_view->model()->OpenSelection(base::TimeTicks(),
-                                       WindowOpenDisposition::CURRENT_TAB);
+  omnibox_view->model()->OpenSelectionForTesting(
+      base::TimeTicks(), WindowOpenDisposition::CURRENT_TAB);
 
   ASSERT_TRUE(listener.WaitUntilSatisfied());
   EXPECT_EQ("sending input", listener.message());
@@ -1293,7 +1349,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest, UnscopedSuggestionGrouping) {
   AutocompleteInput input(u"input", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   const AutocompleteResult& result = autocomplete_controller->result();
@@ -1350,7 +1406,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest, LimitSuggestions) {
   AutocompleteInput input(u"input", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   const AutocompleteResult& result = autocomplete_controller->result();
@@ -1426,7 +1482,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest, OnActionExecuted) {
   AutocompleteInput input(u"sending input", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   ASSERT_TRUE(autocomplete_controller->done());
 
   LocationBar* location_bar = GetLocationBar(browser());
@@ -1500,7 +1556,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest, ActionIconAppliedToMatch) {
   AutocompleteInput input(u"sending input", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   ASSERT_TRUE(autocomplete_controller->done());
 
   {
@@ -1579,7 +1635,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest, MultipleUnscopedExtensions) {
   AutocompleteInput input(u"input", metrics::OmniboxEventProto::NTP,
                           ChromeAutocompleteSchemeClassifier(profile()));
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   const AutocompleteResult& result = autocomplete_controller->result();
@@ -1654,7 +1710,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest,
                               ChromeAutocompleteSchemeClassifier(profile()));
   input_ntp.set_focus_type(metrics::OmniboxFocusType::INTERACTION_FOCUS);
   autocomplete_controller->Start(input_ntp);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   const AutocompleteResult& result_ntp = autocomplete_controller->result();
@@ -1681,7 +1737,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest,
   input_srp.set_focus_type(metrics::OmniboxFocusType::INTERACTION_FOCUS);
 
   autocomplete_controller->Start(input_srp);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   const AutocompleteResult& result_srp = autocomplete_controller->result();
@@ -1702,7 +1758,8 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest,
 
 // Test if unscoped extension are grouped together in zps.
 // TODO(crbug.com/409601761): Test is flaky on Linux.
-#if BUILDFLAG(IS_LINUX)
+// TODO(crbug.com/425974968): Test is flaky on ChromeOS.
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #define MAYBE_MultipleUnscopedExtensionsZeroSuggest \
   DISABLED_MultipleUnscopedExtensionsZeroSuggest
 #else
@@ -1768,7 +1825,7 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest,
                           ChromeAutocompleteSchemeClassifier(profile()));
   input.set_focus_type(metrics::OmniboxFocusType::INTERACTION_FOCUS);
   autocomplete_controller->Start(input);
-  WaitForAutocompleteDone(browser());
+  WaitForAutocompleteDone();
   EXPECT_TRUE(autocomplete_controller->done());
 
   const AutocompleteResult& result = autocomplete_controller->result();
@@ -1820,4 +1877,6 @@ IN_PROC_BROWSER_TEST_F(UnscopedOmniboxApiTest,
                     result.match_at(3).suggestion_group_id.value())));
   }
 }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
+
 }  // namespace extensions

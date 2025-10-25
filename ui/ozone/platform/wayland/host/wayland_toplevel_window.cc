@@ -19,7 +19,6 @@
 #include "ui/events/base_event_utils.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/native_widget_types.h"
 #include "ui/ozone/platform/wayland/host/dump_util.h"
 #include "ui/ozone/platform/wayland/host/org_kde_kwin_appmenu.h"
 #include "ui/ozone/platform/wayland/host/wayland_bubble.h"
@@ -136,8 +135,11 @@ void WaylandToplevelWindow::Show(bool inactive) {
 
   UpdateWindowScale(false);
 
-  if (inactive)
+  if (inactive) {
     Deactivate();
+  } else {
+    Activate();
+  }
 
   WaylandWindow::Show(inactive);
 }
@@ -293,17 +295,20 @@ void WaylandToplevelWindow::ShowWindowControlsMenu(const gfx::Point& point) {
 
 void WaylandToplevelWindow::ActivateWithToken(std::string token) {
   DCHECK(connection()->xdg_activation());
-  bool can_activate = IsSurfaceConfigured();
 
   // Stacking the dragged xdg toplevel as the topmost one (and tied to the
   // pointer cursor) is reponsibility of the Wayland compositor, so bail out
   // if `this` is currently being dragged.
   if (auto* drag_controller = connection()->window_drag_controller()) {
-    can_activate &= !drag_controller->IsDraggingWindow(this);
+    if (drag_controller->IsDraggingWindow(this)) {
+      return;
+    }
   }
 
-  if (can_activate) {
+  if (IsSurfaceConfigured()) {
     connection()->xdg_activation()->Activate(root_surface()->surface(), token);
+  } else {
+    pending_configure_activation_token_ = token;
   }
 }
 
@@ -578,11 +583,7 @@ void WaylandToplevelWindow::OnSequencePoint(int64_t seq) {
 bool WaylandToplevelWindow::OnInitialize(
     PlatformWindowInitProperties properties,
     PlatformWindowDelegate::State* state) {
-  // State is kept as "unknown" until the first configure sequence arrives, when
-  // it's possible to which state it should transition to. That's also when
-  // xdg_surface.set_window_geometry must be sent for the first time in. See
-  // WaylandWindow::LatchStateRequest for more details.
-  CHECK_EQ(state->window_state, PlatformWindowState::kUnknown);
+  state->window_state = PlatformWindowState::kNormal;
 
   app_id_ = properties.wayland_app_id;
   SetWaylandToplevelExtension(this, this);
@@ -669,6 +670,13 @@ void WaylandToplevelWindow::AckConfigure(uint32_t serial) {
   // details.
   if (xdg_toplevel()) {
     xdg_toplevel()->AckConfigure(serial);
+  }
+
+  if (pending_configure_activation_token_.has_value()) {
+    DCHECK(connection()->xdg_activation());
+    connection()->xdg_activation()->Activate(
+        root_surface()->surface(), pending_configure_activation_token_.value());
+    pending_configure_activation_token_.reset();
   }
 }
 

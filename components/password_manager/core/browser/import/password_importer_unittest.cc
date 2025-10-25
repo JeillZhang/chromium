@@ -53,10 +53,8 @@ class PasswordImporterTest : public testing::Test {
     importer_.SetServiceForTesting(std::move(pending_remote));
     importer_.SetDeleteFileForTesting(mock_delete_file_.Get());
 
-    profile_store_->Init(/*prefs=*/nullptr,
-                         /*affiliated_match_helper=*/nullptr);
-    account_store_->Init(/*prefs=*/nullptr,
-                         /*affiliated_match_helper=*/nullptr);
+    profile_store_->Init(/*affiliated_match_helper=*/nullptr);
+    account_store_->Init(/*affiliated_match_helper=*/nullptr);
     async_task_completed_ = false;
     presenter_.Init(base::BindOnce(&PasswordImporterTest::OnAsyncTaskCompleted,
                                    base::Unretained(this)));
@@ -369,7 +367,8 @@ TEST_F(PasswordImporterTest, CSVImportBadHeaderReturnsBadFormat) {
   histogram_tester.ExpectTotalCount("PasswordManager.ImportDuration", 0);
   histogram_tester.ExpectTotalCount(
       "PasswordManager.ImportedPasswordsPerUserInCSV", 0);
-  histogram_tester.ExpectUniqueSample("PasswordManager.ImportFileSize", 120, 1);
+  histogram_tester.ExpectUniqueSample("PasswordManager.ImportFileSize2", 120,
+                                      1);
 
   password_manager::ImportResults results = GetImportResults();
 
@@ -1029,8 +1028,8 @@ TEST_F(PasswordImporterTest, PartialImportSucceeds) {
 
   histogram_tester.ExpectUniqueSample("PasswordManager.ImportEntryStatus",
                                       ImportEntry::Status::MISSING_URL, 1);
-  histogram_tester.ExpectUniqueSample("PasswordManager.ImportFileSize",
-                                      /*sample=*/105,
+  histogram_tester.ExpectUniqueSample("PasswordManager.ImportFileSize2",
+                                      /*sample=*/104,
                                       /*expected_bucket_count=*/1);
   histogram_tester.ExpectTotalCount("PasswordManager.ImportDuration", 1);
   histogram_tester.ExpectUniqueSample(
@@ -1053,8 +1052,8 @@ TEST_F(PasswordImporterTest, PartialImportSucceeds) {
 
 TEST_F(PasswordImporterTest, CSVImportLargeFileShouldFail) {
   base::HistogramTester histogram_tester;
-  // content has more than kMaxFileSizeBytes (150KB) of bytes.
-  std::string content(150 * 1024 + 100, '*');
+  // content has more than kMaxFileSizeBytes (1000KB) of bytes.
+  std::string content(1000 * 1024 + 100, '*');
 
   base::FilePath temp_file_path;
   ASSERT_TRUE(base::CreateTemporaryFile(&temp_file_path));
@@ -1065,8 +1064,8 @@ TEST_F(PasswordImporterTest, CSVImportLargeFileShouldFail) {
 
   EXPECT_THAT(stored_passwords(), IsEmpty());
 
-  histogram_tester.ExpectUniqueSample("PasswordManager.ImportFileSize",
-                                      /*sample=*/153700,
+  histogram_tester.ExpectUniqueSample("PasswordManager.ImportFileSize2",
+                                      /*sample=*/1024100,
                                       /*expected_bucket_count=*/1);
   histogram_tester.ExpectTotalCount("PasswordManager.ImportDuration", 0);
   histogram_tester.ExpectTotalCount(
@@ -1080,16 +1079,16 @@ TEST_F(PasswordImporterTest, CSVImportLargeFileShouldFail) {
 
 TEST_F(PasswordImporterTest, CSVImportLargeStringShouldFail) {
   base::HistogramTester histogram_tester;
-  // content has more than kMaxFileSizeBytes (150KB) of bytes.
-  std::string content(150 * 1024 + 100, '*');
+  // content has more than kMaxFileSizeBytes (1000KB) of bytes.
+  std::string content(1000 * 1024 + 100, '*');
 
   ASSERT_NO_FATAL_FAILURE(StartImportAndWaitForCompletion(content.c_str()));
   AssertNotStartedState();
 
   EXPECT_THAT(stored_passwords(), IsEmpty());
 
-  histogram_tester.ExpectUniqueSample("PasswordManager.ImportFileSize",
-                                      /*sample=*/153700,
+  histogram_tester.ExpectUniqueSample("PasswordManager.ImportFileSize2",
+                                      /*sample=*/1024100,
                                       /*expected_bucket_count=*/1);
   histogram_tester.ExpectTotalCount("PasswordManager.ImportDuration", 0);
   histogram_tester.ExpectTotalCount(
@@ -1133,7 +1132,7 @@ TEST_F(PasswordImporterTest, CSVImportNonExistingFile) {
   ASSERT_NO_FATAL_FAILURE(StartImportAndWaitForCompletion(input_path));
   AssertNotStartedState();
 
-  histogram_tester.ExpectTotalCount("PasswordManager.ImportFileSize", 0);
+  histogram_tester.ExpectTotalCount("PasswordManager.ImportFileSize2", 0);
   histogram_tester.ExpectTotalCount("PasswordManager.ImportDuration", 0);
   histogram_tester.ExpectTotalCount(
       "PasswordManager.ImportedPasswordsPerUserInCSV", 0);
@@ -1149,7 +1148,7 @@ TEST_F(PasswordImporterTest, ImportIOErrorDueToUnreadableFile) {
       StartImportAndWaitForCompletion(non_existent_input_file));
   AssertNotStartedState();
 
-  histogram_tester.ExpectTotalCount("PasswordManager.ImportFileSize", 0);
+  histogram_tester.ExpectTotalCount("PasswordManager.ImportFileSize2", 0);
   histogram_tester.ExpectTotalCount("PasswordManager.ImportDuration", 0);
   histogram_tester.ExpectTotalCount(
       "PasswordManager.ImportedPasswordsPerUserInCSV", 0);

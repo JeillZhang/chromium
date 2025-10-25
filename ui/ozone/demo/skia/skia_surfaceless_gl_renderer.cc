@@ -14,6 +14,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/trace_event/trace_event.h"
+#include "components/viz/common/resources/shared_image_format_utils.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkTypeface.h"
 #include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
@@ -116,7 +117,8 @@ bool SurfacelessSkiaGlRenderer::BufferWrapper::Initialize(
     const gfx::Size& size) {
   glGenTextures(1, &gl_tex_);
 
-  gfx::BufferFormat format = display::DisplaySnapshot::PrimaryFormat();
+  gfx::BufferFormat format = viz::SinglePlaneSharedImageFormatToBufferFormat(
+      display::DisplaySnapshot::PrimaryFormat());
 
   pixmap_ = OzonePlatform::GetInstance()
                 ->GetSurfaceFactoryOzone()

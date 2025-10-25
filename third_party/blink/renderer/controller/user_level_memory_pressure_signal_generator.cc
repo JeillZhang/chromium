@@ -92,8 +92,8 @@ void UserLevelMemoryPressureSignalGenerator::OnRAILModeChanged(
     if (has_pending_request_) {
       task_runner_->PostDelayedTask(
           FROM_HERE,
-          WTF::BindOnce(&UserLevelMemoryPressureSignalGenerator::OnTimerFired,
-                        WTF::UnretainedWrapper(this)),
+          BindOnce(&UserLevelMemoryPressureSignalGenerator::OnTimerFired,
+                   UnretainedWrapper(this)),
           inert_interval_);
     }
   }
@@ -132,8 +132,8 @@ void UserLevelMemoryPressureSignalGenerator::RequestMemoryPressureSignal() {
       if (!has_pending_request_) {
         task_runner_->PostDelayedTask(
             FROM_HERE,
-            WTF::BindOnce(&UserLevelMemoryPressureSignalGenerator::OnTimerFired,
-                          WTF::UnretainedWrapper(this)),
+            BindOnce(&UserLevelMemoryPressureSignalGenerator::OnTimerFired,
+                     UnretainedWrapper(this)),
             inert_interval_ - elapsed);
       }
       has_pending_request_ = true;
@@ -153,7 +153,7 @@ void UserLevelMemoryPressureSignalGenerator::Generate(base::TimeTicks now) {
   if (!last_generated_.has_value() ||
       (now - last_generated_.value()) >= minimum_interval_) {
     base::MemoryPressureListener::NotifyMemoryPressure(
-        base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL);
+        base::MEMORY_PRESSURE_LEVEL_CRITICAL);
     last_generated_ = now;
   }
   has_pending_request_ = false;

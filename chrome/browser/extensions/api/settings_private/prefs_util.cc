@@ -15,18 +15,20 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/content_settings/generated_cookie_prefs.h"
+#include "chrome/browser/content_settings/generated_javascript_optimizer_pref.h"
 #include "chrome/browser/content_settings/generated_permission_prompting_behavior_pref.h"
 #include "chrome/browser/extensions/api/settings_private/generated_prefs.h"
 #include "chrome/browser/extensions/api/settings_private/generated_prefs_factory.h"
 #include "chrome/browser/extensions/settings_api_helpers.h"
-#include "chrome/browser/glic/glic_enabling.h"
 #include "chrome/browser/glic/glic_pref_names.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
 #include "chrome/browser/metrics/profile_pref_names.h"
 #include "chrome/browser/nearby_sharing/common/nearby_share_prefs.h"
 #include "chrome/browser/password_manager/generated_password_leak_detection_pref.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/generated_safe_browsing_pref.h"
+#include "chrome/browser/safe_browsing/generated_security_settings_bundle_pref.h"
 #include "chrome/browser/ssl/generated_https_first_mode_pref.h"
 #include "chrome/browser/ui/safety_hub/safety_hub_prefs.h"
 #include "chrome/browser/ui/tabs/tab_strip_prefs.h"
@@ -64,6 +66,7 @@
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/spellcheck/browser/pref_names.h"
 #include "components/supervised_user/core/common/pref_names.h"
+#include "components/themes/pref_names.h"
 #include "components/translate/core/browser/translate_pref_names.h"
 #include "components/translate/core/browser/translate_prefs.h"
 #include "components/unified_consent/pref_names.h"
@@ -97,7 +100,6 @@
 #include "chromeos/ash/components/settings/cros_settings_names.h"
 #include "chromeos/ash/components/tether/pref_names.h"
 #include "chromeos/ash/experiences/arc/arc_prefs.h"
-#include "chromeos/ash/services/assistant/public/cpp/assistant_prefs.h"
 #include "chromeos/components/quick_answers/public/cpp/quick_answers_prefs.h"
 #include "components/account_manager_core/pref_names.h"
 #include "components/user_manager/user.h"
@@ -199,6 +201,12 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
     BUILDFLAG(IS_CHROMEOS)
   (*s_allowlist)[autofill::prefs::kAutofillBnplEnabled] =
       settings_api::PrefType::kBoolean;
+  (*s_allowlist)[autofill::prefs::kAutofillAiIdentityEntitiesEnabled] =
+      settings_api::PrefType::kBoolean;
+  (*s_allowlist)[autofill::prefs::kAutofillAiOptInStatus] =
+      settings_api::PrefType::kBoolean;
+  (*s_allowlist)[autofill::prefs::kAutofillAiTravelEntitiesEnabled] =
+      settings_api::PrefType::kBoolean;
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
         // BUILDFLAG(IS_CHROMEOS)
   (*s_allowlist)[payments::kCanMakePaymentEnabled] =
@@ -223,11 +231,14 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
       settings_api::PrefType::kBoolean;
   (*s_allowlist)[::prefs::kPinSplitTabButton] =
       settings_api::PrefType::kBoolean;
+  (*s_allowlist)[::prefs::kSplitViewDragAndDropEnabled] =
+      settings_api::PrefType::kBoolean;
 
   // Appearance settings.
   (*s_allowlist)[::prefs::kCurrentThemeID] = settings_api::PrefType::kString;
   (*s_allowlist)[::prefs::kPinnedActions] = settings_api::PrefType::kList;
-  (*s_allowlist)[::prefs::kPolicyThemeColor] = settings_api::PrefType::kNumber;
+  (*s_allowlist)[themes::prefs::kPolicyThemeColor] =
+      settings_api::PrefType::kNumber;
 #if BUILDFLAG(IS_LINUX)
   (*s_allowlist)[::prefs::kSystemTheme] = settings_api::PrefType::kNumber;
 #endif
@@ -374,6 +385,10 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
       settings_api::PrefType::kBoolean;
   (*s_allowlist)[::kGeneratedHttpsFirstModePref] =
       settings_api::PrefType::kNumber;
+  (*s_allowlist)[::prefs::kSecuritySettingsBundle] =
+      settings_api::PrefType::kNumber;
+  (*s_allowlist)[::safe_browsing::kGeneratedSecuritySettingsBundlePref] =
+      settings_api::PrefType::kNumber;
 
   // Tracking protection page
   (*s_allowlist)[::prefs::kCookieControlsMode] =
@@ -487,6 +502,8 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
   (*s_allowlist)[::content_settings::kGeneratedNotificationPref] =
       settings_api::PrefType::kNumber;
   (*s_allowlist)[::content_settings::kGeneratedGeolocationPref] =
+      settings_api::PrefType::kNumber;
+  (*s_allowlist)[::content_settings::kGeneratedJavascriptOptimizerPref] =
       settings_api::PrefType::kNumber;
   (*s_allowlist)[::prefs::kPluginsAlwaysOpenPdfExternally] =
       settings_api::PrefType::kBoolean;
@@ -893,26 +910,6 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
   (*s_allowlist)[ash::ambient::prefs::kAmbientModeRunningDurationMinutes] =
       settings_api::PrefType::kNumber;
 
-  // Google Assistant.
-  (*s_allowlist)[ash::assistant::prefs::kAssistantConsentStatus] =
-      settings_api::PrefType::kNumber;
-  (*s_allowlist)[ash::assistant::prefs::kAssistantDisabledByPolicy] =
-      settings_api::PrefType::kBoolean;
-  (*s_allowlist)[ash::assistant::prefs::kAssistantEnabled] =
-      settings_api::PrefType::kBoolean;
-  (*s_allowlist)[ash::assistant::prefs::kAssistantContextEnabled] =
-      settings_api::PrefType::kBoolean;
-  (*s_allowlist)[ash::assistant::prefs::kAssistantHotwordAlwaysOn] =
-      settings_api::PrefType::kBoolean;
-  (*s_allowlist)[ash::assistant::prefs::kAssistantHotwordEnabled] =
-      settings_api::PrefType::kBoolean;
-  (*s_allowlist)[ash::assistant::prefs::kAssistantVoiceMatchEnabledDuringOobe] =
-      settings_api::PrefType::kBoolean;
-  (*s_allowlist)[ash::assistant::prefs::kAssistantLaunchWithMicOpen] =
-      settings_api::PrefType::kBoolean;
-  (*s_allowlist)[ash::assistant::prefs::kAssistantNotificationEnabled] =
-      settings_api::PrefType::kBoolean;
-
   // Quick Answers.
   (*s_allowlist)[quick_answers::prefs::kQuickAnswersEnabled] =
       settings_api::PrefType::kBoolean;
@@ -1101,7 +1098,11 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
       settings_api::PrefType::kBoolean;
   (*s_allowlist)[arc::prefs::kArcVisibleExternalStorages] =
       settings_api::PrefType::kList;
+  (*s_allowlist)[ash::prefs::kPowerOptimizedChargingStrategy] =
+      settings_api::PrefType::kNumber;
   (*s_allowlist)[ash::prefs::kPowerAdaptiveChargingEnabled] =
+      settings_api::PrefType::kBoolean;
+  (*s_allowlist)[ash::prefs::kPowerChargeLimitEnabled] =
       settings_api::PrefType::kBoolean;
   (*s_allowlist)[ash::prefs::kPowerBatterySaver] =
       settings_api::PrefType::kBoolean;
@@ -1281,9 +1282,6 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
       [optimization_guide::prefs::kHistorySearchEnterprisePolicyAllowed] =
           settings_api::PrefType::kNumber;
   (*s_allowlist)[optimization_guide::prefs::
-                     kPasswordChangeSubmissionEnterprisePolicyAllowed] =
-      settings_api::PrefType::kNumber;
-  (*s_allowlist)[optimization_guide::prefs::
                      kProductSpecificationsEnterprisePolicyAllowed] =
       settings_api::PrefType::kNumber;
   (*s_allowlist)[optimization_guide::prefs::
@@ -1305,8 +1303,14 @@ const PrefsUtil::TypedPrefMap& PrefsUtil::GetAllowlistedKeys() {
         settings_api::PrefType::kBoolean;
     (*s_allowlist)[glic::prefs::kGlicTabContextEnabled] =
         settings_api::PrefType::kBoolean;
+    (*s_allowlist)[glic::prefs::kGlicDefaultTabContextEnabled] =
+        settings_api::PrefType::kBoolean;
+    (*s_allowlist)[glic::prefs::kGlicUserStatus] =
+        settings_api::PrefType::kDictionary;
     (*s_allowlist)[prefs::kGeminiSettings] =
         settings_api::PrefType::kNumber;
+    (*s_allowlist)[glic::prefs::kGlicUserEnabledActuationOnWeb] =
+        settings_api::PrefType::kBoolean;
   }
 #endif
 
@@ -1457,11 +1461,6 @@ std::optional<settings_api::PrefObject> PrefsUtil::GetPref(
     return pref_object;
   }
 
-  if (IsHotwordDisabledForChildUser(name)) {
-    pref_object->controlled_by = settings_api::ControlledBy::kChildRestriction;
-    pref_object->enforcement = settings_api::Enforcement::kEnforced;
-    return pref_object;
-  }
 #endif
 
   const Extension* extension = GetExtensionControllingPref(*pref_object);
@@ -1672,20 +1671,6 @@ bool PrefsUtil::IsPrefPrimaryUserControlled(const std::string& pref_name) {
   return false;
 }
 
-bool PrefsUtil::IsHotwordDisabledForChildUser(const std::string& pref_name) {
-  const std::string& hotwordEnabledPref =
-      ash::assistant::prefs::kAssistantHotwordEnabled;
-  if (!profile_->IsChild() || pref_name != hotwordEnabledPref) {
-    return false;
-  }
-
-  PrefService* pref_service = FindServiceForPref(hotwordEnabledPref);
-  const PrefService::Preference* pref =
-      pref_service->FindPreference(hotwordEnabledPref);
-  DCHECK(pref);
-  const bool isHotwordEnabled = pref->GetValue()->GetIfBool().value_or(false);
-  return !isHotwordEnabled;
-}
 #endif
 
 bool PrefsUtil::IsPrefSupervisorControlled(const std::string& pref_name) {

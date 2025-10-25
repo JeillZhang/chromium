@@ -33,11 +33,12 @@
 #include "cc/layers/painted_scrollbar_layer.h"
 #include "cc/layers/picture_layer.h"
 #include "cc/layers/solid_color_layer.h"
+#include "cc/layers/texture_layer.h"
 #include "cc/layers/video_layer.h"
 #include "cc/layers/view_transition_content_layer.h"
 #include "cc/metrics/begin_main_frame_metrics.h"
 #include "cc/metrics/events_metrics_manager.h"
-#include "cc/metrics/ukm_smoothness_data.h"
+#include "cc/metrics/ukm_dropped_frames_data.h"
 #include "cc/paint/image_animation_count.h"
 #include "cc/resources/ui_resource_manager.h"
 #include "cc/test/fake_content_layer_client.h"
@@ -83,6 +84,7 @@
 #include "components/viz/common/quads/compositor_frame_transition_directive.h"
 #include "components/viz/common/quads/compositor_render_pass_draw_quad.h"
 #include "components/viz/common/quads/draw_quad.h"
+#include "components/viz/common/quads/texture_draw_quad.h"
 #include "components/viz/common/quads/tile_draw_quad.h"
 #include "components/viz/service/display/output_surface.h"
 #include "components/viz/service/display/skia_output_surface.h"
@@ -654,9 +656,10 @@ class LayerTreeHostContextCacheTest : public LayerTreeHostTest {
   // This is called before DestroyLayerTreeHost. The MockContextSupport
   // objects are owned by the TestContextProvider and will be destroyed as part
   // of LayerTreeHost d'tor, so clean them up here to avoid dangling pointers.
-  void CleanupBeforeDestroy() override {
+  void AfterTest() override {
     mock_main_context_support_ = nullptr;
     mock_worker_context_support_ = nullptr;
+    LayerTreeHostTest::AfterTest();
   }
 
   raw_ptr<MockContextSupport> mock_main_context_support_;
@@ -679,7 +682,7 @@ class LayerTreeHostFreesContextResourcesOnInvisible
                 SetAggressivelyFreeResources(true));
     EXPECT_CALL(*mock_worker_context_support_,
                 SetAggressivelyFreeResources(true))
-        .WillOnce(testing::Invoke([this](bool is_visible) { EndTest(); }));
+        .WillOnce([this](bool is_visible) { EndTest(); });
     PostSetVisibleToMainThread(false);
   }
 };
@@ -703,10 +706,10 @@ class LayerTreeHostFreesWorkerContextResourcesOnZeroMemoryLimit
                 SetAggressivelyFreeResources(true));
     EXPECT_CALL(*mock_worker_context_support_,
                 SetAggressivelyFreeResources(true))
-        .WillOnce(testing::Invoke([this](bool is_visible) {
+        .WillOnce([this](bool is_visible) {
           // End test after verifying both.
           EndTest();
-        }));
+        });
     ManagedMemoryPolicy zero_policy(
         0, gpu::MemoryAllocation::CUTOFF_ALLOW_NOTHING, 0);
     host_impl->SetMemoryPolicy(zero_policy);
@@ -1413,10 +1416,11 @@ class LayerTreeHostTestLayerListSurfaceDamage : public LayerTreeHostTest {
 
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
-  void CleanupBeforeDestroy() override {
+  void AfterTest() override {
     // Clear the root_ pointer before LayerTreeHost is destroyed to avoid
     // a dangling pointer.
     root_ = nullptr;
+    LayerTreeHostTest::AfterTest();
   }
 
   void DidCommit() override {
@@ -2981,7 +2985,8 @@ class LayerTreeHostTestSetNeedsCommitWithForcedRedraw
   void CommitCompleteOnThread(LayerTreeHostImpl* host_impl) override {
     if (num_draws_ == 3) {
       host_impl->SetViewportDamage(invalid_rect_);
-      host_impl->SetNeedsRedraw();
+      host_impl->SetNeedsRedraw(/*animation_only=*/false,
+                                /*skip_if_inside_draw=*/false);
     }
   }
 
@@ -3365,7 +3370,8 @@ class LayerTreeHostTestFrameTimeUpdatesAfterDraw : public LayerTreeHostTest {
     frame_++;
     if (frame_ == 1) {
       first_frame_time_ = impl->CurrentBeginFrameArgs().frame_time;
-      impl->SetNeedsRedraw();
+      impl->SetNeedsRedraw(/*animation_only=*/false,
+                           /*skip_if_inside_draw=*/false);
 
       // Since we might use a low-resolution clock on Windows, we need to
       // make sure that the clock has incremented past first_frame_time_.
@@ -3520,6 +3526,7 @@ class ViewportDeltasAppliedDuringPinch : public LayerTreeHostTest,
   void DidCompositorScroll(
       ElementId element_id,
       const gfx::PointF& scroll_offset,
+      ScrollSourceType type,
       const std::optional<TargetSnapAreaElementIds>& snap_target_ids) override {
     last_scrolled_element_id_ = element_id;
     last_scrolled_offset_ = scroll_offset;
@@ -5958,6 +5965,7 @@ class LayerTreeHostTestElasticOverscroll : public LayerTreeHostTest {
         // Begin overscrolling. This should be reflected in the draw transform
         // the next time we draw.
         scroll_elasticity_helper_->SetStretchAmount(gfx::Vector2dF(5.f, 6.f));
+        PostSetNeedsCommitToMainThread();
         break;
       case 2:
         // We should have some overscroll.
@@ -5965,12 +5973,14 @@ class LayerTreeHostTestElasticOverscroll : public LayerTreeHostTest {
                          content_layer_impl->DrawTransform());
 
         scroll_elasticity_helper_->SetStretchAmount(gfx::Vector2dF(3.f, 2.f));
+        PostSetNeedsCommitToMainThread();
         break;
       case 3:
         VerifyOverscroll(gfx::Vector2dF(3.f, 2.f),
                          content_layer_impl->DrawTransform());
 
         scroll_elasticity_helper_->SetStretchAmount(gfx::Vector2dF());
+        PostSetNeedsCommitToMainThread();
         break;
       case 4:
         // In the final frame there is no more overscroll.
@@ -5978,15 +5988,16 @@ class LayerTreeHostTestElasticOverscroll : public LayerTreeHostTest {
         EndTest();
         break;
       default:
-        NOTREACHED();
+        break;
     }
   }
 
-  void CleanupBeforeDestroy() override {
+  void AfterTest() override {
     // Clean up non-owned pointers before the LayerTreeHost is destroyed and
     // releases the objects they point to.
     root_layer_ = nullptr;
     scroll_elasticity_helper_ = nullptr;
+    LayerTreeHostTest::AfterTest();
   }
 
  private:
@@ -6798,10 +6809,11 @@ class LayerTreeHostTestGpuRasterizationEnabledWithMSAA : public LayerTreeTest {
     EndTest();
   }
 
-  void CleanupBeforeDestroy() override {
+  void AfterTest() override {
     // Clear the non-ref pointer before LayerTreeHost is destroyed to avoid a
     // dangling pointer.
     layer_ = nullptr;
+    LayerTreeTest::AfterTest();
   }
 
   FakeContentLayerClient layer_client_;
@@ -7253,6 +7265,8 @@ class LayerTreeHostTestCrispUpAfterPinchEnds : public LayerTreeHostTest {
   }
 
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
+
+  void AfterTest() override { host_impl_ = nullptr; }
 
   DrawResult PrepareToDrawOnThread(LayerTreeHostImpl* host_impl,
                                    LayerTreeHostImpl::FrameData* frame_data,
@@ -8813,7 +8827,7 @@ class LayerTreeHostTestRequestForceSendMetadata
       target_->OnRenderFrameSubmission(render_frame_metadata,
                                        compositor_frame_metadata, force_send);
     }
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
     void DidEndScroll() override { target_->DidEndScroll(); }
 #endif
 
@@ -8868,7 +8882,7 @@ class LayerTreeHostTestRequestForceSendMetadata
     if (force_send)
       num_force_sends_++;
   }
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   void DidEndScroll() override {}
 #endif
 
@@ -9071,7 +9085,7 @@ class LayerTreeHostTestDelegatedInkMetadataBase
       target_->OnRenderFrameSubmission(render_frame_metadata,
                                        compositor_frame_metadata, force_send);
     }
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
     void DidEndScroll() override { target_->DidEndScroll(); }
 #endif
 
@@ -9148,7 +9162,7 @@ class LayerTreeHostTestDelegatedInkMetadataBase
     ExpectMetadata(render_frame_metadata.delegated_ink_metadata,
                    compositor_frame_metadata->delegated_ink_metadata.get());
   }
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   void DidEndScroll() override {}
 #endif
 
@@ -9235,7 +9249,8 @@ class LayerTreeHostTestDelegatedInkMetadataCompositorOnlyFrame
     } else if (begin_frame_count_ == 4) {
       PostIssueBeginFrame(false);
     }
-    host_impl->SetNeedsRedraw();
+    host_impl->SetNeedsRedraw(/*animation_only=*/false,
+                              /*skip_if_inside_draw=*/false);
     host_impl->SetViewportDamage(gfx::Rect(1, 1));
   }
 
@@ -9703,79 +9718,6 @@ class LayerTreeHostTestIgnoreEventsMetricsForNoUpdate
 // TODO(crbug.com/40756887): Disabled because test is flaky on Linux and CrOS.
 // MULTI_THREAD_TEST_F(LayerTreeHostTestIgnoreEventsMetricsForNoUpdate);
 
-class LayerTreeHostUkmSmoothnessMetric : public LayerTreeTest {
- public:
-  LayerTreeHostUkmSmoothnessMetric() = default;
-  ~LayerTreeHostUkmSmoothnessMetric() override = default;
-
-  void InitializeSettings(LayerTreeSettings* settings) override {
-    settings->commit_to_active_tree = false;
-  }
-
-  void SetupTree() override {
-    LayerTreeTest::SetupTree();
-    shmem_region_ = layer_tree_host()->CreateSharedMemoryForSmoothnessUkm();
-    shmem_region_dropped_frames_ =
-        layer_tree_host()->CreateSharedMemoryForDroppedFramesUkm();
-  }
-
-  void BeginTest() override {
-    // Start with requesting main-frames.
-    PostSetNeedsCommitToMainThread();
-  }
-
-  void AfterTest() override {
-    ASSERT_TRUE(shmem_region_.IsValid());
-    auto mapping = shmem_region_.Map();
-    auto* smoothness = mapping.GetMemoryAs<UkmSmoothnessDataShared>();
-    ASSERT_TRUE(smoothness);
-    // It is not always possible to guarantee an exact number of dropped frames.
-    // So validate that there are non-zero dropped frames.
-    EXPECT_GT(smoothness->data.avg_smoothness, 0);
-
-    ASSERT_TRUE(shmem_region_dropped_frames_.IsValid());
-    // TODO(crbug.com/395868899): Test that values are exported here.
-  }
-
-  void WillBeginImplFrameOnThread(LayerTreeHostImpl* host_impl,
-                                  const viz::BeginFrameArgs& args,
-                                  bool has_damage) override {
-    last_args_ = args;
-    if (!fcp_sent_) {
-      host_impl->dropped_frame_counter()->OnFirstContentfulPaintReceived();
-      fcp_sent_ = true;
-    }
-    host_impl->frame_sorter_for_testing()->AddNewFrame(last_args_);
-  }
-
-  void DidFinishImplFrameOnThread(LayerTreeHostImpl* host_impl) override {
-    if (TestEnded())
-      return;
-
-    if (frames_counter_ == 0) {
-      EndTest();
-      return;
-    }
-
-    // Mark every frame as a dropped frame affecting smoothness.
-    // Delegates to DFC::AddSortedFrame, which calls DFC::OnEndFrame.
-    host_impl->frame_sorter_for_testing()->AddFrameResult(
-        last_args_, CreateFakeImplDroppedFrameInfo());
-    host_impl->SetNeedsRedraw();
-    --frames_counter_;
-  }
-
- private:
-  const uint32_t kTotalFramesForTest = 5;
-  uint32_t frames_counter_ = kTotalFramesForTest;
-  bool fcp_sent_ = false;
-  viz::BeginFrameArgs last_args_;
-  base::ReadOnlySharedMemoryRegion shmem_region_;
-  base::ReadOnlySharedMemoryRegion shmem_region_dropped_frames_;
-};
-
-MULTI_THREAD_TEST_F(LayerTreeHostUkmSmoothnessMetric);
-
 class LayerTreeHostUkmSmoothnessMemoryOwnership : public LayerTreeTest {
  public:
   LayerTreeHostUkmSmoothnessMemoryOwnership() = default;
@@ -9798,7 +9740,6 @@ class LayerTreeHostUkmSmoothnessMemoryOwnership : public LayerTreeTest {
                                   bool has_damage) override {
     last_args_ = args;
     if (!fcp_sent_) {
-      host_impl->dropped_frame_counter()->OnFirstContentfulPaintReceived();
       fcp_sent_ = true;
     }
     host_impl->SetNeedsCommit();
@@ -9819,13 +9760,9 @@ class LayerTreeHostUkmSmoothnessMemoryOwnership : public LayerTreeTest {
     // Delegates to DFC::AddSortedFrame, which calls DFC::OnEndFrame.
     host_impl->frame_sorter_for_testing()->AddFrameResult(
         last_args_, CreateFakeImplDroppedFrameInfo());
-    host_impl->SetNeedsRedraw();
+    host_impl->SetNeedsRedraw(/*animation_only=*/false,
+                              /*skip_if_inside_draw=*/false);
     --frames_counter_;
-  }
-
-  void DidBeginMainFrame() override {
-    // Re-request the shared memory region in each frame.
-    shmem_region_ = layer_tree_host()->CreateSharedMemoryForSmoothnessUkm();
   }
 
  private:
@@ -9833,7 +9770,6 @@ class LayerTreeHostUkmSmoothnessMemoryOwnership : public LayerTreeTest {
   uint32_t frames_counter_ = kTotalFramesForTest;
   bool fcp_sent_ = false;
   viz::BeginFrameArgs last_args_;
-  base::ReadOnlySharedMemoryRegion shmem_region_;
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostUkmSmoothnessMemoryOwnership);
@@ -10217,7 +10153,8 @@ class LayerTreeHostTestDelayRecreateTiling
       host_impl->pending_tree()->set_needs_update_draw_properties();
 
       // to make sure Draw happen
-      host_impl->SetNeedsRedraw();
+      host_impl->SetNeedsRedraw(/*animation_only=*/false,
+                                /*skip_if_inside_draw=*/false);
     }
   }
 
@@ -10371,7 +10308,8 @@ class LayerTreeHostTestInvalidateImplSideForRerasterTiling
         // implside will be requested for rerastering tiling.
         ClearAnimationForLayer(host_impl->active_tree(), target_layer);
         ClearAnimationForLayer(host_impl->recycle_tree(), target_layer);
-        host_impl->SetNeedsRedraw();
+        host_impl->SetNeedsRedraw(/*animation_only=*/false,
+                                  /*skip_if_inside_draw=*/false);
       }
     }
   }
@@ -10399,7 +10337,8 @@ class LayerTreeHostTestInvalidateImplSideForRerasterTiling
 
           // trigger draw to check if invalidating implside is not triggered
           // if animation is still active.
-          host_impl->SetNeedsRedraw();
+          host_impl->SetNeedsRedraw(/*animation_only=*/false,
+                                    /*skip_if_inside_draw=*/false);
         } else {
           // check if invalidation implside was requested successfully.
           // new tiling should be created.
@@ -10504,10 +10443,11 @@ class LayerTreeHostTestBeginFramePausedChanged : public LayerTreeHostTest {
 
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
-  void CleanupBeforeDestroy() override {
+  void AfterTest() override {
     // Clear the non-ref pointers before LayerTreeHost is destroyed to avoid a
     // dangling pointer.
     layer_tree_frame_sink_ = nullptr;
+    LayerTreeHostTest::AfterTest();
   }
 
   void ReadyToCommitOnThread(LayerTreeHostImpl* host_impl) override {
@@ -10964,6 +10904,200 @@ class LayerTreeHostTestDamagePropagatesFromViewTransitionSurface
 };
 MULTI_THREAD_TEST_F(LayerTreeHostTestDamagePropagatesFromViewTransitionSurface);
 
+class LayerTreeHostTestBlendingOffWhenDrawingOpaqueLayers
+    : public LayerTreeHostTest {
+ public:
+  void SetupTree() override {
+    SetInitialRootBounds(kRootLayerBounds);
+    LayerTreeHostTest::SetupTree();
+    root_ = layer_tree_host()->root_layer();
+    root_->SetMasksToBounds(false);
+
+    layer1_client_.set_fill_with_nonsolid_color(true);
+    layer1_client_.set_bounds(kLayer1Bounds);
+    layer1_ = PictureLayer::Create(&layer1_client_);
+    layer1_->SetBounds(kLayer1Bounds);
+    layer1_->SetIsDrawable(true);
+    layer1_->SetPosition(gfx::PointF(kLayer1Position));
+    root_->AddChild(layer1_);
+
+    layer2_client_.set_fill_with_nonsolid_color(true);
+    layer2_client_.set_bounds(kLayer2Bounds);
+    layer2_ = PictureLayer::Create(&layer2_client_);
+    layer2_->SetBounds(kLayer2Bounds);
+    layer2_->SetIsDrawable(true);
+    layer2_->SetPosition(gfx::PointF(kLayer2Position));
+    layer1_->AddChild(layer2_);
+  }
+
+  void BeginTest() override {
+    main_thread_state_ = kStateInitial;
+    disp_thread_state_ = kStateInitial;
+    PostSetNeedsCommitToMainThread();
+  }
+
+  void DidCommitAndDrawFrame() override {
+    main_thread_state_ = static_cast<State>(main_thread_state_ + 1);
+    if (main_thread_state_ == kStateDone) {
+      EndTest();
+      return;
+    }
+
+    // Reset layers to a known state before applying new state.
+    layer1_->SetContentsOpaque(false);
+    layer1_->SetOpacity(1.f);
+    layer1_->SetForceRenderSurfaceForTesting(false);
+
+    layer2_->SetContentsOpaque(false);
+    layer2_->SetOpacity(1.f);
+    layer2_->SetHideLayerAndSubtree(false);
+
+    switch (main_thread_state_) {
+      case kStateInitial:
+        NOTREACHED();
+      case kStateOpaque:
+        layer1_->SetContentsOpaque(true);
+        layer2_->SetHideLayerAndSubtree(true);
+        break;
+      case kStateTranslucentContent:
+        layer1_->SetContentsOpaque(false);
+        layer2_->SetHideLayerAndSubtree(true);
+        break;
+      case kStateTranslucentOpacity:
+        layer1_->SetContentsOpaque(true);
+        layer1_->SetOpacity(0.5f);
+        layer2_->SetHideLayerAndSubtree(true);
+        break;
+      case kStateTranslucentOpacityAndContent:
+        layer1_->SetContentsOpaque(false);
+        layer1_->SetOpacity(0.5f);
+        layer2_->SetHideLayerAndSubtree(true);
+        break;
+      case kStateTwoOpaqueLayers:
+        layer1_->SetContentsOpaque(true);
+        layer2_->SetContentsOpaque(true);
+        break;
+      case kStateOpaqueChildOfTranslucentParent:
+        layer1_->SetContentsOpaque(false);
+        layer2_->SetContentsOpaque(true);
+        break;
+      case kStateSurfaceOpaqueChildOfTranslucentParent:
+        layer1_->SetContentsOpaque(true);
+        layer1_->SetOpacity(0.5f);
+        layer1_->SetForceRenderSurfaceForTesting(true);
+        layer2_->SetContentsOpaque(true);
+        break;
+      case kStateDone:
+        return;
+    }
+  }
+
+  void DisplayReceivedCompositorFrameOnThread(
+      const viz::CompositorFrame& frame) override {
+    const auto* pass = frame.render_pass_list.back().get();
+    const viz::DrawQuad* quad1 =
+        GetQuadForRect(*pass, gfx::Rect(kLayer1Position, kLayer1Bounds));
+    const viz::DrawQuad* quad2 = GetQuadForRect(
+        *pass, gfx::Rect(kLayer1Position + gfx::Vector2d(kLayer2Position.x(),
+                                                         kLayer2Position.y()),
+                         kLayer2Bounds));
+
+    switch (disp_thread_state_) {
+      case kStateInitial:
+        break;
+      case kStateOpaque:
+        ASSERT_TRUE(quad1);
+        EXPECT_FALSE(quad1->ShouldDrawWithBlending());
+        break;
+      case kStateTranslucentContent:
+        ASSERT_TRUE(quad1);
+        EXPECT_TRUE(quad1->ShouldDrawWithBlending());
+        break;
+      case kStateTranslucentOpacity:
+        ASSERT_TRUE(quad1);
+        EXPECT_TRUE(quad1->ShouldDrawWithBlending());
+        break;
+      case kStateTranslucentOpacityAndContent:
+        ASSERT_TRUE(quad1);
+        EXPECT_TRUE(quad1->ShouldDrawWithBlending());
+        break;
+      case kStateTwoOpaqueLayers:
+        ASSERT_TRUE(quad1);
+        EXPECT_FALSE(quad1->ShouldDrawWithBlending());
+        ASSERT_TRUE(quad2);
+        EXPECT_FALSE(quad2->ShouldDrawWithBlending());
+        break;
+      case kStateOpaqueChildOfTranslucentParent: {
+        ASSERT_TRUE(quad1);
+        EXPECT_TRUE(quad1->ShouldDrawWithBlending());
+        ASSERT_TRUE(quad2);
+        EXPECT_FALSE(quad2->ShouldDrawWithBlending());
+        break;
+      }
+      case kStateSurfaceOpaqueChildOfTranslucentParent: {
+        ASSERT_EQ(2u, frame.render_pass_list.size());
+        const auto* surface_pass = frame.render_pass_list.front().get();
+        // Quad positions should be surface-relative, so relative to
+        // layer 1's position.
+        const viz::DrawQuad* surface_quad1 = GetQuadForRect(
+            *surface_pass, gfx::Rect(gfx::Point(), kLayer1Bounds));
+        const viz::DrawQuad* surface_quad2 = GetQuadForRect(
+            *surface_pass, gfx::Rect(kLayer2Position, kLayer2Bounds));
+        ASSERT_TRUE(surface_quad1);
+        EXPECT_FALSE(surface_quad1->ShouldDrawWithBlending());
+        ASSERT_TRUE(surface_quad2);
+        EXPECT_FALSE(surface_quad2->ShouldDrawWithBlending());
+        break;
+      }
+      case kStateDone:
+        return;
+    }
+    disp_thread_state_ = static_cast<State>(disp_thread_state_ + 1);
+  }
+
+ protected:
+  enum State {
+    kStateInitial,
+    kStateOpaque,
+    kStateTranslucentContent,
+    kStateTranslucentOpacity,
+    kStateTranslucentOpacityAndContent,
+    kStateTwoOpaqueLayers,
+    kStateOpaqueChildOfTranslucentParent,
+    kStateSurfaceOpaqueChildOfTranslucentParent,
+    kStateDone,
+  };
+
+  const viz::DrawQuad* GetQuadForRect(const viz::CompositorRenderPass& pass,
+                                      const gfx::Rect& rect) {
+    for (auto* quad : pass.quad_list) {
+      gfx::Rect rect_in_target_space = MathUtil::MapEnclosingClippedRect(
+          quad->shared_quad_state->quad_to_target_transform, quad->rect);
+      if (rect_in_target_space == rect) {
+        return quad;
+      }
+    }
+    return nullptr;
+  }
+
+  const gfx::Point kLayer1Position = gfx::Point(10, 10);
+  const gfx::Point kLayer2Position = gfx::Point(50, 10);
+  const gfx::Size kLayer1Bounds = gfx::Size(30, 30);
+  const gfx::Size kLayer2Bounds = gfx::Size(30, 30);
+  const gfx::Size kRootLayerBounds = gfx::Size(100, 100);
+
+  State main_thread_state_;
+  State disp_thread_state_;
+  FakeContentLayerClient layer1_client_;
+  FakeContentLayerClient layer2_client_;
+  scoped_refptr<Layer> root_;
+  scoped_refptr<PictureLayer> layer1_;
+  scoped_refptr<PictureLayer> layer2_;
+};
+
+SINGLE_AND_MULTI_THREAD_TEST_F(
+    LayerTreeHostTestBlendingOffWhenDrawingOpaqueLayers);
+
 class LayerTreeHostTestBlockOnCommitAfterInputEvent : public LayerTreeHostTest {
  protected:
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
@@ -11048,7 +11182,7 @@ class LayerTreeHostTestDetachInputDelegateAndRenderFrameObserver
         const RenderFrameMetadata& render_frame_metadata,
         viz::CompositorFrameMetadata* compositor_frame_metadata,
         bool force_send) override {}
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
     void DidEndScroll() override {}
 #endif
 
@@ -11155,6 +11289,133 @@ class LayerTreeHostTestCustomPropertyTreeDelegate : public LayerTreeHostTest {
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostTestCustomPropertyTreeDelegate);
+
+// This test fixture verifies the fix for a bug where a TextureLayer that is
+// created with a resource while off-screen fails to have that resource
+// correctly pushed to Viz after being scrolled into the view. The bug was
+// specific to the TreesInViz architecture.
+class LayerTreeHostTestTextureLayerOffscreenScroll : public LayerTreeTest {
+ protected:
+  void SetupTree() override {
+    LayerTreeTest::SetupTree();
+    Layer* root = layer_tree_host()->root_layer();
+    ASSERT_TRUE(root);
+
+    // The root layer acts as the viewport.
+    root->SetBounds(gfx::Size(100, 100));
+
+    // Create a scrollable layer that is a child of the root.
+    scroll_layer_ = Layer::Create();
+    scroll_layer_->SetElementId(
+        LayerIdToElementIdForTesting(scroll_layer_->id()));
+    scroll_layer_->SetBounds(gfx::Size(100, 3000));
+    scroll_layer_->SetScrollable(root->bounds());
+    root->AddChild(scroll_layer_);
+
+    texture_layer_ = TextureLayer::Create(nullptr);
+    texture_layer_->SetIsDrawable(true);
+
+    // Position the layer far down the page, well outside the initial viewport.
+    texture_layer_->SetPosition(gfx::PointF(0, 2000));
+    texture_layer_->SetBounds(gfx::Size(10, 10));
+    scroll_layer_->AddChild(texture_layer_);
+
+    // The resource is created on the main thread and sent to the impl thread.
+    auto resource = MakeResource();
+    texture_layer_->SetTransferableResource(resource, base::DoNothing());
+  }
+
+  viz::TransferableResource MakeResource() {
+    // Prepare a transferable resource for the TextureLayer. This uses the
+    // "push" model, where the main thread provides the resource directly.
+    auto mailbox = gpu::Mailbox::Generate();
+    // Use a verified SyncToken as is conventional in tests.
+    gpu::SyncToken sync_token(gpu::CommandBufferNamespace::GPU_IO,
+                              gpu::CommandBufferId::FromUnsafeValue(0x123),
+                              0x456);
+    sync_token.SetVerifyFlush();
+
+    // Correctly create a TransferableResource. The MakeGpu factory is private,
+    // so we use the public constructor and populate the fields.
+    auto resource = viz::TransferableResource();
+    resource.format = viz::SinglePlaneFormat::kRGBA_8888;
+    resource.size = texture_layer_->bounds();
+    resource.set_mailbox(mailbox);
+    resource.set_texture_target(GL_TEXTURE_2D);
+    resource.set_sync_token(sync_token);
+
+    return resource;
+  }
+
+  void BeginTest() override {
+    // Set the initial viewport and kick off the first frame.
+    layer_tree_host()->SetViewportRectAndScale(gfx::Rect(100, 100), 1.f,
+                                               viz::LocalSurfaceId());
+    PostSetNeedsCommitToMainThread();
+  }
+
+  void DidCommitAndDrawFrame() override {
+    // This runs on the MAIN THREAD.
+    // After the first frame has been committed and drawn (with the layer
+    // off-screen), we trigger the scroll.
+    if (layer_tree_host()->SourceFrameNumber() == 1) {
+      // Scroll the scroll layer down to make the texture_layer_ visible.
+      // Setting the scroll offset on the main thread will dirty the tree and
+      // automatically trigger a second commit.
+      scroll_layer_->SetScrollOffset(gfx::PointF(0, 2000));
+    }
+  }
+
+  void DisplayReceivedCompositorFrameOnThread(
+      const viz::CompositorFrame& frame) override {
+    // This method runs on IMPL thread.
+    ++frame_count_on_impl_thread_;
+    if (frame_count_on_impl_thread_ == 1) {
+      // FRAME 1: VERIFY THE BUGGY STATE
+      // The layer is off-screen. Its resource should not have been imported on
+      // the compositor thread, so no quad with a valid ID should be sent to
+      // Viz.
+      bool found_texture_quad = false;
+      for (const auto& pass : frame.render_pass_list) {
+        for (const auto* quad : pass->quad_list) {
+          if (quad->material == viz::DrawQuad::Material::kTextureContent) {
+            found_texture_quad = true;
+          }
+        }
+      }
+      EXPECT_FALSE(found_texture_quad)
+          << "Texture quad should not be present before layer is visible.";
+    } else if (frame_count_on_impl_thread_ == 2) {
+      // FRAME 2: VERIFY THE FIX
+      // The layer is now on-screen. WillDraw() should have run, importing the
+      // resource and (with the fix) triggering a re-push to Viz.
+      bool found_texture_quad_with_valid_resource_id = false;
+      for (const auto& pass : frame.render_pass_list) {
+        for (const auto* quad : pass->quad_list) {
+          if (quad->material == viz::DrawQuad::Material::kTextureContent) {
+            const auto* texture_quad = viz::TextureDrawQuad::MaterialCast(quad);
+            if (texture_quad->resource_id != viz::kInvalidResourceId) {
+              found_texture_quad_with_valid_resource_id = true;
+            }
+          }
+        }
+      }
+      EXPECT_TRUE(found_texture_quad_with_valid_resource_id)
+          << "Texture quad with a valid ResourceID should be present "
+             "after layer is scrolled into view.";
+      EndTest();
+    }
+  }
+
+  // Variable used to track frame count on impl thread since
+  // LayerTreeHost::SourceFrameNumber() can only be called on main thread.
+  int frame_count_on_impl_thread_ = 0;
+  scoped_refptr<Layer> scroll_layer_;
+  scoped_refptr<TextureLayer> texture_layer_;
+};
+
+// This macro registers the test to be run.
+SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostTestTextureLayerOffscreenScroll);
 
 }  // namespace
 }  // namespace cc

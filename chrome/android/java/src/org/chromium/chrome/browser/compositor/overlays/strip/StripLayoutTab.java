@@ -9,26 +9,31 @@ import static org.chromium.chrome.browser.tasks.tab_management.TabUiThemeUtil.FO
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.content.Context;
+import android.content.res.TypedArray;
 import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.FloatProperty;
+import android.util.Size;
 
 import androidx.annotation.ColorInt;
 import androidx.annotation.DrawableRes;
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ObserverList;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.compositor.layouts.LayoutRenderHost;
 import org.chromium.chrome.browser.compositor.layouts.LayoutUpdateHost;
 import org.chromium.chrome.browser.compositor.layouts.components.CompositorButton;
 import org.chromium.chrome.browser.compositor.layouts.components.CompositorButton.ButtonType;
 import org.chromium.chrome.browser.compositor.layouts.components.TintedCompositorButton;
+import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutTabDelegate.VisualState;
 import org.chromium.chrome.browser.compositor.overlays.strip.TabLoadTracker.TabLoadTrackerCallback;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.layouts.animation.CompositorAnimator;
 import org.chromium.chrome.browser.layouts.components.VirtualView;
 import org.chromium.chrome.browser.tab.Tab;
@@ -40,12 +45,12 @@ import org.chromium.ui.util.ColorUtils;
 import org.chromium.ui.util.MotionEventUtils;
 
 import java.util.List;
-import java.util.Optional;
 
 /**
  * {@link StripLayoutTab} is used to keep track of the strip position and rendering information for
  * a particular tab so it can draw itself onto the GL canvas.
  */
+@NullMarked
 public class StripLayoutTab extends StripLayoutView {
     /** An observer interface for StripLayoutTab. */
     public interface Observer {
@@ -66,20 +71,6 @@ public class StripLayoutTab extends StripLayoutView {
                 @Override
                 public Float get(StripLayoutTab object) {
                     return object.getOffsetY();
-                }
-            };
-
-    /** A property for animations to use for changing the width of the tab. */
-    public static final FloatProperty<StripLayoutTab> WIDTH =
-            new FloatProperty<>("width") {
-                @Override
-                public void setValue(StripLayoutTab object, float value) {
-                    object.setWidth(value);
-                }
-
-                @Override
-                public Float get(StripLayoutTab object) {
-                    return object.getWidth();
                 }
             };
 
@@ -117,17 +108,26 @@ public class StripLayoutTab extends StripLayoutView {
     // Close Button Constants
     // Close button padding value comes from the built-in padding in the source png.
     private static final int CLOSE_BUTTON_PADDING_DP = 7;
-    private static final int CLOSE_BUTTON_OFFSET_X = 12;
-    private static final int CLOSE_BUTTON_WIDTH_DP = 48;
+    // 16dp(Folio foot) + 10dp(Close end offset) - 7dp(Close icon padding) = 19dp.
+    private static final int DESKTOP_CLOSE_BUTTON_OFFSET_X_DP = 19;
+    // 7dp(ContentOffsetY) - (24dp(Close button height) - 20dp(Divider height)) / 2 + 2dp(TabDrawY)
+    // = 7dp.
+    private static final int DESKTOP_CLOSE_BUTTON_OFFSET_Y_DP = 7;
 
     // Strip Tab Offset Constants
     protected static final float TOP_MARGIN_DP = 2.f;
     private static final float FOLIO_CONTENT_OFFSET_Y = 8.f;
+    private static final int TAB_TOUCH_TARGET_END_OFFSET_X_DP = 12;
 
     // Visibility Constants.
     private static final float FAVICON_WIDTH = 16.f;
     private static final float FAVICON_PADDING = 26.f;
     protected static final float MIN_WIDTH = FAVICON_WIDTH + (FOLIO_FOOT_LENGTH_DP * 2);
+    // TODO(crbug.com/454048975): Check media indicator constants with UX.
+    private static final float MEDIA_INDICATOR_WIDTH = 16.f;
+    private static final float WIDTH_TO_HIDE_ICON = 86.f;
+    private static final float WIDTH_TO_HIDE_FAVICON_FOR_MEDIA_INDICATOR =
+            WIDTH_TO_HIDE_ICON + MEDIA_INDICATOR_WIDTH;
 
     // Divider Constants
     private static final int DIVIDER_OFFSET_X = 13;
@@ -141,21 +141,25 @@ public class StripLayoutTab extends StripLayoutView {
 
     private final TabLoadTracker mLoadTracker;
     private final LayoutUpdateHost mUpdateHost;
+    private final Size mCloseButtonSize;
     private TintedCompositorButton mCloseButton;
 
-    private boolean mIsDying;
     private boolean mIsClosed;
     private boolean mIsSelected;
+    private boolean mIsPinned;
+    private boolean mIsHovered;
+    private boolean mIsMultiSelected;
     private boolean mCanShowCloseButton = true;
     private boolean mFolioAttached = true;
     private boolean mStartDividerVisible;
     private boolean mEndDividerVisible;
     private boolean mForceHideEndDivider;
+    private boolean mSkipAsyncClosure;
     private float mBottomMargin;
     private float mContainerOpacity;
 
     // For avoiding unnecessary accessibility description updates.
-    private Optional<String> mCachedA11yDescriptionTitle = Optional.empty();
+    private @Nullable String mCachedA11yDescriptionTitle;
     private @StringRes int mCachedA11yTabstripIdentifierResId;
 
     // Startup parameters
@@ -164,7 +168,7 @@ public class StripLayoutTab extends StripLayoutView {
     private boolean mShowingCloseButton = true;
 
     // Content Animations
-    private CompositorAnimator mButtonOpacityAnimation;
+    private @Nullable CompositorAnimator mButtonOpacityAnimation;
 
     private float mLoadingSpinnerRotationDegrees;
 
@@ -172,6 +176,8 @@ public class StripLayoutTab extends StripLayoutView {
     private final RectF mClosePlacement = new RectF();
 
     private final ObserverList<Observer> mObservers = new ObserverList<>();
+
+    private @VisualState int mVisualState = VisualState.NORMAL;
 
     /**
      * Create a {@link StripLayoutTab} that represents the {@link Tab} with an id of {@code id}.
@@ -192,9 +198,11 @@ public class StripLayoutTab extends StripLayoutView {
             StripLayoutViewOnKeyboardFocusHandler keyboardFocusHandler,
             TabLoadTrackerCallback loadTrackerCallback,
             LayoutUpdateHost updateHost,
-            boolean incognito) {
+            boolean incognito,
+            boolean isPinned) {
         super(incognito, clickHandler, keyboardFocusHandler, context);
         mTabId = id;
+        mIsPinned = isPinned;
         mLoadTracker = new TabLoadTracker(id, loadTrackerCallback);
         mUpdateHost = updateHost;
         mCloseButton =
@@ -250,7 +258,75 @@ public class StripLayoutTab extends StripLayoutView {
                 apsBackgroundIncognitoPressedTint);
 
         mCloseButton.setIncognito(incognito);
+        mCloseButtonSize = getCloseButtonSize();
         resetCloseRect();
+    }
+
+    /**
+     * Sets the selected state for this tab.
+     *
+     * @param isSelected Whether the tab is selected.
+     */
+    public void setIsSelected(boolean isSelected) {
+        mIsSelected = isSelected;
+    }
+
+    /** Gets the selected state for this tab. */
+    public boolean getIsSelected() {
+        return mIsSelected;
+    }
+
+    /**
+     * Sets the hovered state for this tab.
+     *
+     * @param isHovered Whether the tab is hovered.
+     */
+    public void setIsHovered(boolean isHovered) {
+        mIsHovered = isHovered;
+    }
+
+    /** Gets the hovered state for this tab. */
+    public boolean getIsHovered() {
+        return mIsHovered;
+    }
+
+    /** Sets the {@link VisualState} for this tab. */
+    public void setVisualState(@VisualState int visualState) {
+        mVisualState = visualState;
+    }
+
+    /** Gets the {@link VisualState} for this tab. */
+    public int getVisualState() {
+        return mVisualState;
+    }
+
+    /**
+     * Sets the multi-selected state for this tab.
+     *
+     * @param isMultiSelected whether this tab is multi-selected. ie, Ctrl Clicked or Shift Clicked.
+     */
+    public void setIsMultiSelected(boolean isMultiSelected) {
+        mIsMultiSelected = isMultiSelected;
+    }
+
+    /** gets the multi-selected state of this tab */
+    public boolean getIsMultiSelected() {
+        return mIsMultiSelected;
+    }
+
+    /**
+     * Sets whether this tab has been pinned.
+     *
+     * @param isPinned whether this tab has been pinned.
+     */
+    public void setIsPinned(boolean isPinned) {
+        // TODO(crbug.com/444267914): Flag guard #setIsPinned in TabImpl too.
+        mIsPinned = StripLayoutUtils.isTabPinningFromStripEnabled() ? isPinned : false;
+    }
+
+    /** Gets whether this tab has been pinned */
+    public boolean getIsPinned() {
+        return mIsPinned;
     }
 
     /**
@@ -268,7 +344,7 @@ public class StripLayoutTab extends StripLayoutView {
 
     @Override
     public void getVirtualViews(List<VirtualView> views) {
-        if (isCollapsed() || mIsDying) return;
+        if (isCollapsed() || isDying()) return;
         super.getVirtualViews(views);
         if (mShowingCloseButton || mIsSelected) mCloseButton.getVirtualViews(views);
     }
@@ -291,7 +367,7 @@ public class StripLayoutTab extends StripLayoutView {
 
         // Cache the title + resource ID used to create this description so we can avoid unnecessary
         // updates.
-        mCachedA11yDescriptionTitle = Optional.ofNullable(title);
+        mCachedA11yDescriptionTitle = title;
         mCachedA11yTabstripIdentifierResId = newA11yTabstripIdentifierResId;
     }
 
@@ -307,11 +383,11 @@ public class StripLayoutTab extends StripLayoutView {
             // A different resource ID was used to create the description.
             return true;
         }
-        if (mCachedA11yDescriptionTitle.isPresent() && newTitle == null) {
+        if (mCachedA11yDescriptionTitle != null && newTitle == null) {
             // Going from non-null title to null title.
             return true;
         }
-        if (newTitle != null && !newTitle.equals(mCachedA11yDescriptionTitle.orElse(null))) {
+        if (newTitle != null && !newTitle.equals(mCachedA11yDescriptionTitle)) {
             // Going from non-null title to some other title (may even be null).
             return true;
         }
@@ -388,22 +464,33 @@ public class StripLayoutTab extends StripLayoutView {
     }
 
     /**
-     * @param foreground Whether or not this tab is a foreground tab.
-     * @param hovered Whether or not this tab is hovered on.
-     * @return The tint color resource that represents the tab background. A foreground tab will
-     *     have the same tint irrespective of its hover state.
+     * Gets the tint color for the tab background based on its current VisualState.
+     *
+     * @return The tint color resource that represents the tab background.
      */
-    public @ColorInt int getTint(boolean foreground, boolean hovered) {
-        // TODO(crbug.com/40888366): Avoid calculating every time. Instead, store the tab's
-        //  color and only re-determine when the color could have changed (i.e. on selection).
-        if (foreground) {
-            return TabUiThemeUtil.getTabStripSelectedTabColor(mContext, isIncognito());
-        } else if (hovered) {
-            return TabUiThemeUtil.getHoveredTabContainerColor(mContext, isIncognito());
-        } else if (mIsPlaceholder) {
-            return TabUiThemeUtil.getTabStripStartupContainerColor(mContext);
+    public @ColorInt int getTint() {
+        switch (mVisualState) {
+            case VisualState.SELECTED_HOVERED:
+                return TabUiThemeUtil.getTabStripSelectedTabColor(mContext, isIncognito());
+            case VisualState.SELECTED:
+                return TabUiThemeUtil.getTabStripSelectedTabColor(mContext, isIncognito());
+            case VisualState.NON_DRAG_REORDERING:
+                return TabUiThemeUtil.getTabStripBackgroundColor(mContext, isIncognito());
+            case VisualState.MULTISELECT_HOVERED:
+                return TabUiThemeUtil.getTabStripMultiSelectedHoveredTabColor(
+                        mContext, isIncognito());
+            case VisualState.MULTISELECT:
+                return TabUiThemeUtil.getTabStripMultiSelectedTabColor(mContext, isIncognito());
+            case VisualState.HOVERED:
+                return TabUiThemeUtil.getHoveredTabContainerColor(mContext, isIncognito());
+            case VisualState.PLACEHOLDER:
+                return TabUiThemeUtil.getTabStripStartupContainerColor(mContext);
+            case VisualState.NORMAL:
+                return ChromeColors.getDefaultBgColor(mContext, isIncognito());
+            default:
+                assert false : "Invalid Visual State";
+                return -1;
         }
-        return ChromeColors.getDefaultBgColor(mContext, isIncognito());
     }
 
     /**
@@ -469,23 +556,6 @@ public class StripLayoutTab extends StripLayoutView {
     }
 
     /**
-     * Mark this tab as in the process of dying. This lets us track which tabs are closed after
-     * animations.
-     *
-     * @param isDying Whether or not the tab is dying.
-     */
-    public void setIsDying(boolean isDying) {
-        mIsDying = isDying;
-    }
-
-    /**
-     * @return Whether or not the tab is dying.
-     */
-    public boolean isDying() {
-        return mIsDying;
-    }
-
-    /**
      * Mark this tab as closed. We can't immediately remove the tab from the TabModel, since doing
      * so may result in a concurrent modification exception. Track here to treat as removed.
      *
@@ -505,6 +575,23 @@ public class StripLayoutTab extends StripLayoutView {
      */
     public boolean isClosed() {
         return mIsClosed;
+    }
+
+    /**
+     * Mark that this tab is closing through the new tab closure flow, and needs to skip the async
+     * closure from the old tab closure flow. Can be removed once the migration is complete. See
+     * crbug.com/443337907.
+     */
+    public void setSkipAsyncClosure(boolean skipAsyncClosure) {
+        mSkipAsyncClosure = skipAsyncClosure;
+    }
+
+    /**
+     * Returns true if the tab should skip the async closure from the old tab closure flow. Can be
+     * removed once the migration is complete. See crbug.com/443337907.
+     */
+    public boolean shouldSkipAsyncClosure() {
+        return mSkipAsyncClosure;
     }
 
     /**
@@ -537,6 +624,11 @@ public class StripLayoutTab extends StripLayoutView {
     /** Called when this tab has finished loading resources. */
     public void loadingFinished() {
         mLoadTracker.loadingFinished();
+    }
+
+    /** Returns {@code true} if the tab should be visible. */
+    public boolean shouldBeVisible() {
+        return mIsSelected || mIsPlaceholder || mIsMultiSelected || getIsNonDragReordering();
     }
 
     /**
@@ -611,6 +703,11 @@ public class StripLayoutTab extends StripLayoutView {
         checkCloseButtonVisibility(animate);
     }
 
+    /** Returns whether the close button is allowed to be shown. */
+    public boolean canShowCloseButton() {
+        return mCanShowCloseButton;
+    }
+
     /** {@link StripLayoutView} Implementation */
     @Override
     public void setDrawX(float x) {
@@ -641,9 +738,13 @@ public class StripLayoutTab extends StripLayoutView {
     }
 
     @Override
-    public void setTouchTargetInsets(Float left, Float top, Float right, Float bottom) {
+    public void setTouchTargetInsets(
+            @Nullable Float left,
+            @Nullable Float top,
+            @Nullable Float right,
+            @Nullable Float bottom) {
         super.setTouchTargetInsets(left, top, right, bottom);
-        // The vertical insets of the close button should match that of the parent tab.
+
         mCloseButton.setTouchTargetInsets(null, top, null, bottom);
     }
 
@@ -744,7 +845,8 @@ public class StripLayoutTab extends StripLayoutView {
     }
 
     private RectF getCloseRect() {
-        int closeButtonWidth = CLOSE_BUTTON_WIDTH_DP;
+        int closeButtonWidth = mCloseButtonSize.getWidth();
+        int closeButtonHeight = mCloseButtonSize.getHeight();
         int closeButtonOffsetX = getCloseButtonOffsetX();
         if (!LocalizationUtils.isLayoutRtl()) {
             mClosePlacement.left = getWidth() - closeButtonWidth - closeButtonOffsetX;
@@ -754,19 +856,65 @@ public class StripLayoutTab extends StripLayoutView {
             mClosePlacement.right = closeButtonWidth + closeButtonOffsetX;
         }
 
-        mClosePlacement.top = 0;
-        mClosePlacement.bottom = getHeight();
+        mClosePlacement.top =
+                StripLayoutUtils.shouldApplyMoreDensity() ? DESKTOP_CLOSE_BUTTON_OFFSET_Y_DP : 0;
+        mClosePlacement.bottom =
+                StripLayoutUtils.shouldApplyMoreDensity()
+                        ? mClosePlacement.top + closeButtonHeight
+                        : getHeight();
 
         mClosePlacement.offset(getDrawX(), getDrawY());
         return mClosePlacement;
+    }
+
+    private Size getCloseButtonSize() {
+        float dpToPx = getDpToPx();
+        TypedArray closeAttributes =
+                mContext.obtainStyledAttributes(
+                        new int[] {R.attr.closeButtonWidth, R.attr.closeButtonHeight});
+        int widthPx = closeAttributes.getDimensionPixelSize(0, 0);
+        int heightPx = closeAttributes.getDimensionPixelSize(1, 0);
+        closeAttributes.recycle();
+        return new Size(Math.round(widthPx / dpToPx), Math.round(heightPx / dpToPx));
     }
 
     public int getCloseButtonPadding() {
         return CLOSE_BUTTON_PADDING_DP;
     }
 
+    public int getTabTouchTargetEndOffsetX() {
+        return TAB_TOUCH_TARGET_END_OFFSET_X_DP;
+    }
+
     public int getCloseButtonOffsetX() {
-        return CLOSE_BUTTON_OFFSET_X;
+        return StripLayoutUtils.shouldApplyMoreDensity()
+                ? DESKTOP_CLOSE_BUTTON_OFFSET_X_DP
+                : getTabTouchTargetEndOffsetX();
+    }
+
+    public boolean shouldHideFavicon(boolean mediaIndicatorIsPresent) {
+        if (mIsPinned) return mediaIndicatorIsPresent;
+
+        // TODO(crbug.com/439931221): Toggle the favicon visibility based on the close button's
+        // opacity.
+        final float width = getWidth();
+
+        if (mediaIndicatorIsPresent) {
+            float widthThreshold =
+                    mIsSelected ? WIDTH_TO_HIDE_FAVICON_FOR_MEDIA_INDICATOR : WIDTH_TO_HIDE_ICON;
+            return width <= widthThreshold;
+        }
+        return mIsSelected && width <= WIDTH_TO_HIDE_ICON;
+    }
+
+    public boolean shouldHideMediaIndicator() {
+        if (!ChromeFeatureList.sMediaIndicatorsAndroid.isEnabled()) return true;
+
+        return mIsSelected && getWidth() <= WIDTH_TO_HIDE_ICON;
+    }
+
+    public float getMediaIndicatorWidth() {
+        return MEDIA_INDICATOR_WIDTH;
     }
 
     @Override
@@ -787,10 +935,6 @@ public class StripLayoutTab extends StripLayoutView {
     /** {@return The width of the keyboard focus ring stroke and tab group color line in px} */
     public int getLineWidth() {
         return TabUiThemeUtil.getLineWidth(mContext);
-    }
-
-    public void setIsSelected(boolean isSelected) {
-        mIsSelected = isSelected;
     }
 
     // TODO(dtrainor): Don't animate this if we're selecting or deselecting this tab.
@@ -829,11 +973,11 @@ public class StripLayoutTab extends StripLayoutView {
         float leftInset;
         float rightInset;
         if (LocalizationUtils.isLayoutRtl()) {
-            leftInset = getCloseButtonOffsetX();
+            leftInset = getTabTouchTargetEndOffsetX();
             rightInset = FOLIO_FOOT_LENGTH_DP;
         } else {
             leftInset = FOLIO_FOOT_LENGTH_DP;
-            rightInset = getCloseButtonOffsetX();
+            rightInset = getTabTouchTargetEndOffsetX();
         }
         return new float[] {leftInset, rightInset};
     }

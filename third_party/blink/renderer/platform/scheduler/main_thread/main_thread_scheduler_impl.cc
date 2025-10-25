@@ -52,17 +52,17 @@
 #include "third_party/blink/renderer/platform/scheduler/common/process_state.h"
 #include "third_party/blink/renderer/platform/scheduler/common/task_priority.h"
 #include "third_party/blink/renderer/platform/scheduler/common/throttling/task_queue_throttler.h"
-#include "third_party/blink/renderer/platform/scheduler/common/tracing_helper.h"
 #include "third_party/blink/renderer/platform/scheduler/main_thread/agent_group_scheduler_impl.h"
 #include "third_party/blink/renderer/platform/scheduler/main_thread/frame_scheduler_impl.h"
 #include "third_party/blink/renderer/platform/scheduler/main_thread/main_thread_impl.h"
-#include "third_party/blink/renderer/platform/scheduler/main_thread/main_thread_metrics_helper.h"
 #include "third_party/blink/renderer/platform/scheduler/main_thread/page_scheduler_impl.h"
 #include "third_party/blink/renderer/platform/scheduler/main_thread/pending_user_input.h"
 #include "third_party/blink/renderer/platform/scheduler/main_thread/task_type_names.h"
+#include "third_party/blink/renderer/platform/scheduler/main_thread/use_case.h"
 #include "third_party/blink/renderer/platform/scheduler/main_thread/widget_scheduler_impl.h"
 #include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "third_party/perfetto/protos/perfetto/trace/track_event/chrome_renderer_scheduler_state.pbzero.h"
 #include "third_party/perfetto/protos/perfetto/trace/track_event/track_event.pbzero.h"
 #include "v8/include/v8.h"
@@ -176,15 +176,22 @@ BASE_FEATURE_PARAM(base::TimeDelta,
                    "busy_loop_for",
                    base::Milliseconds(2));
 
+// Use PerformanceScenario instead of UseCase to compute the current RAILMode.
+BASE_FEATURE(kComputeCurrentRailModeFromPerformanceScenario,
+             base::FEATURE_DISABLED_BY_DEFAULT);
+// Treat "input" as "loading when computing the current RAILMode.
+BASE_FEATURE(kRAILInputAsLoading, base::FEATURE_DISABLED_BY_DEFAULT);
+// Do not call |SetIsLoading|. This is used for a holdback experiment to
+// determine the impact of |SetIsLoading|.
+BASE_FEATURE(kSetIsLoadingAblation, base::FEATURE_DISABLED_BY_DEFAULT);
+
 void MaybeSetBusyLoop(raw_ptr<base::MessagePump> message_pump,
-                      bool backgrounded) {
+                      double scale_factor) {
   if (!message_pump || !base::FeatureList::IsEnabled(kBusyLoopOnRendererMain)) {
     return;
   }
 
-  base::TimeDelta busy_loop_duration =
-      backgrounded ? base::Microseconds(0) : kBusyLoopTime.Get();
-  message_pump->SetBusyLoop(busy_loop_duration);
+  message_pump->SetBusyLoop(kBusyLoopTime.Get() * scale_factor);
 }
 
 }  // namespace
@@ -194,7 +201,7 @@ MainThreadSchedulerImpl::MainThreadSchedulerImpl(
     : MainThreadSchedulerImpl(sequence_manager.get()) {
   owned_sequence_manager_ = std::move(sequence_manager);
   MaybeSetBusyLoop(main_thread_only().message_pump,
-                   main_thread_only().renderer_backgrounded);
+                   main_thread_only().renderer_backgrounded ? 0. : 1.);
 }
 
 MainThreadSchedulerImpl::MainThreadSchedulerImpl(
@@ -392,9 +399,7 @@ MainThreadSchedulerImpl::MainThreadOnly::MainThreadOnly(
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
       background_status_changed_at(now),
-      metrics_helper(main_thread_scheduler_impl,
-                     now,
-                     kLaunchingProcessIsBackgrounded),
+      metrics_helper(now, kLaunchingProcessIsBackgrounded),
       task_description_for_tracing(
           std::nullopt,
           MakeNamedTrack("Scheduler.MainThreadTask", this),
@@ -466,11 +471,6 @@ MainThreadSchedulerImpl::AnyThread::AnyThread(
           MakeNamedTrack("Scheduler.WaitingForMeaningfulPaint", this),
           &main_thread_scheduler_impl->tracing_controller_,
           YesNoStateToString),
-      is_any_main_frame_loading(
-          false,
-          MakeNamedTrack("Scheduler.IsAnyMainFrameLoading", this),
-          &main_thread_scheduler_impl->tracing_controller_,
-          YesNoStateToString),
       have_seen_input_since_navigation(
           false,
           MakeNamedTrack("Scheduler.HaveSeenInputSinceNavigation", this),
@@ -533,15 +533,6 @@ bool MainThreadSchedulerImpl::
   return false;
 }
 
-bool MainThreadSchedulerImpl::IsAnyOrdinaryMainFrameLoading() const {
-  for (const PageSchedulerImpl* ps : main_thread_only().page_schedulers) {
-    if (ps->IsOrdinary() && ps->IsMainFrameLoading()) {
-      return true;
-    }
-  }
-  return false;
-}
-
 bool MainThreadSchedulerImpl::
     IsAnyOrdinaryMainFrameWaitingForFirstContentfulPaint() const {
   for (const PageSchedulerImpl* ps : main_thread_only().page_schedulers) {
@@ -581,27 +572,25 @@ scoped_refptr<WidgetScheduler> MainThreadSchedulerImpl::CreateWidgetScheduler(
     WidgetScheduler::Delegate* delegate) {
   auto widget_scheduler = base::MakeRefCounted<WidgetSchedulerImpl>(
       this, &render_widget_scheduler_signals_, delegate);
-  if (base::FeatureList::IsEnabled(kUseWidgetSchedulerForIdlePeriodSignals)) {
-    CHECK(delegate);
-    main_thread_only().widget_schedulers.insert(widget_scheduler);
-    // If we're already receiving BeginMainFrameNotExpectedUntil signals from
-    // the other `WidgetScheduler`s, we need to receive these signals from this
-    // new one as well, otherwise idle periods might unexpectedly stop once
-    // frames stop being produced.
-    //
-    // Note: by default `widget_scheduler` will not receive these signals, so
-    // initialization is only needed if the signals are needed. If that changes,
-    // as a result of idle tasks being posted, the signals will be requested in
-    // `DispatchRequestBeginMainFrameNotExpected()`.
-    if (main_thread_only().compositor_will_send_main_frame_not_expected) {
-      // Defer this until after the current task to allow `delegate` to complete
-      // initialization.
-      control_task_queue_->GetTaskRunnerWithDefaultTaskType()->PostTask(
-          FROM_HERE,
-          base::BindOnce(&MainThreadSchedulerImpl::
-                             InitializeRequestBeginMainFrameNotExpected,
-                         weak_factory_.GetWeakPtr(), widget_scheduler));
-    }
+  CHECK(delegate);
+  main_thread_only().widget_schedulers.insert(widget_scheduler);
+  // If we're already receiving BeginMainFrameNotExpectedUntil signals from
+  // the other `WidgetScheduler`s, we need to receive these signals from this
+  // new one as well, otherwise idle periods might unexpectedly stop once
+  // frames stop being produced.
+  //
+  // Note: by default `widget_scheduler` will not receive these signals, so
+  // initialization is only needed if the signals are needed. If that changes,
+  // as a result of idle tasks being posted, the signals will be requested in
+  // `DispatchRequestBeginMainFrameNotExpected()`.
+  if (main_thread_only().compositor_will_send_main_frame_not_expected) {
+    // Defer this until after the current task to allow `delegate` to complete
+    // initialization.
+    control_task_queue_->GetTaskRunnerWithDefaultTaskType()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&MainThreadSchedulerImpl::
+                           InitializeRequestBeginMainFrameNotExpected,
+                       weak_factory_.GetWeakPtr(), widget_scheduler));
   }
   return widget_scheduler;
 }
@@ -775,7 +764,7 @@ void MainThreadSchedulerImpl::ShutdownEmptyDetachedTaskQueues() {
   if (main_thread_only().detached_task_queues.empty()) {
     return;
   }
-  WTF::Vector<scoped_refptr<MainThreadTaskQueue>> queues_to_delete;
+  Vector<scoped_refptr<MainThreadTaskQueue>> queues_to_delete;
   for (auto& queue : main_thread_only().detached_task_queues) {
     if (queue->IsEmpty()) {
       queues_to_delete.push_back(queue);
@@ -994,7 +983,7 @@ void MainThreadSchedulerImpl::SetRendererBackgrounded(bool backgrounded) {
   base::TimeTicks now = NowTicks();
   main_thread_only().background_status_changed_at = now;
   main_thread_only().metrics_helper.SetRendererBackgrounded(backgrounded, now);
-  MaybeSetBusyLoop(main_thread_only().message_pump, backgrounded);
+  MaybeSetBusyLoop(main_thread_only().message_pump, backgrounded ? 0. : 1.);
 
   UpdatePolicy();
 
@@ -1447,6 +1436,17 @@ void MainThreadSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
     main_thread_only().current_policy_expiration_time = base::TimeTicks();
   }
 
+  double busy_loop_scale_factor;
+  if (main_thread_only().renderer_backgrounded) {
+    busy_loop_scale_factor = 0.;
+  } else if (main_thread_only().current_use_case != UseCase::kNone ||
+             main_thread_only().blocking_input_expected_soon) {
+    busy_loop_scale_factor = 1.;
+  } else {
+    busy_loop_scale_factor = 0.5;
+  }
+  MaybeSetBusyLoop(main_thread_only().message_pump, busy_loop_scale_factor);
+
   // Avoid prioritizing main thread compositing (e.g., rAF) if it is extremely
   // slow, because that can cause starvation in other task sources.
   main_thread_only().main_thread_compositing_is_fast =
@@ -1473,7 +1473,8 @@ void MainThreadSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
   new_policy.should_prioritize_ipc_tasks =
       num_pending_urgent_ipc_messages_.load(std::memory_order_relaxed) > 0;
 
-  new_policy.should_freeze_compositor_task_queue = AllPagesFrozen();
+  const bool are_all_pages_frozen = AllPagesFrozen();
+  new_policy.should_freeze_compositor_task_queue = are_all_pages_frozen;
 
   // Tracing is done before the early out check, because it's quite possible we
   // will otherwise miss this information in traces.
@@ -1494,7 +1495,9 @@ void MainThreadSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
 
   if (new_policy.rail_mode != main_thread_only().current_policy.rail_mode) {
     if (isolate()) {
-      isolate()->SetIsLoading(new_policy.rail_mode == RAILMode::kLoad);
+      if (!base::FeatureList::IsEnabled(kSetIsLoadingAblation)) {
+        isolate()->SetIsLoading(new_policy.rail_mode == RAILMode::kLoad);
+      }
     }
     for (auto& observer : main_thread_only().rail_mode_observers) {
       observer.OnRAILModeChanged(new_policy.rail_mode);
@@ -1505,10 +1508,56 @@ void MainThreadSchedulerImpl::UpdatePolicyLocked(UpdateType update_type) {
   main_thread_only().current_policy = new_policy;
 
   UpdateStateForAllTaskQueues(old_policy);
+
+  if (are_all_pages_frozen) {
+    if (!main_thread_only().renderer_frozen_metadata.has_value()) {
+      main_thread_only().renderer_frozen_metadata.emplace(
+          "MainThreadSchedulerImpl.RendererFrozen2", /* is_frozen */ 1,
+          base::SampleMetadataScope::kProcess);
+    }
+  } else {
+    main_thread_only().renderer_frozen_metadata.reset();
+  }
+}
+
+RAILMode ComputeCurrentRAILModeFromPerformanceScenario() {
+  using performance_scenarios::LoadingScenario;
+  using performance_scenarios::ScenarioScope;
+  auto loading_state = GetLoadingScenario(ScenarioScope::kCurrentProcess)
+                           ->load(std::memory_order_relaxed);
+  switch (loading_state) {
+    case LoadingScenario::kFocusedPageLoading:
+    case LoadingScenario::kVisiblePageLoading:
+      return RAILMode::kLoad;
+    case LoadingScenario::kBackgroundPageLoading:
+    case LoadingScenario::kNoPageLoading:
+      break;
+  }
+
+  if (base::FeatureList::IsEnabled(kRAILInputAsLoading)) {
+    using performance_scenarios::InputScenario;
+    auto input_state = GetInputScenario(ScenarioScope::kCurrentProcess)
+                           ->load(std::memory_order_relaxed);
+    switch (input_state) {
+      case InputScenario::kTyping:
+      case InputScenario::kTap:
+      case InputScenario::kScroll:
+        return RAILMode::kLoad;
+      case InputScenario::kNoInput:
+        break;
+    }
+  }
+
+  return RAILMode::kDefault;
 }
 
 RAILMode MainThreadSchedulerImpl::ComputeCurrentRAILMode(
     UseCase use_case) const {
+  if (base::FeatureList::IsEnabled(
+          kComputeCurrentRailModeFromPerformanceScenario)) {
+    return ComputeCurrentRAILModeFromPerformanceScenario();
+  }
+
   switch (use_case) {
     case UseCase::kDiscreteInputResponse:
       // TODO(crbug.com/350540984): This really should be `RAILMode::kDefault`,
@@ -1521,8 +1570,14 @@ RAILMode MainThreadSchedulerImpl::ComputeCurrentRAILMode(
     case UseCase::kCompositorGesture:
     case UseCase::kSynchronizedGesture:
     case UseCase::kMainThreadGesture:
-    case UseCase::kNone:
     case UseCase::kMainThreadCustomInputHandling:
+      // TODO(crbug.com/444705203): Don't ship this as-is. Likely want to
+      // update the RAILModes if we decide to ship.
+      return base::FeatureList::IsEnabled(kRAILInputAsLoading)
+                 ? RAILMode::kLoad
+                 : RAILMode::kDefault;
+
+    case UseCase::kNone:
       return RAILMode::kDefault;
 
     case UseCase::kEarlyLoading:
@@ -1650,18 +1705,12 @@ UseCase MainThreadSchedulerImpl::ComputeCurrentUseCase(
   // treat the presence of input as an indirect signal that there is meaningful
   // content on the page.
   if (!any_thread().have_seen_input_since_navigation) {
-    if (any_thread().waiting_for_any_main_frame_contentful_paint)
+    if (any_thread().waiting_for_any_main_frame_contentful_paint) {
       return UseCase::kEarlyLoading;
+    }
 
-    if (base::FeatureList::IsEnabled(
-            features::kLoadingPhaseBufferTimeAfterFirstMeaningfulPaint)) {
-      if (any_thread().waiting_for_any_main_frame_meaningful_paint) {
-        return UseCase::kLoading;
-      }
-    } else {
-      if (any_thread().is_any_main_frame_loading) {
-        return UseCase::kLoading;
-      }
+    if (any_thread().waiting_for_any_main_frame_meaningful_paint) {
+      return UseCase::kLoading;
     }
   }
   return UseCase::kNone;
@@ -1783,7 +1832,6 @@ void MainThreadSchedulerImpl::WriteIntoTraceLocked(
            any_thread().waiting_for_any_main_frame_contentful_paint);
   dict.Add("waiting_for_any_main_frame_meaningful_paint",
            any_thread().waiting_for_any_main_frame_meaningful_paint);
-  dict.Add("is_any_main_frame_loading", any_thread().is_any_main_frame_loading);
   dict.Add("have_seen_input_since_navigation",
            any_thread().have_seen_input_since_navigation);
   dict.Add("renderer_backgrounded", main_thread_only().renderer_backgrounded);
@@ -1907,27 +1955,16 @@ void MainThreadSchedulerImpl::DispatchRequestBeginMainFrameNotExpected(
       TRACE_DISABLED_BY_DEFAULT("renderer.scheduler"),
       "MainThreadSchedulerImpl::DispatchRequestBeginMainFrameNotExpected",
       "has_tasks", has_tasks);
-  bool success = false;
-  if (base::FeatureList::IsEnabled(kUseWidgetSchedulerForIdlePeriodSignals)) {
-    // If idle tasks are posted before compositing is initialized, the scheduler
-    // will request these signals as soon as it is.
-    for (auto& widget_scheduler : main_thread_only().widget_schedulers) {
-      widget_scheduler->RequestBeginMainFrameNotExpected(has_tasks);
-    }
-    success = true;
-  } else {
-    for (PageSchedulerImpl* page_scheduler :
-         main_thread_only().page_schedulers) {
-      success |= page_scheduler->RequestBeginMainFrameNotExpected(has_tasks);
-    }
+  // If idle tasks are posted before compositing is initialized, the scheduler
+  // will request these signals as soon as it is.
+  for (auto& widget_scheduler : main_thread_only().widget_schedulers) {
+    widget_scheduler->RequestBeginMainFrameNotExpected(has_tasks);
   }
-  main_thread_only().compositor_will_send_main_frame_not_expected =
-      success && has_tasks;
+  main_thread_only().compositor_will_send_main_frame_not_expected = has_tasks;
 }
 
 void MainThreadSchedulerImpl::InitializeRequestBeginMainFrameNotExpected(
     scoped_refptr<WidgetSchedulerImpl> widget_scheduler) {
-  CHECK(base::FeatureList::IsEnabled(kUseWidgetSchedulerForIdlePeriodSignals));
   if (main_thread_only().widget_schedulers.Contains(widget_scheduler)) {
     widget_scheduler->RequestBeginMainFrameNotExpected(
         main_thread_only().compositor_will_send_main_frame_not_expected);
@@ -1967,7 +2004,9 @@ void MainThreadSchedulerImpl::DidCommitProvisionalLoad(
         isolate()) {
       // V8 was already informed that the load started, but now that the load is
       // committed, update the start timestamp.
-      isolate()->SetIsLoading(true);
+      if (!base::FeatureList::IsEnabled(kSetIsLoadingAblation)) {
+        isolate()->SetIsLoading(true);
+      }
     }
   }
 }
@@ -1983,7 +2022,6 @@ void MainThreadSchedulerImpl::OnMainFramePaint() {
       IsAnyOrdinaryMainFrameWaitingForFirstContentfulPaint();
   any_thread().waiting_for_any_main_frame_meaningful_paint =
       IsAnyOrdinaryMainFrameWaitingForFirstMeaningfulPaint();
-  any_thread().is_any_main_frame_loading = IsAnyOrdinaryMainFrameLoading();
 
   UpdatePolicyLocked(UpdateType::kMayEarlyOutIfPolicyUnchanged);
 }
@@ -1999,7 +2037,6 @@ void MainThreadSchedulerImpl::ResetForNavigationLocked() {
       IsAnyOrdinaryMainFrameWaitingForFirstContentfulPaint();
   any_thread().waiting_for_any_main_frame_meaningful_paint =
       IsAnyOrdinaryMainFrameWaitingForFirstMeaningfulPaint();
-  any_thread().is_any_main_frame_loading = IsAnyOrdinaryMainFrameLoading();
   any_thread().have_seen_input_since_navigation = false;
   main_thread_only().idle_time_estimator.Clear();
   UpdatePolicyLocked(UpdateType::kMayEarlyOutIfPolicyUnchanged);
@@ -2016,10 +2053,10 @@ void MainThreadSchedulerImpl::RemoveRAILModeObserver(
 }
 
 void MainThreadSchedulerImpl::ForEachMainThreadIsolate(
-    base::RepeatingCallback<void(v8::Isolate* isolate)> callback) {
-  // TODO(dtapuska): For each AgentGroupScheduler's isolate invoke the callback.
+    base::FunctionRef<void(v8::Isolate* isolate)> function) {
+  // TODO(dtapuska): For each AgentGroupScheduler's isolate invoke the function.
   if (v8::Isolate* isolate = Isolate()) {
-    callback.Run(isolate);
+    function(isolate);
   }
 }
 
@@ -2129,10 +2166,11 @@ void MainThreadSchedulerImpl::BeginAgentGroupSchedulerScope(
     trace_event_scope_id = this;
   }
 
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
-      TRACE_DISABLED_BY_DEFAULT("renderer.scheduler"), trace_event_scope_name,
-      trace_event_scope_id, "agent_group_scheduler",
-      static_cast<void*>(next_agent_group_scheduler));
+  TRACE_EVENT_BEGIN(
+      TRACE_DISABLED_BY_DEFAULT("renderer.scheduler"),
+      perfetto::StaticString(trace_event_scope_name),
+      perfetto::Track(reinterpret_cast<uint64_t>(trace_event_scope_id)),
+      "agent_group_scheduler", static_cast<void*>(next_agent_group_scheduler));
 
   AgentGroupScheduler* previous_agent_group_scheduler =
       current_agent_group_scheduler_;
@@ -2188,10 +2226,10 @@ void MainThreadSchedulerImpl::EndAgentGroupSchedulerScope() {
   current_agent_group_scheduler_ =
       agent_group_scheduler_scope.previous_agent_group_scheduler;
 
-  TRACE_EVENT_NESTABLE_ASYNC_END1(
+  TRACE_EVENT_END(
       TRACE_DISABLED_BY_DEFAULT("renderer.scheduler"),
-      agent_group_scheduler_scope.trace_event_scope_name,
-      agent_group_scheduler_scope.trace_event_scope_id.get(),
+      perfetto::Track(reinterpret_cast<uint64_t>(
+          agent_group_scheduler_scope.trace_event_scope_id.get())),
       "agent_group_scheduler",
       static_cast<void*>(
           agent_group_scheduler_scope.current_agent_group_scheduler));
@@ -2235,7 +2273,6 @@ void MainThreadSchedulerImpl::AddPageScheduler(
       IsAnyOrdinaryMainFrameWaitingForFirstContentfulPaint();
   any_thread().waiting_for_any_main_frame_meaningful_paint =
       IsAnyOrdinaryMainFrameWaitingForFirstMeaningfulPaint();
-  any_thread().is_any_main_frame_loading = IsAnyOrdinaryMainFrameLoading();
   UpdatePolicyLocked(UpdateType::kMayEarlyOutIfPolicyUnchanged);
 }
 
@@ -2262,7 +2299,6 @@ void MainThreadSchedulerImpl::RemovePageScheduler(
       IsAnyOrdinaryMainFrameWaitingForFirstContentfulPaint();
   any_thread().waiting_for_any_main_frame_meaningful_paint =
       IsAnyOrdinaryMainFrameWaitingForFirstMeaningfulPaint();
-  any_thread().is_any_main_frame_loading = IsAnyOrdinaryMainFrameLoading();
   UpdatePolicyLocked(UpdateType::kMayEarlyOutIfPolicyUnchanged);
 }
 
@@ -2298,13 +2334,9 @@ void MainThreadSchedulerImpl::OnPageFrozen(
 #endif
   memory_purge_manager_.OnPageFrozen(called_from);
   UpdatePolicy();
-  main_thread_only().renderer_frozen_metadata.emplace(
-      "MainThreadSchedulerImpl.RendererFrozen", /* is_frozen */ 1,
-      base::SampleMetadataScope::kProcess);
 }
 
 void MainThreadSchedulerImpl::OnPageResumed() {
-  main_thread_only().renderer_frozen_metadata.reset();
   memory_purge_manager_.OnPageResumed();
   UpdatePolicy();
 }
@@ -2732,7 +2764,7 @@ const char* MainThreadSchedulerImpl::TimeDomainTypeToString(
   }
 }
 
-WTF::Vector<base::OnceClosure>&
+Vector<base::OnceClosure>&
 MainThreadSchedulerImpl::GetOnTaskCompletionCallbacks() {
   return main_thread_only().on_task_completion_callbacks;
 }
@@ -2781,10 +2813,6 @@ const IdleHelper& MainThreadSchedulerImpl::GetIdleHelperForTesting() const {
 
 void MainThreadSchedulerImpl::OnWidgetSchedulerWillShutdown(
     WidgetSchedulerImpl* scheduler) {
-  if (!base::FeatureList::IsEnabled(kUseWidgetSchedulerForIdlePeriodSignals)) {
-    return;
-  }
-
   auto iter = main_thread_only().widget_schedulers.find(scheduler);
   CHECK_NE(iter, main_thread_only().widget_schedulers.end());
   main_thread_only().widget_schedulers.erase(iter);

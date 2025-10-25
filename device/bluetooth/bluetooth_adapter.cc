@@ -14,6 +14,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/observer_list.h"
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
@@ -36,7 +37,7 @@ BluetoothAdapter::ServiceOptions::~ServiceOptions() = default;
     !BUILDFLAG(IS_APPLE) && !BUILDFLAG(IS_WIN) && !BUILDFLAG(IS_LINUX)
 // static
 scoped_refptr<BluetoothAdapter> BluetoothAdapter::CreateAdapter() {
-  return nullptr;
+  NOTREACHED();
 }
 #endif  // Not supported platforms.
 

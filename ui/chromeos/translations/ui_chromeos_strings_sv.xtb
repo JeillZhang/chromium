@@ -35,6 +35,7 @@
 <translation id="1249250836236328755">Genre</translation>
 <translation id="1254593899333212300">Direkt Internetanslutning</translation>
 <translation id="1272293450992660632">Pinkoderna matchar inte.</translation>
+<translation id="1279040297980392566">Väntar på att sökningen ska slutföras. Försök igen senare.</translation>
 <translation id="1280820357415527819">Söker efter mobilnätverk</translation>
 <translation id="1293556467332435079">Filer</translation>
 <translation id="1297922636971898492">Google Drive är inte tillgängligt för närvarande. Överföringen fortsätter automatiskt när Google Drive är tillgängligt igen.</translation>
@@ -657,7 +658,7 @@
 <translation id="6096979789310008754">Söktexten har tagits bort och alla filer och mappar visas.</translation>
 <translation id="610101264611565198"><ph name="FILE_NAME" /> flyttas till <ph name="FOLDER_NAME" /></translation>
 <translation id="61118516107968648">CSV-text</translation>
-<translation id="6129953537138746214">Rymden</translation>
+<translation id="6129953537138746214">Mellanslag</translation>
 <translation id="6133173853026656527"><ph name="FILE_NAME" /> flyttas ...</translation>
 <translation id="6133877453787250710">Administratören övervakar följande:</translation>
 <translation id="613750717151263950">japanska med amerikanskt tangentbord</translation>
@@ -925,7 +926,7 @@
 <translation id="8116072619078571545">Isvatten</translation>
 <translation id="8120392982188717723">Tillåt synkronisering i nätverk med datapriser</translation>
 <translation id="8124093710070495550">Problem med synkronisering</translation>
-<translation id="8128733386027980860">engelska (Förenade kungariket) med Dvorak-tangentbord</translation>
+<translation id="8128733386027980860">engelska (Storbritannien) med Dvorak-tangentbord</translation>
 <translation id="8137331602592933310"><ph name="FILENAME" /> har delats med dig. Du kan inte ta bort det eftersom du inte äger det.</translation>
 <translation id="8138705869659070104">Aktivera efter enhetskonfig.</translation>
 <translation id="813913629614996137">Initierar …</translation>
@@ -1078,6 +1079,7 @@
 <translation id="9213073329713032541">Installationen har påbörjats.</translation>
 <translation id="9219103736887031265">Bilder</translation>
 <translation id="9219908252191632183">Måne</translation>
+<translation id="931652069802536959">Nätverket blockeras av en princip</translation>
 <translation id="938470336146445890">Installera ett användarcertifikat.</translation>
 <translation id="939736085109172342">Ny mapp</translation>
 <translation id="943972244133411984">Ändrades av</translation>

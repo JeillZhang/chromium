@@ -27,6 +27,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_FILTER_OPERATION_H_
 
 #include <iosfwd>
+#include <sstream>
 
 #include "base/notreached.h"
 #include "third_party/blink/renderer/core/core_export.h"
@@ -109,7 +110,6 @@ class CORE_EXPORT FilterOperation : public GarbageCollected<FilterOperation> {
   bool operator==(const FilterOperation& o) const {
     return IsSameType(o) && IsEqualAssumingSameType(o);
   }
-  bool operator!=(const FilterOperation& o) const { return !(*this == o); }
 
   OperationType GetType() const { return type_; }
   virtual bool IsSameType(const FilterOperation& o) const {
@@ -173,9 +173,7 @@ class CORE_EXPORT ReferenceFilterOperation : public FilterOperation {
 
   void Trace(Visitor*) const override;
 
-  String DebugString() const override {
-    return WTF::StrCat({"<ref: ", url_, ">"});
-  }
+  String DebugString() const override { return StrCat({"<ref: ", url_, ">"}); }
 
  protected:
   bool IsEqualAssumingSameType(const FilterOperation&) const override;

@@ -16,7 +16,7 @@
 #import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 namespace {
 // Workaround for https://crbug.com/1369643
@@ -222,7 +222,7 @@ ImmersiveModeControllerCocoa::ImmersiveModeControllerCocoa(
   immersive_mode_titlebar_view_controller_.layoutAttribute =
       NSLayoutAttributeBottom;
 
-  display_observation_.Observe(display::Screen::GetScreen());
+  display_observation_.Observe(display::Screen::Get());
 }
 
 ImmersiveModeControllerCocoa::~ImmersiveModeControllerCocoa() {
@@ -303,7 +303,7 @@ void ImmersiveModeControllerCocoa::OnTopViewBoundsChanged(
     const gfx::Rect& bounds) {
   // Set the height of the AppKit fullscreen view. The width will be
   // automatically handled by AppKit.
-  NSRect frame = NSRectFromCGRect(bounds.ToCGRect());
+  NSRect frame = bounds.ToCGRect();
   NSView* overlay_view = immersive_mode_titlebar_view_controller_.view;
   NSSize size = overlay_view.window.frame.size;
   if (frame.size.height != size.height) {

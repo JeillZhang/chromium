@@ -7,6 +7,7 @@
 
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 #include "base/functional/callback_helpers.h"
 #include "base/test/bind.h"
@@ -15,9 +16,6 @@
 #include "ui/base/interaction/interaction_sequence.h"
 
 namespace ui::test::internal {
-
-// Specifies an element either by ID or by name.
-using ElementSpecifier = std::variant<ElementIdentifier, std::string_view>;
 
 // Specifies a sequence of steps.
 using MultiStep = std::vector<InteractionSequence::StepBuilder>;
@@ -63,7 +61,7 @@ auto MaybeBind(F&& function) {
     // base::DoNothing() is compatible with callbacks, so return it as-is.
     return function;
   } else {
-    static_assert(base::AlwaysFalse<F>, "Can only bind callable objects.");
+    static_assert(false, "Can only bind callable objects.");
   }
 }
 
@@ -147,7 +145,7 @@ inline constexpr bool HasCompatibleSignatureValue<F, R(A, Args...)> = true;
 
 // Checks that `T` is a reference wrapper around any type.
 template <typename T>
-concept IsReferenceWrapper = base::is_instantiation<std::reference_wrapper, T>;
+concept IsReferenceWrapper = base::is_instantiation<T, std::reference_wrapper>;
 
 // Helper to determine the type used to match a value. The default is to just
 // use the decayed value type.
@@ -196,7 +194,7 @@ concept HasMatchAndExplain = requires { &T::MatchAndExplain; };
 
 template <typename T>
 concept IsMatcher = IsGtestMatcher<T> || HasMatchAndExplain<T> ||
-                    base::is_instantiation<testing::PolymorphicMatcher, T>;
+                    base::is_instantiation<T, testing::PolymorphicMatcher>;
 
 // Accepts any function-like object that is compatible with
 // `InteractionSequence::StepCallback`.
@@ -211,11 +209,6 @@ concept IsCheckCallback =
     internal::HasCompatibleSignature<F,
                                      R(const InteractionSequence*,
                                        const TrackedElement*)>;
-
-// Converts an ElementSpecifier to an element ID or name and sets it onto
-// `builder`.
-void SpecifyElement(ui::InteractionSequence::StepBuilder& builder,
-                    ElementSpecifier element);
 
 std::string DescribeElement(ElementSpecifier spec);
 

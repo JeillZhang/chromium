@@ -742,7 +742,7 @@ bool ServiceWorkerClient::IsEligibleForServiceWorkerController() const {
   std::set<std::string> schemes;
   GetContentClient()->browser()->GetSchemesBypassingSecureContextCheckAllowlist(
       &schemes);
-  return schemes.find(url_.scheme()) != schemes.end();
+  return schemes.find(url_.GetScheme()) != schemes.end();
 }
 
 bool ServiceWorkerClient::is_response_committed() const {
@@ -1157,13 +1157,16 @@ void ServiceWorkerClient::InheritControllerFrom(
          (base::FeatureList::IsEnabled(features::kServiceWorkerSrcdocSupport) &&
           GetClientType() == blink::mojom::ServiceWorkerClientType::kWindow &&
           client_url.IsAboutSrcdoc()));
-  // Only expect srcdoc url or blob url of same origin as creator for
-  // client_url.
-  DCHECK((client_url.SchemeIsBlob() &&
-          url::Origin::Create(client_url)
-              .IsSameOriginWith(creator_host.key().origin())) ||
+  // Only expect srcdoc url or blob url.
+  DCHECK(client_url.SchemeIsBlob() ||
          (base::FeatureList::IsEnabled(features::kServiceWorkerSrcdocSupport) &&
           client_url.IsAboutSrcdoc()));
+  // origins of blob client_url and creator host should be the same or both
+  // opaque.
+  if (client_url.SchemeIsBlob()) {
+    service_worker_security_utils::CheckOnUpdateUrls(client_url,
+                                                     creator_host.key());
+  }
 
   // Let `scope_match_url_for_client_` be the creator's url for scope match
   // because a client should be handled by the service worker of its creator.
@@ -1254,11 +1257,16 @@ ServiceWorkerClient::CreateNetworkURLLoaderFactory(
 
   switch (type) {
     case CreateNetworkURLLoaderFactoryType::kNavigationPreload:
+    case CreateNetworkURLLoaderFactoryType::kSyntheticNetworkRequest:
       // Allow the embedder to intercept the URLLoader request if necessary.
       // This must be a synchronous decision by the embedder. In the future, we
       // may wish to support asynchronous decisions using
       // |URLLoaderRequestInterceptor| in the same fashion that they are used
       // for navigation requests.
+      //
+      // TODO(crbug.com/352578800): Rename
+      // `CreateURLLoaderHandlerForServiceWorkerNavigationPreload`. This is used
+      // by not only navigation preload, but also synthetic response.
       if (ContentBrowserClient::URLLoaderRequestHandler
               embedder_url_loader_handler =
                   GetContentClient()
@@ -1271,7 +1279,6 @@ ServiceWorkerClient::CreateNetworkURLLoaderFactory(
       }
       break;
     case CreateNetworkURLLoaderFactoryType::kRaceNetworkRequest:
-    case CreateNetworkURLLoaderFactoryType::kSyntheticNetworkRequest:
       break;
   }
 
@@ -1332,8 +1339,6 @@ ServiceWorkerClient::CreateNetworkURLLoaderFactory(
 
 // If a blob URL is used for a SharedWorker script's URL, a controller will be
 // inherited.
-BASE_FEATURE(kSharedWorkerBlobURLFix,
-             "SharedWorkerBlobURLFix",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kSharedWorkerBlobURLFix, base::FEATURE_ENABLED_BY_DEFAULT);
 
 }  // namespace content

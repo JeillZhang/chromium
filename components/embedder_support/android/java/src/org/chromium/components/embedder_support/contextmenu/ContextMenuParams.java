@@ -9,12 +9,14 @@ import androidx.annotation.VisibleForTesting;
 import org.jni_zero.CalledByNative;
 import org.jni_zero.JNINamespace;
 
+import org.chromium.blink_public.common.ContextMenuDataMediaFlags;
 import org.chromium.blink_public.common.ContextMenuDataMediaType;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.AdditionalNavigationParams;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.content_public.common.Referrer;
+import org.chromium.ui.listmenu.MenuModelBridge;
 import org.chromium.url.GURL;
 
 /**
@@ -39,6 +41,8 @@ public class ContextMenuParams {
     private final boolean mIsVideo;
     private final boolean mCanSaveMedia;
 
+    private final @ContextMenuDataMediaFlags int mMediaFlags;
+
     private final int mTriggeringTouchXDp;
     private final int mTriggeringTouchYDp;
 
@@ -46,10 +50,11 @@ public class ContextMenuParams {
 
     private final boolean mOpenedFromHighlight;
 
-    private final boolean mOpenedFromInterestTarget;
-    private final int mInterestTargetNodeID;
+    private final boolean mOpenedFromInterestFor;
+    private final int mInterestForNodeID;
 
     private final @Nullable AdditionalNavigationParams mAdditionalNavigationParams;
+    private final MenuModelBridge mMenuModelBridge;
 
     @CalledByNative
     private long getNativePointer() {
@@ -120,8 +125,22 @@ public class ContextMenuParams {
     }
 
     /**
+     * @return Whether the media element is eligible to enter Picture-in-Picture.
+     */
+    public boolean canPictureInPicture() {
+        return (mMediaFlags & ContextMenuDataMediaFlags.MEDIA_CAN_PICTURE_IN_PICTURE) != 0;
+    }
+
+    /**
+     * @return Whether the media element is currently in Picture-in-Picture.
+     */
+    public boolean isPictureInPicture() {
+        return (mMediaFlags & ContextMenuDataMediaFlags.MEDIA_PICTURE_IN_PICTURE) != 0;
+    }
+
+    /**
      * @return The x-coordinate of the touch that triggered the context menu in dp relative to the
-     *         render view; 0 corresponds to the left edge.
+     *     render view; 0 corresponds to the left edge.
      */
     public int getTriggeringTouchXDp() {
         return mTriggeringTouchXDp;
@@ -166,21 +185,20 @@ public class ContextMenuParams {
     }
 
     /**
-     * @return Whether or not the context menu was opened from an element with the `interesttarget`
+     * @return Whether or not the context menu was opened from an element with the `interestfor`
      *     attribute.
      */
-    public boolean getOpenedFromInterestTarget() {
-        return mOpenedFromInterestTarget;
+    public boolean getOpenedFromInterestFor() {
+        return mOpenedFromInterestFor;
     }
 
     /**
-     * @return Only valid if `getOpenedFromInterestTarget()` is true, and only non-zero if the
-     *     `HTMLInterestTargetContextMenuItemOnly` feature is enabled. With that feature enabled,
-     *     this returns the DOMNodeID for the element that should be "shown interest" in case the
-     *     "show interest" menu item is chosen by the user.
+     * @return Only valid if `getOpenedFromInterestFor()` is true. This returns the DOMNodeID
+     *     for the element that should be "shown interest" in case the "show interest" menu
+     *     item is chosen by the user.
      */
-    public int getInterestTargetNodeID() {
-        return mInterestTargetNodeID;
+    public int getInterestForNodeID() {
+        return mInterestForNodeID;
     }
 
     /**
@@ -190,10 +208,17 @@ public class ContextMenuParams {
         return mAdditionalNavigationParams;
     }
 
+    /** Returns the {@link MenuModelBridge} associated with this context menu. */
+    public MenuModelBridge getMenuModelBridge() {
+        return mMenuModelBridge;
+    }
+
     @VisibleForTesting
     public ContextMenuParams(
             long nativePtr,
+            MenuModelBridge menuModelBridge,
             @ContextMenuDataMediaType int mediaType,
+            @ContextMenuDataMediaFlags int mediaFlags,
             GURL pageUrl,
             GURL linkUrl,
             String linkText,
@@ -206,10 +231,11 @@ public class ContextMenuParams {
             int triggeringTouchYDp,
             int sourceType,
             boolean openedFromHighlight,
-            boolean openedFromInterestTarget,
-            int interestTargetNodeID,
+            boolean openedFromInterestFor,
+            int interestForNodeID,
             @Nullable AdditionalNavigationParams additionalNavigationParams) {
         mNativePtr = nativePtr;
+        mMenuModelBridge = menuModelBridge;
         mPageUrl = pageUrl;
         mLinkUrl = linkUrl;
         mLinkText = linkText;
@@ -229,19 +255,22 @@ public class ContextMenuParams {
         mIsImage = mediaType == ContextMenuDataMediaType.IMAGE;
         mIsVideo = mediaType == ContextMenuDataMediaType.VIDEO;
         mCanSaveMedia = canSaveMedia;
+        mMediaFlags = mediaFlags;
         mTriggeringTouchXDp = triggeringTouchXDp;
         mTriggeringTouchYDp = triggeringTouchYDp;
         mSourceType = sourceType;
         mOpenedFromHighlight = openedFromHighlight;
-        mOpenedFromInterestTarget = openedFromInterestTarget;
-        mInterestTargetNodeID = interestTargetNodeID;
+        mOpenedFromInterestFor = openedFromInterestFor;
+        mInterestForNodeID = interestForNodeID;
         mAdditionalNavigationParams = additionalNavigationParams;
     }
 
     @CalledByNative
     private static ContextMenuParams create(
             long nativePtr,
+            MenuModelBridge menuModelBridge,
             @ContextMenuDataMediaType int mediaType,
+            @ContextMenuDataMediaFlags int mediaFlags,
             GURL pageUrl,
             GURL linkUrl,
             String linkText,
@@ -255,8 +284,8 @@ public class ContextMenuParams {
             int triggeringTouchYDp,
             int sourceType,
             boolean openedFromHighlight,
-            boolean openedFromInterestTarget,
-            int interestTargetNodeID,
+            boolean openedFromInterestFor,
+            int interestForNodeID,
             @Nullable AdditionalNavigationParams additionalNavigationParams) {
         // TODO(crbug.com/40549331): Convert Referrer to use GURL.
         Referrer referrer =
@@ -265,7 +294,9 @@ public class ContextMenuParams {
                         : new Referrer(sanitizedReferrer.getSpec(), referrerPolicy);
         return new ContextMenuParams(
                 nativePtr,
+                menuModelBridge,
                 mediaType,
+                mediaFlags,
                 pageUrl,
                 linkUrl,
                 linkText,
@@ -278,8 +309,8 @@ public class ContextMenuParams {
                 triggeringTouchYDp,
                 sourceType,
                 openedFromHighlight,
-                openedFromInterestTarget,
-                interestTargetNodeID,
+                openedFromInterestFor,
+                interestForNodeID,
                 additionalNavigationParams);
     }
 }

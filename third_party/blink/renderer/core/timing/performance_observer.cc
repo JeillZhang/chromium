@@ -82,7 +82,8 @@ PerformanceEntryType PerformanceObserver::supportedEntryTypeMask(
   }
   if (RuntimeEnabledFeatures::SoftNavigationHeuristicsEnabled(
           execution_context)) {
-    mask |= PerformanceEntry::kSoftNavigation;
+    mask |= PerformanceEntry::kSoftNavigation |
+            PerformanceEntry::kInteractionContentfulPaint;
   }
   mask |= PerformanceEntry::kLongAnimationFrame;
   if (RuntimeEnabledFeatures::ContainerTimingEnabled(execution_context)) {
@@ -116,6 +117,10 @@ Vector<AtomicString> PerformanceObserver::supportedEntryTypes(
   }
   if (mask & PerformanceEntry::kFirstInput) {
     supportedEntryTypes.push_back(performance_entry_names::kFirstInput);
+  }
+  if (mask & PerformanceEntry::kInteractionContentfulPaint) {
+    supportedEntryTypes.push_back(
+        performance_entry_names::kInteractionContentfulPaint);
   }
   if (mask & PerformanceEntry::kLargestContentfulPaint) {
     supportedEntryTypes.push_back(
@@ -267,14 +272,11 @@ void PerformanceObserver::observe(ScriptState* script_state,
       }
       return;
     }
-    include_soft_navigation_observations_ =
-        observer_init->includeSoftNavigationObservations();
     if (observer_init->buffered()) {
       // Append all entries of this type to the current performance_entries_
       // to be returned on the next callback.
       performance_entries_.AppendVector(performance_->getBufferedEntriesByType(
-          AtomicString(observer_init->type()),
-          include_soft_navigation_observations_));
+          AtomicString(observer_init->type())));
       std::sort(performance_entries_.begin(), performance_entries_.end(),
                 PerformanceEntry::StartTimeCompareLessThan);
       is_buffered = true;

@@ -7,16 +7,22 @@
 #import <Foundation/Foundation.h>
 
 #import "base/check.h"
-#import "ios/chrome/browser/home_customization/model/background_collection_configuration.h"
+#import "base/metrics/histogram_functions.h"
+#import "ios/chrome/browser/home_customization/ui/background_collection_configuration.h"
+#import "ios/chrome/browser/home_customization/ui/background_customization_configuration.h"
+#import "ios/chrome/browser/home_customization/ui/home_customization_accessibility_identifiers.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_background_cell.h"
-#import "ios/chrome/browser/home_customization/ui/home_customization_background_picker_action_sheet_presentation_delegate.h"
-#import "ios/chrome/browser/home_customization/ui/home_customization_background_preset_gallery_picker_mutator.h"
+#import "ios/chrome/browser/home_customization/ui/home_customization_background_configuration_mutator.h"
+#import "ios/chrome/browser/home_customization/ui/home_customization_background_picker_presentation_delegate.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_background_preset_header_view.h"
+#import "ios/chrome/browser/home_customization/ui/home_customization_background_skeleton_cell.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_collection_configurator.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_header_view.h"
-#import "ios/chrome/browser/home_customization/ui/home_customization_logo_vendor_provider.h"
+#import "ios/chrome/browser/home_customization/ui/home_customization_search_engine_logo_mediator_provider.h"
 #import "ios/chrome/browser/home_customization/ui/home_customization_view_controller_protocol.h"
 #import "ios/chrome/browser/home_customization/utils/home_customization_constants.h"
+#import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_image_background_trait.h"
+#import "ios/chrome/browser/shared/ui/util/custom_ui_trait_accessor.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -27,6 +33,15 @@
 namespace {
 // The left and right padding for the header in the collection view.
 const CGFloat kHeaderInsetSides = 7.5;
+
+// The number of skeleton sections to display while content is loading.
+const NSInteger kSkeletonSectionCount = 3;
+
+// The number of skeleton items to show in each section during loading.
+const NSInteger kSkeletonItemsPerSection = 4;
+
+// The time interval between loading animation updates, in seconds.
+const NSTimeInterval kAnimationIntervalSeconds = 0.5;
 }  // namespace
 
 @interface HomeCustomizationBackgroundPresetGalleryPickerViewController () <
@@ -37,12 +52,15 @@ const CGFloat kHeaderInsetSides = 7.5;
   // Registration for the background cell.
   UICollectionViewCellRegistration* _backgroundCellRegistration;
 
+  // Registration for the background skeleton cell.
+  UICollectionViewCellRegistration* _backgroundSkeletonCellRegistration;
+
   // Registration for the collection's header.
   UICollectionViewSupplementaryRegistration* _headerRegistration;
 
   // A flat map of background customization options, keyed by background ID.
   // Used by HomeCustomizationBackgroundCell to apply backgrounds on the NTP.
-  NSMutableDictionary<NSString*, BackgroundCustomizationConfiguration*>*
+  NSMutableDictionary<NSString*, id<BackgroundCustomizationConfiguration>>*
       _backgroundCustomizationConfigurationMap;
 
   // A list of background customization configurations grouped by section,
@@ -52,6 +70,19 @@ const CGFloat kHeaderInsetSides = 7.5;
 
   // The id of the selected background cell.
   NSString* _selectedBackgroundId;
+
+  // Timer used to periodically trigger the loading animation update.
+  NSTimer* _loadingTimer;
+
+  // The current index of the cell being dimmed in the loading animation.
+  NSInteger _skeletonAnimationIndex;
+
+  // Tracking for maximum visible indices
+  NSInteger _maxVisibleSectionIndex;
+  NSInteger _maxVisibleItemIndex;
+
+  // The number of times an item from the gallery is selected.
+  int _galleryClickCount;
 }
 @end
 
@@ -61,6 +92,8 @@ const CGFloat kHeaderInsetSides = 7.5;
 @synthesize collectionView = _collectionView;
 @synthesize diffableDataSource = _diffableDataSource;
 @synthesize page = _page;
+@synthesize additionalViewWillTransitionToSizeHandler =
+    _additionalViewWillTransitionToSizeHandler;
 
 - (void)viewDidLoad {
   [super viewDidLoad];
@@ -89,6 +122,8 @@ const CGFloat kHeaderInsetSides = 7.5;
   _collectionView = [[UICollectionView alloc] initWithFrame:CGRectZero
                                        collectionViewLayout:layout];
   _collectionView.delegate = self;
+  _collectionView.accessibilityIdentifier =
+      kHomeCustomizationGalleryPickerViewAccessibilityIdentifier;
 
   _diffableDataSource = [[UICollectionViewDiffableDataSource alloc]
       initWithCollectionView:_collectionView
@@ -105,8 +140,18 @@ const CGFloat kHeaderInsetSides = 7.5;
         return [weakSelf configuredHeaderForIndexPath:indexPath];
       };
 
-  [_diffableDataSource applySnapshot:[self dataSnapshot]
-                animatingDifferences:NO];
+  NSDiffableDataSourceSnapshot<CustomizationSection*, NSString*>*
+      initialSnapshot =
+          (_backgroundCollectionConfigurations) ? [self dataSnapshot]
+                                                : [self skeletonSnapshot];
+  [_diffableDataSource applySnapshot:initialSnapshot animatingDifferences:NO];
+
+  _loadingTimer =
+      [NSTimer scheduledTimerWithTimeInterval:(kAnimationIntervalSeconds)
+                                       target:self
+                                     selector:@selector(updateLoadingAnimation)
+                                     userInfo:nil
+                                      repeats:YES];
 
   _collectionView.translatesAutoresizingMaskIntoConstraints = NO;
   [self.view addSubview:_collectionView];
@@ -114,25 +159,58 @@ const CGFloat kHeaderInsetSides = 7.5;
   AddSameConstraints(_collectionView, self.view);
 }
 
-#pragma mark - HomeCustomizationBackgroundPresetGalleryPickerConsumer
+- (void)viewWillTransitionToSize:(CGSize)size
+       withTransitionCoordinator:
+           (id<UIViewControllerTransitionCoordinator>)coordinator {
+  // Some of the layout sections care about rotation/size changes, so invalidate
+  // the layout so those sections can be updated.
+  [_collectionView.collectionViewLayout invalidateLayout];
+  if (_additionalViewWillTransitionToSizeHandler) {
+    _additionalViewWillTransitionToSizeHandler(size, coordinator);
+  }
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+  // Log final maximums before disappearing, for example.
+  base::UmaHistogramSparse(
+      "IOS.HomeCustomization.Background.Gallery.MaxVisibleSectionIndex",
+      _maxVisibleSectionIndex);
+  base::UmaHistogramSparse(
+      "IOS.HomeCustomization.Background.Gallery.MaxVisibleItemIndex",
+      _maxVisibleItemIndex);
+  // Log the total number of selection changes while the gallery was open.
+  base::UmaHistogramCounts10000(
+      "IOS.HomeCustomization.Background.Gallery.ClickCount",
+      _galleryClickCount);
+  [self stopLoadingAnimation];
+}
+
+- (NSInteger)selectedIndex {
+  return _collectionView.indexPathsForSelectedItems.firstObject.section;
+}
+
+#pragma mark - HomeCustomizationBackgroundConfigurationConsumer
 
 - (void)setBackgroundCollectionConfigurations:
             (NSArray<BackgroundCollectionConfiguration*>*)
                 backgroundCollectionConfigurations
                          selectedBackgroundId:(NSString*)selectedBackgroundId {
-  NSMutableDictionary<NSString*, BackgroundCustomizationConfiguration*>*
+  [self stopLoadingAnimation];
+  NSMutableDictionary<NSString*, id<BackgroundCustomizationConfiguration>>*
       backgroundCustomizationConfigurationMap =
           [NSMutableDictionary dictionary];
 
   // Flattens all background configurations from the collections into a single
   // map.
-  for (BackgroundCollectionConfiguration* BackgroundCollectionConfiguration in
+  for (BackgroundCollectionConfiguration* backgroundCollectionConfiguration in
            backgroundCollectionConfigurations) {
-    for (BackgroundCustomizationConfiguration* backgroundConfiguration in
-             BackgroundCollectionConfiguration.configurations) {
-      [backgroundCustomizationConfigurationMap
-          setObject:backgroundConfiguration
-             forKey:backgroundConfiguration.configurationID];
+    for (NSString* configurationID in backgroundCollectionConfiguration
+             .configurations) {
+      id<BackgroundCustomizationConfiguration> backgroundConfiguration =
+          [backgroundCollectionConfiguration.configurations
+              objectForKey:configurationID];
+      [backgroundCustomizationConfigurationMap setObject:backgroundConfiguration
+                                                  forKey:configurationID];
     }
   }
 
@@ -142,6 +220,37 @@ const CGFloat kHeaderInsetSides = 7.5;
   _backgroundCollectionConfigurations = backgroundCollectionConfigurations;
   [_diffableDataSource applySnapshot:[self dataSnapshot]
                 animatingDifferences:NO];
+}
+
+- (void)currentBackgroundConfigurationChanged:
+    (id<BackgroundCustomizationConfiguration>)currentConfiguration {
+  NSString* currentItemID = currentConfiguration.configurationID;
+  NSIndexPath* currentItemIndexPath =
+      [_diffableDataSource indexPathForItemIdentifier:currentItemID];
+
+  [self.collectionView
+      selectItemAtIndexPath:currentItemIndexPath
+                   animated:NO
+             scrollPosition:UICollectionViewScrollPositionNone];
+
+  _selectedBackgroundId = currentItemID;
+
+  UIBarButtonItem* cancelButton = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemCancel
+                           target:self
+                           action:@selector(cancelButtonPressed)];
+  cancelButton.accessibilityIdentifier =
+      kPickerViewCancelButtonAccessibilityIdentifier;
+
+  UIBarButtonItem* doneButton = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:UIBarButtonSystemItemDone
+                           target:self
+                           action:@selector(donebuttonPressed)];
+  doneButton.accessibilityIdentifier =
+      kPickerViewDoneButtonAccessibilityIdentifier;
+
+  self.navigationItem.leftBarButtonItem = cancelButton;
+  self.navigationItem.rightBarButtonItem = doneButton;
 }
 
 #pragma mark - UICollectionViewDelegate
@@ -157,35 +266,79 @@ const CGFloat kHeaderInsetSides = 7.5;
 // Returns a configured cell for the given index path and item identifier.
 - (UICollectionViewCell*)configuredCellForIndexPath:(NSIndexPath*)indexPath
                                      itemIdentifier:(NSString*)itemIdentifier {
+  if (_backgroundCollectionConfigurations) {
+    return [_collectionView
+        dequeueConfiguredReusableCellWithRegistration:
+            _backgroundCellRegistration
+                                         forIndexPath:indexPath
+                                                 item:itemIdentifier];
+  }
   return [_collectionView
-      dequeueConfiguredReusableCellWithRegistration:_backgroundCellRegistration
+      dequeueConfiguredReusableCellWithRegistration:
+          _backgroundSkeletonCellRegistration
                                        forIndexPath:indexPath
                                                item:itemIdentifier];
+}
+
+- (BOOL)collectionView:(UICollectionView*)collectionView
+    shouldSelectItemAtIndexPath:(NSIndexPath*)indexPath {
+  return _backgroundCollectionConfigurations;
 }
 
 - (void)collectionView:(UICollectionView*)collectionView
     didSelectItemAtIndexPath:(NSIndexPath*)indexPath {
   NSString* itemIdentifier =
       [_diffableDataSource itemIdentifierForIndexPath:indexPath];
-  [self.presentationDelegate
-      applyBackgroundForConfiguration:_backgroundCustomizationConfigurationMap
-                                          [itemIdentifier]];
+
+  // Prevent background updates when a user clicks on an already selected cell.
+  if (_selectedBackgroundId == itemIdentifier) {
+    return;
+  }
+
+  _selectedBackgroundId = itemIdentifier;
+
+  [self.mutator applyBackgroundForConfiguration:
+                    _backgroundCustomizationConfigurationMap[itemIdentifier]];
+  _galleryClickCount += 1;
 }
 
 - (void)collectionView:(UICollectionView*)collectionView
        willDisplayCell:(HomeCustomizationBackgroundCell*)cell
     forItemAtIndexPath:(NSIndexPath*)indexPath {
+  // Update the maximum visible section index.
+  _maxVisibleSectionIndex =
+      std::max(_maxVisibleSectionIndex, indexPath.section);
+
+  // Update the maximum visible item index.
+  _maxVisibleItemIndex = std::max(_maxVisibleItemIndex, indexPath.item);
+
   NSString* itemIdentifier =
       [_diffableDataSource itemIdentifierForIndexPath:indexPath];
-  BackgroundCustomizationConfiguration* backgroundConfiguration =
+  id<BackgroundCustomizationConfiguration> backgroundConfiguration =
       _backgroundCustomizationConfigurationMap[itemIdentifier];
+  __weak __typeof(self) weakSelf = self;
 
-  if (!backgroundConfiguration.thumbnailURL.is_empty()) {
+  if (backgroundConfiguration &&
+      !backgroundConfiguration.thumbnailURL.is_empty()) {
     [self.mutator
         fetchBackgroundCustomizationThumbnailURLImage:backgroundConfiguration
                                                           .thumbnailURL
-                                           completion:^(UIImage* image) {
-                                             [cell updateBackgroundImage:image];
+                                           completion:^(UIImage* image,
+                                                        NSError* error) {
+                                             if (error) {
+                                               // Delete the cell if the
+                                               // thumbnail image failed to
+                                               // load.
+                                               [weakSelf
+                                                   deleteBackgroundCell:
+                                                       backgroundConfiguration
+                                                           .configurationID
+                                                     forItemAtIndexPath:
+                                                         indexPath];
+                                             } else {
+                                               [cell updateBackgroundImage:image
+                                                        framingCoordinates:nil];
+                                             }
                                            }];
   }
 }
@@ -195,11 +348,69 @@ const CGFloat kHeaderInsetSides = 7.5;
 - (NSCollectionLayoutSection*)
       sectionForIndex:(NSInteger)sectionIndex
     layoutEnvironment:(id<NSCollectionLayoutEnvironment>)layoutEnvironment {
+  CGSize windowSize = self.view.window.bounds.size;
   return [_collectionConfigurator
-      backgroundCellSectionForLayoutEnvironment:layoutEnvironment];
+      backgroundCellSectionForLayoutEnvironment:layoutEnvironment
+                                     windowSize:windowSize];
 }
 
 #pragma mark - Private
+
+// Removes a background cell for the given configurationID.
+- (void)deleteBackgroundCell:(NSString*)configurationID
+          forItemAtIndexPath:(NSIndexPath*)indexPath {
+  [_backgroundCustomizationConfigurationMap removeObjectForKey:configurationID];
+
+  BackgroundCollectionConfiguration* backgroundCollectionConfiguration =
+      _backgroundCollectionConfigurations[indexPath.section];
+  if (backgroundCollectionConfiguration) {
+    [backgroundCollectionConfiguration.configurations
+        removeObjectForKey:configurationID];
+
+    NSUInteger indexOfConfigurationOrder =
+        [backgroundCollectionConfiguration.configurationOrder
+            indexOfObjectPassingTest:^BOOL(NSString* id, NSUInteger index,
+                                           BOOL* stop) {
+              return configurationID == id;
+            }];
+    if (indexOfConfigurationOrder != NSNotFound) {
+      [backgroundCollectionConfiguration.configurationOrder
+          removeObjectAtIndex:indexOfConfigurationOrder];
+    }
+  }
+
+  NSDiffableDataSourceSnapshot<CustomizationSection*, NSString*>* snapshot =
+      [_diffableDataSource snapshot];
+  [snapshot deleteItemsWithIdentifiers:@[ configurationID ]];
+  [_diffableDataSource applySnapshot:snapshot animatingDifferences:NO];
+}
+
+// Creates a skeleton snapshot representing the loading content of the
+// collection view.
+- (NSDiffableDataSourceSnapshot<CustomizationSection*, NSString*>*)
+    skeletonSnapshot {
+  NSDiffableDataSourceSnapshot<NSString*, NSString*>* snapshot =
+      [[NSDiffableDataSourceSnapshot alloc] init];
+
+  for (NSInteger row = 0; row < kSkeletonSectionCount; row++) {
+    NSString* sectionId =
+        [NSString stringWithFormat:@"%@_%ld", kBackgroundCellIdentifier, row];
+    [snapshot appendSectionsWithIdentifiers:@[ sectionId ]];
+
+    NSMutableArray* skeletonIds = [NSMutableArray array];
+
+    for (NSInteger col = 0; col < kSkeletonItemsPerSection; col++) {
+      NSString* id = [NSString
+          stringWithFormat:@"%@_%ld_%ld", kBackgroundCellIdentifier, row, col];
+      [skeletonIds addObject:id];
+    }
+
+    [snapshot appendItemsWithIdentifiers:skeletonIds
+               intoSectionWithIdentifier:sectionId];
+  }
+
+  return snapshot;
+}
 
 // Creates a data snapshot representing the content of the collection view.
 - (NSDiffableDataSourceSnapshot<CustomizationSection*, NSString*>*)
@@ -207,19 +418,19 @@ const CGFloat kHeaderInsetSides = 7.5;
   NSDiffableDataSourceSnapshot<NSString*, NSString*>* snapshot =
       [[NSDiffableDataSourceSnapshot alloc] init];
 
-  for (BackgroundCollectionConfiguration* BackgroundCollectionConfiguration in
+  for (BackgroundCollectionConfiguration* backgroundCollectionConfiguration in
            _backgroundCollectionConfigurations) {
     [snapshot appendSectionsWithIdentifiers:@[
-      BackgroundCollectionConfiguration.collectionName
+      backgroundCollectionConfiguration.collectionName
     ]];
     NSMutableArray* backgroundIds = [NSMutableArray array];
-    for (BackgroundCustomizationConfiguration* backgroundConfiguration in
-             BackgroundCollectionConfiguration.configurations) {
-      [backgroundIds addObject:backgroundConfiguration.configurationID];
+    for (NSString* configurationID in backgroundCollectionConfiguration
+             .configurationOrder) {
+      [backgroundIds addObject:configurationID];
     }
 
     [snapshot appendItemsWithIdentifiers:backgroundIds
-               intoSectionWithIdentifier:BackgroundCollectionConfiguration
+               intoSectionWithIdentifier:backgroundCollectionConfiguration
                                              .collectionName];
   }
 
@@ -229,8 +440,10 @@ const CGFloat kHeaderInsetSides = 7.5;
 // Creates and configures the section layout using the given layout environment.
 - (NSCollectionLayoutSection*)createSectionLayoutWithEnvironment:
     (id<NSCollectionLayoutEnvironment>)layoutEnvironment {
+  CGSize windowSize = self.view.window.bounds.size;
   NSCollectionLayoutSection* section = [_collectionConfigurator
-      backgroundCellSectionForLayoutEnvironment:layoutEnvironment];
+      backgroundCellSectionForLayoutEnvironment:layoutEnvironment
+                                     windowSize:windowSize];
 
   // Header.
   NSCollectionLayoutSize* headerSize = [NSCollectionLayoutSize
@@ -256,6 +469,10 @@ const CGFloat kHeaderInsetSides = 7.5;
 - (void)configureHeaderView:(HomeCustomizationBackgroundPresetHeaderView*)header
                 elementKind:(NSString*)elementKind
                   indexPath:(NSIndexPath*)indexPath {
+  if (!_backgroundCollectionConfigurations) {
+    return;
+  }
+
   NSString* collectionName =
       [_diffableDataSource snapshot].sectionIdentifiers[indexPath.section];
 
@@ -274,6 +491,13 @@ const CGFloat kHeaderInsetSides = 7.5;
              [weakSelf configureBackgroundCell:cell
                                    atIndexPath:indexPath
                             withItemIdentifier:itemIdentifier];
+           }];
+
+  _backgroundSkeletonCellRegistration = [UICollectionViewCellRegistration
+      registrationWithCellClass:[HomeCustomizationBackgroundSkeletonCell class]
+           configurationHandler:^(HomeCustomizationBackgroundSkeletonCell* cell,
+                                  NSIndexPath* indexPath,
+                                  NSString* itemIdentifier){
            }];
 
   _headerRegistration = [UICollectionViewSupplementaryRegistration
@@ -295,13 +519,21 @@ const CGFloat kHeaderInsetSides = 7.5;
 - (void)configureBackgroundCell:(HomeCustomizationBackgroundCell*)cell
                     atIndexPath:(NSIndexPath*)indexPath
              withItemIdentifier:(NSString*)itemIdentifier {
-  BackgroundCustomizationConfiguration* backgroundConfiguration =
+  if (!_backgroundCustomizationConfigurationMap) {
+    return;
+  }
+  id<BackgroundCustomizationConfiguration> backgroundConfiguration =
       _backgroundCustomizationConfigurationMap[itemIdentifier];
-  id<LogoVendor> logoVendor = [self.logoVendorProvider provideLogoVendor];
+  SearchEngineLogoMediator* searchEngineLogoMediator =
+      [self.searchEngineLogoMediatorProvider
+          provideSearchEngineLogoMediatorForKey:itemIdentifier];
+
+  CustomUITraitAccessor* traitAccessor =
+      [[CustomUITraitAccessor alloc] initWithMutableTraits:cell.traitOverrides];
+  [traitAccessor setBoolForNewTabPageImageBackgroundTrait:YES];
 
   [cell configureWithBackgroundOption:backgroundConfiguration
-                           logoVendor:logoVendor
-                         colorPalette:nil];
+             searchEngineLogoMediator:searchEngineLogoMediator];
 
   if ([itemIdentifier isEqualToString:_selectedBackgroundId]) {
     [_collectionView selectItemAtIndexPath:indexPath
@@ -313,6 +545,64 @@ const CGFloat kHeaderInsetSides = 7.5;
 // Dismisses the current customization menu page.
 - (void)dismissCustomizationMenuPage {
   [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+// This method simulates a loading shimmer effect by dimming one cell at a time.
+// Only one cell per section is dimmed at any given moment.
+- (void)updateLoadingAnimation {
+  NSInteger previousIndex =
+      (_skeletonAnimationIndex - 1 + kSkeletonItemsPerSection) %
+      kSkeletonItemsPerSection;
+
+  for (NSInteger section = 0; section < kSkeletonSectionCount; section++) {
+    NSIndexPath* previousIndexPath = [NSIndexPath indexPathForItem:previousIndex
+                                                         inSection:section];
+    NSIndexPath* currentIndexPath =
+        [NSIndexPath indexPathForItem:_skeletonAnimationIndex
+                            inSection:section];
+
+    UICollectionViewCell* previousCell =
+        [self.collectionView cellForItemAtIndexPath:previousIndexPath];
+    UICollectionViewCell* currentCell =
+        [self.collectionView cellForItemAtIndexPath:currentIndexPath];
+
+    previousCell.alpha = 1;
+    currentCell.alpha = 0.5;
+  }
+
+  _skeletonAnimationIndex =
+      (_skeletonAnimationIndex + 1) % kSkeletonItemsPerSection;
+}
+
+// Stops the loading animation by invalidating the timer and resetting the alpha
+// of currently dimmed cells back to fully opaque.
+- (void)stopLoadingAnimation {
+  if (!_loadingTimer) {
+    return;
+  }
+
+  [_loadingTimer invalidate];
+  _loadingTimer = nil;
+
+  for (NSInteger section = 0; section < kSkeletonSectionCount; section++) {
+    NSIndexPath* indexPath =
+        [NSIndexPath indexPathForItem:_skeletonAnimationIndex
+                            inSection:section];
+    UICollectionViewCell* cell =
+        [self.collectionView cellForItemAtIndexPath:indexPath];
+    cell.alpha = 1.0;
+  }
+}
+
+// Cancels any unsaved changes and dismisses the menu.
+- (void)cancelButtonPressed {
+  [self.mutator discardBackground];
+  [self.presentationDelegate cancelBackgroundPicker];
+}
+
+// Dismiss the menu. The current background will be saved on menu dismiss.
+- (void)donebuttonPressed {
+  [self.presentationDelegate dismissBackgroundPicker];
 }
 
 @end

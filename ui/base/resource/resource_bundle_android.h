@@ -34,6 +34,11 @@ int GetMainAndroidPackFd(base::MemoryMappedFile::Region* out_region);
 COMPONENT_EXPORT(UI_BASE)
 int GetCommonResourcesPackFd(base::MemoryMappedFile::Region* out_region);
 
+// Returns the file descriptor and region for chrome_200_percent.pak.
+// This requires buildflag `enable_hidpi` to be set to `true`.
+COMPONENT_EXPORT(UI_BASE)
+int Get200PercentResourcesPackFd(base::MemoryMappedFile::Region* out_region);
+
 // Returns the file descriptors and regions for the locale .pak files. The first
 // item in the vector is the main translation, and if a string cannot be found
 // there, then we should fall back to the next item in the vector, and so on.
@@ -44,9 +49,9 @@ const std::vector<ResourceBundle::FdAndRegion>& GetLocalePaks();
 // GetPathForAndroidLocalePakWithinApk rather than looking for them on disk.
 COMPONENT_EXPORT(UI_BASE) void SetLocalePaksStoredInApk(bool value);
 
-// Tell ResourceBundle to determine whether load secondary locale .pak files
-// based on whether secondary locale .pak files exist.
-COMPONENT_EXPORT(UI_BASE) void DetectAndSetLoadSecondaryLocalePaks();
+// Tell ResourceBundle to determine whether load non-webview locale .pak files
+// based on whether non-webview locale .pak files exist.
+COMPONENT_EXPORT(UI_BASE) void DetectAndSetLoadNonWebViewLocalePaks();
 
 // Called in test when there are no locale pak files available.
 COMPONENT_EXPORT(UI_BASE) void SetNoAvailableLocalePaksForTest();

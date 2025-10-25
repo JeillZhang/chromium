@@ -27,9 +27,32 @@ struct IsPressedStyle: ButtonStyle {
   }
 }
 
+/// `ViewModifier` that hides badges when button is pressed.
+struct HideBadgeOnPressModifier: ViewModifier {
+  let isPressed: Bool
+  @Binding var hideBadge: Bool
+
+  @ViewBuilder
+  func body(content: Content) -> some View {
+    if #available(iOS 17, *) {
+      content.onChange(of: isPressed) { _, newValue in
+        if newValue {
+          hideBadge = true
+        }
+      }
+    } else {
+      content.onChange(of: isPressed) { newValue in
+        if newValue {
+          hideBadge = true
+        }
+      }
+    }
+  }
+}
+
 /// `PreferenceKey` holding the frame of the icon in the destination view.
 struct IconFramePreferenceKey: PreferenceKey {
-  static var defaultValue: CGRect = .null
+  static let defaultValue: CGRect = .null
   static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
     value = CGRectUnion(value, nextValue())
   }
@@ -149,10 +172,6 @@ struct OverflowMenuDestinationView: View {
             }
           }
         }
-        .simultaneousGesture(
-          LongPressGesture(minimumDuration: 0).onEnded { _ in
-            hideBadge = true
-          })
       }
       .accessibilityIdentifier(accessibilityIdentifier)
       .accessibilityLabel(Text(accessibilityLabel))
@@ -162,8 +181,11 @@ struct OverflowMenuDestinationView: View {
         ) { $0 }
       }
       .onPreferenceChange(IconFramePreferenceKey.self) { newFrame in
-        iconFrame = newFrame
+        Task { @MainActor in
+          iconFrame = newFrame
+        }
       }
+      .modifier(HideBadgeOnPressModifier(isPressed: isPressed, hideBadge: $hideBadge))
   }
 
   // The button view, which is replaced by just a plain view when this is in
@@ -293,7 +315,6 @@ struct OverflowMenuDestinationView: View {
   }
 
   /// Build the image to be displayed, based on the configuration of the item.
-  /// TODO(crbug.com/40833570): Remove this once only the symbols are present.
   @ViewBuilder
   func iconBuilder(interiorPadding: CGFloat, image: Image) -> some View {
     let configuredImage = image.overlay {

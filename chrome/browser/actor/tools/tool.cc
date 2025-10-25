@@ -4,15 +4,35 @@
 
 #include "chrome/browser/actor/tools/tool.h"
 
-#include <memory>
-
-#include "chrome/browser/actor/tools/observation_delay_controller.h"
+#include "chrome/browser/actor/aggregated_journal.h"
+#include "chrome/common/actor/action_result.h"
 
 namespace actor {
 
-std::unique_ptr<ObservationDelayController> Tool::GetObservationDelayer(
-    content::RenderFrameHost& target_frame) const {
-  return std::make_unique<ObservationDelayController>(target_frame);
+Tool::Tool(TaskId task_id, ToolDelegate& tool_delegate)
+    : task_id_(task_id), tool_delegate_(tool_delegate) {}
+Tool::~Tool() = default;
+
+mojom::ActionResultPtr Tool::TimeOfUseValidation(
+    const optimization_guide::proto::AnnotatedPageContent* last_observation) {
+  return MakeOkResult();
+}
+
+GURL Tool::JournalURL() const {
+  return GURL::EmptyGURL();
+}
+
+void Tool::UpdateTaskBeforeInvoke(ActorTask& task,
+                                  InvokeCallback callback) const {
+  // Do nothing by default, just trigger the callback.
+  std::move(callback).Run(MakeOkResult());
+}
+
+void Tool::UpdateTaskAfterInvoke(ActorTask& task,
+                                 mojom::ActionResultPtr result,
+                                 InvokeCallback callback) const {
+  // Do nothing by default, just trigger the callback.
+  std::move(callback).Run(std::move(result));
 }
 
 }  // namespace actor

@@ -13,8 +13,8 @@
 #include "base/test/task_environment.h"
 #include "components/memory_pressure/fake_memory_pressure_monitor.h"
 #include "components/omnibox/browser/on_device_tail_model_executor.h"
-#include "components/optimization_guide/core/test_model_info_builder.h"
-#include "components/optimization_guide/core/test_optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/delivery/test_model_info_builder.h"
+#include "components/optimization_guide/core/delivery/test_optimization_guide_model_provider.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -162,8 +162,7 @@ TEST_F(OnDeviceTailModelServiceTest, MemoryPressureLevel) {
       },
       &results_1);
   mem_pressure_monitor.SetAndNotifyMemoryPressure(
-      base::MemoryPressureListener::MemoryPressureLevel::
-          MEMORY_PRESSURE_LEVEL_CRITICAL);
+      base::MEMORY_PRESSURE_LEVEL_CRITICAL);
   service_->GetPredictionsForInput(input, std::move(callback_1));
   task_environment_.RunUntilIdle();
   EXPECT_FALSE(IsExecutorReady());
@@ -178,8 +177,7 @@ TEST_F(OnDeviceTailModelServiceTest, MemoryPressureLevel) {
       },
       &results_2);
   mem_pressure_monitor.SetAndNotifyMemoryPressure(
-      base::MemoryPressureListener::MemoryPressureLevel::
-          MEMORY_PRESSURE_LEVEL_MODERATE);
+      base::MEMORY_PRESSURE_LEVEL_MODERATE);
   service_->GetPredictionsForInput(input, std::move(callback_2));
   task_environment_.RunUntilIdle();
   EXPECT_TRUE(IsExecutorReady());

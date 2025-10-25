@@ -32,6 +32,7 @@ import "third_party/blink/public/mojom/conversions/conversions.mojom";
 import "third_party/blink/public/mojom/devtools/console_message.mojom";
 import "third_party/blink/public/mojom/fenced_frame/fenced_frame.mojom";
 import "third_party/blink/public/mojom/fenced_frame/fenced_frame_config.mojom";
+import "third_party/blink/public/mojom/fingerprinting_protection/noise_token.mojom";
 import "third_party/blink/public/mojom/frame/frame_owner_properties.mojom";
 import "third_party/blink/public/mojom/frame/frame_policy.mojom";
 import "third_party/blink/public/mojom/frame/frame_replication_state.mojom";
@@ -177,6 +178,14 @@ struct CreateViewParams {
   // Identifies the navigation that triggered this view creation, if any. Used
   // for collecting metrics.
   mojo_base.mojom.UnguessableToken? navigation_metrics_token;
+
+  // A snapshot of the history information when this view was created.
+  int32 history_index = -1;
+  int32 history_length = 0;
+
+  // The 64 bit hash value for canvas noising from the current page. A nullopt
+  // indicates canvas noising should be disabled for this page.
+  blink.mojom.NoiseToken? canvas_noise_token;
 };
 
 // A union to distinguish between parameters specific to local main frame
@@ -260,10 +269,6 @@ struct CreateFrameWidgetParams {
 
   // The initial visual properties of the widget.
   blink.mojom.VisualProperties visual_properties;
-
-  // If true, reuse the compositor by taking it from the current local root's
-  // frame widget when this frame widget's frame commits and is swapped in.
-  bool reuse_compositor;
 };
 
 // Used for recreating child frames after a crash (does this still happen?) and
@@ -782,12 +787,22 @@ interface FrameHost {
   // either ignored, or serviced correctly in the security context of the
   // document they originated from (based on which BrowserInterfaceBroker
   // connection the GetInterface messages arrive on).
+  //
+  // NOTE: PageState in DidCommitProvisionalLoadParams can be quite large when
+  // serialized, and its message structure must remain stable; hence
+  // [UnlimitedSize] for this message.
+  [UnlimitedSize]
   DidCommitProvisionalLoad(
       DidCommitProvisionalLoadParams params,
       DidCommitProvisionalLoadInterfaceParams? interface_params);
 
   // Sent by the renderer to indicate that a same document navigation
   // committed in the renderer process.
+  //
+  // NOTE: PageState in DidCommitProvisionalLoadParams can be quite large when
+  // serialized, and its message structure must remain stable; hence
+  // [UnlimitedSize] for this message.
+  [UnlimitedSize]
   DidCommitSameDocumentNavigation(
       DidCommitProvisionalLoadParams params,
       DidCommitSameDocumentNavigationParams same_document_params);

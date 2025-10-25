@@ -6,7 +6,6 @@
 
 #include <vector>
 
-#include "base/android/build_info.h"
 #include "base/base_paths_android.h"
 #include "base/base_paths_posix.h"
 #include "base/files/file_path.h"
@@ -18,6 +17,7 @@
 #include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "content/public/browser/file_system_access_permission_grant.h"
+#include "third_party/blink/public/mojom/permissions/permission_status.mojom-shared.h"
 
 namespace android_webview {
 namespace {
@@ -188,6 +188,14 @@ void AwFileSystemAccessPermissionContext::NotifyEntryMoved(
     const url::Origin& origin,
     const content::PathInfo& old_path,
     const content::PathInfo& new_path) {}
+
+void AwFileSystemAccessPermissionContext::NotifyEntryModified(
+    const url::Origin& origin,
+    const content::PathInfo& path) {}
+
+void AwFileSystemAccessPermissionContext::NotifyEntryRemoved(
+    const url::Origin& origin,
+    const content::PathInfo& path) {}
 
 void AwFileSystemAccessPermissionContext::OnFileCreatedFromShowSaveFilePicker(
     const GURL& file_picker_binding_context,

@@ -98,7 +98,9 @@ class CONTENT_EXPORT WebContentsAndroid {
 
   void ResumeLoadingCreatedWebContents(JNIEnv* env);
 
-  void SetPrimaryMainFrameImportance(JNIEnv* env, jint importance);
+  void SetPrimaryPageImportance(JNIEnv* env,
+                                jint main_frame_importance,
+                                jint subframe_importance);
   void SuspendAllMediaPlayers(JNIEnv* env);
   void SetAudioMuted(JNIEnv* env, jboolean mute);
   jboolean IsAudioMuted(JNIEnv* env);
@@ -163,6 +165,9 @@ class CONTENT_EXPORT WebContentsAndroid {
 
   base::android::ScopedJavaLocalRef<jstring> GetEncoding(JNIEnv* env) const;
 
+  void Discard(JNIEnv* env,
+               const base::android::JavaParamRef<jobject>& on_discarded);
+
   void SetOverscrollRefreshHandler(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& overscroll_refresh_handler);
@@ -201,12 +206,6 @@ class CONTENT_EXPORT WebContentsAndroid {
                                 int left,
                                 int bottom,
                                 int right);
-
-  void SetContextMenuInsets(JNIEnv* env,
-                            int top,
-                            int left,
-                            int bottom,
-                            int right);
 
   void ShowInterestInElement(JNIEnv* env, int nodeID);
 
@@ -251,11 +250,24 @@ class CONTENT_EXPORT WebContentsAndroid {
 
   void SetLongPressLinkSelectText(JNIEnv* env, jboolean enabled);
 
+  void SetCanAcceptLoadDrops(JNIEnv* env, jboolean enabled);
+
+  bool GetCanAcceptLoadDropsForTesting(JNIEnv* env);
+
   void SetSupportsForwardTransitionAnimation(JNIEnv* env, jboolean enabled);
 
   jboolean HasOpener(JNIEnv* env);
 
   jint GetOriginalWindowOpenDisposition(JNIEnv* env);
+
+  void UpdateWindowControlsOverlay(JNIEnv* env,
+                                   jint left,
+                                   jint top,
+                                   jint right,
+                                   jint bottom);
+
+  void SetSupportsDraggableRegions(JNIEnv* env,
+                                   bool supports_draggable_regions);
 
   // Adds a crash report, like DumpWithoutCrashing(), including the Java stack
   // trace from which `web_contents` was created. This is meant to help debug

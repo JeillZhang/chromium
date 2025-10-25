@@ -110,7 +110,7 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   // GC functionality.
   void Trace(Visitor* visitor) const override;
 
-  // Returns true if the pseudo element corresponding to the given id and name
+  // Returns true if the pseudo-element corresponding to the given id and name
   // is the only child.
   bool MatchForOnlyChild(PseudoId pseudo_id,
                          const AtomicString& view_transition_name) const;
@@ -134,7 +134,7 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   // painting in the snapshot.
   bool NeedsViewTransitionClipNode(const LayoutObject& object) const;
 
-  // Returns true if this object is painted via pseudo elements. Note that this
+  // Returns true if this object is painted via pseudo-elements. Note that this
   // is different from NeedsViewTransitionEffectNode() since the root may not
   // be a transitioning element, but require an effect node.
   bool IsRepresentedViaPseudoElements(const LayoutObject& object) const;
@@ -151,10 +151,11 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   viz::ViewTransitionElementResourceId GetSnapshotId(
       const LayoutObject& object) const;
 
-  // The layer used to paint the old Document rendered in a LocalFrame subframe
-  // until the new Document can start rendering.
-  const scoped_refptr<cc::ViewTransitionContentLayer>&
-  GetSubframeSnapshotLayer() const;
+  // The layer used to paint the old contents of the transition scope until the
+  // transition can start animating. This is used for non-document scopes and
+  // for document scopes in local subframes.
+  const scoped_refptr<cc::ViewTransitionContentLayer>& GetScopeSnapshotLayer()
+      const;
 
   // Updates a clip node. The clip tracks the subset of the |object|'s ink
   // overflow rectangle which should be painted.The return value is a result of
@@ -182,12 +183,12 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   // content-visibility locks.
   bool NeedsUpToDateTags() const;
 
-  // Creates a pseudo element for the given |pseudo_id|.
+  // Creates a pseudo-element for the given |pseudo_id|.
   PseudoElement* CreatePseudoElement(Element* parent,
                                      PseudoId pseudo_id,
                                      const AtomicString& view_transition_name);
 
-  // Returns the UA style sheet for the pseudo element tree generated during a
+  // Returns the UA style sheet for the pseudo-element tree generated during a
   // transition.
   CSSStyleSheet* UAStyleSheet() const;
 
@@ -205,16 +206,14 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
            style_tracker_->IsTransitionElement(*document_->documentElement());
   }
 
-  void RecalcTransitionPseudoTreeStyle() const;
-
-  void RebuildTransitionPseudoLayoutTree() const;
-
   // In physical pixels. See comments on equivalent methods in
   // ViewTransitionStyleTracker for info.
   gfx::Size GetSnapshotRootSize() const;
   gfx::Vector2d GetFrameToSnapshotRootOffset() const;
 
   bool IsDone() const { return IsTerminalState(state_); }
+
+  bool HasActiveAnimations() const;
 
   // Returns true if this object was created to cache a snapshot of the current
   // Document for a navigation.
@@ -287,8 +286,12 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   void WillExitGetComputedStyleScope();
 
   // If this transition is in a phase that has non-web exposed view transition
-  // pseudo elements, then this invalidates the style for those pseudo elements.
+  // pseudo-elements, then this invalidates the style for those pseudo-elements.
   void InvalidateInternalPseudoStyle();
+
+  // Count the number of blocking promises for waitUntil() functionality.
+  void IncrementWaitUntilPromises();
+  void DecrementWaitUntilPromises();
 
  private:
   friend class ViewTransitionTest;
@@ -333,6 +336,7 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
     kAnimateTagDiscovery,
     kAnimateRequestPending,
     kAnimating,
+    kPendingDone,
 
     // Terminal states.
     kFinished,
@@ -368,6 +372,12 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   void PauseRendering();
   void OnRenderingPausedTimeout();
   void ResumeRendering();
+
+  // Returns true if unable to capture the view transition due to unsupported
+  // style or layout.
+  bool UnsupportedCapture();
+
+  void LogMessageToConsole(const String& message);
 
   // Cross-document navigations may span across multiple CompositorFrameSinks if
   // the old/new Documents render to different WebWidgets. This returns false if
@@ -411,7 +421,7 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   // selectively pausing animations for a CC instance is difficult.
   class ScopedPauseRendering {
    public:
-    explicit ScopedPauseRendering(const Element&);
+    explicit ScopedPauseRendering(const Element&, bool has_document_scope);
     ~ScopedPauseRendering();
 
     bool ShouldThrottleRendering() const;
@@ -442,6 +452,8 @@ class CORE_EXPORT ViewTransition : public GarbageCollected<ViewTransition>,
   bool first_animating_frame_ = true;
   bool context_destroyed_ = false;
   bool pending_skip_view_transitions_ = false;
+
+  int wait_until_pending_promise_count_ = 0;
 };
 
 }  // namespace blink

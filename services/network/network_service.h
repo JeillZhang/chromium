@@ -68,10 +68,6 @@
 #include "services/network/public/mojom/ct_log_info.mojom.h"
 #endif  // BUILDFLAG(IS_CT_SUPPORTED)
 
-namespace mojo_base {
-class ProtoWrapper;
-}
-
 namespace net {
 class FileNetLogObserver;
 class HostResolverManager;
@@ -85,7 +81,7 @@ class URLRequestContext;
 namespace network {
 
 class DnsConfigChangeManager;
-class HttpAuthCacheCopier;
+class HttpAuthCacheProxyCopier;
 class NetLogProxySink;
 class NetworkContext;
 class NetworkService;
@@ -197,8 +193,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
   void OnTrustStoreChanged() override;
   void OnClientCertStoreChanged() override;
   void SetEncryptionKey(const std::string& encryption_key) override;
-  void OnMemoryPressure(base::MemoryPressureListener::MemoryPressureLevel
-                            memory_pressure_level) override;
+  void OnMemoryPressure(
+      base::MemoryPressureLevel memory_pressure_level) override;
   void OnPeerToPeerConnectionsCountChange(uint32_t count) override;
 #if BUILDFLAG(IS_ANDROID)
   void OnApplicationStateChange(base::android::ApplicationState state) override;
@@ -228,10 +224,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
                          base::Time update_time) override;
 
   void UpdateMaskedDomainList(
-      mojo_base::ProtoWrapper masked_domain_list,
-      const std::vector<std::string>& exclusion_list) override;
-
-  void UpdateMaskedDomainListFlatbuffer(
       base::File default_file,
       uint64_t default_file_size,
       base::File regular_browsing_file,
@@ -270,6 +262,12 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
       mojo::PendingReceiver<network::mojom::URLLoader> dest_url_loader,
       mojo::PendingRemote<network::mojom::URLLoaderClient>
           dest_url_loader_client) override;
+
+  void DecodeContentEncoding(
+      const std::vector<net::SourceStreamType>& content_encoding_types,
+      mojo::ScopedDataPipeConsumerHandle source_body,
+      mojo::ScopedDataPipeProducerHandle dest_body,
+      DecodeContentEncodingCallback callback) override;
 
   void SetTLS13EarlyDataEnabled(bool enabled) override;
 
@@ -315,8 +313,8 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
   net::HostResolver::Factory* host_resolver_factory() {
     return host_resolver_factory_.get();
   }
-  HttpAuthCacheCopier* http_auth_cache_copier() {
-    return http_auth_cache_copier_.get();
+  HttpAuthCacheProxyCopier* http_auth_cache_proxy_copier() {
+    return http_auth_cache_proxy_copier_.get();
   }
 
   FirstPartySetsManager* first_party_sets_manager() const {
@@ -339,10 +337,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
   void set_host_resolver_factory_for_testing(
       std::unique_ptr<net::HostResolver::Factory> host_resolver_factory) {
     host_resolver_factory_ = std::move(host_resolver_factory);
-  }
-
-  bool split_auth_cache_by_network_isolation_key() const {
-    return split_auth_cache_by_network_isolation_key_;
   }
 
   // From initialization on, this will be non-null and will always point to the
@@ -478,7 +472,7 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
 
   std::unique_ptr<net::HostResolverManager> host_resolver_manager_;
   std::unique_ptr<net::HostResolver::Factory> host_resolver_factory_;
-  std::unique_ptr<HttpAuthCacheCopier> http_auth_cache_copier_;
+  std::unique_ptr<HttpAuthCacheProxyCopier> http_auth_cache_proxy_copier_;
 
   // Members that would store the http auth network_service related params.
   // These Params are later used by NetworkContext to create
@@ -518,10 +512,6 @@ class COMPONENT_EXPORT(NETWORK_SERVICE) NetworkService
       raw_headers_access_origins_by_pid_;
 
   bool quic_disabled_ = false;
-
-  // Whether new NetworkContexts will be configured to partition their
-  // HttpAuthCaches by NetworkIsolationKey.
-  bool split_auth_cache_by_network_isolation_key_ = false;
 
   // Globally-scoped cryptographic state for the Trust Tokens protocol
   // (https://github.com/wicg/trust-token-api), updated via a Mojo IPC and

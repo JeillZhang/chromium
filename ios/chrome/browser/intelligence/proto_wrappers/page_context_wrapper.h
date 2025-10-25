@@ -7,12 +7,42 @@
 
 #import <Foundation/Foundation.h>
 
+#import <memory>
+
 #import "base/functional/callback_forward.h"
+#import "base/types/expected.h"
 #import "components/optimization_guide/proto/features/common_quality_data.pb.h"
+
+namespace base {
+class TimeDelta;
+}  // namespace base
 
 namespace web {
 class WebState;
 }  // namespace web
+
+// PageContextWrapper error states, for when no PageContext is provided to the
+// caller.
+enum class PageContextWrapperError {
+  // Generic error.
+  kGenericError,
+  // APC was expected, but none was extracted.
+  kAPCError,
+  // Screenshot was expected, but none could be taken.
+  kScreenshotError,
+  // PDF data was expected, but none could be extracted.
+  kPDFDataError,
+  // The webpage is protected, PageContext was force-detached.
+  kForceDetachError,
+  // The Page Context retrieval timed out.
+  kTimeout,
+  // innerText was expected, but none was extracted.
+  kInnerTextError,
+};
+
+using PageContextWrapperCallbackResponse =
+    base::expected<std::unique_ptr<optimization_guide::proto::PageContext>,
+                   PageContextWrapperError>;
 
 // A wrapper/helper around the `optimization_guide::proto::PageContext` proto
 // which handles populating all the necessary PageContext fields asynchronously.
@@ -25,27 +55,34 @@ class WebState;
 // disable-by-default behaviour.
 @interface PageContextWrapper : NSObject
 
-
 // Initializer which takes everything needed to construct the PageContext proto
 // as arguments.
-- (instancetype)
-      initWithWebState:(web::WebState*)webState
-    completionCallback:
-        (base::OnceCallback<
-            void(std::unique_ptr<::optimization_guide::proto::PageContext>)>)
-            completionCallback NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithWebState:(web::WebState*)webState
+              completionCallback:
+                  (base::OnceCallback<void(PageContextWrapperCallbackResponse)>)
+                      completionCallback NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;
 
 // Initiates the asynchronous work of populating all the PageContext fields, and
 // executes the `completionCallback` when all async work is complete.
 // Relinquishes ownership of the PageContext proto back to the handler of the
-// callback.
+// callback. Uses a default timeout.
 - (void)populatePageContextFieldsAsync;
+
+// Same as `populatePageContextFieldsAsync`, but with a custom timeout.
+- (void)populatePageContextFieldsAsyncWithTimeout:(base::TimeDelta)timeout;
 
 // Enables force taking snapshots if none could be retrieved from storage, does
 // nothing if `shouldGetSnapshot` is NO.
 @property(nonatomic, assign) BOOL shouldForceUpdateMissingSnapshots;
+
+// Since most of the extraction needs to run on the main thread anyways,
+// enabling this flag will simply post the task on the main thread instead of
+// executing it synchronously, so it can be picked up at a later (hopefully
+// better) time. Use this for non time-sensitive or user-facing PageContext
+// extractions.
+@property(nonatomic, assign) BOOL isLowPriorityExtraction;
 
 // Text to highlight in the snapshot. Will be highlighted just before taking the
 // snapshot, and unhighlighted right after. Nil if no text should be
@@ -66,11 +103,20 @@ class WebState;
 // force-realizes the associated WebState.
 @property(nonatomic, assign) BOOL shouldGetFullPagePDF;
 
-// Whether the entire webpage body's innerText should be fetched. This includes
-// the innerText of the webpage's iframes, but only for those from the same
-// origin as the main WebFrame.
-@property(nonatomic, assign) BOOL shouldGetInnerText;
+// Whether the entire webpage AnnotatedPageContent (APC) of innerTexts should be
+// fetched. This will construct an APC tree with all same-origin and
+// cross-origin frames as FrameData ContentNodes, each with their single
+// corresponding TextInfo ContentNode filled with their innerText. For the main
+// frame and its same-origin iframes, the original hierarchy is kept. All
+// cross-origin iframes will be direct children of the main frame's root node,
+// with their descendents keeping their relative (WRT to their parent
+// cross-origin iframes) hierarchy.
+@property(nonatomic, assign) BOOL shouldGetAnnotatedPageContent;
 
+// Whether the entire webpage's innerText should be fetched. This includes the
+// innerText of all of the webpage's iframes as the information is aggregated
+// while the AnnotatedPageContent (APC) tree is built.
+@property(nonatomic, assign) BOOL shouldGetInnerText;
 
 @end
 

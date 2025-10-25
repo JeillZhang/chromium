@@ -117,24 +117,14 @@
 - (void)resetVideoOrientation:(AVCaptureVideoPreviewLayer*)previewLayer {
   DCHECK(previewLayer);
   AVCaptureConnection* videoConnection = [previewLayer connection];
-  if (@available(iOS 17, *)) {
-    AVCaptureDevice* camera = [self camera];
-    AVCaptureDeviceRotationCoordinator* rotationCoordiantor =
-        [[AVCaptureDeviceRotationCoordinator alloc]
-            initWithDevice:camera
-              previewLayer:previewLayer];
-    CGFloat angle =
-        rotationCoordiantor.videoRotationAngleForHorizonLevelCapture;
-    if ([videoConnection isVideoRotationAngleSupported:angle]) {
-      [videoConnection setVideoRotationAngle:angle];
-    }
+  AVCaptureDevice* camera = [self camera];
+  AVCaptureDeviceRotationCoordinator* rotationCoordiantor =
+      [[AVCaptureDeviceRotationCoordinator alloc] initWithDevice:camera
+                                                    previewLayer:previewLayer];
+  CGFloat angle = rotationCoordiantor.videoRotationAngleForHorizonLevelCapture;
+  if ([videoConnection isVideoRotationAngleSupported:angle]) {
+    [videoConnection setVideoRotationAngle:angle];
   }
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-  else if ([videoConnection isVideoOrientationSupported]) {
-    [videoConnection setVideoOrientation:
-                         [self videoOrientationForCurrentInterfaceOrientation]];
-  }
-#endif
 }
 
 - (void)startRecording {
@@ -384,6 +374,10 @@
         break;
       case AVCaptureSessionInterruptionReasonAudioDeviceInUseByAnotherClient:
         NOTREACHED();
+      case AVCaptureSessionInterruptionReasonSensitiveContentMitigationActivated:
+        // TODO(crbug.com/423849692): Add a new camera state for this case.
+        [weakSelf setCameraState:scanner::CAMERA_UNAVAILABLE];
+        break;
     }
   });
 }

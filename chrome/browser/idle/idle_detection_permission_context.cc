@@ -9,6 +9,7 @@
 #include "base/rand_util.h"
 #include "chrome/browser/visibility_timer_tab_helper.h"
 #include "components/content_settings/browser/page_specific_content_settings.h"
+#include "components/permissions/permission_decision.h"
 #include "components/permissions/permission_request_id.h"
 #include "content/public/browser/browser_context.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom.h"
@@ -16,7 +17,7 @@
 
 IdleDetectionPermissionContext::IdleDetectionPermissionContext(
     content::BrowserContext* browser_context)
-    : PermissionContextBase(
+    : ContentSettingPermissionContextBase(
           browser_context,
           ContentSettingsType::IDLE_DETECTION,
           network::mojom::PermissionsPolicyFeature::kIdleDetection) {}
@@ -24,12 +25,11 @@ IdleDetectionPermissionContext::IdleDetectionPermissionContext(
 IdleDetectionPermissionContext::~IdleDetectionPermissionContext() = default;
 
 void IdleDetectionPermissionContext::UpdateTabContext(
-    const permissions::PermissionRequestID& id,
-    const GURL& requesting_frame,
+    const permissions::PermissionRequestData& request_data,
     bool allowed) {
   content_settings::PageSpecificContentSettings* content_settings =
       content_settings::PageSpecificContentSettings::GetForFrame(
-          id.global_render_frame_host_id());
+          request_data.id.global_render_frame_host_id());
   if (!content_settings)
     return;
 
@@ -70,8 +70,8 @@ void IdleDetectionPermissionContext::DecidePermission(
                   if (context) {
                     context->NotifyPermissionSet(
                         *request_data, std::move(callback),
-                        /*persist=*/true, CONTENT_SETTING_BLOCK,
-                        /*is_one_time=*/false, /*is_final_decision=*/true);
+                        /*persist=*/true, PermissionDecision::kDeny,
+                        /*is_final_decision=*/true);
                   }
                 },
                 weak_factory_.GetWeakPtr(), std::move(request_data),
@@ -80,6 +80,6 @@ void IdleDetectionPermissionContext::DecidePermission(
     return;
   }
 
-  PermissionContextBase::DecidePermission(std::move(request_data),
-                                          std::move(callback));
+  ContentSettingPermissionContextBase::DecidePermission(std::move(request_data),
+                                                        std::move(callback));
 }

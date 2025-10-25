@@ -29,10 +29,10 @@
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/color_scheme_flags.h"
 #include "third_party/blink/renderer/core/css/css_position_try_rule.h"
+#include "third_party/blink/renderer/core/css/css_to_length_conversion_data.h"
 #include "third_party/blink/renderer/core/css/element_rule_collector.h"
 #include "third_party/blink/renderer/core/css/resolver/matched_properties_cache.h"
 #include "third_party/blink/renderer/core/css/resolver/style_builder.h"
-#include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
 #include "third_party/blink/renderer/core/css/selector_checker.h"
 #include "third_party/blink/renderer/core/css/selector_filter.h"
 #include "third_party/blink/renderer/core/css/style_request.h"
@@ -56,6 +56,7 @@ class PageMarginsStyle;
 class PropertyHandle;
 class StyleCascade;
 class StyleRecalcContext;
+class StyleResolverState;
 class StyleRuleUsageTracker;
 
 // This class selects a ComputedStyle for a given element in a document based on
@@ -193,18 +194,18 @@ class CORE_EXPORT StyleResolver final : public GarbageCollected<StyleResolver> {
   RuleIndexList* PseudoCSSRulesForElement(
       Element*,
       PseudoId,
-      const AtomicString& view_transition_name,
+      const AtomicString& pseudo_argument,
       unsigned rules_to_include = kAllCSSRules);
   // Note that StyleRulesForElement will behave as if all links are
-  // unvisited; the :visited pseudo class will never match.
+  // unvisited; the :visited pseudo-class will never match.
   StyleRuleList* StyleRulesForElement(Element*, unsigned rules_to_include);
   HeapHashMap<CSSPropertyName, Member<const CSSValue>> CascadedValuesForElement(
       Element*,
       PseudoId);
 
-  Element* FindContainerForElement(Element*,
-                                   const ContainerSelector&,
-                                   const TreeScope* selector_tree_scope);
+  static Element* FindContainerForElement(Element*,
+                                          const ContainerSelector&,
+                                          const TreeScope* selector_tree_scope);
 
   Font* ComputeFont(Element&, const ComputedStyle&, const CSSPropertyValueSet&);
 
@@ -234,7 +235,9 @@ class CORE_EXPORT StyleResolver final : public GarbageCollected<StyleResolver> {
                                       const CSSValue&);
   // Resolves a single CSSValue in the context of some element's computed style.
   //
-  // This currently always resolves the value with tree_scope=Document.
+  // This currently always resolves the value with tree_scope=Document,
+  // and without any custom @env bindings. (When we get mixin support
+  // in Devtools, we'll need to do something about at least the latter.)
   //
   // This is intended for use by the Inspector Agent.
   static const CSSValue* ResolveValue(Element& element,
@@ -287,6 +290,8 @@ class CORE_EXPORT StyleResolver final : public GarbageCollected<StyleResolver> {
     return computed_style_bytes_used_;
   }
 
+  void ApplyTriggerData(StyleResolverState& state);
+
   void Trace(Visitor*) const;
 
  private:
@@ -318,7 +323,7 @@ class CORE_EXPORT StyleResolver final : public GarbageCollected<StyleResolver> {
   void CollectPseudoRulesForElement(const Element&,
                                     ElementRuleCollector&,
                                     PseudoId,
-                                    const AtomicString& view_transition_name,
+                                    const AtomicString& pseudo_argument,
                                     unsigned rules_to_include);
   void MatchUARules(const Element&, ElementRuleCollector&);
   void MatchUserRules(ElementRuleCollector&);
@@ -393,9 +398,8 @@ class CORE_EXPORT StyleResolver final : public GarbageCollected<StyleResolver> {
 
   MatchedPropertiesCache matched_properties_cache_;
 
-  // Both these members are on a hot-path for creating ComputedStyle objects.
+  // This member is on a hot-path for creating ComputedStyle objects.
   const subtle::UncompressedMember<const ComputedStyle> initial_style_;
-  const subtle::UncompressedMember<const ComputedStyle> initial_style_for_img_;
   SelectorFilter selector_filter_;
 
   // Micro 1-element cache.

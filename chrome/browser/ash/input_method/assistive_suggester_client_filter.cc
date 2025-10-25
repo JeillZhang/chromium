@@ -19,8 +19,6 @@
 #include "base/hash/hash.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/ash/input_method/url_utils.h"
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/browser_window.h"
 #include "components/exo/wm_helper.h"
 #include "ui/base/ime/ash/text_input_method.h"
 #include "ui/base/ime/text_input_type.h"
@@ -126,7 +124,7 @@ bool IsInternalWebsite(const std::optional<GURL>& url) {
   if (!url) {
     return false;
   }
-  std::string host = url->host();
+  std::string host = url->GetHost();
   for (const size_t hash_code : kHashedInternalUrls) {
     if (hash_code == base::PersistentHash(host)) {
       return true;
@@ -142,7 +140,7 @@ bool AtDomainWithPathPrefix(const std::optional<GURL>& url,
     return false;
   }
   return url->DomainIs(domain) && url->has_path() &&
-         base::StartsWith(url->path(), prefix);
+         base::StartsWith(url->GetPath(), prefix);
 }
 
 template <size_t N>

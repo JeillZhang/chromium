@@ -217,7 +217,7 @@ AutofillProfile CreateAutofillProfile(ProfileType type) {
 }
 
 AutofillProfile CreateUniqueAutofillProfile() {
-  AutofillProfile profile(AddressCountryCode("US"));
+  AutofillProfile profile(autofill::AddressCountryCode("US"));
   autofill::test::SetProfileInfoWithGuid(
       &profile, base::Uuid::GenerateRandomV4().AsLowercaseString().c_str(),
       "First", "Middle", "Last", "email@domain.tld", "Company", "123 Main St",
@@ -407,8 +407,7 @@ AutofillProfileChecker::~AutofillProfileChecker() {
       ->address_data_manager()
       .RemoveObserver(this);
 }
-bool AutofillProfileChecker::Wait() {
-  DLOG(WARNING) << "AutofillProfileChecker::Wait() started";
+void AutofillProfileChecker::WillStartWaiting() {
   PersonalDataManager* pdm_a =
       autofill_helper::GetPersonalDataManager(profile_a_);
   PersonalDataManager* pdm_b =
@@ -428,9 +427,6 @@ bool AutofillProfileChecker::Wait() {
   WaitForCurrentTasksToComplete(
       GetWebDataService(profile_b_)->GetDBTaskRunner());
   std::move(waiter_b).Wait();
-
-  DLOG(WARNING) << "AutofillProfileChecker::Wait() completed";
-  return StatusChangeChecker::Wait();
 }
 
 bool AutofillProfileChecker::IsExitConditionSatisfied(std::ostream* os) {

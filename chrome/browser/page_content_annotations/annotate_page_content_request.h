@@ -5,12 +5,17 @@
 #ifndef CHROME_BROWSER_PAGE_CONTENT_ANNOTATIONS_PAGE_CONTENT_ANNOTATIONS_ANNOTATE_PAGE_CONTENT_REQUEST_H_
 #define CHROME_BROWSER_PAGE_CONTENT_ANNOTATIONS_PAGE_CONTENT_ANNOTATIONS_ANNOTATE_PAGE_CONTENT_REQUEST_H_
 
-#include "chrome/browser/content_extraction/inner_text.h"
+#include "base/memory/raw_ptr.h"
+#include "chrome/browser/page_content_annotations/page_content_extraction_types.h"
+#include "components/content_extraction/content/browser/inner_text.h"
 #include "components/optimization_guide/content/browser/page_content_proto_provider.h"
-#include "components/optimization_guide/proto/features/common_quality_data.pb.h"
 #include "content/public/browser/web_contents.h"
 #include "pdf/buildflags.h"
 #include "third_party/blink/public/mojom/content_extraction/ai_page_content.mojom.h"
+
+namespace optimization_guide {
+class PageContextEligibility;
+}  // namespace optimization_guide
 
 namespace page_content_annotations {
 
@@ -18,6 +23,11 @@ namespace page_content_annotations {
 // extracts page content.
 class AnnotatedPageContentRequest {
  public:
+  using GetAIPageContentCallback =
+      base::RepeatingCallback<void(content::WebContents*,
+                                   blink::mojom::AIPageContentOptionsPtr,
+                                   optimization_guide::OnAIPageContentDone)>;
+
   static std::unique_ptr<AnnotatedPageContentRequest> Create(
                                  content::WebContents* web_contents);
 
@@ -37,11 +47,20 @@ class AnnotatedPageContentRequest {
 
   void OnFirstContentfulPaintInPrimaryMainFrame();
 
+  void OnVisibilityChanged(content::Visibility visibility);
+
+  // Returns the cached APC for `page` and whether it is eligible for
+  // server upload. Will return nullopt if not available.
+  std::optional<ExtractedPageContentResult> GetCachedContentAndEligibility();
+
+  void SetGetAIPageContentCallbackForTesting(GetAIPageContentCallback callback);
+
  private:
   void ResetForNewNavigation();
 
   void MaybeScheduleExtraction();
 
+  void ExtractPageContent();
   void RequestAnnotatedPageContentSync();
 
   bool ShouldScheduleExtraction() const;
@@ -60,6 +79,10 @@ class AnnotatedPageContentRequest {
   void OnPdfDocumentLoadComplete();
 #endif  // BUILDFLAG(ENABLE_PDF)
 
+  void OnPageContextEligibilityAPILoaded(
+      optimization_guide::PageContextEligibility* page_context_eligibility);
+
+  raw_ptr<optimization_guide::PageContextEligibility> page_context_eligibility_;
   const raw_ptr<content::WebContents> web_contents_;
   const blink::mojom::AIPageContentOptionsPtr request_;
   const base::TimeDelta delay_;
@@ -76,13 +99,21 @@ class AnnotatedPageContentRequest {
     // has reached a stable state.
     kScheduled,
 
-    // The content for the last committed navigation has been extracted.
-    kDone
+    // The extraction finished after page load.
+    kExtractedAtPageLoad,
+
+    // All extraction triggers are handled.
+    kFinal
   };
-  Lifecycle lifecycle_ = Lifecycle::kDone;
+  Lifecycle lifecycle_ = Lifecycle::kFinal;
 
   bool waiting_for_load_ = false;
   bool waiting_for_fcp_ = false;
+  bool is_hidden_ = false;
+
+  std::optional<ExtractedPageContentResult> cached_content_;
+
+  GetAIPageContentCallback get_ai_page_content_callback_;
 
   base::WeakPtrFactory<AnnotatedPageContentRequest> weak_factory_{this};
 };

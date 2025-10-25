@@ -93,7 +93,7 @@ constexpr auto kReasonDescriptionMap = std::to_array<ReasonAndDescription>({
     {CompositingReason::kViewTransitionElement,
      "This element is shared during view transition."},
     {CompositingReason::kViewTransitionPseudoElement,
-     "This element is a part of a pseudo element tree representing the view "
+     "This element is a part of a pseudo-element tree representing the view "
      "transition."},
     {CompositingReason::kViewTransitionElementDescendantWithClipPath,
      "This element's ancestor is shared during view transition and it has a "
@@ -161,12 +161,8 @@ std::vector<const char*> CompositingReason::Descriptions(
 
 String CompositingReason::ToString(CompositingReasons reasons) {
   StringBuilder builder;
-  for (const char* name : ShortNames(reasons)) {
-    if (builder.length())
-      builder.Append(',');
-    builder.Append(name);
-  }
-  return builder.ToString();
+  builder.AppendRange(ShortNames(reasons), ",");
+  return builder.ReleaseString();
 }
 
 }  // namespace blink

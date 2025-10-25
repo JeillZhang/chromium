@@ -15,6 +15,7 @@
 #include "content/public/renderer/plugin_ax_tree_action_target_adapter.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "pdf/accessibility_structs.h"
+#include "pdf/page_character_index.h"
 #include "pdf/pdf_accessibility_data_handler.h"
 #include "services/screen_ai/buildflags/buildflags.h"
 #include "third_party/blink/public/web/web_ax_object.h"
@@ -124,7 +125,7 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
 
   // content::RenderFrameObserver:
   void AccessibilityModeChanged(const ui::AXMode& mode) override;
-  void OnDestruct() override;
+  void OnDestruct() override {}
   void WasHidden() override;
   void WasShown() override;
 
@@ -164,16 +165,12 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
                       int32_t* out_node_id,
                       int32_t* out_node_char_index) const;
 
-  // Called after the data for all pages in the PDF have been received.
-  // Finishes assembling a complete accessibility tree and grafts it
-  // onto the host tree.
+  // Called after the data for some pages in the PDF have been received and
+  // sends the data on the added pages to the host tree.
   void UnserializeNodes();
 
-#if BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
-  // Called after the OCR data for all images in the PDF have been received.
-  // Set the status node with the OCR completion message.
-  void SetOcrCompleteStatus();
-#endif  // BUILDFLAG(ENABLE_SCREEN_AI_SERVICE)
+  // If needed sets the status message when all pages are loaded.
+  void SetFinalStatusMessage();
 
   void AddPageContent(
       const chrome_pdf::AccessibilityPageInfo& page_info,
@@ -217,11 +214,6 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
 
   ui::AXTreeData tree_data_;
   ui::AXTree tree_;
-
-  // ‌PdfAccessibilityTree belongs to the PDF plugin which is created by the
-  // renderer. `render_frame_` is reset when renderer sends OnDestruct() to its
-  // observers.
-  raw_ptr<content::RenderFrame> render_frame_;
 
   // Unowned. Must outlive `this`.
   const raw_ptr<chrome_pdf::PdfAccessibilityActionHandler> action_handler_;
@@ -274,7 +266,7 @@ class PdfAccessibilityTree : public ui::AXTreeSource<const ui::AXNode*,
   // applying searchify.
   bool had_accessible_text_ = false;
   bool did_have_an_image_ = false;
-  bool sent_metrics_once_ = false;
+
   // Initialize `currently_in_foreground_` to be true as an associated render
   // frame would be most likely in foreground when being created. If it goes to
   // background, this value will be flipped to false in `WasHidden()`.

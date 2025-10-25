@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_TABS_TAB_STRIP_API_TESTING_TOY_TAB_STRIP_BROWSER_ADAPTER_H_
 #define CHROME_BROWSER_UI_TABS_TAB_STRIP_API_TESTING_TOY_TAB_STRIP_BROWSER_ADAPTER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/tabs/tab_strip_api/adapters/browser_adapter.h"
 #include "chrome/browser/ui/tabs/tab_strip_api/testing/toy_tab_strip.h"
 
@@ -18,7 +19,11 @@ class ToyTabStripBrowserAdapter : public BrowserAdapter {
       delete;
   ~ToyTabStripBrowserAdapter() = default;
 
-  tabs::TabHandle AddTabAt(const GURL& url, std::optional<int> index) override;
+  tabs::TabHandle AddTabAt(
+      const GURL& url,
+      std::optional<int> index,
+      std::optional<tab_groups::TabGroupId> group = std::nullopt,
+      bool pinned = false) override;
 
  private:
   raw_ptr<ToyTabStrip> tab_strip_;

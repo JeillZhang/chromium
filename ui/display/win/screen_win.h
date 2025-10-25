@@ -10,6 +10,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/callback_list.h"
 #include "base/scoped_observation.h"
 #include "ui/display/display_change_notifier.h"
 #include "ui/display/display_export.h"
@@ -23,8 +24,8 @@
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 #include "ui/gfx/mojom/dxgi_info.mojom.h"
-#include "ui/gfx/native_widget_types.h"
-#include "ui/gfx/win/singleton_hwnd_observer.h"
+#include "ui/gfx/native_ui_types.h"
+#include "ui/gfx/win/singleton_hwnd.h"
 
 namespace display::win {
 
@@ -237,6 +238,10 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
       const std::vector<internal::DisplayInfo>& display_infos);
 
   // Virtual to support mocking by unit tests and headless screen.
+  virtual HMONITOR HMONITORFromScreenPoint(
+      const gfx::Point& screen_point) const;
+  virtual HMONITOR HMONITORFromScreenRect(const gfx::Rect& screen_rect) const;
+  virtual HMONITOR HMONITORFromWindow(HWND hwnd, DWORD default_options) const;
   virtual std::optional<MONITORINFOEX> MonitorInfoFromScreenPoint(
       const gfx::Point& screen_point) const;
   virtual std::optional<MONITORINFOEX> MonitorInfoFromScreenRect(
@@ -244,6 +249,9 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   virtual std::optional<MONITORINFOEX> MonitorInfoFromWindow(
       HWND hwnd,
       DWORD default_options) const;
+  virtual std::optional<MONITORINFOEX> MonitorInfoFromHMONITOR(
+      HMONITOR monitor) const;
+
   virtual int64_t GetDisplayIdFromMonitorInfo(
       const MONITORINFOEX& monitor_info) const;
   virtual HWND GetRootWindow(HWND hwnd) const;
@@ -255,11 +263,11 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   virtual ScreenWinDisplay GetScreenWinDisplayNearestHWND(HWND hwnd) const;
 
   // Returns the ScreenWinDisplay closest to or enclosing |screen_rect|.
-  ScreenWinDisplay GetScreenWinDisplayNearestScreenRect(
+  virtual ScreenWinDisplay GetScreenWinDisplayNearestScreenRect(
       const gfx::Rect& screen_rect) const;
 
   // Returns the ScreenWinDisplay closest to or enclosing |screen_point|.
-  ScreenWinDisplay GetScreenWinDisplayNearestScreenPoint(
+  virtual ScreenWinDisplay GetScreenWinDisplayNearestScreenPoint(
       const gfx::Point& screen_point) const;
 
   // Returns the ScreenWinDisplay closest to or enclosing |dip_point|.
@@ -276,6 +284,12 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   // Returns the ScreenWinDisplay corresponding to the given monitor info.
   virtual ScreenWinDisplay GetScreenWinDisplay(
       std::optional<MONITORINFOEX> monitor_info) const;
+
+  // Returns the ScreenWinDisplay for the given `monitor`, first by matching on
+  // ScreenWinDisplay::hmonitor(), then by looking up the monitor info if
+  // there's no match.
+  virtual ScreenWinDisplay GetScreenWinDisplayForHMONITOR(
+      HMONITOR monitor) const;
 
   // Returns the result of GetSystemMetrics for |metric| scaled to the specified
   // |scale_factor|.
@@ -307,7 +321,7 @@ class DISPLAY_EXPORT ScreenWin : public Screen,
   // Helper implementing the DisplayObserver handling.
   DisplayChangeNotifier change_notifier_;
 
-  std::unique_ptr<gfx::SingletonHwndObserver> singleton_hwnd_observer_;
+  base::CallbackListSubscription hwnd_subscription_;
 
   // Current list of ScreenWinDisplays.
   std::vector<ScreenWinDisplay> screen_win_displays_;

@@ -13,11 +13,15 @@
 {
   "accessibilityFeatures.modify": {
     "channel": "stable",
-    "extension_types": ["extension", "platform_app"]
+    "extension_types": ["extension", "platform_app"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "accessibilityFeatures.read": [{
     "channel": "stable",
-    "extension_types": ["extension", "platform_app"]
+    "extension_types": ["extension", "platform_app"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   }, {
     "channel": "stable",
     "extension_types": ["legacy_packaged_app"],
@@ -59,7 +63,9 @@
   "autofillPrivate": {
     "channel": "trunk",
     "extension_types": ["extension", "platform_app"],
-    "location": "component"
+    "location": "component",
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "autotestPrivate": {
     "channel": "stable",
@@ -83,7 +89,9 @@
   "brailleDisplayPrivate": {
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app", "platform_app"],
-    "location": "component"
+    "location": "component",
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "browsingData": {
     "channel": "stable",
@@ -169,7 +177,9 @@
   "commandLinePrivate": {
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app", "platform_app"],
-    "location": "component"
+    "location": "component",
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "commands.accessibility": {
     "channel": "stable",
@@ -181,7 +191,9 @@
   },
   "contentSettings": {
     "channel": "stable",
-    "extension_types": ["extension", "legacy_packaged_app"]
+    "extension_types": ["extension", "legacy_packaged_app"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "contextMenus": {
     "channel": "stable",
@@ -229,17 +241,15 @@
         "5F57A9AE8DFF5D6BB09DF8606270402612E871E5"  // http://crbug.com/422624
     ]
   },
-  "devtools": {
-    "channel": "stable",
-    "extension_types": ["extension", "legacy_packaged_app"]
-  },
   "declarativeContent": {
     "channel": "stable",
     "extension_types": ["extension"]
   },
   "desktopCapture": {
     "channel": "stable",
-    "extension_types": ["extension", "platform_app"]
+    "extension_types": ["extension", "platform_app"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "documentScan": {
     "channel": "stable",
@@ -273,6 +283,14 @@
     "extension_types": ["login_screen_extension"],
     "location": "policy",
     "platforms": ["chromeos"]
+  }, {
+    "channel": "stable",
+    "extension_types": ["login_screen_extension"],
+    "location": "policy",
+    "platforms": ["chromeos"],
+    "allowlist": [
+      "4B7E9789426EBD1BB3F99D72690DAE303FC042DF"   // AuthX Secure for ChromeOS
+    ]
   }],
   "enterprise.networkingAttributes": [{
     "channel": "stable",
@@ -299,6 +317,12 @@
     "session_types": ["kiosk"],
     // TODO(b/307230150): Clean up API flag
     "feature_flag": "ApiEnterpriseKioskInput"
+  },
+  "enterprise.login": {
+    "channel": "stable",
+    "extension_types": ["extension"],
+    "location": "policy",
+    "platforms": ["chromeos"]
   },
   "enterprise.platformKeys": [{
     "channel": "stable",
@@ -347,6 +371,8 @@
   "enterprise.reportingPrivate": {
     "channel": "stable",
     "extension_types": ["extension"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"],
     "allowlist" : [
       "86D63D90308742AA65B8B29AE2D39FED2D6DC310",  // https://crbug.com/882461 SecureConnect
       "031E5E4A54C39E4F46E11CE643584E9187915908",  // https://crbug.com/882461 SecureConnect
@@ -356,6 +382,14 @@
       "C8F4673FC69965390BC376C0761EC341492F9D87",  // Contact Center Insights
       "31367E6C4D69B90D866289492A307C205AF8A32F", // b/361094242 Secure Enterprise Browser Extension
       "50B8ECD18A36937668D1FCA9CEEE668BC25C39CC" // b/361094242 Beyondcorp Enterprise Extension
+    ]
+  },
+  "enterprise.reportingPrivate.onDataMaskingRulesTriggered": {
+    "channel": "stable",
+    "extension_types": ["extension"],
+    "allowlist" : [
+      "31367E6C4D69B90D866289492A307C205AF8A32F", // crbug.com/361094242 Secure Enterprise Browser Extension
+      "50B8ECD18A36937668D1FCA9CEEE668BC25C39CC" // crbug.com/361094242 Beyondcorp Enterprise Extension
     ]
   },
   "experimental": {
@@ -368,12 +402,16 @@
   "experimentalActor": {
     "extension_types": ["extension"],
     "channel": "stable",
-    "command_line_switch": "extension-actor-api"
+    "command_line_switch": "extension-actor-api",
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "experimentalAiData": {
     "extension_types": ["extension"],
     "channel": "stable",
-    "command_line_switch": "extension-ai-data-collection"
+    "command_line_switch": "extension-ai-data-collection",
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "favicon": {
     "channel": "stable",
@@ -475,7 +513,9 @@
     {
       "channel": "trunk",
       "extension_types": ["extension", "platform_app"],
-      "location": "component"
+      "location": "component",
+      // "desktop_android" is not supported.
+      "platforms": ["chromeos", "linux", "mac", "win"]
     },
     {
       "channel": "stable",
@@ -517,8 +557,10 @@
       "93B7178E8C275515C38D4F43D9DF4648F0EA9B03", // Identity Card Connector
       "7FE4A999359A456C4B0FB7B7AD85CEA29CA50519", // Login screen APIs test extension
       "3F5995FE79A861F019C6F093BEF98D73FA9D3A5F", // Login screen APIs in-session test extension
-      "8ECFC754A70BE499325FA4BB705E62EFEEC1BC80",  // b/314208017
-      "C03440D5E6161ED58738ABA11586B1DB4B4DCA8A"  // b/379564028#comment27
+      "8ECFC754A70BE499325FA4BB705E62EFEEC1BC80", // b/314208017
+      "C03440D5E6161ED58738ABA11586B1DB4B4DCA8A", // b/379564028#comment27
+      // https://crbug.com/433867146
+      "4B7E9789426EBD1BB3F99D72690DAE303FC042DF"  // AuthX Secure for ChromeOS
     ]
   }, {
     "channel": "stable",
@@ -550,7 +592,9 @@
     "location": "policy",
     "platforms": ["chromeos"],
     "allowlist": [
-      "93B7178E8C275515C38D4F43D9DF4648F0EA9B03" // Identity Card Connector
+      "93B7178E8C275515C38D4F43D9DF4648F0EA9B03", // Identity Card Connector
+      // https://crbug.com/433867146
+      "4B7E9789426EBD1BB3F99D72690DAE303FC042DF"  // AuthX Secure for ChromeOS
     ]
   }],
   "loginScreenUi": [{
@@ -565,7 +609,9 @@
     "location": "policy",
     "platforms": ["chromeos"],
     "allowlist": [
-      "7FE4A999359A456C4B0FB7B7AD85CEA29CA50519" // Login screen APIs test extension
+      "7FE4A999359A456C4B0FB7B7AD85CEA29CA50519", // Login screen APIs test extension
+      // https://crbug.com/433867146
+      "4B7E9789426EBD1BB3F99D72690DAE303FC042DF"  // AuthX Secure for ChromeOS
     ]
   }],
   "loginState": [{
@@ -585,7 +631,9 @@
       // https://crbug.com/1194693
       "6B748A5C005F21B7CBCF4170C2F883E435DEB511",   // DriveLock Smart Card Middleware
       "075FF17D52ED6E3C2E5EC4D99F188E7A25AF47EA",   // Beta DriveLock Smart Card Middleware
-      "5C825E850034490380BCB756D43ABB2CF537AA91"    // b/359290130
+      "5C825E850034490380BCB756D43ABB2CF537AA91",   // b/359290130
+      // https://crbug.com/433867146
+      "4B7E9789426EBD1BB3F99D72690DAE303FC042DF"    // AuthX Secure for ChromeOS
     ]
   }, {
     "channel": "stable",
@@ -687,11 +735,8 @@
   },
   {
     "channel": "stable",
-    "extension_types": ["platform_app"]
-  },
-  {
-    "channel": "dev",
-    "extension_types": ["extension"]
+    "extension_types": ["platform_app"],
+    "platforms": ["chromeos", "linux", "mac", "win"]
   }],
   "notifications": [{
     // The chrome.notifications functionality listed in notifications.idl is
@@ -730,11 +775,15 @@
   "passwordsPrivate": {
     "channel": "trunk",
     "extension_types": ["extension", "platform_app"],
-    "location": "component"
+    "location": "component",
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "pdfViewerPrivate": {
     "channel": "stable",
     "extension_types": ["extension"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"],
     "allowlist": [
       "CBCC42ABED43A4B58FE3810E62AFFA010EB0349F"  // PDF Viewer
     ]
@@ -793,7 +842,10 @@
   }],
   "proxy": [{
     "channel": "stable",
-    "extension_types": ["extension", "legacy_packaged_app"]
+    "extension_types": [
+      "extension",
+      "legacy_packaged_app"
+    ]
   }, {
     "channel": "stable",
     "extension_types": ["platform_app"],
@@ -802,6 +854,8 @@
   "imageWriterPrivate": {
     "channel": "stable",
     "extension_types": ["extension", "platform_app"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"],
     "allowlist": [
       // TODO(ntang): Remove these 2 hashes when the app is no longer active.
       "A291B26E088FA6BA53FFD72F0916F06EBA7C585A", // http://crbug.com/329088
@@ -828,11 +882,15 @@
     "extension_types": [
       "extension", "legacy_packaged_app", "platform_app"
     ],
-    "location": "component"
+    "location": "component",
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "safeBrowsingPrivate": {
     "channel": "stable",
     "extension_types": ["extension"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"],
     "allowlist": [
       "B281B98DDD6A379EF50D59BB1135419536C1C353",  // Report site to Safe Browsing Extension, crbug.com/932161
       "FD15C63ABA854733FDCBC1D4D34A71E963A12ABD",  // Chrome Reporting Extension
@@ -850,12 +908,16 @@
   },
   "sessions": {
     "channel": "stable",
-    "extension_types": ["extension", "legacy_packaged_app"]
+    "extension_types": ["extension", "legacy_packaged_app"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "settingsPrivate": [{
     "channel": "trunk",
     "extension_types": ["extension", "platform_app"],
-    "location": "component"
+    "location": "component",
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   {
     // TODO(devlin): Remove these entries. Unfortunately, this causes a bit of
@@ -863,6 +925,8 @@
     // implicit allowlisting from this entry.
     "channel": "stable",
     "extension_types": ["extension"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"],
     "allowlist": [
       "63ED55E43214C211F82122ED56407FF1A807F2A3",  // Media Router Dev
       "226CF815E39A363090A1E547D53063472B8279FA"   // Media Router Release
@@ -888,15 +952,19 @@
   "sidePanel": {
     "channel": "stable",
     "extension_types": ["extension"],
-    "min_manifest_version": 3
+    "min_manifest_version": 3,
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "smartCardProviderPrivate": {
-    "channel": "dev",
+    "channel": "stable",
     "platforms": ["chromeos"],
     "extension_types": ["extension", "platform_app"],
     "allowlist": [
-      "EC3DE21E048B67319893889529354DFBFA96FD23"   // Smart Card Connector
-    ]
+      "EC3DE21E048B67319893889529354DFBFA96FD23", // Smart Card Connector
+      "A19608AC34215B127FF9D7C006D67F5C8ED8146D"  // Smart Card Connector - beta channel
+    ],
+    "feature_flag": "SmartCard"
   },
   "speechRecognitionPrivate": {
     "channel": "stable",
@@ -918,6 +986,7 @@
     "platforms": ["chromeos"],
     "allowlist": [
       "EC3DE21E048B67319893889529354DFBFA96FD23", // Smart Card Connector
+      "A19608AC34215B127FF9D7C006D67F5C8ED8146D", // Smart Card Connector - beta channel
       "6B748A5C005F21B7CBCF4170C2F883E435DEB511", // DriveLock Smart Card Middleware
       "075FF17D52ED6E3C2E5EC4D99F188E7A25AF47EA", // Beta DriveLock Smart Card Middleware
       "5C825E850034490380BCB756D43ABB2CF537AA91"  // b/359290130
@@ -926,12 +995,16 @@
   "systemPrivate": {
     "channel": "stable",
     "extension_types": ["extension", "legacy_packaged_app", "platform_app"],
-    "location": "component"
+    "location": "component",
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "tabGroups": {
     "channel": "stable",
     "extension_types": ["extension"],
-    "min_manifest_version": 3
+    "min_manifest_version": 3,
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "tabs": [
     {
@@ -950,7 +1023,9 @@
   ],
   "tabCapture": {
     "channel": "stable",
-    "extension_types": ["extension", "legacy_packaged_app"]
+    "extension_types": ["extension", "legacy_packaged_app"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"]
   },
   "terminalPrivate": {
     "channel": "stable",
@@ -999,7 +1074,7 @@
     "channel": "stable",
     "extension_types": ["extension"],
     "min_manifest_version": 3,
-    "platforms": ["win", "linux", "mac"]
+    "platforms": ["desktop_android", "linux", "mac", "win"]
   },
   "webNavigation": {
     "channel": "stable",
@@ -1020,6 +1095,8 @@
   "webrtcDesktopCapturePrivate": {
     "channel": "stable",
     "extension_types": ["extension"],
+    // "desktop_android" is not supported.
+    "platforms": ["chromeos", "linux", "mac", "win"],
     "allowlist": [
       // Hangouts test extension
       "80B9DC58E5210749F052F5B4DB239C50CF72AEB6",

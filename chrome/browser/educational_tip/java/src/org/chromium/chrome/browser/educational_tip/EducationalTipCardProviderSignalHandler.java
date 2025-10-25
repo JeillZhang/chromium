@@ -101,7 +101,14 @@ public class EducationalTipCardProviderSignalHandler {
      * function returns 0.0f.
      */
     private static float hasDefaultBrowserPromoShownInOtherSurface(Tracker tracker) {
-        return tracker.wouldTriggerHelpUi(FeatureConstants.DEFAULT_BROWSER_PROMO_MAGIC_STACK)
+        if (tracker.isInitialized()) {
+            return tracker.wouldTriggerHelpUi(FeatureConstants.DEFAULT_BROWSER_PROMO_MAGIC_STACK)
+                    ? 0.0f
+                    : 1.0f;
+        }
+
+        return EducationalTipModuleUtils
+                        .getDefaultBrowserPromoAllowDisplayForRelaunchFromSharedPreference()
                 ? 0.0f
                 : 1.0f;
     }
@@ -111,8 +118,18 @@ public class EducationalTipCardProviderSignalHandler {
      * Otherwise, it returns 0.0f.
      */
     private static float tabGroupExists(EducationTipModuleActionDelegate actionDelegate) {
-        TabGroupModelFilterProvider provider =
-                actionDelegate.getTabModelSelector().getTabGroupModelFilterProvider();
+        TabModelSelector tabModelSelector = actionDelegate.getTabModelSelector();
+        if (!tabModelSelector.isTabStateInitialized()
+                || tabModelSelector.isReparentingInProgress()) {
+            return 0.0f;
+        }
+
+        if (tabModelSelector.getCurrentModel().getTabById(tabModelSelector.getCurrentTabId())
+                == null) {
+            return 0.0f;
+        }
+
+        TabGroupModelFilterProvider provider = tabModelSelector.getTabGroupModelFilterProvider();
         TabGroupModelFilter normalFilter =
                 provider.getTabGroupModelFilter(/* isIncognito= */ false);
         assumeNonNull(normalFilter);
@@ -160,7 +177,7 @@ public class EducationalTipCardProviderSignalHandler {
         if (assumeNonNull(IdentityServicesProvider.get().getIdentityManager(profile))
                 .hasPrimaryAccount(ConsentLevel.SIGNIN)) {
             HistorySyncHelper helper = HistorySyncHelper.getForProfile(profile);
-            return helper.shouldSuppressHistorySync() || helper.isDeclinedOften() ? 0.0f : 1.0f;
+            return !helper.shouldDisplayHistorySync() || helper.isDeclinedOften() ? 0.0f : 1.0f;
         }
 
         return 0.0f;

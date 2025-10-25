@@ -120,6 +120,7 @@ class FakeImageFetchTabHelper : public ImageFetchTabHelper {
 class SaveToPhotosMediatorTest : public PlatformTest {
  protected:
   void SetUp() final {
+    PlatformTest::SetUp();
     TestProfileIOS::Builder builder;
     builder.AddTestingFactory(
         IdentityManagerFactory::GetInstance(),
@@ -168,7 +169,13 @@ class SaveToPhotosMediatorTest : public PlatformTest {
     GetTestPhotosService()->SetQuitClosure(task_environment_.QuitClosure());
   }
 
-  void TearDown() final { [mock_application_ stopMocking]; }
+  void TearDown() final {
+    EXPECT_OCMOCK_VERIFY(mock_application_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_manage_storage_alert_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_google_one_handler_);
+    EXPECT_OCMOCK_VERIFY(mock_application_);
+    PlatformTest::TearDown();
+  }
 
   // Create a SaveToPhotosMediator with services from the test browser state.
   SaveToPhotosMediator* CreateSaveToPhotosMediator() {
@@ -296,9 +303,8 @@ TEST_F(SaveToPhotosMediatorTest,
 
   // This test assumes there is a default account memorized for Save to Photos
   // and that the user opted-in skipping the account picker.
-  profile_->GetPrefs()->SetString(
-      prefs::kIosSaveToPhotosDefaultGaiaId,
-      base::SysNSStringToUTF8(fake_identity_.gaiaID).c_str());
+  profile_->GetPrefs()->SetString(prefs::kIosSaveToPhotosDefaultGaiaId,
+                                  fake_identity_.gaiaId.ToString());
   profile_->GetPrefs()->SetBoolean(prefs::kIosSaveToPhotosSkipAccountPicker,
                                    true);
 
@@ -520,7 +526,7 @@ TEST_F(SaveToPhotosMediatorTest, SnackbarOpenButtonOpensPhotosAppIfInstalled) {
   // Expect that the mediator tries to open the Photos app and switch to the
   // Photos account associated with `fake_identity_`.
   NSString* recently_added_url_string = [kGooglePhotosRecentlyAddedURLString
-      stringByAppendingString:fake_identity_.gaiaID];
+      stringByAppendingString:fake_identity_.gaiaId.ToNSString()];
   NSURL* photos_url = [NSURL URLWithString:recently_added_url_string];
   OCMExpect([mock_application_
                 openURL:photos_url
@@ -547,6 +553,7 @@ TEST_F(SaveToPhotosMediatorTest, SnackbarOpenButtonOpensPhotosAppIfInstalled) {
   // Verify that the mediator detected that the app is installed and tried to
   // open it.
   EXPECT_OCMOCK_VERIFY(mock_application_);
+  EXPECT_OCMOCK_VERIFY(mock_save_to_photos_mediator_delegate);
 }
 
 // Tests that the SaveToPhotosMediator tries to show the StoreKit if it detects

@@ -10,6 +10,7 @@
 #include "third_party/blink/renderer/core/animation/element_animations.h"
 #include "third_party/blink/renderer/core/css/css_container_rule.h"
 #include "third_party/blink/renderer/core/css/css_test_helpers.h"
+#include "third_party/blink/renderer/core/css/media_query_exp.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
 #include "third_party/blink/renderer/core/css/post_style_update_scope.h"
 #include "third_party/blink/renderer/core/css/properties/css_property_ref.h"
@@ -344,7 +345,8 @@ TEST_F(ContainerQueryTest, RuleCopy) {
   ASSERT_TRUE(container);
 
   // Copy via StyleRuleBase to test switch dispatch.
-  auto* copy_base = static_cast<StyleRuleBase*>(container)->Copy();
+  auto* copy_base =
+      static_cast<StyleRuleBase*>(container)->Clone(nullptr, nullptr);
   auto* copy = DynamicTo<StyleRuleContainer>(copy_base);
   ASSERT_TRUE(copy);
 
@@ -1163,7 +1165,7 @@ TEST_F(ContainerQueryTest, CQDependentContentVisibilityHidden) {
 
   Element* locker = GetDocument().getElementById(AtomicString("locker"));
   locker->setAttribute(html_names::kClassAttr, AtomicString("locked"));
-  locker->setInnerHTML("<span>Visible?</span>");
+  locker->SetInnerHTMLWithoutTrustedTypes("<span>Visible?</span>");
 
   UpdateAllLifecyclePhasesForTest();
 
@@ -1248,7 +1250,7 @@ TEST_F(ContainerQueryTest, TreeScopedReferenceUserOrigin) {
   GetStyleEngine().InjectSheet(user_sheet_key, parsed_user_sheet,
                                WebCssOrigin::kUser);
 
-  GetDocument().body()->setHTMLUnsafe(R"HTML(
+  GetDocument().body()->SetHTMLUnsafeWithoutTrustedTypes(R"HTML(
     <style>
       @container user-container (width >= 0) {
         div > span {

@@ -517,9 +517,17 @@ class ConsumerEndpoint : public perfetto::ConsumerEndpoint,
           .error = "Session name is not an UnguessableToken",
       });
     }
+
+    bool privacy_filtering_enabled = false;
+    for (const auto& data_source : trace_config_.data_sources()) {
+      if (data_source.config().chrome_config().privacy_filtering_enabled()) {
+        privacy_filtering_enabled = true;
+      }
+    }
     consumer_host_->CloneSession(
         tracing_session_host_.BindNewPipeAndPassReceiver(),
         tracing_session_client_.BindNewPipeAndPassRemote(), *uuid,
+        privacy_filtering_enabled,
         base::BindOnce(
             [](ConsumerEndpoint* endpoint, bool success,
                const std::string& error, const base::Token& uuid) {
@@ -575,7 +583,7 @@ class ConsumerEndpoint : public perfetto::ConsumerEndpoint,
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     if (tokenizer_) {
       // Protobuf-format data.
-      auto packets = tokenizer_->Parse(data.data(), data.size());
+      auto packets = tokenizer_->Parse(data);
       if (!packets.empty())
         consumer_->OnTraceData(std::move(packets), /*has_more=*/true);
     } else {

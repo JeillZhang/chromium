@@ -27,7 +27,7 @@ const AccessPoint kAccessPointsThatSupportUserAction[] = {
     AccessPoint::kAvatarBubbleSignIn,
     AccessPoint::kUserManager,
     AccessPoint::kDevicesPage,
-    AccessPoint::kSigninPromo,
+    AccessPoint::kFullscreenSigninPromo,
     AccessPoint::kRecentTabs,
     AccessPoint::kUnknown,
     AccessPoint::kPasswordBubble,
@@ -52,6 +52,7 @@ const AccessPoint kAccessPointsThatSupportUserAction[] = {
     AccessPoint::kGlicLaunchButton,
     AccessPoint::kNonModalSigninPasswordPromo,
     AccessPoint::kNonModalSigninBookmarkPromo,
+    AccessPoint::kUserManagerWithPrefilledEmail,
 };
 
 const AccessPoint kAccessPointsThatSupportImpression[] = {
@@ -64,7 +65,7 @@ const AccessPoint kAccessPointsThatSupportImpression[] = {
     AccessPoint::kBookmarkManager,
     AccessPoint::kAvatarBubbleSignIn,
     AccessPoint::kDevicesPage,
-    AccessPoint::kSigninPromo,
+    AccessPoint::kFullscreenSigninPromo,
     AccessPoint::kRecentTabs,
     AccessPoint::kPasswordBubble,
     AccessPoint::kAutofillDropdown,
@@ -110,7 +111,7 @@ class SigninMetricsTest : public ::testing::Test {
         return "UserManager";
       case AccessPoint::kDevicesPage:
         return "DevicesPage";
-      case AccessPoint::kSigninPromo:
+      case AccessPoint::kFullscreenSigninPromo:
         return "SigninPromo";
       case AccessPoint::kRecentTabs:
         return "RecentTabs";
@@ -230,8 +231,6 @@ class SigninMetricsTest : public ::testing::Test {
         return "Widget";
       case AccessPoint::kCollaborationLeaveOrDeleteTabGroup:
         return "CollaborationLeaveOrDeleteTabGroup";
-      case AccessPoint::kHistorySyncOptinExpansionPillOnInactivity:
-        return "HistorySyncOptinExpansionPillOnInactivity";
       case AccessPoint::kHistorySyncEducationalTip:
         return "HistorySyncEducationalTip";
       case AccessPoint::kManagedProfileAutoSigninIos:
@@ -240,6 +239,16 @@ class SigninMetricsTest : public ::testing::Test {
         return "NonModalSigninPasswordPromo";
       case AccessPoint::kNonModalSigninBookmarkPromo:
         return "NonModalSigninBookmarkPromo";
+      case AccessPoint::kUserManagerWithPrefilledEmail:
+        return "UserManagerWithPrefilledEmail";
+      case AccessPoint::kEnterpriseManagementDisclaimerAtStartup:
+        return "EnterpriseManagementDisclaimerAtStartup";
+      case AccessPoint::kEnterpriseManagementDisclaimerAfterBrowserFocus:
+        return "EnterpriseManagementDisclaimerAfterBrowserFocus";
+      case AccessPoint::kEnterpriseManagementDisclaimerAfterSignin:
+        return "EnterpriseManagementDisclaimerAfterSignin";
+      case AccessPoint::kNtpFeaturePromo:
+        return "NtpFeaturePromo";
     }
   }
 };
@@ -265,13 +274,11 @@ TEST_F(SigninMetricsTest, RecordSigninImpressionUserAction) {
 TEST(LogSyncOptInOfferedTest, RecordsHistogram) {
   base::HistogramTester histogram_tester;
   const AccessPoint access_point =
-      AccessPoint::kHistorySyncOptinExpansionPillOnInactivity;
+      AccessPoint::kHistorySyncOptinExpansionPillOnStartup;
   LogSyncOptInOffered(access_point);
   LogSyncOptInOffered(access_point);
-  histogram_tester.ExpectUniqueSample(
-      "Signin.SyncOptIn.Offered",
-      AccessPoint::kHistorySyncOptinExpansionPillOnInactivity,
-      /*expected_bucket_count=*/2);
+  histogram_tester.ExpectUniqueSample("Signin.SyncOptIn.Offered", access_point,
+                                      /*expected_bucket_count=*/2);
 }
 
 }  // namespace

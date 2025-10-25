@@ -14,6 +14,7 @@
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/task_environment.h"
 #include "components/safe_search_api/fake_url_checker_client.h"
 #include "components/supervised_user/core/browser/supervised_user_preferences.h"
 #include "components/supervised_user/core/browser/supervised_user_test_environment.h"
@@ -612,10 +613,14 @@ TEST_F(SupervisedUserURLFilterTest, UrlsNotRequiringGuardianApprovalAllowed) {
   // appended, and the redirect URL with locale appended).
   EXPECT_EQ(GetFilteringBehavior("https://www.google.com/settings/chrome/sync"),
             FilteringBehavior::kAllow);
+  EXPECT_EQ(GetFilteringBehavior("https://www.google.com/settings/chrome/data"),
+            FilteringBehavior::kAllow);
   EXPECT_EQ(GetFilteringBehavior(
                 "https://www.google.com/settings/chrome/sync?hl=en-US"),
             FilteringBehavior::kAllow);
   EXPECT_EQ(GetFilteringBehavior("https://chrome.google.com/sync?hl=en-US"),
+            FilteringBehavior::kAllow);
+  EXPECT_EQ(GetFilteringBehavior("https://chrome.google.com/data?hl=en-US"),
             FilteringBehavior::kAllow);
 }
 

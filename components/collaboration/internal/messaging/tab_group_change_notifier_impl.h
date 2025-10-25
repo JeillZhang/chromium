@@ -23,9 +23,7 @@
 
 namespace collaboration::messaging {
 
-// The TabGroupChangeNotifier is a class that listens to changes from
-// TabGroupSyncService and passes them on to its own observers as delta updates
-// of the tab group and tabs.
+// The concrete implementation of the `TabGroupChangeNotifier`.
 class TabGroupChangeNotifierImpl : public TabGroupChangeNotifier {
  public:
   explicit TabGroupChangeNotifierImpl(
@@ -38,7 +36,6 @@ class TabGroupChangeNotifierImpl : public TabGroupChangeNotifier {
   void RemoveObserver(TabGroupChangeNotifier::Observer* observer) override;
   void Initialize() override;
   bool IsInitialized() override;
-  bool HadSharedTabGroupsLastSession(bool open_shared_tab_groups) override;
 
   void OnTabGroupOpenedOrClosed(
       const base::Uuid& sync_id,
@@ -128,12 +125,6 @@ class TabGroupChangeNotifierImpl : public TabGroupChangeNotifier {
   // backend) about any intermediate change in selection after the sync updated
   // has been applied.
   bool ignore_tab_selection_events_ = false;
-
-  // Whether shared tab groups existed during startup.
-  bool had_shared_tab_groups_on_startup_ = false;
-
-  // Whether open shared tab groups existed during startup.
-  bool had_open_shared_tab_groups_on_startup_ = false;
 
   base::WeakPtrFactory<TabGroupChangeNotifierImpl> weak_ptr_factory_{this};
 };

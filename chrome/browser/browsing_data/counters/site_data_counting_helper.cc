@@ -22,7 +22,6 @@
 #include "content/public/common/content_features.h"
 #include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "net/cookies/cookie_util.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
@@ -116,7 +115,7 @@ void SiteDataCountingHelper::CountAndDestroySelfWhenFinished() {
   }
 
   if (base::FeatureList::IsEnabled(
-          network::features::kCompressionDictionaryTransportBackend)) {
+          network::features::kCompressionDictionaryTransport)) {
     tasks_ += 1;
     partition->GetNetworkContext()->GetSharedDictionaryOriginsBetween(
         begin_, end_,
@@ -209,7 +208,7 @@ void SiteDataCountingHelper::Done(const std::vector<GURL>& origins) {
   DCHECK(tasks_ > 0);
   for (const GURL& origin : origins) {
     if (browsing_data::HasWebScheme(origin))
-      unique_hosts_.insert(origin.host());
+      unique_hosts_.insert(origin.GetHost());
   }
   if (--tasks_ > 0)
     return;

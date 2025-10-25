@@ -14,7 +14,6 @@
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
-#include "chrome/browser/enterprise/connectors/analysis/content_analysis_features.h"
 #include "chrome/browser/enterprise/connectors/common.h"
 #include "chrome/browser/enterprise/connectors/connectors_service.h"
 #include "chrome/browser/enterprise/util/affiliation.h"
@@ -26,9 +25,10 @@
 #include "chrome/browser/safe_browsing/cloud_content_scanning/resumable_uploader.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "components/enterprise/common/proto/connectors.pb.h"
+#include "components/enterprise/connectors/core/features.h"
 #include "components/enterprise/connectors/core/reporting_utils.h"
 #include "components/policy/core/common/management/management_service.h"
-#include "components/safe_browsing/content/browser/web_ui/safe_browsing_ui.h"
+#include "components/safe_browsing/content/browser/web_ui/web_ui_content_info_singleton.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/safebrowsing_switches.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -41,6 +41,12 @@
 
 namespace safe_browsing {
 namespace {
+
+// The default maximum number of concurrent active requests. This is used to
+// limit the number of requests that are actively being uploaded. This is set to
+// default of 15 because it was determined to be a good value through
+// experiments. See http://crbug.com/329293309.
+constexpr int kDefaultMaxParallelActiveRequests = 15;
 
 constexpr base::TimeDelta kAuthTimeout = base::Seconds(10);
 constexpr base::TimeDelta kScanningTimeout = base::Minutes(5);
@@ -191,12 +197,20 @@ bool IgnoreErrorResultForResumableUpload(BinaryUploadService::Request* request,
 
 // static
 size_t CloudBinaryUploadService::GetParallelActiveRequestsMax() {
-  size_t max_value =
-      enterprise_connectors::kParallelContentAnalysisRequestCount.Get();
-  return max_value > 0
-             ? max_value
-             : enterprise_connectors::kParallelContentAnalysisRequestCount
-                   .default_value;
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kWpMaxParallelActiveRequests)) {
+    int parsed_max;
+    if (base::StringToInt(command_line->GetSwitchValueASCII(
+                              switches::kWpMaxParallelActiveRequests),
+                          &parsed_max) &&
+        parsed_max > 0) {
+      return parsed_max;
+    } else {
+      DVLOG(1) << "wp-max-parallel-active-requests had invalid value";
+    }
+  }
+
+  return kDefaultMaxParallelActiveRequests;
 }
 
 CloudBinaryUploadService::CloudBinaryUploadService(Profile* profile)
@@ -428,6 +442,14 @@ void CloudBinaryUploadService::OnGetRequestData(Request::Id request_id,
     // file contents to the content analysis service.  Let the service know that
     // a metadata-only analysis is required.
     request->set_require_metadata_verdict(true);
+    // If the file is encrypted, let the service know that the file is
+    // encrypted.
+    if (result == Result::FILE_ENCRYPTED) {
+      request->set_is_content_encrypted(true);
+    }
+    if (result == Result::FILE_TOO_LARGE) {
+      request->set_is_content_too_large(true);
+    }
   }
 
   if (!request->IsAuthRequest() && data.size == 0) {
@@ -466,10 +488,24 @@ void CloudBinaryUploadService::OnGetRequestData(Request::Id request_id,
   // upload behaviour.
   bool force_sync_upload =
       request->analysis_connector() == enterprise_connectors::FILE_DOWNLOADED;
-  if (request->IsAuthRequest() || !data.contents.empty()) {
+  if (request->IsAuthRequest()) {
     upload_request = MultipartUploadRequest::CreateStringRequest(
         url_loader_factory_, url, metadata, data.contents, histogram_suffix,
         std::move(traffic_annotation), std::move(callback));
+  } else if (!data.contents.empty()) {
+    upload_request =
+        (enterprise_connectors::IsResumableUpload(*request) &&
+         base::FeatureList::IsEnabled(
+             enterprise_connectors::kDlpScanPastedImages))
+            ? ResumableUploadRequest::CreateStringRequest(
+                  url_loader_factory_, url, metadata, data.contents,
+                  histogram_suffix, std::move(traffic_annotation),
+                  std::move(verdict_received_callback),
+                  std::move(content_uploaded_callback), force_sync_upload)
+            : MultipartUploadRequest::CreateStringRequest(
+                  url_loader_factory_, url, metadata, data.contents,
+                  histogram_suffix, std::move(traffic_annotation),
+                  std::move(callback));
   } else if (!data.path.empty()) {
     upload_request =
         enterprise_connectors::IsResumableUpload(*request)
@@ -502,7 +538,7 @@ void CloudBinaryUploadService::OnGetRequestData(Request::Id request_id,
   }
   upload_request->set_access_token(request->access_token());
 
-  WebUIInfoSingleton::GetInstance()->AddToDeepScanRequests(
+  WebUIContentInfoSingleton::GetInstance()->AddToDeepScanRequests(
       request->per_profile_request(), request->access_token(),
       upload_request->GetUploadInfo(), url.spec(),
       request->content_analysis_request());
@@ -600,10 +636,17 @@ void CloudBinaryUploadService::MaybeFinishRequest(Request::Id request_id) {
     *response.add_results() = std::move(tag_and_result.second);
   }
 
-  // Set `result` to be unknown, if the request is terminated with incomplete
+  // Set `result` to be INCOMPLETE_RESPONSE, if the request is terminated with incomplete
   // response.
-  Result result = ResponseIsComplete(request_id) ? Result::SUCCESS
-                                                 : Result::INCOMPLETE_RESPONSE;
+  Result result = Result::SUCCESS;
+  if (!ResponseIsComplete(request_id)) {
+    result = Result::INCOMPLETE_RESPONSE;
+  } else if (request->is_content_too_large()) {
+    result = Result::FILE_TOO_LARGE;
+  } else if (request->is_content_encrypted()) {
+    result = Result::FILE_ENCRYPTED;
+  }
+
   FinishRequest(request, result, std::move(response));
 }
 
@@ -637,10 +680,10 @@ void CloudBinaryUploadService::FinishRequest(
 
   // We add the request here in case we never actually uploaded anything, so
   // it wasn't added in OnGetRequestData
-  WebUIInfoSingleton::GetInstance()->AddToDeepScanRequests(
+  WebUIContentInfoSingleton::GetInstance()->AddToDeepScanRequests(
       request->per_profile_request(), request->access_token(), upload_info,
       request->GetUrlWithParams().spec(), request->content_analysis_request());
-  WebUIInfoSingleton::GetInstance()->AddToDeepScanResponses(
+  WebUIContentInfoSingleton::GetInstance()->AddToDeepScanResponses(
       active_tokens_[request->id()], ResultToString(result), response);
 
   request->FinishRequest(result, response);

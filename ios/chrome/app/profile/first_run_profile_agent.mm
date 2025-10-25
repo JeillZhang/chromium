@@ -21,7 +21,8 @@
 #import "ios/chrome/browser/first_run/ui_bundled/first_run_screen_provider.h"
 #import "ios/chrome/browser/first_run/ui_bundled/guided_tour/guided_tour_coordinator.h"
 #import "ios/chrome/browser/first_run/ui_bundled/guided_tour/guided_tour_promo_coordinator.h"
-#import "ios/chrome/browser/safari_data_import/coordinator/safari_data_import_ui_handler.h"
+#import "ios/chrome/browser/safari_data_import/public/safari_data_import_entry_point.h"
+#import "ios/chrome/browser/safari_data_import/public/safari_data_import_ui_handler.h"
 #import "ios/chrome/browser/scoped_ui_blocker/ui_bundled/scoped_ui_blocker.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state.h"
 #import "ios/chrome/browser/shared/coordinator/scene/scene_state_observer.h"
@@ -218,14 +219,7 @@ const char kGuidedTourStepDidFinishHistogram[] = "IOS.GuidedTour.DidFinishStep";
   // UI.
   DCHECK(_presentingSceneState);
 
-  // The UI will be blocked until the user completes the first run flow, so
-  // inform the ProfileState this is going to happen.
-  [self.profileState willBlockProfileInitialisationForUI];
-
-  id<BrowserProvider> presentingInterface =
-      _presentingSceneState.browserProviderInterface.currentBrowserProvider;
-  Browser* browser = presentingInterface.browser;
-  ProfileIOS* profile = browser->GetProfile()->GetOriginalProfile();
+  ProfileIOS* profile = [self originalProfile];
 
   DCHECK(!_firstRunUIBlocker);
   _firstRunUIBlocker = std::make_unique<ScopedUIBlocker>(_presentingSceneState);
@@ -236,11 +230,15 @@ const char kGuidedTourStepDidFinishHistogram[] = "IOS.GuidedTour.DidFinishStep";
 
   FirstRunScreenProvider* provider =
       [[FirstRunScreenProvider alloc] initForProfile:profile];
-
-  _firstRunCoordinator = [[FirstRunCoordinator alloc]
-      initWithBaseViewController:presentingInterface.viewController
-                         browser:browser
-                  screenProvider:provider];
+  UIViewController* baseViewController =
+      _presentingSceneState.browserProviderInterface.currentBrowserProvider
+          .viewController;
+  Browser* mainBrowser = _presentingSceneState.browserProviderInterface
+                             .mainBrowserProvider.browser;
+  _firstRunCoordinator =
+      [[FirstRunCoordinator alloc] initWithBaseViewController:baseViewController
+                                                      browser:mainBrowser
+                                               screenProvider:provider];
   _firstRunCoordinator.delegate = self;
   [_firstRunCoordinator start];
 }
@@ -249,7 +247,10 @@ const char kGuidedTourStepDidFinishHistogram[] = "IOS.GuidedTour.DidFinishStep";
 // finished presenting.
 - (void)performNextPostFirstRunAction {
   if (!_postActionsProvider) {
-    _postActionsProvider = [[FirstRunPostActionProvider alloc] init];
+    ProfileIOS* profile = [self originalProfile];
+    PrefService* prefService = profile ? profile->GetPrefs() : nullptr;
+    _postActionsProvider =
+        [[FirstRunPostActionProvider alloc] initWithPrefService:prefService];
   }
   switch ([_postActionsProvider nextScreenType]) {
     case kGuidedTour:
@@ -339,7 +340,9 @@ const char kGuidedTourStepDidFinishHistogram[] = "IOS.GuidedTour.DidFinishStep";
 - (void)displaySafariDataImportEntryPoint {
   id<ApplicationCommands> applicationHandler =
       HandlerForProtocol([self commandDispatcher], ApplicationCommands);
-  [applicationHandler displaySafariDataImportEntryPointWithUIHandler:self];
+  [applicationHandler displaySafariDataImportFromEntryPoint:
+                          SafariDataImportEntryPoint::kFirstRun
+                                              withUIHandler:self];
 }
 
 // Logs the user decision for the Guided Tour promo.
@@ -431,6 +434,20 @@ const char kGuidedTourStepDidFinishHistogram[] = "IOS.GuidedTour.DidFinishStep";
 
 - (void)safariDataImportDidDismiss {
   [self performNextPostFirstRunAction];
+}
+
+#pragma mark - Private
+
+// Returns the original (i.e., not off-the-record) profile associated with the
+// current browser. May return nullptr.
+- (ProfileIOS*)originalProfile {
+  id<BrowserProvider> presentingInterface =
+      _presentingSceneState.browserProviderInterface.currentBrowserProvider;
+  Browser* browser = presentingInterface.browser;
+  if (!browser || !browser->GetProfile()) {
+    return nullptr;
+  }
+  return browser->GetProfile()->GetOriginalProfile();
 }
 
 @end

@@ -33,8 +33,9 @@
 #include <utility>
 #include <variant>
 
-#include "base/functional/overloaded.h"
 #include "base/notreached.h"
+#include "third_party/abseil-cpp/absl/functional/overload.h"
+#include "third_party/abseil-cpp/absl/numeric/int128.h"
 #include "third_party/blink/public/platform/file_path_conversion.h"
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/public/platform/web_drag_data.h"
@@ -58,8 +59,7 @@ DataObject* DataObject::CreateFromClipboard(ExecutionContext* context,
 #if DCHECK_IS_ON()
   HashSet<String> types_seen;
 #endif
-  ClipboardSequenceNumberToken sequence_number =
-      system_clipboard->SequenceNumber();
+  absl::uint128 sequence_number = system_clipboard->SequenceNumber();
   for (const String& type : system_clipboard->ReadAvailableTypes()) {
     if (paste_mode == PasteMode::kPlainTextOnly &&
         type != ui::kMimeTypePlainText) {
@@ -371,7 +371,7 @@ DataObject* DataObject::Create(ExecutionContext* context,
 
   for (const WebDragData::Item& item : data.Items()) {
     std::visit(
-        base::Overloaded{
+        absl::Overload{
             [&](const WebDragData::StringItem& item) {
               if (String(item.type) == ui::kMimeTypeUriList) {
                 data_object->SetURLAndTitle(item.data, item.title);

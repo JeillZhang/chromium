@@ -16,9 +16,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
-#include "base/time/time.h"
 #include "build/build_config.h"
-#include "chrome/browser/extensions/extension_context_menu_model.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/page_action/page_action_icon_type.h"
 #include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
@@ -138,6 +136,9 @@ class LocationBarView
   // be called when the receiving instance is attached to a view container.
   bool IsInitialized() const;
 
+  // Called when the popup view becomes visible.
+  void OnPopupOpened();
+
   // Returns a background that paints an (optionally stroked) rounded rect with
   // the given color.
   std::unique_ptr<views::Background> CreateRoundRectBackground(
@@ -213,6 +214,8 @@ class LocationBarView
   void UpdateWithoutTabRestore() override;
   LocationBarModel* GetLocationBarModel() override;
   content::WebContents* GetWebContents() override;
+  std::optional<bubble_anchor_util::AnchorConfiguration> GetChipAnchor()
+      override;
 
   // views::View:
   void AddedToWidget() override;
@@ -243,6 +246,7 @@ class LocationBarView
   // GeolocationSystemPermissionManager::PermissionObserver:
   void OnSystemPermissionUpdated(
       device::LocationSystemPermissionStatus new_status) override;
+  void OnPermissionManagerShuttingDown() override;
 #endif  // BUILDFLAG(OS_LEVEL_GEOLOCATION_PERMISSION_SUPPORTED)
 
   static bool IsVirtualKeyboardVisible(views::Widget* widget);
@@ -286,17 +290,10 @@ class LocationBarView
     return content_setting_views_;
   }
 
-  void RecordPageInfoMetrics();
-
-  void ResetConfirmationChipShownTime() {
-    confirmation_chip_collapsed_time_ = base::TimeTicks::Now();
-  }
-
-  void SetConfirmationChipShownTimeForTesting(base::TimeTicks time) {
-    confirmation_chip_collapsed_time_ = time;
-  }
-
   SkColor GetBackgroundColorForTesting() const { return background_color_; }
+
+  OmniboxPopupView* GetOmniboxPopupView();
+  const OmniboxPopupView* GetOmniboxPopupView() const;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(SecurityIndicatorTest, CheckIndicatorText);
@@ -330,6 +327,9 @@ class LocationBarView
   // actions are available on the current page.
   void RefreshPageActionIconViews();
 
+  // Updates the visibility state of the AIM page action icon view.
+  void RefreshAiModePageActionIconView();
+
   // Updates PageActionContainerView's action controller to the active tab's
   // controller. At the same time, the page actions visibility will be set based
   // on the omnibox state.
@@ -341,10 +341,6 @@ class LocationBarView
 
   // Returns true if a keyword is selected in the model.
   bool ShouldShowKeywordBubble() const;
-
-  // Gets the OmniboxPopupView associated with the model in |omnibox_view_|.
-  OmniboxPopupView* GetOmniboxPopupView();
-  const OmniboxPopupView* GetOmniboxPopupView() const;
 
   // Called when the page info bubble is closed.
   void OnPageInfoBubbleClosed(views::Widget::ClosedReason closed_reason,
@@ -396,6 +392,12 @@ class LocationBarView
   content::WebContents* GetWebContentsForPageActionIconView() override;
   bool ShouldHidePageActionIcons() const override;
   bool ShouldHidePageActionIcon(PageActionIconView* icon_view) const override;
+
+  bool ShouldHidePageActionIconsForContext(
+      metrics::OmniboxEventProto::PageClassification page_context) const;
+
+  // Returns true if the AIM page action is the right-most visible page action.
+  bool IsAimLastVisiblePageAction() const;
 
   // views::AnimationDelegateViews:
   void AnimationProgressed(const gfx::Animation* animation) override;
@@ -461,6 +463,10 @@ class LocationBarView
   // The omnibox view where the user types and the current page URL is displayed
   // when user input is not in progress.
   raw_ptr<OmniboxViewViews> omnibox_view_ = nullptr;
+
+  // Owns either an OmniboxPopupViewViews or an OmniboxPopupViewWebUI.
+  std::unique_ptr<OmniboxPopupView> omnibox_popup_view_;
+  base::CallbackListSubscription popup_view_opened_subscription_;
 
   // Our delegate.
   raw_ptr<Delegate> delegate_;
@@ -529,9 +535,6 @@ class LocationBarView
   const bool is_popup_mode_;
 
   bool is_initialized_ = false;
-
-  // Used for metrics collection.
-  base::TimeTicks confirmation_chip_collapsed_time_;
 
   SkColor background_color_ = gfx::kPlaceholderColor;
 

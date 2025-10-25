@@ -21,6 +21,8 @@
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
+#include "third_party/blink/renderer/core/scroll/scrollable_area.h"
+#include "third_party/blink/renderer/core/scroll/scrollbar.h"
 #include "ui/gfx/geometry/point_conversions.h"
 
 namespace blink {
@@ -31,7 +33,6 @@ ScrollManager::ScrollManager(LocalFrame& frame) : frame_(frame) {
 
 void ScrollManager::Clear() {
   resize_scrollable_area_ = nullptr;
-  offset_from_resize_corner_ = {};
   resize_position_to_size_transform_ = {};
 }
 
@@ -91,60 +92,30 @@ bool ScrollManager::CanPropagate(const LayoutBox* layout_box,
 }
 
 void ScrollManager::RecomputeScrollChain(const Node& start_node,
-                                         Deque<DOMNodeId>& scroll_chain,
-                                         bool is_autoscroll) {
+                                         Deque<DOMNodeId>& scroll_chain) {
   DCHECK(scroll_chain.empty());
   scroll_chain.clear();
 
   DCHECK(start_node.GetLayoutObject());
+  LayoutBox* cur_box = start_node.GetLayoutObject()->EnclosingBox();
+  // Scrolling propagates along the containing block chain and ends at the
+  // RootScroller node. The RootScroller node will have a custom applyScroll
+  // callback that performs scrolling as well as associated "root" actions
+  // like browser control movement and overscroll glow.
+  while (cur_box) {
+    Node* cur_node = cur_box->GetNode();
 
-  if (is_autoscroll) {
-    // Propagate the autoscroll along the layout object chain, and
-    // append only the first node which is able to consume the scroll delta.
-    // The scroll node is computed differently to regular scrolls in order to
-    // maintain consistency with the autoscroll controller.
-    LayoutBox* autoscrollable = LayoutBox::FindAutoscrollable(
-        start_node.GetLayoutObject(), is_autoscroll);
-    if (autoscrollable) {
-      Node* cur_node = autoscrollable->GetNode();
-      LayoutObject* layout_object = cur_node->GetLayoutObject();
-      while (layout_object && !CanScroll(*cur_node, is_autoscroll)) {
-        if (!layout_object->Parent() &&
-            layout_object->GetNode() == layout_object->GetDocument() &&
-            layout_object->GetDocument().LocalOwner()) {
-          layout_object =
-              layout_object->GetDocument().LocalOwner()->GetLayoutObject();
-        } else {
-          layout_object = layout_object->Parent();
-        }
-        LayoutBox* new_autoscrollable =
-            LayoutBox::FindAutoscrollable(layout_object, is_autoscroll);
-        if (new_autoscrollable)
-          cur_node = new_autoscrollable->GetNode();
-      }
-      scroll_chain.push_front(cur_node->GetDomNodeId());
-    }
-  } else {
-    LayoutBox* cur_box = start_node.GetLayoutObject()->EnclosingBox();
-
-    // Scrolling propagates along the containing block chain and ends at the
-    // RootScroller node. The RootScroller node will have a custom applyScroll
-    // callback that performs scrolling as well as associated "root" actions
-    // like browser control movement and overscroll glow.
-    while (cur_box) {
-      Node* cur_node = cur_box->GetNode();
-
-      if (cur_node) {
-        if (CanScroll(*cur_node, /* for_autoscroll */ false)) {
-          scroll_chain.push_front(cur_node->GetDomNodeId());
-        }
-
-        if (cur_node->IsEffectiveRootScroller())
-          break;
+    if (cur_node) {
+      if (CanScroll(*cur_node, /* for_autoscroll */ false)) {
+        scroll_chain.push_front(cur_node->GetDomNodeId());
       }
 
-      cur_box = cur_box->ContainingBlock();
+      if (cur_node->IsEffectiveRootScroller()) {
+        break;
+      }
     }
+
+    cur_box = cur_box->ContainingBlock();
   }
 }
 
@@ -205,8 +176,7 @@ bool ScrollManager::LogicalScroll(mojom::blink::ScrollDirection direction,
   document.UpdateStyleAndLayout(DocumentUpdateReason::kScroll);
 
   Deque<DOMNodeId> scroll_chain;
-  RecomputeScrollChain(*node, scroll_chain,
-                       /* is_autoscroll */ false);
+  RecomputeScrollChain(*node, scroll_chain);
 
   while (!scroll_chain.empty()) {
     Node* scroll_chain_node = DOMNodeIds::NodeForId(scroll_chain.TakeLast());
@@ -222,6 +192,7 @@ bool ScrollManager::LogicalScroll(mojom::blink::ScrollDirection direction,
     ScrollableArea* scrollable_area = ScrollableArea::GetForScrolling(box);
     DCHECK(scrollable_area);
 
+    cc::ScrollSourceType source_type = cc::ScrollSourceType::kNone;
     // Pressing the arrow key is considered as a scroll with intended direction
     // only. Pressing the PgUp/PgDn key is considered as a scroll with intended
     // direction and end position. Pressing the Home/End key is considered as a
@@ -231,25 +202,28 @@ bool ScrollManager::LogicalScroll(mojom::blink::ScrollDirection direction,
         if (scrollable_area->SnapForDirection(physical_direction)) {
           return true;
         }
+        source_type = cc::ScrollSourceType::kRelativeScroll;
         break;
       }
       case ui::ScrollGranularity::kScrollByPage: {
         if (scrollable_area->SnapForPageScroll(physical_direction)) {
           return true;
         }
+        source_type = cc::ScrollSourceType::kRelativeScroll;
         break;
       }
       case ui::ScrollGranularity::kScrollByDocument: {
         if (scrollable_area->SnapForDocumentScroll(physical_direction)) {
           return true;
         }
+        source_type = cc::ScrollSourceType::kAbsoluteScroll;
         break;
       }
       default:
         NOTREACHED();
     }
 
-    ScrollableArea::ScrollCallback callback(WTF::BindOnce(
+    ScrollableArea::ScrollCallback callback(BindOnce(
         [](WeakPersistent<ScrollableArea> area,
            WeakPersistent<KeyboardEventManager> keyboard_event_manager,
            bool is_key_scroll,
@@ -287,7 +261,8 @@ bool ScrollManager::LogicalScroll(mojom::blink::ScrollDirection direction,
             &(frame_->GetEventHandler().GetKeyboardEventManager())),
         scrolling_via_key));
     ScrollResult result = scrollable_area->UserScroll(
-        granularity, ToScrollDelta(physical_direction, 1), std::move(callback));
+        granularity, ToScrollDelta(physical_direction, 1), source_type,
+        std::move(callback));
 
     if (result.DidScroll())
       return true;
@@ -323,7 +298,7 @@ void ScrollManager::Resize(const WebMouseEvent& evt) {
       return;
     resize_scrollable_area_->Resize(
         gfx::ToFlooredPoint(evt.PositionInRootFrame()),
-        offset_from_resize_corner_, resize_position_to_size_transform_);
+        resize_position_to_size_transform_);
   }
 }
 
@@ -341,8 +316,6 @@ void ScrollManager::SetResizeScrollableArea(PaintLayer* layer, gfx::Point p) {
   resize_scrollable_area_->SetInResizeMode(true);
   resize_position_to_size_transform_ =
       resize_scrollable_area_->InitializeResizeTransform(p);
-  offset_from_resize_corner_ =
-      resize_scrollable_area_->OffsetFromResizeCorner(p);
 }
 
 }  // namespace blink

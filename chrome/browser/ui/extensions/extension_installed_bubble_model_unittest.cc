@@ -11,7 +11,6 @@
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_with_install.h"
 #include "chrome/common/extensions/api/omnibox.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "content/public/test/browser_task_environment.h"
 #include "extensions/browser/extension_registrar.h"
 #include "extensions/common/api/extension_action/action_info.h"
@@ -25,10 +24,7 @@ using extensions::Extension;
 class ExtensionInstalledBubbleModelTest
     : public extensions::ExtensionServiceTestWithInstall {
  public:
-  ExtensionInstalledBubbleModelTest() {
-    scoped_feature_list_.InitAndDisableFeature(
-        switches::kEnableExtensionsExplicitBrowserSignin);
-  }
+  ExtensionInstalledBubbleModelTest() = default;
 
   ~ExtensionInstalledBubbleModelTest() override = default;
 
@@ -61,9 +57,6 @@ class ExtensionInstalledBubbleModelTest
                 .Set("suggested_key", key)
                 .Set("description", "Invoke the page action")));
   }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 TEST_F(ExtensionInstalledBubbleModelTest, SyntheticPageActionExtension) {
@@ -128,11 +121,9 @@ TEST_F(ExtensionInstalledBubbleModelTest, PageActionExtension) {
 }
 
 // TODO(crbug.com/405148986): Modify this test once the appropriate how to use
-// text is decided for MV3 action extensions.
-TEST_F(ExtensionInstalledBubbleModelTest, MV3ActionExtension) {
-  // An extension with a MV3 action...
+// text is decided for extensions with actions.
+TEST_F(ExtensionInstalledBubbleModelTest, ActionExtension) {
   auto extension = extensions::ExtensionBuilder("Foo")
-                       .SetManifestVersion(3)
                        .SetAction(extensions::ActionInfo::Type::kAction)
                        .Build();
   registrar()->AddExtension(extension);

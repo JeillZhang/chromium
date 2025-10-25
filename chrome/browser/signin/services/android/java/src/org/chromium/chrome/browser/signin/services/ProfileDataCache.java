@@ -38,6 +38,7 @@ import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.AccountInfoService;
 import org.chromium.components.signin.identitymanager.AccountInfoServiceProvider;
+import org.chromium.components.signin.identitymanager.IdentityManager;
 
 import java.util.HashMap;
 import java.util.List;
@@ -130,14 +131,20 @@ public class ProfileDataCache implements AccountInfoService.Observer {
     private final ObserverList<Observer> mObservers = new ObserverList<>();
     private final Map<String, DisplayableProfileData> mCachedProfileData = new HashMap<>();
 
-    // TODO(crbug.com/342205162): Require native for ProfileDataCache creation.
     @VisibleForTesting
-    ProfileDataCache(Context context, @Px int imageSize, @Nullable BadgeConfig badgeConfig) {
+    ProfileDataCache(
+            Context context,
+            IdentityManager identityManager,
+            @Px int imageSize,
+            @Nullable BadgeConfig badgeConfig) {
+        // TODO(crbug.com/341948846): Remove AccountInfoService and update
+        // populateCache/populateCacheForAllAccounts to use identityManager to get the list of
+        // accounts
+        assert identityManager != null;
         mContext = context;
         mImageSize = imageSize;
         mDefaultBadgeConfig = badgeConfig;
         mPlaceholderImage = getScaledPlaceholderImage(context, imageSize);
-        // TODO(crbug.com/341948846): Remove AccountInfoService and simplify this.
         Promise<AccountInfoService> accountInfoServicePromise =
                 AccountInfoServiceProvider.getPromise();
         if (accountInfoServicePromise.isFulfilled()) {
@@ -152,9 +159,11 @@ public class ProfileDataCache implements AccountInfoService.Observer {
      * @return A {@link ProfileDataCache} object with default image size(R.dimen.user_picture_size)
      *     and no badge.
      */
-    public static ProfileDataCache createWithDefaultImageSizeAndNoBadge(Context context) {
+    public static ProfileDataCache createWithDefaultImageSizeAndNoBadge(
+            Context context, IdentityManager identityManager) {
         return new ProfileDataCache(
                 context,
+                identityManager,
                 context.getResources().getDimensionPixelSize(R.dimen.user_picture_size),
                 /* badgeConfig= */ null);
     }
@@ -168,9 +177,10 @@ public class ProfileDataCache implements AccountInfoService.Observer {
      *     per-account badges?
      */
     public static ProfileDataCache createWithDefaultImageSize(
-            Context context, @DrawableRes int badgeResId) {
+            Context context, IdentityManager identityManager, @DrawableRes int badgeResId) {
         return new ProfileDataCache(
                 context,
+                identityManager,
                 context.getResources().getDimensionPixelSize(R.dimen.user_picture_size),
                 createDefaultSizeChildAccountBadgeConfig(context, badgeResId));
     }
@@ -181,9 +191,10 @@ public class ProfileDataCache implements AccountInfoService.Observer {
      * @return A {@link ProfileDataCache} object with the given image size and no badge.
      */
     public static ProfileDataCache createWithoutBadge(
-            Context context, @DimenRes int imageSizeRedId) {
+            Context context, IdentityManager identityManager, @DimenRes int imageSizeRedId) {
         return new ProfileDataCache(
                 context,
+                identityManager,
                 context.getResources().getDimensionPixelSize(imageSizeRedId),
                 /* badgeConfig= */ null);
     }
@@ -258,7 +269,7 @@ public class ProfileDataCache implements AccountInfoService.Observer {
     /**
      * Sets a default {@link BadgeConfig} and then populates the cache with the new Badge.
      *
-     * @param BadgeConfig The badge configuration. If null then the current badge is removed.
+     * @param badgeConfig The badge configuration. If null then the current badge is removed.
      *     <p>If both a per-account and default badge are set, the per-account badge takes
      *     precedence.
      *     <p>TODO(crbug.com/40798208): replace usages of this method with the per-account config
@@ -279,7 +290,7 @@ public class ProfileDataCache implements AccountInfoService.Observer {
      * Badge.
      *
      * @param accountEmail The account email for which to set this badge.
-     * @param BadgeConfig The badge configuration. If null then the current badge is removed.
+     * @param badgeConfig The badge configuration. If null then the current badge is removed.
      *     <p>If both a per-account and default badge are set, the per-account badge takes
      *     precedence.
      *     <p>TODO(crbug.com/40274844): Replace accountEmail with CoreAccountId or CoreAccountInfo.

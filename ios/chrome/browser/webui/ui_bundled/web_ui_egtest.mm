@@ -154,8 +154,7 @@ using chrome_test_util::ForwardButton;
 // Tests that all URLs on chrome://chrome-urls page load without error.
 - (void)testChromeURLsLoadWithoutError {
   // Load WebUI pages and verify they load without any error.
-  for (size_t i = 0; i < kNumberOfChromeHostURLs; ++i) {
-    const char* host = kChromeHostURLs[i];
+  for (const std::string_view host : kChromeHostURLs) {
     // Exclude non-WebUI pages, as they do not go through a "loading" phase.
     if (host == kChromeUINewTabHost) {
       continue;

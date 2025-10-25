@@ -7,10 +7,12 @@
 #include <stddef.h>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/containers/contains.h"
+#include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
@@ -403,7 +405,7 @@ void BaseWebUIBrowserTest::SetUpOnMainThread() {
       std::make_unique<content::ScopedWebUIControllerFactoryRegistration>(
           test_factory_.get(), ChromeWebUIControllerFactory::GetInstance());
 
-  test_factory_->AddFactoryOverride(DummyUrl().host(),
+  test_factory_->AddFactoryOverride(DummyUrl().GetHost(),
                                     mock_provider_.Pointer());
   test_factory_->AddFactoryOverride(content::kChromeUIResourcesHost,
                                     mock_provider_.Pointer());
@@ -412,7 +414,7 @@ void BaseWebUIBrowserTest::SetUpOnMainThread() {
 void BaseWebUIBrowserTest::TearDownOnMainThread() {
   logging::SetLogMessageHandler(nullptr);
 
-  test_factory_->RemoveFactoryOverride(DummyUrl().host());
+  test_factory_->RemoveFactoryOverride(DummyUrl().GetHost());
   // |factory_registration_| must be reset before |test_factory_| to remove
   // any pointers to |test_factory_| from the factory registry before its
   // destruction.
@@ -451,7 +453,10 @@ bool BaseWebUIBrowserTest::RunJavascriptUsingHandler(
                                   : test_handler_->GetRenderFrameHostForTest();
   if (!base::Contains(libraries_preloaded_for_frames_,
                       frame_for_libraries->GetGlobalId())) {
-    BuildJavascriptLibraries(&libraries);
+    if (!BuildJavascriptLibraries(&libraries)) {
+      ADD_FAILURE() << "Failed to build JavaScript libraries";
+      return false;
+    }
     if (!preload_frame) {
       content = base::JoinString(libraries, u"\n");
       libraries.clear();

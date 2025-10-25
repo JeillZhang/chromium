@@ -894,6 +894,11 @@ public class SelectFileDialogTest {
                 SelectFileDialog.SELECT_FILE_DIALOG_SCOPE_GENERIC,
                 scopeForFileTypes(".avi", ".mp4", "video/ogg", "text/plain"));
 
+        // Audio + video should result in generic.
+        assertEquals(
+                SelectFileDialog.SELECT_FILE_DIALOG_SCOPE_GENERIC,
+                scopeForFileTypes(".avi", "video/ogg", "audio/mp4", ".mp3"));
+
         // Non-image, non-video extension only.
         assertEquals(SelectFileDialog.SELECT_FILE_DIALOG_SCOPE_GENERIC, scopeForFileTypes(".doc"));
 
@@ -1420,8 +1425,6 @@ public class SelectFileDialogTest {
     @Config(sdk = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
     public void testIntentPermissionNotCheckedOnLowerSDKVersions() throws Exception {
         TestSelectFileDialog selectFileDialog = new TestSelectFileDialog(0);
-        WindowAndroid windowAndroid = Mockito.mock(WindowAndroid.class);
-        Mockito.verify(windowAndroid, Mockito.times(0)).getActivity();
         selectFileDialog.onIntentCompleted(
                 Activity.RESULT_OK,
                 new Intent(Intent.ACTION_VIEW, Uri.parse("content://com.android.xyz/xyz")));

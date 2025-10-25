@@ -90,17 +90,11 @@ CreateVideoCaptureHostOnIO(
     blink::mojom::MediaStreamType type,
     mojo::PendingReceiver<media::mojom::VideoCaptureHost> receiver) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  scoped_refptr<base::SingleThreadTaskRunner> device_task_runner =
-      base::ThreadPool::CreateSingleThreadTaskRunner(
-          {base::TaskPriority::USER_BLOCKING,
-           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
-          base::SingleThreadTaskRunnerThreadMode::DEDICATED);
   return mojo::MakeSelfOwnedReceiver(
       std::make_unique<SingleClientVideoCaptureHost>(
           device_id, type,
           base::BindRepeating(&content::VideoCaptureDeviceLauncher::
-                                  CreateInProcessVideoCaptureDeviceLauncher,
-                              std::move(device_task_runner))),
+                                  CreateDeviceLauncherFromMediaStreamManager)),
       std::move(receiver));
 }
 
@@ -166,7 +160,7 @@ bool IsAccessCodeCastTabSwitchingUIEnabled(
 // Returns the size of the primary display in pixels, or std::nullopt if it
 // cannot be determined.
 std::optional<gfx::Size> GetScreenResolution() {
-  display::Screen* screen = display::Screen::GetScreen();
+  display::Screen* screen = display::Screen::Get();
   if (!screen) {
     DVLOG(1) << "Cannot get the Screen object.";
     return std::nullopt;
@@ -302,7 +296,8 @@ gfx::Size CastMirroringServiceHost::GetClampedResolution(
 
 void CastMirroringServiceHost::BindGpu(
     mojo::PendingReceiver<viz::mojom::Gpu> receiver) {
-  gpu_client_ = content::CreateGpuClient(std::move(receiver));
+  gpu_client_ = content::CreateGpuClient(
+      std::move(receiver), /*enable_extra_handles_validation=*/false);
 }
 
 void CastMirroringServiceHost::GetVideoCaptureHost(
@@ -443,6 +438,19 @@ void CastMirroringServiceHost::CreateAudioStreamForDesktop(
   mojo::MessagePipe pipe_to_audio_service;
   mojo::MessagePipe pipe_to_mirroring_service;
 
+  // Temporary logic to make the launch of CatapAudioInputStream for Cast
+  // independent of the launch of the same feature for getDisplayMedia().
+  // TODO(https://crbug.com/425902990): Remove the usage of
+  // `kLoopbackWithMuteDeviceIdCast` once CatapAudioInputStream is launched for
+  // both Cast and getDisplayMedia().
+#if BUILDFLAG(IS_MAC)
+  const char* loopback_id =
+      media::AudioDeviceDescription::kLoopbackWithMuteDeviceIdCast;
+#else  // IS_MAC
+  const char* loopback_id =
+      media::AudioDeviceDescription::kLoopbackWithMuteDeviceId;
+#endif
+
   // This does the mostly the same thing as the similar insane glob of code in
   // the CreateAudioStreamForTab() method. Here, system-wide audio is requested
   // from the platform, and so the CreateInputStream() API is used instead of
@@ -457,9 +465,8 @@ void CastMirroringServiceHost::CreateAudioStreamForDesktop(
           std::move(pipe_to_audio_service.handle1)),
       mojo::PendingRemote<AudioInputStreamClient>(
           std::move(pipe_to_mirroring_service.handle0), 0),
-      mojo::NullRemote(), mojo::NullRemote(),
-      media::AudioDeviceDescription::kLoopbackWithMuteDeviceId, params,
-      total_segments, false, nullptr,
+      mojo::NullRemote(), mojo::NullRemote(), loopback_id, params,
+      base::UnguessableToken::Create(), total_segments, false, nullptr,
       base::BindOnce(
           [](mojo::PendingRemote<mojom::AudioStreamCreatorClient> requestor,
              mojo::PendingRemote<AudioInputStream> stream,

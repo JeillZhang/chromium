@@ -77,10 +77,14 @@ class AudioManagerAndroid {
         private final @Nullable String mName;
         private final int mType;
 
-        public AudioDevice(int id, @Nullable String name, int type) {
+        // Empty if arbitrary sample rates are supported.
+        private final int[] mSampleRates;
+
+        public AudioDevice(int id, @Nullable String name, int type, int[] sampleRates) {
             mId = id;
             mName = name;
             mType = type;
+            mSampleRates = sampleRates;
         }
 
         @CalledByNative("AudioDevice")
@@ -97,14 +101,15 @@ class AudioManagerAndroid {
         private int type() {
             return mType;
         }
+
+        @CalledByNative("AudioDevice")
+        private @JniType("std::vector<int>") int[] sampleRates() {
+            return mSampleRates;
+        }
     }
 
     // Use 44.1kHz as the default sampling rate.
     private static final int DEFAULT_SAMPLING_RATE = 44100;
-    // Randomly picked up frame size which is close to return value on N4.
-    // Return this value when getProperty(PROPERTY_OUTPUT_FRAMES_PER_BUFFER)
-    // fails.
-    private static final int DEFAULT_FRAME_PER_BUFFER = 256;
 
     private final AudioManager mAudioManager;
     private final long mNativeAudioManagerAndroid;
@@ -125,6 +130,10 @@ class AudioManagerAndroid {
     private final ContentResolver mContentResolver;
     private @Nullable ContentObserver mSettingsObserver;
     private @Nullable HandlerThread mSettingsObserverThread;
+
+    private @Nullable AudioDeviceListener mDeviceListener;
+
+    private @Nullable ScoStateListener mScoStateListener;
 
     private final CommunicationDeviceSelector mCommunicationDeviceSelector;
 
@@ -173,12 +182,38 @@ class AudioManagerAndroid {
         }
 
         mCommunicationDeviceSelector.init();
+
         mIsInitialized = true;
     }
 
     /**
-     * Unregister all previously registered intent receivers and restore
-     * the stored state (stored in {@link #init()}).
+     * Initializes the device listener, which listens for changes to the list of audio devices
+     * exposed by the OS.
+     */
+    @CalledByNative
+    private void initDeviceListener() {
+        mDeviceListener =
+                new AudioDeviceListener(
+                        added -> AudioManagerAndroidJni.get().onDevicesChanged(added));
+    }
+
+    /**
+     * Initializes the SCO state listener, which listens for changes to the SCO state reported by
+     * the OS.
+     */
+    @CalledByNative
+    private void initScoStateListener() {
+        mScoStateListener =
+                new ScoStateListener(
+                        state -> {
+                            AudioManagerAndroidJni.get()
+                                    .onScoStateChanged(mNativeAudioManagerAndroid, state);
+                        });
+    }
+
+    /**
+     * Unregister all previously registered intent receivers and restore the stored state (stored in
+     * {@link #init()}).
      */
     @CalledByNative
     private void close() {
@@ -188,15 +223,23 @@ class AudioManagerAndroid {
 
         stopObservingVolumeChanges();
 
+        if (mDeviceListener != null) {
+            mDeviceListener.destroy();
+        }
+
+        if (mScoStateListener != null) {
+            mScoStateListener.destroy();
+        }
+
         mCommunicationDeviceSelector.close();
 
         mIsInitialized = false;
     }
 
     /**
-     * Sets audio mode as COMMUNICATION if input parameter is true.
-     * Restores audio mode to NORMAL if input parameter is false.
-     * Required permission: android.Manifest.permission.MODIFY_AUDIO_SETTINGS.
+     * Sets audio mode as COMMUNICATION if input parameter is true. Restores audio mode to NORMAL if
+     * input parameter is false. Required permission:
+     * android.Manifest.permission.MODIFY_AUDIO_SETTINGS.
      */
     @CalledByNative
     private void setCommunicationAudioModeOn(boolean on) {
@@ -244,8 +287,8 @@ class AudioManagerAndroid {
     }
 
     /**
-     * Sets audio mode to MODE_IN_COMMUNICATION if input parameter is true.
-     * Restores audio mode to MODE_NORMAL if input parameter is false.
+     * Sets audio mode to MODE_IN_COMMUNICATION if input parameter is true. Restores audio mode to
+     * MODE_NORMAL if input parameter is false.
      */
     private void setCommunicationAudioModeOnInternal(boolean on) {
         if (DEBUG) logd("setCommunicationAudioModeOn(" + on + ")");
@@ -323,13 +366,6 @@ class AudioManagerAndroid {
                 case AudioDeviceInfo.TYPE_TELEPHONY:
                     // Unusable device types.
                     continue;
-                case AudioDeviceInfo.TYPE_BLUETOOTH_A2DP:
-                case AudioDeviceInfo.TYPE_BLUETOOTH_SCO:
-                    // TODO(crbug.com/405955144): Bluetooth Classic output streams do not work
-                    // correctly, as they do not react to SCO state changes.
-                    if (!inputs) {
-                        continue;
-                    }
             }
 
             int id = deviceInfo.getId();
@@ -339,7 +375,8 @@ class AudioManagerAndroid {
                 // `android.os.Build.MODEL` to facilitate providing a custom fallback name instead.
                 name = null;
             }
-            devices.add(new AudioDevice(id, name, type));
+            int[] sampleRates = deviceInfo.getSampleRates();
+            devices.add(new AudioDevice(id, name, type, sampleRates));
         }
         return devices.toArray(new AudioDevice[0]);
     }
@@ -369,12 +406,6 @@ class AudioManagerAndroid {
         return mCommunicationDeviceSelector.getDevices();
     }
 
-    /** Gets whether Bluetooth SCO is currently enabled. */
-    @CalledByNative
-    private boolean isBluetoothScoOn() {
-        return mCommunicationDeviceSelector.isBluetoothScoOn();
-    }
-
     /** Requests for Bluetooth SCO to be enabled or disabled. This request may fail. */
     @CalledByNative
     private void maybeSetBluetoothScoState(boolean state) {
@@ -397,7 +428,7 @@ class AudioManagerAndroid {
      * @param channels number of channels
      */
     @CalledByNative
-    private static int getMinInputFrameSize(int sampleRate, int channels) {
+    private static int getMinInputFramesPerBuffer(int sampleRate, int channels) {
         int channelConfig;
         if (channels == 1) {
             channelConfig = AudioFormat.CHANNEL_IN_MONO;
@@ -419,7 +450,7 @@ class AudioManagerAndroid {
      * @param channels number of channels
      */
     @CalledByNative
-    private static int getMinOutputFrameSize(int sampleRate, int channels) {
+    private static int getMinOutputFramesPerBuffer(int sampleRate, int channels) {
         int channelConfig;
         if (channels == 1) {
             channelConfig = AudioFormat.CHANNEL_OUT_MONO;
@@ -442,12 +473,10 @@ class AudioManagerAndroid {
     }
 
     @CalledByNative
-    private int getAudioLowLatencyOutputFrameSize() {
+    private int getAudioLowLatencyOutputFramesPerBuffer() {
         String framesPerBuffer =
                 mAudioManager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER);
-        return framesPerBuffer == null
-                ? DEFAULT_FRAME_PER_BUFFER
-                : Integer.parseInt(framesPerBuffer);
+        return framesPerBuffer == null ? 0 : Integer.parseInt(framesPerBuffer);
     }
 
     @CalledByNative
@@ -572,10 +601,7 @@ class AudioManagerAndroid {
                         int volume = mAudioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL);
                         if (DEBUG) logd("AudioManagerAndroidJni.get().setMute: " + (volume == 0));
                         AudioManagerAndroidJni.get()
-                                .setMute(
-                                        mNativeAudioManagerAndroid,
-                                        AudioManagerAndroid.this,
-                                        (volume == 0));
+                                .setMute(mNativeAudioManagerAndroid, (volume == 0));
                     }
                 };
 
@@ -601,37 +627,23 @@ class AudioManagerAndroid {
         mSettingsObserverThread = null;
     }
 
-    /** Return the AudioDeviceInfo array as reported by the Android OS. */
-    private static AudioDeviceInfo[] getAudioDeviceInfo() {
+    /**
+     * Returns a bitmask of audio encoding formats supported by all connected HDMI output devices.
+     */
+    @CalledByNative
+    private static @JniType("media::AudioParameters::Format") @AudioEncodingFormat int
+            getHdmiOutputEncodingFormats() {
         AudioManager audioManager =
                 (AudioManager)
                         ContextUtils.getApplicationContext()
                                 .getSystemService(Context.AUDIO_SERVICE);
-        return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS);
-    }
 
-    /** Returns whether an audio sink device is connected. */
-    @CalledByNative
-    private static boolean isAudioSinkConnected() {
-        for (AudioDeviceInfo deviceInfo : getAudioDeviceInfo()) {
-            if (deviceInfo.isSink()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Returns a bit mask of Audio Formats (C++ AudioParameters::Format enum) supported by all of
-     * the sink devices.
-     */
-    @CalledByNative
-    private static int getAudioEncodingFormatsSupported() {
-        int intersection_mask = 0; // intersection of multiple device encoding arrays
+        int intersectionMask = 0; // intersection of multiple device encoding arrays
         boolean first = true;
-        for (AudioDeviceInfo deviceInfo : getAudioDeviceInfo()) {
+        for (AudioDeviceInfo deviceInfo :
+                audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)) {
             int[] encodings = deviceInfo.getEncodings();
-            if (deviceInfo.isSink() && deviceInfo.getType() == AudioDeviceInfo.TYPE_HDMI) {
+            if (deviceInfo.getType() == AudioDeviceInfo.TYPE_HDMI) {
                 int mask = 0; // bit mask for a single device
 
                 // Map AudioFormat values to C++ media/base/audio_parameters.h Format enum
@@ -661,19 +673,19 @@ class AudioManagerAndroid {
                 // Require all devices to support a format
                 if (first) {
                     first = false;
-                    intersection_mask = mask;
+                    intersectionMask = mask;
                 } else {
-                    intersection_mask &= mask;
+                    intersectionMask &= mask;
                 }
             }
         }
-        return intersection_mask;
+        return intersectionMask;
     }
 
     /**
      * Retrieves the maximum supported channel layout for automotive audio.
      *
-     * This method identifies the channel layout with the highest number of channels among all
+     * <p>This method identifies the channel layout with the highest number of channels among all
      * available audio devices of type {@link AudioDeviceInfo#TYPE_BUS}. It's designed specifically
      * for automotive systems (when {@code mIsAutomotive} is true); otherwise, it returns {@link
      * ChannelLayout#LAYOUT_UNSUPPORTED}.
@@ -766,6 +778,10 @@ class AudioManagerAndroid {
 
     @NativeMethods
     interface Natives {
-        void setMute(long nativeAudioManagerAndroid, AudioManagerAndroid caller, boolean muted);
+        void onDevicesChanged(boolean added);
+
+        void setMute(long nativeAudioManagerAndroid, boolean muted);
+
+        void onScoStateChanged(long nativeAudioManagerAndroid, boolean state);
     }
 }

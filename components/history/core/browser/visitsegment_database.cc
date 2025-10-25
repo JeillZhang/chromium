@@ -166,7 +166,7 @@ std::string VisitSegmentDatabase::ComputeSegmentName(const GURL& url) {
   // TODO(brettw) this should probably use the registry controlled
   // domains service.
   GURL::Replacements r;
-  std::string_view host = url.host_piece();
+  std::string_view host = url.host();
 
   // Strip various common prefixes in order to group the resulting hostnames
   // together and avoid duplicates.
@@ -266,8 +266,7 @@ VisitSegmentDatabase::QuerySegmentUsage(
     int max_result_count,
     const base::RepeatingCallback<bool(const GURL&)>& url_filter,
     const std::optional<std::string>& recency_factor_name,
-    std::optional<size_t> recency_window_days,
-    bool visual_deduplication_enabled) {
+    std::optional<size_t> recency_window_days) {
   // Phase 1: Gather all segments and compute scores.
   std::vector<std::unique_ptr<PageUsageData>> segments;
   base::Time now = base::Time::Now();
@@ -343,12 +342,11 @@ VisitSegmentDatabase::QuerySegmentUsage(
       GURL url(statement2.ColumnStringView(0));
       if (url_filter.is_null() || url_filter.Run(url)) {
         std::u16string title = statement2.ColumnString16(1);
-        HostTitleKey current_key(url.host(),
+        HostTitleKey current_key(url.GetHost(),
                                  title.substr(0, kTitleDedupLength));
         // If `!visual_deduplication_enabled` then it's okay to skip insert(),
         // since `added_host_titles` won't be used anyway.
-        if (!visual_deduplication_enabled ||
-            added_host_titles.insert(current_key).second) {
+        if (added_host_titles.insert(current_key).second) {
           pud->SetURL(url);
           pud->SetTitle(title);
           results.push_back(std::move(pud));
@@ -362,7 +360,7 @@ VisitSegmentDatabase::QuerySegmentUsage(
     }
     statement2.Reset(true);
   }
-  if (visual_deduplication_enabled && !histogram_recorded_) {
+  if (!histogram_recorded_) {
     base::UmaHistogramCounts100("History.MostVisitedTilesVisualDeduplication",
                                 duplicate_tiles);
     histogram_recorded_ = true;
@@ -392,6 +390,47 @@ bool VisitSegmentDatabase::DeleteSegmentForURL(URLID url_id) {
   delete_seg.BindInt64(0, url_id);
 
   return delete_seg.Run();
+}
+
+bool VisitSegmentDatabase::MigratePresentationIndex() {
+  sql::Transaction transaction(&GetDB());
+  return transaction.Begin() &&
+      GetDB().Execute("DROP TABLE presentation") &&
+      GetDB().Execute("CREATE TABLE segments_tmp ("
+                      "id INTEGER PRIMARY KEY,"
+                      "name VARCHAR,"
+                      "url_id INTEGER NON NULL)") &&
+      GetDB().Execute("INSERT INTO segments_tmp SELECT "
+                      "id, name, url_id FROM segments") &&
+      GetDB().Execute("DROP TABLE segments") &&
+      GetDB().Execute("ALTER TABLE segments_tmp RENAME TO segments") &&
+      transaction.Commit();
+}
+
+bool VisitSegmentDatabase::MigrateVisitSegmentNames() {
+  sql::Statement select(
+      GetDB().GetUniqueStatement("SELECT id, name FROM segments"));
+  if (!select.is_valid())
+    return false;
+
+  bool success = true;
+  while (select.Step()) {
+    SegmentID id = select.ColumnInt64(0);
+    std::string_view old_name = select.ColumnStringView(1);
+    std::string new_name = ComputeSegmentName(GURL(old_name));
+    if (new_name.empty() || old_name == new_name)
+      continue;
+
+    SegmentID to_segment_id = GetSegmentNamed(new_name);
+    if (to_segment_id) {
+      // `new_name` is already in use, so merge.
+      success = success && MergeSegments(/*from_segment_id=*/id, to_segment_id);
+    } else {
+      // Trivial rename of the segment.
+      success = success && RenameSegment(id, new_name);
+    }
+  }
+  return success;
 }
 
 bool VisitSegmentDatabase::RenameSegment(SegmentID segment_id,

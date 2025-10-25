@@ -5,6 +5,7 @@
 #include "ui/gfx/linux/test/mock_gbm_device.h"
 
 #include <xf86drm.h>
+
 #include <memory>
 #include <utility>
 
@@ -12,6 +13,7 @@
 #include "base/containers/contains.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_math.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -56,8 +58,8 @@ class MockGbmBuffer final : public ui::GbmBuffer {
   uint64_t GetFormatModifier() const override { return format_modifier_; }
   uint32_t GetFlags() const override { return flags_; }
   gfx::Size GetSize() const override { return size_; }
-  gfx::BufferFormat GetBufferFormat() const override {
-    return ui::GetBufferFormatFromFourCCFormat(format_);
+  viz::SharedImageFormat GetSharedImageFormat() const override {
+    return ui::GetSharedImageFormatFromFourCCFormat(format_);
   }
   bool AreFdsValid() const override {
     if (planes_.empty())

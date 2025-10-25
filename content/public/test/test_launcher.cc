@@ -74,6 +74,7 @@
 #undef GetCommandLine
 #elif BUILDFLAG(IS_MAC)
 #include "base/apple/scoped_nsautorelease_pool.h"
+#include "base/mac/mac_util.h"
 #include "sandbox/mac/seatbelt_exec.h"
 #endif
 
@@ -307,6 +308,15 @@ void AppendCommandLineSwitches() {
   // Always disable the unsandbox GPU process for DX12 Info collection to avoid
   // interference. This GPU process is launched 120 seconds after chrome starts.
   command_line->AppendSwitch(switches::kDisableGpuProcessForDX12InfoCollection);
+
+#if BUILDFLAG(IS_MAC)
+  // TODO(crbug.com/439820682): Remove this when the issue is fixed.
+  // This is a temporary workaround for an issue where GPU video decoding
+  // is slow on Mac VMs, causing test flakiness.
+  if (base::mac::IsVirtualMachine()) {
+    command_line->AppendSwitch(switches::kDisableAcceleratedVideoDecode);
+  }
+#endif
 }
 
 }  // namespace
@@ -396,8 +406,7 @@ int LaunchTestsInternal(TestLauncherDelegate* launcher_delegate,
 #if GTEST_HAS_DEATH_TEST
       // Ensure death test child processes don't reuse the user data dir of
       // their parent process.
-      if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-              "gtest_internal_run_death_test")) {
+      if (command_line->HasSwitch("gtest_internal_run_death_test")) {
         command_line->RemoveSwitch(user_data_dir_switch);
       }
 #endif  // GTEST_HAS_DEATH_TEST

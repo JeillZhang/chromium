@@ -47,9 +47,14 @@ using PsmExecutionResult = em::DeviceRegisterRequest::PsmExecutionResult;
 
 namespace policy {
 
-BASE_FEATURE(kPolicyFetchWithSha256,
-             "PolicyFetchWithSha256",
+BASE_FEATURE(kPolicyFetchWithSha256, base::FEATURE_ENABLED_BY_DEFAULT);
+
+BASE_FEATURE(kEnableReregistration,
+#if BUILDFLAG(IS_CHROMEOS)
              base::FEATURE_ENABLED_BY_DEFAULT);
+#else
+             base::FEATURE_DISABLED_BY_DEFAULT);
+#endif
 
 namespace {
 
@@ -93,7 +98,7 @@ ThirdPartyIdentityType TranslateProtobufThirdPartyIdentityType(
 
 bool IsChromePolicy(const std::string& type) {
   return type == dm_protocol::kChromeDevicePolicyType ||
-         type == dm_protocol::kChromeUserPolicyType ||
+         type == dm_protocol::GetChromeUserPolicyType() ||
          IsMachineLevelUserCloudPolicyType(type);
 }
 
@@ -275,7 +280,7 @@ std::string FormatMacAddress(const CloudPolicyClient::MacAddress& mac_address) {
 // Returns the histogram variant for the corresponding `type`. Returns nullopt
 // if there is no variant for the type.
 std::optional<std::string_view> HistogramVariantForType(std::string_view type) {
-  if (type == dm_protocol::kChromeUserPolicyType) {
+  if (type == dm_protocol::GetChromeUserPolicyType()) {
     return "UserPolicy";
   } else if (type == dm_protocol::kChromeMachineLevelUserCloudPolicyType) {
     return "MachineLevelUserCloudPolicy";
@@ -353,6 +358,9 @@ CloudPolicyClient::CloudPolicyClient(
     std::optional<MacAddress> ethernet_mac_address,
     std::optional<MacAddress> dock_mac_address,
     std::string_view manufacture_date,
+    std::string_view flex_sys_vendor,
+    std::string_view flex_product_name,
+    std::string_view flex_product_version,
     DeviceManagementService* service,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
     DeviceDMTokenCallback device_dm_token_callback)
@@ -366,6 +374,9 @@ CloudPolicyClient::CloudPolicyClient(
       dock_mac_address_(dock_mac_address ? FormatMacAddress(*dock_mac_address)
                                          : std::string()),
       manufacture_date_(manufacture_date),
+      flex_sys_vendor_(flex_sys_vendor),
+      flex_product_name_(flex_product_name),
+      flex_product_version_(flex_product_version),
       service_(service),  // Can be null for unit tests.
       device_dm_token_callback_(device_dm_token_callback),
       url_loader_factory_(url_loader_factory) {}
@@ -697,7 +708,7 @@ void CloudPolicyClient::FetchPolicy(PolicyFetchReason reason) {
   CHECK(is_registered());
   CHECK(!types_to_fetch_.empty());
 
-  VLOG(2) << "Policy fetch starting";
+  VLOG_POLICY(2, POLICY_FETCHING) << "Policy fetch starting";
   auto params = DMServerJobConfiguration::CreateParams::WithClient(
       DeviceManagementService::JobConfiguration::TYPE_POLICY_FETCH, this);
   params.auth_data = DMAuth::FromDMToken(dm_token_);
@@ -1716,9 +1727,16 @@ void CloudPolicyClient::OnPolicyFetchCompleted(base::Time start_time,
     if (result.dm_status == DM_STATUS_SERVICE_DEVICE_NOT_FOUND ||
         result.dm_status == DM_STATUS_SERVICE_DEVICE_NEEDS_RESET) {
       // Mark as unregistered and initialize re-registration flow.
-      reregistration_dm_token_ = dm_token_;
-      dm_token_.clear();
-      NotifyRegistrationStateChanged();
+      // This re-registration flow is only used by ChromeOS. Using an
+      // experiemntal flag to turn it off on other platforms.
+      // TODO(b/437175703): Once we have verified that it's safe to remove such
+      // logic on other platforms, we will remove the experiment and guarded all
+      // related logic behind the #if condition.
+      if (base::FeatureList::IsEnabled(kEnableReregistration)) {
+        reregistration_dm_token_ = dm_token_;
+        dm_token_.clear();
+        NotifyRegistrationStateChanged();
+      }
     }
   }
 }
@@ -1945,6 +1963,15 @@ void CloudPolicyClient::CreateDeviceRegisterRequest(
   }
   if (!manufacture_date_.empty()) {
     request->set_manufacture_date(manufacture_date_);
+  }
+  if (!flex_sys_vendor_.empty()) {
+    request->mutable_smbios_info()->set_sys_vendor(flex_sys_vendor_);
+  }
+  if (!flex_product_name_.empty()) {
+    request->mutable_smbios_info()->set_product_name(flex_product_name_);
+  }
+  if (!flex_product_version_.empty()) {
+    request->mutable_smbios_info()->set_product_version(flex_product_version_);
   }
   if (!params.requisition.empty()) {
     request->set_requisition(params.requisition);

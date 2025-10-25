@@ -48,6 +48,7 @@
 #include "components/services/storage/public/cpp/buckets/bucket_locator.h"
 #include "components/services/storage/public/mojom/cache_storage_control.mojom.h"
 #include "content/browser/attribution_reporting/aggregatable_result.mojom.h"
+#include "content/browser/attribution_reporting/attribution_debug_report.h"
 #include "content/browser/attribution_reporting/attribution_manager.h"
 #include "content/browser/attribution_reporting/attribution_observer.h"
 #include "content/browser/attribution_reporting/attribution_report.h"
@@ -58,16 +59,22 @@
 #include "content/browser/attribution_reporting/send_result.h"
 #include "content/browser/attribution_reporting/storable_source.h"
 #include "content/browser/attribution_reporting/store_source_result.mojom.h"
+#include "content/browser/devtools/dedicated_worker_devtools_agent_host.h"
+#include "content/browser/devtools/devtools_agent_host_impl.h"
 #include "content/browser/devtools/protocol/browser_handler.h"
 #include "content/browser/devtools/protocol/handler_helpers.h"
 #include "content/browser/devtools/protocol/network.h"
 #include "content/browser/devtools/protocol/network_handler.h"
 #include "content/browser/devtools/protocol/storage.h"
+#include "content/browser/devtools/service_worker_devtools_agent_host.h"
+#include "content/browser/devtools/shared_worker_devtools_agent_host.h"
 #include "content/browser/interest_group/interest_group_manager_impl.h"
+#include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/devtools_agent_host_client.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "net/base/net_errors.h"
@@ -413,8 +420,11 @@ class StorageHandler::QuotaManagerObserver
   mojo::Receiver<storage::mojom::QuotaManagerObserver> receiver_{this};
 };
 
-StorageHandler::StorageHandler(DevToolsAgentHostClient* client)
-    : DevToolsDomainHandler(Storage::Metainfo::domainName), client_(client) {}
+StorageHandler::StorageHandler(DevToolsAgentHostImpl* host,
+                               DevToolsAgentHostClient* client)
+    : DevToolsDomainHandler(Storage::Metainfo::domainName),
+      host_(host),
+      client_(client) {}
 
 StorageHandler::~StorageHandler() {
   DCHECK(!cache_storage_observer_);
@@ -537,7 +547,7 @@ void StorageHandler::ClearCookies(
                      std::move(callback)));
 }
 
-Response StorageHandler::GetStorageKeyForFrame(
+Response StorageHandler::GetStorageKeyForFrameInternal(
     const std::string& frame_id,
     std::string* serialized_storage_key) {
   if (!frame_host_) {
@@ -555,6 +565,61 @@ Response StorageHandler::GetStorageKeyForFrame(
         "serialized");
   }
   *serialized_storage_key = rfh->GetStorageKey().Serialize();
+  return Response::Success();
+}
+
+// TODO(crbug.com/445966299): This method is deprecated and
+// will be removed once all clients, including the DevTools frontend, have
+// migrated to using GetStorageKey.
+Response StorageHandler::GetStorageKeyForFrame(
+    const std::string& frame_id,
+    std::string* serialized_storage_key) {
+  return GetStorageKeyForFrameInternal(frame_id, serialized_storage_key);
+}
+
+Response StorageHandler::GetStorageKey(std::optional<std::string> frame_id,
+                                       std::string* serialized_storage_key) {
+  if (frame_id.has_value()) {
+    return GetStorageKeyForFrameInternal(frame_id.value(),
+                                         serialized_storage_key);
+  }
+
+  if (!host_) {
+    return Response::InvalidParams("DevToolsAgentHost not found");
+  }
+
+  std::optional<blink::StorageKey> storage_key;
+
+  const std::string& type = host_->GetType();
+
+  if (type == content::DevToolsAgentHost::kTypeServiceWorker) {
+    auto* service_worker_agent_host =
+        static_cast<content::ServiceWorkerDevToolsAgentHost*>(host_.get());
+    storage_key = service_worker_agent_host->GetStorageKey();
+  } else if (type == content::DevToolsAgentHost::kTypeDedicatedWorker) {
+    auto* dedicated_worker_agent_host =
+        static_cast<content::DedicatedWorkerDevToolsAgentHost*>(host_.get());
+    storage_key = dedicated_worker_agent_host->GetStorageKey();
+  } else if (type == content::DevToolsAgentHost::kTypeSharedWorker) {
+    auto* shared_worker_agent_host =
+        static_cast<content::SharedWorkerDevToolsAgentHost*>(host_.get());
+    storage_key = shared_worker_agent_host->GetStorageKey();
+  } else {
+    return Response::InvalidParams(
+        "Target is not a supported worker type for storage inspection.");
+  }
+
+  if (!storage_key.has_value()) {
+    return Response::ServerError(
+        "Could not determine storage key for the target.");
+  }
+  if (storage_key->origin().opaque()) {
+    return Response::ServerError(
+        "Target corresponds to an opaque origin and its storage key cannot be "
+        "serialized");
+  }
+
+  *serialized_storage_key = storage_key.value().Serialize();
   return Response::Success();
 }
 
@@ -2387,16 +2452,16 @@ void StorageHandler::OnReportSent(const AttributionReport& report,
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   std::optional<int> net_error;
-  std::optional<String> net_error_name;
+  std::optional<std::string> net_error_name;
   std::optional<int> http_status_code;
   Storage::AttributionReportingReportResult out_result = std::visit(
       absl::Overload{
           [&](SendResult::Sent result) {
-            if (result.status >= 0) {
+            if (result.status > 0) {
               http_status_code = result.status;
             } else {
               net_error = result.status;
-              net_error_name = String(net::ErrorToShortString(result.status));
+              net_error_name = net::ErrorToShortString(result.status);
             }
             return Storage::AttributionReportingReportResultEnum::Sent;
           },
@@ -2417,6 +2482,34 @@ void StorageHandler::OnReportSent(const AttributionReport& report,
       report.ReportURL(is_debug_report).spec(),
       std::make_unique<base::Value::Dict>(report.ReportBody()), out_result,
       net_error, std::move(net_error_name), http_status_code);
+}
+
+void StorageHandler::OnDebugReportSent(const AttributionDebugReport& report,
+                                       int status,
+                                       base::Time time) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  std::optional<int> net_error;
+  std::optional<std::string> net_error_name;
+  std::optional<int> http_status_code;
+
+  if (status > 0) {
+    http_status_code = status;
+  } else {
+    net_error = status;
+    net_error_name = net::ErrorToShortString(status);
+  }
+
+  auto body = std::make_unique<Array<Value::Dict>>();
+  for (const auto& item : report.ReportBody()) {
+    const auto* as_dict = item.GetIfDict();
+    CHECK(as_dict);
+    body->push_back(std::make_unique<Value::Dict>(as_dict->Clone()));
+  }
+
+  frontend_->AttributionReportingVerboseDebugReportSent(
+      report.ReportUrl().spec(), std::move(body), net_error,
+      std::move(net_error_name), http_status_code);
 }
 
 Response StorageHandler::SetAttributionReportingTracking(bool enable) {

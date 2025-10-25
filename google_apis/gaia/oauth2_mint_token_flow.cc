@@ -35,6 +35,7 @@
 #include "net/base/net_errors.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/http/http_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
 
@@ -202,7 +203,7 @@ struct OAuth2ErrorDetails {
 OAuth2ErrorDetails ParseErrorResponse(
     int net_error,
     const network::mojom::URLResponseHead* head,
-    std::unique_ptr<std::string> body) {
+    std::optional<std::string> body) {
   if (net_error == net::ERR_ABORTED) {
     return {GoogleServiceAuthError(GoogleServiceAuthError::REQUEST_CANCELED),
             std::nullopt};
@@ -214,13 +215,8 @@ OAuth2ErrorDetails ParseErrorResponse(
             std::nullopt};
   }
 
-  std::string_view response_body;
-  if (body) {
-    response_body = *body;
-  }
-
-  std::optional<base::Value::Dict> dict =
-      base::JSONReader::ReadDict(response_body);
+  std::optional<base::Value::Dict> dict = base::JSONReader::ReadDict(
+      body.value_or(""), base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   const std::string* message = FindMessageInErrorResponse(dict);
   const std::string* reason = FindReasonInErrorResponse(dict);
   OAuth2Response oauth2_response = GetOAuth2ResponseFromErrorReason(reason);
@@ -441,14 +437,9 @@ std::string OAuth2MintTokenFlow::CreateAuthorizationHeaderValue(
 
 void OAuth2MintTokenFlow::ProcessApiCallSuccess(
     const network::mojom::URLResponseHead* head,
-    std::unique_ptr<std::string> body) {
-  std::string response_body;
-  if (body) {
-    response_body = std::move(*body);
-  }
-
-  std::optional<base::Value::Dict> dict =
-      base::JSONReader::ReadDict(response_body);
+    std::optional<std::string> body) {
+  std::optional<base::Value::Dict> dict = base::JSONReader::ReadDict(
+      body.value_or(""), base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   if (!dict) {
     RecordApiCallMetrics(OAuth2MintTokenApiCallResult::kParseJsonFailure,
                          OAuth2Response::kOkUnexpectedFormat);
@@ -503,7 +494,7 @@ void OAuth2MintTokenFlow::ProcessApiCallSuccess(
 void OAuth2MintTokenFlow::ProcessApiCallFailure(
     int net_error,
     const network::mojom::URLResponseHead* head,
-    std::unique_ptr<std::string> body) {
+    std::optional<std::string> body) {
   std::string challenge = FindTokenBindingChallenge(net_error, head);
   if (!challenge.empty()) {
     RecordApiCallMetrics(
@@ -630,10 +621,9 @@ bool OAuth2MintTokenFlow::ParseRemoteConsentResponse(
       std::unique_ptr<net::CanonicalCookie> cookie =
           net::CanonicalCookie::CreateSanitizedCookie(
               resolution_url, *name, *value, *domain, path ? *path : "/",
-              time_now, expiration_time, time_now,
-              is_secure ? *is_secure : false,
-              is_http_only ? *is_http_only : false,
-              net::StringToCookieSameSite(same_site ? *same_site : ""),
+              time_now, expiration_time, time_now, (is_secure && *is_secure),
+              (is_http_only && *is_http_only),
+              net::StringToCookieSameSite(same_site ? *same_site : "").first,
               net::COOKIE_PRIORITY_DEFAULT,
               /* partition_key */ std::nullopt, /*status=*/nullptr);
       cookies.push_back(*cookie);

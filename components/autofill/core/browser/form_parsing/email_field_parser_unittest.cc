@@ -17,8 +17,7 @@ class EmailFieldParserTest : public FormFieldParserTestBase,
  public:
   EmailFieldParserTest() {
     feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kAutofillParseEmailLabelAndPlaceholder,
-                              features::kAutofillEnableLoyaltyCardsFilling,
+        /*enabled_features=*/{features::kAutofillEnableLoyaltyCardsFilling,
                               features::
                                   kAutofillEnableEmailOrLoyaltyCardsFilling},
         /*disabled_features=*/{});
@@ -28,7 +27,7 @@ class EmailFieldParserTest : public FormFieldParserTestBase,
 
  protected:
   std::unique_ptr<FormFieldParser> Parse(ParsingContext& context,
-                                         AutofillScanner* scanner) override {
+                                         AutofillScanner& scanner) override {
     return EmailFieldParser::Parse(context, scanner);
   }
 

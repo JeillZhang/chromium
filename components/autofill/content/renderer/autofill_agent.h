@@ -48,7 +48,6 @@
 #include "ui/accessibility/ax_mode.h"
 
 namespace blink {
-class WebNode;
 class WebFormControlElement;
 class WebFormElement;
 }  // namespace blink
@@ -181,7 +180,7 @@ class AutofillAgent : public content::RenderFrameObserver,
       uint32_t number_of_ancestor_levels_to_search,
       base::OnceCallback<void(const std::string&)> callback) override;
 
-  void ExposeDomNodeIDs() override;
+  void ExposeDomNodeIds() override;
   void FieldTypePredictionsAvailable(
       const std::vector<FormDataPredictions>& forms) override;
   // Besides cases that "actually" clear the form, this function needs to be
@@ -204,10 +203,9 @@ class AutofillAgent : public content::RenderFrameObserver,
   void GetPotentialLastFourCombinationsForStandaloneCvc(
       base::OnceCallback<void(const std::vector<std::string>&)>
           potential_matches) override;
-
-  base::WeakPtr<AutofillAgent> GetWeakPtr() {
-    return weak_ptr_factory_.GetWeakPtr();
-  }
+  void DispatchEmailVerifiedEvent(
+      FieldRendererId field_id,
+      const std::string& presentation_token) override;
 
   // Called after updating the last interacted element in FormTracker because of
   // `reason`. It is always the case that `form` or `element` are non-null. If
@@ -388,11 +386,6 @@ class AutofillAgent : public content::RenderFrameObserver,
       const blink::WebElement& element,
       AutofillSuggestionTriggerSource trigger_source);
 
-  // Sets the selected value of the the field identified by `field_id` to
-  // `suggested_value`.
-  void DoAcceptDataListSuggestion(FieldRendererId field_id,
-                                  const std::u16string& suggested_value);
-
   // Set `element` to display the given `value`.
   void DoFillFieldWithValue(std::u16string_view value,
                             blink::WebFormControlElement& element,
@@ -451,10 +444,6 @@ class AutofillAgent : public content::RenderFrameObserver,
   // cleared in this method.
   void OnFormNoLongerSubmittable();
 
-  // Amends the given `extract_options` with datalists if required.
-  DenseSet<form_util::ExtractOption> MaybeExtractDatalist(
-      DenseSet<form_util::ExtractOption> extract_options);
-
   // Helpers for SelectFieldOptionsChanged() and
   // DataListOptionsChanged(), which get called after a timer that is restarted
   // when another event of the same type started.
@@ -476,10 +465,6 @@ class AutofillAgent : public content::RenderFrameObserver,
   // Stores immutable configuration this agent was created with. It contains
   // features and settings that are specific to the client using this agent.
   const Config config_;
-
-  // Return the next web node of `current_node` in the DOM. `next` determines
-  // the direction to traverse in.
-  blink::WebNode NextWebNode(const blink::WebNode& current_node, bool next);
 
   // Contains the forms of the document.
   FormCache form_cache_{this};
@@ -584,7 +569,6 @@ class AutofillAgent : public content::RenderFrameObserver,
     FieldRendererId field = {};
   } last_ask_for_values_to_fill_;
 
-  const bool optimize_form_extraction_ = false;
   const bool replace_form_element_observer_ = false;
 
   base::WeakPtrFactory<AutofillAgent> weak_ptr_factory_{this};

@@ -84,6 +84,10 @@ const char kEnableRasterSideDarkModeForImages[] =
 // Enable rasterizer that writes directly to GPU memory associated with tiles.
 const char kEnableZeroCopy[] = "enable-zero-copy";
 
+// Sets the total amount of memory that may be allocated for GPU resources in
+// cc.
+const char kForceGpuMemAvailableMb[] = "force-gpu-mem-available-mb";
+
 // The number of multisample antialiasing samples for GPU rasterization.
 // Requires MSAA support on GPU to have an effect. 0 disables MSAA.
 const char kGpuRasterizationMSAASampleCount[] =
@@ -142,11 +146,6 @@ const char kTouchTextSelectionStrategy_Direction[] = "direction";
 // Override mechanism for preserving the old non-standard behavior of CSS zoom.
 const char kDisableStandardizedBrowserZoom[] =
     "disable-standardized-browser-zoom";
-
-// Comma-separated list of origins that can use SharedArrayBuffer without
-// enabling cross-origin isolation.
-const char kSharedArrayBufferAllowedOrigins[] =
-    "shared-array-buffer-allowed-origins";
 
 // Specifies the flags passed to JS engine.
 const char kJavaScriptFlags[] = "js-flags";

@@ -33,6 +33,7 @@
   DCHECK(self.commandHandler == item.commandHandler);
   _itemType = item.itemType;
   _sessionName = item.sessionName;
+  _localWebState = item.localWebState;
   _tabTitle = item.tabTitle;
   _tabURL = item.tabURL;
   _reason = item.reason;
@@ -42,6 +43,7 @@
   _URLKey = item.URLKey;
   _requestID = item.requestID;
   _shopCardData = item.shopCardData;
+  _consumerSource = item.consumerSource;
 }
 
 #pragma mark - properties

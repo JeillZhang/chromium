@@ -35,7 +35,7 @@
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_extra_info.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #include "ui/gl/gl_share_group.h"
 #include "ui/gl/gpu_preference.h"
 
@@ -48,8 +48,6 @@ class DCOMPTexture;
 class FenceSyncReleaseDelegate;
 class GpuChannelManager;
 class GpuChannelMessageFilter;
-class GpuMemoryBufferFactory;
-class ImageDecodeAcceleratorWorker;
 class Scheduler;
 class SharedImageStub;
 class SyncPointManager;
@@ -74,16 +72,13 @@ class GPU_IPC_SERVICE_EXPORT GpuChannel : public IPC::Listener,
       int32_t client_id,
       uint64_t client_tracing_id,
       bool is_gpu_host,
-      ImageDecodeAcceleratorWorker* image_decode_accelerator_worker,
-      const gfx::GpuExtraInfo& gpu_extra_info,
-      gpu::GpuMemoryBufferFactory* gpu_memory_buffer_factory);
+      bool enable_extra_handles_validation,
+      const gfx::GpuExtraInfo& gpu_extra_info);
 
   // Init() sets up the underlying IPC channel.  Use a separate method because
   // we don't want to do that in tests.
-  void Init(IPC::ChannelHandle channel_handle,
+  void Init(mojo::MessagePipeHandle channel_handle,
             base::WaitableEvent* shutdown_event);
-
-  void InitForTesting(IPC::Channel* channel);
 
   base::WeakPtr<GpuChannel> AsWeakPtr();
 
@@ -112,9 +107,11 @@ class GPU_IPC_SERVICE_EXPORT GpuChannel : public IPC::Listener,
   }
 
   bool is_gpu_host() const { return is_gpu_host_; }
+  bool enable_extra_handles_validation() const {
+    return enable_extra_handles_validation_;
+  }
 
   // IPC::Listener implementation:
-  bool OnMessageReceived(const IPC::Message& msg) override;
   void OnChannelError() override;
 
   // gpu::IsolationKeyProvider:
@@ -151,9 +148,6 @@ class GPU_IPC_SERVICE_EXPORT GpuChannel : public IPC::Listener,
   // scheduled by the scheduler.
   void ExecuteDeferredRequest(mojom::DeferredRequestParamsPtr params,
                               FenceSyncReleaseDelegate* release_delegate);
-  void GetGpuMemoryBufferHandleInfo(
-      const gpu::Mailbox& mailbox,
-      mojom::GpuChannel::GetGpuMemoryBufferHandleInfoCallback callback);
   void PerformImmediateCleanup();
 
   void WaitForTokenInRange(
@@ -222,9 +216,8 @@ class GPU_IPC_SERVICE_EXPORT GpuChannel : public IPC::Listener,
              int32_t client_id,
              uint64_t client_tracing_id,
              bool is_gpu_host,
-             ImageDecodeAcceleratorWorker* image_decode_accelerator_worker,
-             const gfx::GpuExtraInfo& gpu_extra_info,
-             gpu::GpuMemoryBufferFactory* gpu_memory_buffer_factory);
+             bool enable_extra_handles_validation,
+             const gfx::GpuExtraInfo& gpu_extra_info);
 
   void OnDestroyCommandBuffer(int32_t route_id);
 
@@ -232,8 +225,6 @@ class GPU_IPC_SERVICE_EXPORT GpuChannel : public IPC::Listener,
   bool CreateSharedImageStub(const gfx::GpuExtraInfo& gpu_extra_info);
 
   std::unique_ptr<IPC::SyncChannel> sync_channel_;  // nullptr in tests.
-  raw_ptr<IPC::Sender>
-      channel_;  // Same as sync_channel_.get() except in tests.
 
   base::ProcessId client_pid_ = base::kNullProcessId;
 
@@ -274,6 +265,7 @@ class GPU_IPC_SERVICE_EXPORT GpuChannel : public IPC::Listener,
   std::unique_ptr<SharedImageStub> shared_image_stub_;
 
   const bool is_gpu_host_;
+  const bool enable_extra_handles_validation_;
 
 #if BUILDFLAG(IS_WIN)
   // Set of active DCOMPTextures.

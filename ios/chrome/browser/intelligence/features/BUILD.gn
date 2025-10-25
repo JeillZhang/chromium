@@ -9,4 +9,11 @@ source_set("features") {
   ]
 
   public_deps = [ "//base" ]
+
+  # TODO(crbug.com/430198461): Remove this.
+  deps = [
+    "//components/prefs",
+    "//ios/chrome/browser/shared/public/features",
+    "//ios/chrome/browser/tabs/model/inactive_tabs:features",
+  ]
 }

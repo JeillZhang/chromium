@@ -19,6 +19,7 @@
 #include "base/rand_util.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "components/history/core/browser/features.h"
 #include "components/history/core/browser/history_types.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "sql/database.h"
@@ -37,8 +38,10 @@ namespace {
 // Current version number. We write databases at the "current" version number,
 // but any previous version that can read the "compatible" one can make do with
 // our database without *too* many bad effects.
-const int kCurrentVersionNumber = 70;
-const int kCompatibleVersionNumber = 69;
+constexpr int kCurrentVersionNumber = 70;
+constexpr int kCompatibleVersionNumber = 16;
+// The oldest version number that we can migrate to the current version.
+constexpr int kMinimalVersionNumber = 15;
 
 const char kEarlyExpirationThresholdKey[] = "early_expiration_threshold";
 const char kMayContainForeignVisits[] = "may_contain_foreign_visits";
@@ -55,21 +58,7 @@ sql::InitStatus LogMigrationFailure(int from_version) {
   return sql::INIT_FAILURE;
 }
 
-// Reasons for initialization to fail. These are logged to UMA. It corresponds
-// to the HistoryInitStep enum in enums.xml.
-//
-// DO NOT CHANGE THE VALUES. Leave holes if anything is removed and add only
-// to the end.
-enum class InitStep {
-  OPEN = 0,
-  TRANSACTION_BEGIN = 1,
-  META_TABLE_INIT = 2,
-  CREATE_TABLES = 3,
-  VERSION = 4,
-  COMMIT = 5,
-};
-
-sql::InitStatus LogInitFailure(InitStep what) {
+sql::InitStatus LogInitFailure(HistoryDatabase::InitStep what) {
   base::UmaHistogramSparse("History.InitializationFailureStep",
                            static_cast<int>(what));
   return sql::INIT_FAILURE;
@@ -101,9 +90,42 @@ HistoryDatabase::HistoryDatabase(
 
 HistoryDatabase::~HistoryDatabase() = default;
 
+bool HistoryDatabase::RazeDbIfTooOld() {
+  const int db_version = sql::InitializedMetaTable(db_).GetVersionNumber();
+  base::UmaHistogramSparse("History.DatabaseVersion", db_version);
+
+  // `db_version` will be 0 if it could not be read, in which case we should
+  // raze the table just as if it was too old.
+  if (db_version >= kMinimalVersionNumber) {
+    return true;
+  }
+
+  base::UmaHistogramSparse("History.DatabaseTooOld", db_version);
+  if (!base::FeatureList::IsEnabled(kRazeOldHistoryDatabase)) {
+    return true;
+  }
+  return db_.Raze();
+}
+
 sql::InitStatus HistoryDatabase::Init(const base::FilePath& history_name) {
+  const bool database_exists = base::PathExists(history_name);
+
   if (!db_.Open(history_name))
     return LogInitFailure(InitStep::OPEN);
+
+  if (database_exists) {
+    // TODO(crbug.com/40777743): The history database should always have a meta
+    // table. If it's missing, we either have a corrupted or a very very old
+    // database. The code currently doesn't handle this case. Log an histogram
+    // to know if this represents a problem in the real world. The histogram
+    // can be removed once the bug is fixed.
+    base::UmaHistogramBoolean("History.MetaTableExists",
+                              sql::MetaTable::DoesTableExist(&db_));
+  }
+
+  if (database_exists && !RazeDbIfTooOld()) {
+    return LogInitFailure(InitStep::RAZE_OLD_DB);
+  }
 
   // Wrap the rest of init in a transaction. This will prevent the database from
   // getting corrupted if we crash in the middle of initialization or migration.
@@ -263,10 +285,10 @@ void HistoryDatabase::ComputeDatabaseMetrics(
       GURL url(url_sql.ColumnStringView(0));
       base::Time visit_time = url_sql.ColumnTime(1);
       ++month_url_count;
-      month_hosts.insert(url.host());
+      month_hosts.insert(url.GetHost());
       if (visit_time > one_week_ago) {
         ++week_url_count;
-        week_hosts.insert(url.host());
+        week_hosts.insert(url.GetHost());
       }
     }
     base::UmaHistogramCounts1M("History.WeeklyURLCount", week_url_count);
@@ -278,41 +300,41 @@ void HistoryDatabase::ComputeDatabaseMetrics(
   }
 }
 
-int HistoryDatabase::CountUniqueHostsVisitedLastMonth() {
-  // Collect all URLs visited within the last month.
-  base::Time one_month_ago = base::Time::Now() - base::Days(30);
-
-  sql::Statement url_sql(
-      db_.GetUniqueStatement("SELECT url FROM urls "
-                             "WHERE last_visit_time > ? "
-                             "AND hidden = 0 "
-                             "AND visit_count > 0"));
-  url_sql.BindTime(0, one_month_ago);
-
-  std::set<std::string> hosts;
-  while (url_sql.Step()) {
-    GURL url(url_sql.ColumnStringView(0));
-    hosts.insert(url.host());
-  }
-
-  return hosts.size();
-}
-
 DomainsVisitedResult HistoryDatabase::GetUniqueDomainsVisited(
     base::Time begin_time,
-    base::Time end_time) {
-  sql::Statement url_sql(db_.GetUniqueStatement(
-      "SELECT urls.url, visits.originator_cache_guid, "
-      "IFNULL(visit_source.source, ?) "  // SOURCE_BROWSED
-      "FROM urls "
-      "INNER JOIN visits ON urls.id = visits.url "
-      "LEFT JOIN visit_source ON visits.id = visit_source.id "
-      "WHERE (transition & ?) != 0 "            // CHAIN_END
-      "AND (transition & ?) NOT IN (?, ?, ?) "  // No *_SUBFRAME or
-                                                // KEYWORD_GENERATED
-      "AND hidden = 0 AND visit_time >= ? AND visit_time < ? "
-      "ORDER BY visit_time DESC, visits.id DESC"));
-
+    base::Time end_time,
+    VisitQuery404sPolicy policy_for_404_visits) {
+  sql::Statement url_sql;
+  switch (policy_for_404_visits) {
+    case VisitQuery404sPolicy::kInclude404s:
+      url_sql.Assign(db_.GetUniqueStatement(
+          "SELECT urls.url, visits.originator_cache_guid, "
+          "IFNULL(visit_source.source, ?) "  // SOURCE_BROWSED
+          "FROM urls "
+          "INNER JOIN visits ON urls.id=visits.url "
+          "LEFT JOIN visit_source ON visits.id=visit_source.id "
+          "WHERE (transition & ?)!=0 "              // CHAIN_END
+          "AND (transition & ?) NOT IN (?, ?, ?) "  // No *_SUBFRAME or
+                                                    // KEYWORD_GENERATED
+          "AND hidden=0 AND visit_time>=? AND visit_time<? "
+          "ORDER BY visit_time DESC, visits.id DESC"));
+      break;
+    case VisitQuery404sPolicy::kExclude404s:
+      url_sql.Assign(db_.GetUniqueStatement(
+          "SELECT urls.url, visits.originator_cache_guid, "
+          "IFNULL(visit_source.source, ?) "  // SOURCE_BROWSED
+          "FROM urls "
+          "INNER JOIN visits ON urls.id=visits.url "
+          "LEFT JOIN visit_source ON visits.id=visit_source.id "
+          "LEFT JOIN context_annotations ca ON visits.id = ca.visit_id "
+          "WHERE (transition & ?)!=0 "              // CHAIN_END
+          "AND (transition & ?) NOT IN (?, ?, ?) "  // No *_SUBFRAME or
+                                                    // KEYWORD_GENERATED
+          "AND hidden=0 AND visit_time>=? AND visit_time<? "
+          "AND (ca.response_code IS NULL OR ca.response_code!=404) "
+          "ORDER BY visit_time DESC, visits.id DESC"));
+      break;
+  }
   url_sql.BindInt64(0, VisitSource::SOURCE_BROWSED);
   url_sql.BindInt64(1, ui::PAGE_TRANSITION_CHAIN_END);
   url_sql.BindInt64(2, ui::PAGE_TRANSITION_CORE_MASK);
@@ -358,8 +380,10 @@ DomainsVisitedResult HistoryDatabase::GetUniqueDomainsVisited(
 
 std::pair<int, int> HistoryDatabase::CountUniqueDomainsVisited(
     base::Time begin_time,
-    base::Time end_time) {
-  DomainsVisitedResult result = GetUniqueDomainsVisited(begin_time, end_time);
+    base::Time end_time,
+    VisitQuery404sPolicy policy_for_404_visits) {
+  DomainsVisitedResult result =
+      GetUniqueDomainsVisited(begin_time, end_time, policy_for_404_visits);
   return {result.locally_visited_domains.size(),
           result.all_visited_domains.size()};
 }
@@ -532,11 +556,419 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
 
   // Put migration code here
 
+  static_assert(kMinimalVersionNumber == 15);
+  if (cur_version == 15) {
+    if (!db_.Execute("DROP TABLE starred") || !DropStarredIDFromURLs())
+      return LogMigrationFailure(15);
+    ++cur_version;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+    std::ignore = meta_table_.SetCompatibleVersionNumber(
+        std::min(cur_version, kCompatibleVersionNumber));
+  }
+
+  if (cur_version == 16) {
+#if !BUILDFLAG(IS_WIN)
+    // In this version we bring the time format on Mac & Linux in sync with the
+    // Windows version so that profiles can be moved between computers.
+    MigrateTimeEpoch();
+#endif
+    // On all platforms we bump the version number, so on Windows this
+    // migration is a NOP. We keep the compatible version at 16 since things
+    // will basically still work, just history will be in the future if an
+    // old version reads it.
+    ++cur_version;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 17) {
+    // Version 17 was for thumbnails to top sites migration. We ended up
+    // disabling it though, so 17->18 does nothing.
+    ++cur_version;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 18) {
+    // This is the version prior to adding url_source column. We need to
+    // migrate the database.
+    cur_version = 19;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 19) {
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+    // This was the thumbnail migration.  Obsolete.
+  }
+
+  if (cur_version == 20) {
+    // This is the version prior to adding the visit_duration field in visits
+    // database. We need to migrate the database.
+    if (!MigrateVisitsWithoutDuration())
+      return LogMigrationFailure(20);
+    ++cur_version;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 21) {
+    // The android_urls table's data schemal was changed in version 21.
+
+    // The android_urls table ceased usage in 91.0.4438.0 and is dropped in
+    // version 70. The migration code was removed along with version 70.
+    ++cur_version;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 22) {
+    if (!MigrateDownloadsState())
+      return LogMigrationFailure(22);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 23) {
+    if (!MigrateDownloadsReasonPathsAndDangerType())
+      return LogMigrationFailure(23);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 24) {
+    if (!MigratePresentationIndex())
+      return LogMigrationFailure(24);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 25) {
+    if (!MigrateReferrer())
+      return LogMigrationFailure(25);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 26) {
+    if (!MigrateDownloadedByExtension())
+      return LogMigrationFailure(26);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 27) {
+    if (!MigrateDownloadValidators())
+      return LogMigrationFailure(27);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 28) {
+    if (!MigrateMimeType())
+      return LogMigrationFailure(28);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 29) {
+    if (!MigrateHashHttpMethodAndGenerateGuids())
+      return LogMigrationFailure(29);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 30) {
+    if (!MigrateDownloadTabUrl())
+      return LogMigrationFailure(30);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 31) {
+    if (!MigrateDownloadSiteInstanceUrl())
+      return LogMigrationFailure(31);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 32) {
+    // New download slices table is introduced, no migration needed.
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 33) {
+    if (!MigrateDownloadLastAccessTime())
+      return LogMigrationFailure(33);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 34) {
+    // This originally contained an autoincrement migration which was abandoned
+    // and added back in version 36. (see https://crbug.com/736136)
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 35) {
+    if (!MigrateDownloadTransient())
+      return LogMigrationFailure(35);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 36) {
+    // Version 34 added AUTOINCREMENT but was reverted. Since some users will
+    // have been migrated and others not, explicitly check for the AUTOINCREMENT
+    // annotation rather than the version number.
+    if (!URLTableContainsAutoincrement()) {
+      if (!RecreateURLTableWithAllContents())
+        return LogMigrationFailure(36);
+    }
+
+    DCHECK(URLTableContainsAutoincrement());
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 37) {
+    if (!MigrateVisitSegmentNames())
+      return LogMigrationFailure(37);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 38) {
+    if (!MigrateDownloadSliceFinished())
+      return LogMigrationFailure(38);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 39) {
+    if (!MigrateVisitsWithoutIncrementedOmniboxTypedScore())
+      return LogMigrationFailure(39);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 40) {
+    // The migration to version 40 concerned Sync metadata for TypedURLs, which
+    // doesn't exist anymore in current versions (68+). So nothing to do here.
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 41) {
+    if (!MigrateKeywordsSearchTermsLowerTermColumn())
+      return LogMigrationFailure(41);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 42) {
+    if (!MigrateVisitsWithoutPubliclyRoutableColumn())
+      return LogMigrationFailure(42);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 43) {
+    if (!MigrateFlocAllowedToAnnotationsTable()) {
+      return LogMigrationFailure(43);
+    }
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 44) {
+    MigrateReplaceClusterVisitsTable();
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 45) {
+    // New download reroute infos table is introduced, no migration needed.
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 46) {
+    if (!MigrateContentAnnotationsWithoutEntitiesColumn())
+      return LogMigrationFailure(46);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 47) {
+    if (!MigrateContentAnnotationsAddRelatedSearchesColumn())
+      return LogMigrationFailure(47);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 48) {
+    if (!MigrateVisitsWithoutOpenerVisitColumnAndDropPubliclyRoutableColumn())
+      return LogMigrationFailure(48);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 49) {
+    if (!MigrateContentAnnotationsAddVisibilityScore())
+      return LogMigrationFailure(49);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 50) {
+    if (!MigrateContextAnnotationsAddTotalForegroundDuration())
+      return LogMigrationFailure(50);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 51) {
+    if (!MigrateEmbedderDownloadData())
+      return LogMigrationFailure(51);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 52) {
+    if (!MigrateContentAnnotationsAddSearchMetadata())
+      return LogMigrationFailure(52);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 53) {
+    if (!MigrateContentAnnotationsAddAlternativeTitle())
+      return LogMigrationFailure(53);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 54) {
+    if (!MigrateVisitsAutoincrementIdAndAddOriginatorColumns())
+      return LogMigrationFailure(54);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 55) {
+    if (!MigrateVisitsAddOriginatorFromVisitAndOpenerVisitColumns())
+      return LogMigrationFailure(55);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 56) {
+    if (!MigrateClustersAddColumns())
+      return LogMigrationFailure(56);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 57) {
+    if (!MigrateAnnotationsAddColumnsForSync())
+      return LogMigrationFailure(57);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 58) {
+    if (!MigrateVisitsAddIsKnownToSyncColumn())
+      return LogMigrationFailure(58);
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 59) {
+    if (!MigrateClustersAddTriggerabilityCalculated()) {
+      return LogMigrationFailure(59);
+    }
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 60) {
+    if (!MigrateClustersAutoincrementIdAndAddOriginatorColumns()) {
+      return LogMigrationFailure(60);
+    }
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 61) {
+    if (!MigrateContentAnnotationsAddHasUrlKeyedImage()) {
+      return LogMigrationFailure(61);
+    }
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
+  if (cur_version == 62) {
+    if (!MigrateVisitsAddConsiderForNewTabPageMostVisitedColumn()) {
+      return LogMigrationFailure(62);
+    }
+    cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
+  }
+
   if (cur_version == 63) {
     if (!MigrateDownloadByWebApp()) {
       return LogMigrationFailure(63);
     }
     cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
   }
 
   if (cur_version == 64) {
@@ -544,6 +976,8 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
       return LogMigrationFailure(64);
     }
     cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
   }
 
   if (cur_version == 65) {
@@ -551,6 +985,8 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
       return LogMigrationFailure(65);
     }
     cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
   }
 
   if (cur_version == 66) {
@@ -558,6 +994,8 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
       return LogMigrationFailure(66);
     }
     cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
   }
 
   if (cur_version == 67) {
@@ -565,6 +1003,8 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
       return LogMigrationFailure(67);
     }
     cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
   }
 
   if (cur_version == 68) {
@@ -572,6 +1012,8 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
       return LogMigrationFailure(68);
     }
     cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
   }
 
   if (cur_version == 69) {
@@ -583,6 +1025,8 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
     }
 #endif
     cur_version++;
+    // TODO(crbug.com/40891923): Handle failure instead of ignoring it.
+    std::ignore = meta_table_.SetVersionNumber(cur_version);
   }
 
   // =========================       ^^ new migration code goes here ^^
@@ -601,11 +1045,10 @@ sql::InitStatus HistoryDatabase::EnsureCurrentVersion() {
   // operations will then just be skipped which is not nearly as disruptive.
   // See https://crbug.com/734194.
 
-  if (cur_version != kCurrentVersionNumber ||
-      !meta_table_.SetVersionNumber(kCurrentVersionNumber) ||
-      !meta_table_.SetCompatibleVersionNumber(kCompatibleVersionNumber)) {
-    return sql::INIT_FAILURE;
-  }
+  // When the version is too old, we just try to continue anyway, there should
+  // not be a released product that makes a database too old for us to handle.
+  LOG_IF(WARNING, cur_version < GetCurrentVersion()) <<
+         "History database version " << cur_version << " is too old to handle.";
 
   return sql::INIT_OK;
 }

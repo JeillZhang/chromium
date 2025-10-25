@@ -41,7 +41,7 @@
 #include "ui/events/event_targeter.h"
 #include "ui/events/gestures/gesture_types.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 #if BUILDFLAG(IS_APPLE)
 #error "This file must not be included on macOS; Chromium Mac doesn't use Aura."
@@ -260,7 +260,7 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
   //
   // Note that this should only be called for non-root windows. Root windows are
   // already capturable by the capturer as they're identifiable by their
-  // |viz::FrameSinkId| and thei associated root render pass, so there's no need
+  // |viz::FrameSinkId| and the associated root render pass, so there's no need
   // to call this.
   //
   // This returns a scoped object associated with this request to make the
@@ -389,7 +389,7 @@ class AURA_EXPORT Window : public ui::LayerDelegate,
                                   const Window* target,
                                   gfx::Rect* rect);
 
-  // Convert the native |point| in pixels to the target's host's coordiantes if
+  // Convert the native |point| in pixels to the target's host's coordinates if
   // source and target have different hosts.
   static void ConvertNativePointToTargetHost(const Window* source,
                                              const Window* target,

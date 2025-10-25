@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+#include <array>
 #include <optional>
 #include <set>
 #include <string>
@@ -137,7 +138,7 @@ struct BLINK_COMMON_EXPORT InterestGroup {
   std::vector<std::string> GetAllKAnonKeys() const;
 
   // Parses string representation of a TrustedBiddingSignalsSlotSizeMode. A
-  // template so it works on wtf::Strings and std::strings. Returns kNone when
+  // template so it works on blink::Strings and std::strings. Returns kNone when
   // passed an unrecognized mode, for forward compatibility.
   template <class StringType>
   static TrustedBiddingSignalsSlotSizeMode
@@ -191,7 +192,7 @@ struct BLINK_COMMON_EXPORT InterestGroup {
   std::optional<AdditionalBidKey> additional_bid_key;
   std::optional<url::Origin> aggregation_coordinator_origin;
 
-  static_assert(__LINE__ == 194, R"(
+  static_assert(__LINE__ == 195, R"(
 If modifying InterestGroup fields, make sure to also modify:
 
 * IsValid(), EstimateSize(), and in this class

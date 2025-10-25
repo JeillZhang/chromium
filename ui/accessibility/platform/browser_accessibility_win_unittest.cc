@@ -21,6 +21,7 @@
 #include "base/win/scoped_variant.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/accessibility/ax_node_data.h"
+#include "ui/accessibility/platform/ax_platform.h"
 #include "ui/accessibility/platform/ax_platform_node_win.h"
 #include "ui/accessibility/platform/browser_accessibility_manager.h"
 #include "ui/accessibility/platform/browser_accessibility_manager_win.h"
@@ -1017,7 +1018,7 @@ TEST_F(BrowserAccessibilityWinTest, TestCreateEmptyDocument) {
   BrowserAccessibility* root = manager->GetBrowserAccessibilityRoot();
   EXPECT_EQ(kInitialEmptyDocumentRootNodeID, root->GetId());
   EXPECT_EQ(ax::mojom::Role::kRootWebArea, root->GetRole());
-  EXPECT_EQ(ax::mojom::State::kNone, root->GetState());
+  EXPECT_EQ(AXStates(0U), root->GetStates());
 
   // Tree with a child textfield.
   AXNodeData tree1_1;
@@ -1098,7 +1099,7 @@ TEST_F(BrowserAccessibilityWinTest, EmptyDocHasUniqueIdWin) {
   BrowserAccessibility* root = manager->GetBrowserAccessibilityRoot();
   EXPECT_EQ(kInitialEmptyDocumentRootNodeID, root->GetId());
   EXPECT_EQ(ax::mojom::Role::kRootWebArea, root->GetRole());
-  EXPECT_EQ(ax::mojom::State::kNone, root->GetState());
+  EXPECT_EQ(AXStates(0U), root->GetStates());
 
   BrowserAccessibilityWin* win_root = ToBrowserAccessibilityWin(root);
 
@@ -2922,6 +2923,120 @@ TEST_F(BrowserAccessibilityWinTest, TestNewMisspellingsInSimpleTextFields) {
   manager.reset();
 }
 
+TEST_F(BrowserAccessibilityWinTest, TestCustomHighlightsInSimpleTextFields) {
+  AXNodeData root;
+  root.id = 1;
+  root.role = ax::mojom::Role::kRootWebArea;
+  root.AddState(ax::mojom::State::kFocusable);
+
+  // The text field will contain the text "Helo world..", with "Helo" marked
+  // misspelled, "world" highlighted, and ".." marked as a grammar error.
+  const std::string text = "Helo world..";
+  AXNodeData text_field_container;
+  text_field_container.id = 2;
+  text_field_container.role = ax::mojom::Role::kGenericContainer;
+  text_field_container.AddState(ax::mojom::State::kEditable);
+  text_field_container.AddState(ax::mojom::State::kFocusable);
+  text_field_container.AddStringAttribute(ax::mojom::StringAttribute::kHtmlTag,
+                                          "input");
+  text_field_container.AddStringAttribute(
+      ax::mojom::StringAttribute::kInputType, "text");
+  text_field_container.SetValue(text);
+
+  AXNodeData text_field;
+  text_field.id = 3;
+  text_field.role = ax::mojom::Role::kStaticText;
+  text_field.AddState(ax::mojom::State::kEditable);
+  text_field.SetName(text);
+
+  std::vector<int32_t> marker_types{
+      static_cast<int32_t>(ax::mojom::MarkerType::kHighlight),
+      static_cast<int32_t>(ax::mojom::MarkerType::kHighlight),
+      static_cast<int32_t>(ax::mojom::MarkerType::kHighlight)};
+  std::vector<int32_t> highlight_types{
+      static_cast<int32_t>(ax::mojom::HighlightType::kSpellingError),
+      static_cast<int32_t>(ax::mojom::HighlightType::kHighlight),
+      static_cast<int32_t>(ax::mojom::HighlightType::kGrammarError)};
+  std::vector<int32_t> marker_starts{0, 5, 10};
+  std::vector<int32_t> marker_ends{4, 10, 12};
+  text_field.AddIntListAttribute(ax::mojom::IntListAttribute::kMarkerTypes,
+                                 marker_types);
+  text_field.AddIntListAttribute(ax::mojom::IntListAttribute::kHighlightTypes,
+                                 highlight_types);
+  text_field.AddIntListAttribute(ax::mojom::IntListAttribute::kMarkerStarts,
+                                 marker_starts);
+  text_field.AddIntListAttribute(ax::mojom::IntListAttribute::kMarkerEnds,
+                                 marker_ends);
+
+  root.child_ids.push_back(2);
+  text_field_container.child_ids.push_back(3);
+
+  std::unique_ptr<BrowserAccessibilityManager> manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root, text_field_container, text_field),
+          node_id_delegate_, test_browser_accessibility_delegate_.get()));
+
+  ASSERT_NE(nullptr, manager->GetBrowserAccessibilityRoot());
+  BrowserAccessibilityWin* ax_root =
+      ToBrowserAccessibilityWin(manager->GetBrowserAccessibilityRoot());
+  ASSERT_NE(nullptr, ax_root);
+  ASSERT_EQ(1U, ax_root->PlatformChildCount());
+
+  BrowserAccessibilityWin* ax_text_field =
+      ToBrowserAccessibilityWin(ax_root->PlatformGetChild(0));
+  ASSERT_NE(nullptr, ax_text_field);
+
+  HRESULT hr;
+  LONG start_offset, end_offset;
+  base::win::ScopedBstr text_attributes;
+
+  // Ensure that "Helo" is marked misspelled.
+  for (LONG offset = 0; offset < 4; ++offset) {
+    hr = ax_text_field->GetCOM()->get_attributes(
+        offset, &start_offset, &end_offset, text_attributes.Receive());
+    EXPECT_EQ(S_OK, hr);
+    EXPECT_EQ(0, start_offset);
+    EXPECT_EQ(4, end_offset);
+    EXPECT_NE(std::wstring::npos,
+              std::wstring(text_attributes.Get()).find(L"invalid:spelling"));
+    text_attributes.Reset();
+  }
+
+  // Ensure that the next character " " is not marked.
+  hr = ax_text_field->GetCOM()->get_attributes(4, &start_offset, &end_offset,
+                                               text_attributes.Receive());
+  EXPECT_TRUE(std::wstring(text_attributes.Get()).empty());
+  EXPECT_EQ(4, start_offset);
+  EXPECT_EQ(5, end_offset);
+  text_attributes.Reset();
+
+  // Ensure that "world" is a highlight.
+  for (LONG offset = 5; offset < 10; ++offset) {
+    hr = ax_text_field->GetCOM()->get_attributes(
+        offset, &start_offset, &end_offset, text_attributes.Receive());
+    EXPECT_EQ(S_OK, hr);
+    EXPECT_EQ(5, start_offset);
+    EXPECT_EQ(10, end_offset);
+    EXPECT_NE(std::wstring::npos,
+              std::wstring(text_attributes.Get()).find(L"mark:true"));
+    text_attributes.Reset();
+  }
+
+  // Ensure that ".." is marked as a grammar error.
+  for (LONG offset = 10; offset < 12; ++offset) {
+    hr = ax_text_field->GetCOM()->get_attributes(
+        offset, &start_offset, &end_offset, text_attributes.Receive());
+    EXPECT_EQ(S_OK, hr);
+    EXPECT_EQ(10, start_offset);
+    EXPECT_EQ(12, end_offset);
+    EXPECT_NE(std::wstring::npos,
+              std::wstring(text_attributes.Get()).find(L"invalid:grammar"));
+    text_attributes.Reset();
+  }
+
+  manager.reset();
+}
+
 TEST_F(BrowserAccessibilityWinTest, TestDeepestFirstLastChild) {
   AXNodeData root;
   root.id = 1;
@@ -3234,6 +3349,363 @@ TEST_F(BrowserAccessibilityWinTest, DISABLED_TestIAccessible2Relations) {
   EXPECT_EQ(2, n_relations);
   EXPECT_HRESULT_SUCCEEDED(ax_child2->GetCOM()->get_nRelations(&n_relations));
   EXPECT_EQ(2, n_relations);
+}
+
+TEST_F(BrowserAccessibilityWinTest, UIACreateExtraAnnouncementNodesFails) {
+  AXPlatform::GetInstance().SetUiaProviderEnabled(true);
+  AXNodeData root_data;
+  root_data.id = 1;
+  root_data.role = ax::mojom::Role::kGenericContainer;
+  root_data.child_ids = {2};
+
+  AXNodeData button;
+  button.id = 2;
+  button.role = ax::mojom::Role::kButton;
+
+  std::unique_ptr<BrowserAccessibilityManager> manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root_data, button), node_id_delegate_,
+          test_browser_accessibility_delegate_.get()));
+  manager->FireAriaNotificationEvent(
+      manager->GetFromID(2), "This is an announcement",
+      ax::mojom::AriaNotificationPriority::kNormal,
+      ax::mojom::AriaNotificationInterrupt::kNone, "" /*type */);
+
+  AXTree* tree = const_cast<AXTree*>(manager->ax_tree());
+  ASSERT_FALSE(tree->extra_announcement_nodes());
+
+  BrowserAccessibilityWin* root_node =
+      ToBrowserAccessibilityWin(manager->GetBrowserAccessibilityRoot());
+  EXPECT_EQ(1U, root_node->PlatformChildCount());
+
+  // Only the root node should not have the extra announcement nodes as
+  // children.
+  BrowserAccessibilityWin* button_node =
+      ToBrowserAccessibilityWin(root_node->PlatformGetChild(0));
+  EXPECT_EQ(0U, button_node->PlatformChildCount());
+}
+
+TEST_F(BrowserAccessibilityWinTest, CreateExtraAnnouncementNodes) {
+  AXPlatform::GetInstance().SetUiaProviderEnabled(false);
+
+  // Create AXNodeData objects for a simple document tree.
+  AXNodeData root_data;
+  root_data.id = 1;
+  root_data.role = ax::mojom::Role::kGenericContainer;
+  root_data.child_ids = {2};
+
+  AXNodeData button;
+  button.id = 2;
+  button.role = ax::mojom::Role::kButton;
+  button.SetName("Test Button");
+
+  // Construct a BrowserAccessibilityManager and fire an announcement.
+  std::unique_ptr<BrowserAccessibilityManager> manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root_data, button), node_id_delegate_,
+          test_browser_accessibility_delegate_.get()));
+  manager->FireAriaNotificationEvent(
+      manager->GetBrowserAccessibilityRoot(), "This is an announcement",
+      ax::mojom::AriaNotificationPriority::kNormal,
+      ax::mojom::AriaNotificationInterrupt::kNone, "" /*type */);
+
+  AXTree* tree = const_cast<AXTree*>(manager->ax_tree());
+  EXPECT_EQ(2, tree->extra_announcement_nodes()->Count());
+
+  BrowserAccessibilityWin* root_node =
+      ToBrowserAccessibilityWin(manager->GetBrowserAccessibilityRoot());
+  EXPECT_EQ(3U, root_node->PlatformChildCount());
+
+  // Only the root node should have the extra announcement nodes as children.
+  BrowserAccessibilityWin* button_node =
+      ToBrowserAccessibilityWin(root_node->PlatformGetChild(0));
+  EXPECT_EQ(0U, button_node->PlatformChildCount());
+
+  // Delete the manager and test that extra announcement nodes are properly
+  // cleaned up.
+  manager.reset();
+
+  // Construct a new manager with the same tree and test multiple updates.
+  manager.reset(BrowserAccessibilityManager::Create(
+      MakeAXTreeUpdateForTesting(root_data, button), node_id_delegate_,
+      test_browser_accessibility_delegate_.get()));
+
+  manager->FireAriaNotificationEvent(
+      manager->GetBrowserAccessibilityRoot(), "another announcement",
+      ax::mojom::AriaNotificationPriority::kNormal,
+      ax::mojom::AriaNotificationInterrupt::kNone, "" /*type */);
+
+  tree = const_cast<AXTree*>(manager->ax_tree());
+  EXPECT_EQ(2, tree->extra_announcement_nodes()->Count());
+
+  root_node = ToBrowserAccessibilityWin(manager->GetBrowserAccessibilityRoot());
+  EXPECT_EQ(3U, root_node->PlatformChildCount());
+
+  // Verify the polite announcement node contains the first announcement.
+  BrowserAccessibility* polite_node = root_node->GetExtraAnnouncementNode(
+      ax::mojom::AriaNotificationPriority::kNormal);
+  ASSERT_NE(nullptr, polite_node);
+  EXPECT_EQ(polite_node->GetNameAsString16(), u"another announcement");
+
+  // Fire a second announcement with high priority.
+  manager->FireAriaNotificationEvent(
+      manager->GetBrowserAccessibilityRoot(), "Urgent message!",
+      ax::mojom::AriaNotificationPriority::kHigh,
+      ax::mojom::AriaNotificationInterrupt::kNone, "" /*type */);
+
+  // Verify the tree structure remains stable.
+  EXPECT_EQ(2, tree->extra_announcement_nodes()->Count());
+  EXPECT_EQ(3U, root_node->PlatformChildCount());
+
+  BrowserAccessibility* assertive_node = root_node->GetExtraAnnouncementNode(
+      ax::mojom::AriaNotificationPriority::kHigh);
+  ASSERT_NE(nullptr, assertive_node);
+  EXPECT_EQ(assertive_node->GetNameAsString16(), u"Urgent message!");
+
+  // Fire a third announcement to test that announcement nodes can be updated.
+  manager->FireAriaNotificationEvent(
+      manager->GetBrowserAccessibilityRoot(), "Updated announcement",
+      ax::mojom::AriaNotificationPriority::kNormal,
+      ax::mojom::AriaNotificationInterrupt::kNone, "" /*type */);
+
+  polite_node = root_node->GetExtraAnnouncementNode(
+      ax::mojom::AriaNotificationPriority::kNormal);
+  ASSERT_NE(nullptr, polite_node);
+  EXPECT_EQ(polite_node->GetNameAsString16(), u"Updated announcement");
+
+  // Test tree updates by adding a new child to the root.
+  AXNodeData new_text;
+  new_text.id = 3;
+  new_text.role = ax::mojom::Role::kStaticText;
+  new_text.SetName("New text node");
+
+  root_data.child_ids.push_back(3);  // Add new child to root
+
+  AXUpdatesAndEvents event_bundle;
+  event_bundle.updates.resize(1);
+  event_bundle.updates[0].nodes.push_back(root_data);
+  event_bundle.updates[0].nodes.push_back(new_text);
+  ASSERT_TRUE(manager->OnAccessibilityEvents(event_bundle));
+
+  // It is OK for announcement nodes to be cleared, but they should do so
+  // without crashing or leaving dangling pointers.
+  root_node = ToBrowserAccessibilityWin(manager->GetBrowserAccessibilityRoot());
+  EXPECT_EQ(2U, root_node->PlatformChildCount());
+  manager->FireAriaNotificationEvent(
+      manager->GetBrowserAccessibilityRoot(), "Updated announcement",
+      ax::mojom::AriaNotificationPriority::kNormal,
+      ax::mojom::AriaNotificationInterrupt::kNone, "" /*type */);
+  // Announcement nodes will be lazily constructed when they are next needed.
+  EXPECT_EQ(4U, root_node->PlatformChildCount());
+  EXPECT_EQ(2, tree->extra_announcement_nodes()->Count());
+
+  // Ensure there is no issue re-creating the announcement nodes.
+  polite_node = root_node->GetExtraAnnouncementNode(
+      ax::mojom::AriaNotificationPriority::kNormal);
+  ASSERT_NE(nullptr, polite_node);
+  EXPECT_EQ(polite_node->GetNameAsString16(), u"Updated announcement");
+
+  // Delete the manager and test that all instances are cleaned up properly.
+  manager.reset();
+}
+
+TEST_F(BrowserAccessibilityWinTest, GetExtraAnnouncementNodes) {
+  AXPlatform::GetInstance().SetUiaProviderEnabled(false);
+  AXNodeData root_data;
+  root_data.id = 1;
+  root_data.role = ax::mojom::Role::kGenericContainer;
+
+  std::unique_ptr<BrowserAccessibilityManager> manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root_data), node_id_delegate_,
+          test_browser_accessibility_delegate_.get()));
+
+  AXTree* tree = const_cast<AXTree*>(manager->ax_tree());
+  tree->CreateExtraAnnouncementNodes();
+  ASSERT_TRUE(tree->extra_announcement_nodes());
+  EXPECT_EQ(2, tree->extra_announcement_nodes()->Count());
+
+  BrowserAccessibility* root_node = manager->GetBrowserAccessibilityRoot();
+  EXPECT_EQ(2U, root_node->PlatformChildCount());
+
+  BrowserAccessibility* assertive_node = root_node->GetExtraAnnouncementNode(
+      ax::mojom::AriaNotificationPriority::kHigh);
+  EXPECT_EQ(assertive_node->GetData().GetStringAttribute(
+                ax::mojom::StringAttribute::kContainerLiveStatus),
+            "assertive");
+
+  BrowserAccessibility* polite_node = root_node->GetExtraAnnouncementNode(
+      ax::mojom::AriaNotificationPriority::kNormal);
+  EXPECT_EQ(polite_node->GetData().GetStringAttribute(
+                ax::mojom::StringAttribute::kContainerLiveStatus),
+            "polite");
+}
+
+TEST_F(BrowserAccessibilityWinTest, IA2AriaNotifyFallback) {
+  AXPlatform::GetInstance().SetUiaProviderEnabled(false);
+  AXNodeData root_data;
+  root_data.id = 1;
+  root_data.role = ax::mojom::Role::kGenericContainer;
+  root_data.child_ids = {2};
+
+  AXNodeData button;
+  button.id = 2;
+  button.role = ax::mojom::Role::kButton;
+
+  std::unique_ptr<BrowserAccessibilityManager> manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root_data, button), node_id_delegate_,
+          test_browser_accessibility_delegate_.get()));
+  manager->FireAriaNotificationEvent(
+      manager->GetBrowserAccessibilityRoot(), "This is an announcement",
+      ax::mojom::AriaNotificationPriority::kNormal,
+      ax::mojom::AriaNotificationInterrupt::kNone, "" /*type */);
+  BrowserAccessibility* root_node = manager->GetBrowserAccessibilityRoot();
+  BrowserAccessibility* polite_node = root_node->GetExtraAnnouncementNode(
+      ax::mojom::AriaNotificationPriority::kNormal);
+  EXPECT_EQ(polite_node->GetData().GetStringAttribute(
+                ax::mojom::StringAttribute::kContainerLiveStatus),
+            "polite");
+  EXPECT_EQ(polite_node->GetNameAsString16(), u"This is an announcement");
+}
+
+TEST_F(BrowserAccessibilityWinTest, PlatformGetChild) {
+  AXPlatform::GetInstance().SetUiaProviderEnabled(false);
+  AXNodeData root_data;
+  root_data.id = 1;
+  root_data.role = ax::mojom::Role::kGenericContainer;
+  root_data.child_ids = {2};
+
+  AXNodeData button;
+  button.id = 2;
+  button.role = ax::mojom::Role::kButton;
+
+  std::unique_ptr<BrowserAccessibilityManager> manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root_data, button), node_id_delegate_,
+          test_browser_accessibility_delegate_.get()));
+
+  AXTree* tree = const_cast<AXTree*>(manager->ax_tree());
+  tree->CreateExtraAnnouncementNodes();
+  ASSERT_TRUE(tree->extra_announcement_nodes());
+  EXPECT_EQ(2, tree->extra_announcement_nodes()->Count());
+
+  BrowserAccessibilityWin* root_node =
+      ToBrowserAccessibilityWin(manager->GetBrowserAccessibilityRoot());
+  EXPECT_EQ(3U, root_node->PlatformChildCount());
+
+  BrowserAccessibilityWin* button_node =
+      ToBrowserAccessibilityWin(root_node->PlatformGetChild(0));
+  EXPECT_EQ(button_node->GetData().id, 2);
+  EXPECT_EQ(button_node->GetData().role, ax::mojom::Role::kButton);
+
+  BrowserAccessibilityWin* assertive_node =
+      ToBrowserAccessibilityWin(root_node->PlatformGetChild(1));
+  EXPECT_EQ(assertive_node->GetData().id, -1);
+  EXPECT_EQ(assertive_node->GetData().GetStringAttribute(
+                ax::mojom::StringAttribute::kContainerLiveStatus),
+            "assertive");
+
+  BrowserAccessibilityWin* polite_node =
+      ToBrowserAccessibilityWin(root_node->PlatformGetChild(2));
+  EXPECT_EQ(polite_node->GetData().id, -2);
+  EXPECT_EQ(polite_node->GetData().GetStringAttribute(
+                ax::mojom::StringAttribute::kContainerLiveStatus),
+            "polite");
+
+  EXPECT_EQ(nullptr, root_node->PlatformGetChild(3));
+}
+
+TEST_F(BrowserAccessibilityWinTest, PlatformGetLastChild) {
+  AXPlatform::GetInstance().SetUiaProviderEnabled(false);
+  AXNodeData root_data;
+  root_data.id = 1;
+  root_data.role = ax::mojom::Role::kGenericContainer;
+  root_data.child_ids = {2};
+
+  AXNodeData button;
+  button.id = 2;
+  button.role = ax::mojom::Role::kButton;
+
+  std::unique_ptr<BrowserAccessibilityManager> manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root_data, button), node_id_delegate_,
+          test_browser_accessibility_delegate_.get()));
+
+  BrowserAccessibilityWin* root_node =
+      ToBrowserAccessibilityWin(manager->GetBrowserAccessibilityRoot());
+  EXPECT_EQ(1U, root_node->PlatformChildCount());
+
+  BrowserAccessibilityWin* last_child =
+      ToBrowserAccessibilityWin(root_node->PlatformGetLastChild());
+  EXPECT_EQ(last_child->GetData().id, 2);
+  EXPECT_EQ(last_child->GetData().role, ax::mojom::Role::kButton);
+
+  AXTree* tree = const_cast<AXTree*>(manager->ax_tree());
+  tree->CreateExtraAnnouncementNodes();
+  ASSERT_TRUE(tree->extra_announcement_nodes());
+  EXPECT_EQ(2, tree->extra_announcement_nodes()->Count());
+  EXPECT_EQ(3U, root_node->PlatformChildCount());
+
+  last_child = ToBrowserAccessibilityWin(root_node->PlatformGetLastChild());
+  EXPECT_EQ(last_child->GetData().id, -2);
+  EXPECT_EQ(last_child->GetData().GetStringAttribute(
+                ax::mojom::StringAttribute::kContainerLiveStatus),
+            "polite");
+}
+
+TEST_F(BrowserAccessibilityWinTest, PlatformGetSiblings) {
+  AXPlatform::GetInstance().SetUiaProviderEnabled(false);
+  AXNodeData root_data;
+  root_data.id = 1;
+  root_data.role = ax::mojom::Role::kGenericContainer;
+  root_data.child_ids = {2};
+
+  AXNodeData button;
+  button.id = 2;
+  button.role = ax::mojom::Role::kButton;
+
+  std::unique_ptr<BrowserAccessibilityManager> manager(
+      BrowserAccessibilityManager::Create(
+          MakeAXTreeUpdateForTesting(root_data, button), node_id_delegate_,
+          test_browser_accessibility_delegate_.get()));
+
+  BrowserAccessibilityWin* root_node =
+      ToBrowserAccessibilityWin(manager->GetBrowserAccessibilityRoot());
+  EXPECT_EQ(1U, root_node->PlatformChildCount());
+
+  BrowserAccessibilityWin* button_node =
+      ToBrowserAccessibilityWin(root_node->PlatformGetChild(0));
+  EXPECT_EQ(button_node->GetData().id, 2);
+  EXPECT_EQ(button_node->GetData().role, ax::mojom::Role::kButton);
+  EXPECT_EQ(nullptr, button_node->PlatformGetNextSibling());
+  EXPECT_EQ(nullptr, button_node->PlatformGetPreviousSibling());
+
+  AXTree* tree = const_cast<AXTree*>(manager->ax_tree());
+  tree->CreateExtraAnnouncementNodes();
+  ASSERT_TRUE(tree->extra_announcement_nodes());
+  EXPECT_EQ(2, tree->extra_announcement_nodes()->Count());
+  EXPECT_EQ(3U, root_node->PlatformChildCount());
+
+  BrowserAccessibilityWin* assertive_node =
+      ToBrowserAccessibilityWin(button_node->PlatformGetNextSibling());
+  ASSERT_NE(nullptr, assertive_node);
+  EXPECT_EQ(assertive_node->GetData().id, -1);
+  EXPECT_EQ(assertive_node->GetData().GetStringAttribute(
+                ax::mojom::StringAttribute::kContainerLiveStatus),
+            "assertive");
+  EXPECT_EQ(button_node, assertive_node->PlatformGetPreviousSibling());
+
+  BrowserAccessibilityWin* polite_node =
+      ToBrowserAccessibilityWin(assertive_node->PlatformGetNextSibling());
+  ASSERT_NE(nullptr, polite_node);
+  EXPECT_EQ(polite_node->GetData().id, -2);
+  EXPECT_EQ(polite_node->GetData().GetStringAttribute(
+                ax::mojom::StringAttribute::kContainerLiveStatus),
+            "polite");
+  EXPECT_EQ(assertive_node, polite_node->PlatformGetPreviousSibling());
+
+  EXPECT_EQ(nullptr, polite_node->PlatformGetNextSibling());
 }
 
 }  // namespace ui

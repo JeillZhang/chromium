@@ -13,6 +13,7 @@ import type {LensFormElement} from './lens_form.js';
 import {LensErrorType, LensSubmitType} from './lens_form.js';
 import {getCss} from './lens_upload_dialog.css.js';
 import {getHtml} from './lens_upload_dialog.html.js';
+import {recordEnumeration} from './metrics_utils.js';
 import {WindowProxy} from './window_proxy.js';
 
 enum DialogState {
@@ -76,6 +77,7 @@ export enum LensUploadDialogAction {
   DIALOG_OPENED = 3,
   DIALOG_CLOSED = 4,
   ERROR_SHOWN = 5,
+  MAX_VALUE = ERROR_SHOWN,
 }
 
 /**
@@ -93,18 +95,19 @@ export enum LensUploadDialogError {
   INVALID_SCHEME = 5,
   INVALID_URL = 6,
   NETWORK_ERROR = 7,
+  MAX_VALUE = NETWORK_ERROR,
 }
 
 export function recordLensUploadDialogAction(action: LensUploadDialogAction) {
-  chrome.metricsPrivate.recordEnumerationValue(
+  recordEnumeration(
       'NewTabPage.Lens.UploadDialog.DialogAction', action,
-      Object.keys(LensUploadDialogAction).length);
+      LensUploadDialogAction.MAX_VALUE + 1);
 }
 
 export function recordLensUploadDialogError(action: LensUploadDialogError) {
-  chrome.metricsPrivate.recordEnumerationValue(
+  recordEnumeration(
       'NewTabPage.Lens.UploadDialog.DialogError', action,
-      Object.keys(LensUploadDialogError).length);
+      LensUploadDialogError.MAX_VALUE + 1);
 }
 
 const LensUploadDialogElementBase = I18nMixinLit(CrLitElement);
@@ -125,7 +128,7 @@ export class LensUploadDialogElement extends LensUploadDialogElementBase {
 
   static override get properties() {
     return {
-      dialogState_: {type: DialogState},
+      dialogState_: {type: Number},
       lensErrorMessage_: {type: Number},
       isHidden_: {type: Boolean},
       isNormalOrError_: {type: Boolean},

@@ -310,8 +310,7 @@ class HintsManagerTest : public ProtoDatabaseProviderTestBase {
         {
             {features::kOptimizationHints,
              GetOptimizationHintsDefaultFeatureParams()},
-            {features::kRemoteOptimizationGuideFetching,
-             {{"batch_update_hints_for_top_hosts", "true"}}},
+            {kHintsBatchUpdateForActiveTabsAndTopHosts, {}},
         },
         /*disabled_features=*/{});
 
@@ -1090,7 +1089,7 @@ TEST_F(HintsManagerTest, InvalidOptimizationFilterNotLoaded) {
 
   base::HistogramTester histogram_tester;
 
-  int too_many_bits = features::MaxServerBloomFilterByteSize() * 8 + 1;
+  int too_many_bits = kMaxServerBloomFilterBits + 1;
 
   proto::Configuration config;
   BloomFilter blocklist_bloom_filter(kDefaultHostBloomFilterNumHashFunctions,
@@ -1534,33 +1533,6 @@ TEST_F(HintsManagerTest,
             optimization_type_decision);
 }
 
-class HintsManagerFetchingDisabledTest : public HintsManagerTest {
- public:
-  HintsManagerFetchingDisabledTest() {
-    scoped_list_.InitAndDisableFeature(
-        features::kRemoteOptimizationGuideFetching);
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_list_;
-};
-
-TEST_F(HintsManagerFetchingDisabledTest,
-       HintsFetchNotAllowedIfFeatureIsNotEnabled) {
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kDisableCheckingUserPermissionsForTesting);
-
-  CreateHintsManager(std::make_unique<FakeTopHostProvider>(
-      std::vector<std::string>({"example1.com", "example2.com"})));
-  InitializeWithDefaultConfig("1.0.0");
-
-  // Force timer to expire and schedule a hints fetch.
-  MoveClockForwardBy(base::Seconds(kUpdateFetchHintsTimeSecs));
-  EXPECT_EQ(0, top_host_provider()->get_num_top_hosts_called());
-  // Hints fetcher should not even be created.
-  EXPECT_FALSE(active_tabs_batch_update_hints_fetcher());
-}
-
 TEST_F(HintsManagerTest,
        CanApplyOptimizationAsyncReturnsRightAwayIfNotAllowedToFetch) {
   base::HistogramTester histogram_tester;
@@ -1630,23 +1602,23 @@ TEST_F(HintsManagerTest, RemoveFetchedEntriesByHintKeys_Host) {
 
   hint = get_hints_response->add_hints();
   hint->set_key_representation(proto::HOST);
-  hint->set_key(url.host());
+  hint->set_key(url.GetHost());
   page_hint = hint->add_page_hints();
   page_hint->set_page_pattern("anything/*");
 
   std::unique_ptr<base::RunLoop> run_loop = std::make_unique<base::RunLoop>();
   hints_manager()->hint_cache()->UpdateFetchedHints(
-      std::move(get_hints_response), base::Time().Now(), {url.host()}, {url},
+      std::move(get_hints_response), base::Time().Now(), {url.GetHost()}, {url},
       run_loop->QuitClosure());
-  EXPECT_TRUE(hints_manager()->hint_cache()->HasHint(url.host()));
+  EXPECT_TRUE(hints_manager()->hint_cache()->HasHint(url.GetHost()));
   EXPECT_TRUE(hints_manager()->hint_cache()->HasURLKeyedEntryForURL(url));
 
   run_loop = std::make_unique<base::RunLoop>();
   hints_manager()->RemoveFetchedEntriesByHintKeys(
-      run_loop->QuitClosure(), proto::KeyRepresentation::HOST, {url.host()});
+      run_loop->QuitClosure(), proto::KeyRepresentation::HOST, {url.GetHost()});
   run_loop->Run();
 
-  EXPECT_FALSE(hints_manager()->hint_cache()->HasHint(url.host()));
+  EXPECT_FALSE(hints_manager()->hint_cache()->HasHint(url.GetHost()));
   EXPECT_TRUE(hints_manager()->hint_cache()->HasURLKeyedEntryForURL(url));
 }
 
@@ -1668,15 +1640,15 @@ TEST_F(HintsManagerTest, RemoveFetchedEntriesByHintKeys_URL) {
 
   hint = get_hints_response->add_hints();
   hint->set_key_representation(proto::HOST);
-  hint->set_key(url.host());
+  hint->set_key(url.GetHost());
   page_hint = hint->add_page_hints();
   page_hint->set_page_pattern("anything/*");
 
   std::unique_ptr<base::RunLoop> run_loop = std::make_unique<base::RunLoop>();
   hints_manager()->hint_cache()->UpdateFetchedHints(
-      std::move(get_hints_response), base::Time().Now(), {url.host()}, {url},
+      std::move(get_hints_response), base::Time().Now(), {url.GetHost()}, {url},
       run_loop->QuitClosure());
-  EXPECT_TRUE(hints_manager()->hint_cache()->HasHint(url.host()));
+  EXPECT_TRUE(hints_manager()->hint_cache()->HasHint(url.GetHost()));
   EXPECT_TRUE(hints_manager()->hint_cache()->HasURLKeyedEntryForURL(url));
 
   run_loop = std::make_unique<base::RunLoop>();
@@ -1687,7 +1659,7 @@ TEST_F(HintsManagerTest, RemoveFetchedEntriesByHintKeys_URL) {
 
   // Both the host and url entries should have been removed to support upgrading
   // hint keys from HOST to FULL_URL.
-  EXPECT_FALSE(hints_manager()->hint_cache()->HasHint(url.host()));
+  EXPECT_FALSE(hints_manager()->hint_cache()->HasHint(url.GetHost()));
   EXPECT_FALSE(hints_manager()->hint_cache()->HasURLKeyedEntryForURL(url));
 }
 
@@ -1748,22 +1720,25 @@ class HintsManagerFetchingTest : public HintsManagerTest {
   HintsManagerFetchingTest() {
     scoped_list_.InitWithFeaturesAndParameters(
         {
-            {
-                features::kRemoteOptimizationGuideFetching,
-                {{"batch_update_hints_for_top_hosts", "true"},
-                 {"max_concurrent_page_navigation_fetches", "2"},
-                 {"max_concurrent_batch_update_fetches",
-                  base::NumberToString(batch_concurrency_limit_)}},
-            },
+            {kHintsBatchUpdateForActiveTabsAndTopHosts, {}},
+            {*kHintsMaxConcurrentNavigationFetches.feature,
+             {
+                 {kHintsMaxConcurrentNavigationFetches.name, "2"},
+             }},
+            {*kHintsMaxConcurrentBatchUpdateFetches.feature,
+             {
+                 {kHintsMaxConcurrentBatchUpdateFetches.name,
+                  base::NumberToString(batch_concurrency_limit_)},
+             }},
         },
-        {features::kRemoteOptimizationGuideFetchingAnonymousDataConsent});
+        {});
   }
 
   size_t batch_concurrency_limit() const { return batch_concurrency_limit_; }
 
  private:
   size_t batch_concurrency_limit_ = 2;
-  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
+  variations::test::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
   base::test::ScopedFeatureList scoped_list_;
 };
@@ -2042,9 +2017,13 @@ TEST_F(HintsManagerFetchingTest,
   RunUntilIdle();
 
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 0);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "PageNavigation",
+      0);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 0);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "PageNavigation",
+      0);
   histogram_tester.ExpectTotalCount(
       "OptimizationGuide.HintsManager.RaceNavigationFetchAttemptStatus", 0);
 }
@@ -2062,9 +2041,13 @@ TEST_F(HintsManagerFetchingTest, HintsFetchedAtNavigationTime) {
   RunUntilIdle();
 
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 1, 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "PageNavigation",
+      1, 1);
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 1, 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "PageNavigation",
+      1, 1);
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.HintsManager.RaceNavigationFetchAttemptStatus",
       RaceNavigationFetchAttemptStatus::kRaceNavigationFetchHostAndURL, 1);
@@ -2086,9 +2069,13 @@ TEST_F(HintsManagerFetchingTest,
   RunUntilIdle();
 
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 0);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "PageNavigation",
+      0);
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 0);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "PageNavigation",
+      0);
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.HintsManager.RaceNavigationFetchAttemptStatus",
       RaceNavigationFetchAttemptStatus::kRaceNavigationFetchNotAttempted, 1);
@@ -2110,7 +2097,9 @@ TEST_F(HintsManagerFetchingTest,
   CallOnNavigationStartOrRedirect(navigation_data.get(), base::DoNothing());
   RunUntilIdle();
   histogram_tester.ExpectTotalCount(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 0);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "PageNavigation",
+      0);
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.HintsManager.RaceNavigationFetchAttemptStatus",
       RaceNavigationFetchAttemptStatus::kRaceNavigationFetchURL, 1);
@@ -2147,9 +2136,13 @@ TEST_F(HintsManagerFetchingTest,
   CallOnNavigationStartOrRedirect(navigation_data.get(), base::DoNothing());
   RunUntilIdle();
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 1, 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "PageNavigation",
+      1, 1);
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 0, 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "PageNavigation",
+      0, 1);
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.HintsManager.RaceNavigationFetchAttemptStatus",
       RaceNavigationFetchAttemptStatus::kRaceNavigationFetchHost, 1);
@@ -2181,7 +2174,9 @@ TEST_F(HintsManagerFetchingTest, URLHintsNotFetchedAtNavigationTime) {
     RunUntilIdle();
 
     histogram_tester.ExpectTotalCount(
-        "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 0);
+        "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+        "PageNavigation",
+        0);
 
     // Make sure navigation data is populated correctly.
     EXPECT_TRUE(navigation_data->hints_fetch_latency().has_value());
@@ -2238,7 +2233,9 @@ TEST_F(HintsManagerFetchingTest, URLWithNoHintsNotRefetchedAtNavigationTime) {
     CallOnNavigationStartOrRedirect(navigation_data.get(), base::DoNothing());
     RunUntilIdle();
     histogram_tester.ExpectTotalCount(
-        "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 0);
+        "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+        "PageNavigation",
+        0);
 
     // Make sure navigation data is populated correctly.
     EXPECT_TRUE(navigation_data->hints_fetch_latency().has_value());
@@ -3539,9 +3536,8 @@ TEST_F(HintsManagerFetchingTest,
 class HintsManagerFetchingNoBatchUpdateTest : public HintsManagerTest {
  public:
   HintsManagerFetchingNoBatchUpdateTest() {
-    scoped_list_.InitAndEnableFeatureWithParameters(
-        features::kRemoteOptimizationGuideFetching,
-        {{"batch_update_hints_for_top_hosts", "false"}});
+    scoped_list_.InitAndDisableFeature(
+        kHintsBatchUpdateForActiveTabsAndTopHosts);
   }
 
  private:
@@ -3602,11 +3598,7 @@ TEST_F(HintsManagerComponentSkipProcessingTest, ProcessHintsWithExistingPref) {
 
 class HintsManagerPersonalizedFetchingTest : public HintsManagerFetchingTest {
  public:
-  HintsManagerPersonalizedFetchingTest() {
-    scoped_feature_list_.InitAndEnableFeatureWithParameters(
-        features::kOptimizationGuidePersonalizedFetching,
-        {{"allowed_contexts", "CONTEXT_BOOKMARKS"}});
-  }
+  HintsManagerPersonalizedFetchingTest() = default;
 
   HintsManagerPersonalizedFetchingTest(
       const HintsManagerPersonalizedFetchingTest&) = delete;
@@ -3629,7 +3621,7 @@ class HintsManagerPersonalizedFetchingTest : public HintsManagerFetchingTest {
 };
 
 // TODO(crbug.com/41482478): test is failing on iPhone device.
-#if TARGET_OS_IOS && !TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_IOS && !TARGET_OS_SIMULATOR
 #define MAYBE_SuccessfulPersonalizedHintsFetching \
   DISABLED_SuccessfulPersonalizedHintsFetching
 #else
@@ -3653,7 +3645,7 @@ TEST_F(HintsManagerPersonalizedFetchingTest,
   std::unique_ptr<base::RunLoop> run_loop = std::make_unique<base::RunLoop>();
   hints_manager()->CanApplyOptimizationOnDemand(
       {url_with_url_keyed_hint()}, {proto::COMPRESS_PUBLIC_IMAGES},
-      proto::RequestContext::CONTEXT_BOOKMARKS,
+      proto::RequestContext::CONTEXT_PAGE_INSIGHTS_HUB,
       base::BindRepeating(
           [](base::RunLoop* run_loop, const GURL& url,
              const base::flat_map<proto::OptimizationType,
@@ -3694,7 +3686,7 @@ TEST_F(HintsManagerPersonalizedFetchingTest, TokenFailure) {
   std::unique_ptr<base::RunLoop> run_loop = std::make_unique<base::RunLoop>();
   hints_manager()->CanApplyOptimizationOnDemand(
       {url_with_url_keyed_hint()}, {proto::COMPRESS_PUBLIC_IMAGES},
-      proto::RequestContext::CONTEXT_BOOKMARKS,
+      proto::RequestContext::CONTEXT_PAGE_INSIGHTS_HUB,
       base::BindRepeating(
           [](base::RunLoop* run_loop, const GURL& url,
              const base::flat_map<proto::OptimizationType,
@@ -3734,7 +3726,7 @@ TEST_F(HintsManagerPersonalizedFetchingTest, NoUserSignIn) {
   std::unique_ptr<base::RunLoop> run_loop = std::make_unique<base::RunLoop>();
   hints_manager()->CanApplyOptimizationOnDemand(
       {url_with_url_keyed_hint()}, {proto::COMPRESS_PUBLIC_IMAGES},
-      proto::RequestContext::CONTEXT_BOOKMARKS,
+      proto::RequestContext::CONTEXT_PAGE_INSIGHTS_HUB,
       base::BindRepeating(
           [](base::RunLoop* run_loop, const GURL& url,
              const base::flat_map<proto::OptimizationType,
@@ -3759,24 +3751,27 @@ TEST_F(HintsManagerPersonalizedFetchingTest, NoUserSignIn) {
       OptimizationGuideAccessTokenResult::kUserNotSignedIn, 1);
 }
 
-class HintsManagerProactivePersonalizedFetchingTest : public HintsManagerTest {
+class HintsManagerProactivePersonalizationFetchingTest
+    : public HintsManagerTest {
  public:
-  HintsManagerProactivePersonalizedFetchingTest() {
+  HintsManagerProactivePersonalizationFetchingTest() {
     scoped_list_.InitWithFeaturesAndParameters(
         {
-            {
-                features::kRemoteOptimizationGuideFetching,
-                {{"batch_update_hints_for_top_hosts", "true"},
-                 {"max_concurrent_page_navigation_fetches", "2"},
-                 {"max_concurrent_batch_update_fetches",
-                  base::NumberToString(batch_concurrency_limit_)}},
-            },
+            {kHintsBatchUpdateForActiveTabsAndTopHosts, {}},
+            {*kHintsMaxConcurrentNavigationFetches.feature,
+             {
+                 {kHintsMaxConcurrentNavigationFetches.name, "2"},
+             }},
+            {*kHintsMaxConcurrentBatchUpdateFetches.feature,
+             {
+                 {kHintsMaxConcurrentBatchUpdateFetches.name, "2"},
+             }},
             {
                 features::kOptimizationGuideProactivePersonalizedHintsFetching,
                 {{"allowed_optimization_types", "SHOPPING_DISCOUNTS"}},
             },
         },
-        {features::kRemoteOptimizationGuideFetchingAnonymousDataConsent});
+        {});
   }
 
   void SetUp() override {
@@ -3785,21 +3780,18 @@ class HintsManagerProactivePersonalizedFetchingTest : public HintsManagerTest {
                        identity_test_env()->identity_manager());
   }
 
-  size_t batch_concurrency_limit() const { return batch_concurrency_limit_; }
-
   signin::IdentityTestEnvironment* identity_test_env() {
     return &identity_test_env_;
   }
 
  private:
-  size_t batch_concurrency_limit_ = 2;
-  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
+  variations::test::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
   signin::IdentityTestEnvironment identity_test_env_;
   base::test::ScopedFeatureList scoped_list_;
 };
 
-TEST_F(HintsManagerProactivePersonalizedFetchingTest,
+TEST_F(HintsManagerProactivePersonalizationFetchingTest,
        NotAnAllowedOptimizationTypeHintsFetchedAtNavigationTime) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kDisableCheckingUserPermissionsForTesting);
@@ -3813,15 +3805,19 @@ TEST_F(HintsManagerProactivePersonalizedFetchingTest,
   RunUntilIdle();
 
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 1, 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "PageNavigation",
+      1, 1);
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 1, 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "PageNavigation",
+      1, 1);
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.HintsManager.RaceNavigationFetchAttemptStatus",
       RaceNavigationFetchAttemptStatus::kRaceNavigationFetchHostAndURL, 1);
 }
 
-TEST_F(HintsManagerProactivePersonalizedFetchingTest,
+TEST_F(HintsManagerProactivePersonalizationFetchingTest,
        AllowedOptimizationTypeHintsFetchedAtNavigationTime) {
   ASSERT_TRUE(identity_test_env()->identity_manager());
   AccountInfo account_info = identity_test_env()->MakePrimaryAccountAvailable(
@@ -3840,15 +3836,19 @@ TEST_F(HintsManagerProactivePersonalizedFetchingTest,
   RunUntilIdle();
 
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount", 1, 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.HostCount."
+      "PageNavigation",
+      1, 1);
   histogram_tester.ExpectUniqueSample(
-      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount", 1, 1);
+      "OptimizationGuide.HintsFetcher.GetHintsRequest.UrlCount."
+      "PageNavigation",
+      1, 1);
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.HintsManager.RaceNavigationFetchAttemptStatus",
       RaceNavigationFetchAttemptStatus::kRaceNavigationFetchHostAndURL, 1);
 }
 
-TEST_F(HintsManagerProactivePersonalizedFetchingTest, TokenFailure) {
+TEST_F(HintsManagerProactivePersonalizationFetchingTest, TokenFailure) {
   ASSERT_TRUE(identity_test_env()->identity_manager());
   AccountInfo account_info = identity_test_env()->MakePrimaryAccountAvailable(
       "test_email", signin::ConsentLevel::kSignin);
@@ -3868,6 +3868,144 @@ TEST_F(HintsManagerProactivePersonalizedFetchingTest, TokenFailure) {
   histogram_tester.ExpectUniqueSample(
       "OptimizationGuide.AccessTokenHelper.Result",
       OptimizationGuideAccessTokenResult::kTransientError, 1);
+}
+
+TEST_F(HintsManagerProactivePersonalizationFetchingTest,
+       FetchHintsForActiveTabsWithoutPersonalizableTypes) {
+  auto scoped_feature_list = SetUpDeferStartupActiveTabsHintsFetch(true);
+  base::HistogramTester histogram_tester;
+
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kDisableCheckingUserPermissionsForTesting);
+
+  ASSERT_TRUE(identity_test_env()->identity_manager());
+  AccountInfo account_info = identity_test_env()->MakePrimaryAccountAvailable(
+      "test_email", signin::ConsentLevel::kSignin);
+
+  CreateHintsManager(
+      std::make_unique<FakeTopHostProvider>(std::vector<std::string>({})),
+      identity_test_env()->identity_manager());
+  hints_manager()->RegisterOptimizationTypes({proto::DEFER_ALL_SCRIPT});
+  hints_manager()->SetHintsFetcherFactoryForTesting(
+      BuildTestHintsFetcherFactory(
+          {HintsFetcherEndState::kFetchSuccessWithHostHints}));
+  InitializeWithDefaultConfig("1.0.0");
+
+  tab_url_provider()->SetUrls(
+      {GURL("https://a.com"), GURL("https://b.com"), GURL("chrome://new-tab")});
+
+  // No hints fetch should happen on startup.
+  RunUntilIdle();
+  histogram_tester.ExpectTotalCount(
+      "OptimizationGuide.HintsManager.ActiveTabUrlsToFetchFor", 0);
+  EXPECT_EQ(0, tab_url_provider()->get_num_urls_called());
+
+  // Hints fetch should be triggered on deferred startup.
+  hints_manager()->OnDeferredStartup();
+
+  // No access token request is expected when there are no personalized types.
+
+  RunUntilIdle();
+  histogram_tester.ExpectBucketCount(
+      "OptimizationGuide.HintsManager.ActiveTabUrlsToFetchFor", 2, 1);
+  EXPECT_EQ(1, tab_url_provider()->get_num_urls_called());
+  EXPECT_EQ(1,
+            active_tabs_batch_update_hints_fetcher()->num_fetches_requested());
+  EXPECT_EQ(
+      proto::RequestContext::CONTEXT_BATCH_UPDATE_ACTIVE_TABS,
+      active_tabs_batch_update_hints_fetcher()->request_context_requested());
+}
+
+TEST_F(HintsManagerProactivePersonalizationFetchingTest,
+       FetchHintsForActiveTabsWithPersonalizableTypes) {
+  auto scoped_feature_list = SetUpDeferStartupActiveTabsHintsFetch(true);
+  base::HistogramTester histogram_tester;
+
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kDisableCheckingUserPermissionsForTesting);
+
+  ASSERT_TRUE(identity_test_env()->identity_manager());
+  AccountInfo account_info = identity_test_env()->MakePrimaryAccountAvailable(
+      "test_email", signin::ConsentLevel::kSignin);
+
+  CreateHintsManager(
+      std::make_unique<FakeTopHostProvider>(std::vector<std::string>({})),
+      identity_test_env()->identity_manager());
+  hints_manager()->RegisterOptimizationTypes({proto::SHOPPING_DISCOUNTS});
+  hints_manager()->SetHintsFetcherFactoryForTesting(
+      BuildTestHintsFetcherFactory(
+          {HintsFetcherEndState::kFetchSuccessWithHostHints}));
+  InitializeWithDefaultConfig("1.0.0");
+
+  tab_url_provider()->SetUrls(
+      {GURL("https://a.com"), GURL("https://b.com"), GURL("chrome://new-tab")});
+
+  // No hints fetch should happen on startup.
+  RunUntilIdle();
+  histogram_tester.ExpectTotalCount(
+      "OptimizationGuide.HintsManager.ActiveTabUrlsToFetchFor", 0);
+  EXPECT_EQ(0, tab_url_provider()->get_num_urls_called());
+
+  // Hints fetch should be triggered on deferred startup.
+  hints_manager()->OnDeferredStartup();
+  RunUntilIdle();
+  // An access token request is expected with personalized types.
+  identity_test_env()->WaitForAccessTokenRequestIfNecessaryAndRespondWithToken(
+      "access_token", base::Time::Max());
+  histogram_tester.ExpectBucketCount(
+      "OptimizationGuide.HintsManager.ActiveTabUrlsToFetchFor", 2, 1);
+  EXPECT_EQ(1, tab_url_provider()->get_num_urls_called());
+  EXPECT_EQ(1,
+            active_tabs_batch_update_hints_fetcher()->num_fetches_requested());
+  EXPECT_EQ(
+      proto::RequestContext::CONTEXT_BATCH_UPDATE_ACTIVE_TABS,
+      active_tabs_batch_update_hints_fetcher()->request_context_requested());
+}
+
+TEST_F(HintsManagerProactivePersonalizationFetchingTest,
+       FetchHintsForActiveTabsWithPersonalizableTypesWithTokenFailure) {
+  auto scoped_feature_list = SetUpDeferStartupActiveTabsHintsFetch(true);
+  base::HistogramTester histogram_tester;
+
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kDisableCheckingUserPermissionsForTesting);
+
+  ASSERT_TRUE(identity_test_env()->identity_manager());
+  AccountInfo account_info = identity_test_env()->MakePrimaryAccountAvailable(
+      "test_email", signin::ConsentLevel::kSignin);
+
+  CreateHintsManager(
+      std::make_unique<FakeTopHostProvider>(std::vector<std::string>({})),
+      identity_test_env()->identity_manager());
+  hints_manager()->RegisterOptimizationTypes({proto::SHOPPING_DISCOUNTS});
+  hints_manager()->SetHintsFetcherFactoryForTesting(
+      BuildTestHintsFetcherFactory(
+          {HintsFetcherEndState::kFetchSuccessWithHostHints}));
+  InitializeWithDefaultConfig("1.0.0");
+
+  tab_url_provider()->SetUrls(
+      {GURL("https://a.com"), GURL("https://b.com"), GURL("chrome://new-tab")});
+
+  // No hints fetch should happen on startup.
+  RunUntilIdle();
+  histogram_tester.ExpectTotalCount(
+      "OptimizationGuide.HintsManager.ActiveTabUrlsToFetchFor", 0);
+  EXPECT_EQ(0, tab_url_provider()->get_num_urls_called());
+
+  // Hints fetch should be triggered on deferred startup.
+  hints_manager()->OnDeferredStartup();
+  RunUntilIdle();
+  // An access token request is expected with personalized types.
+  identity_test_env()->WaitForAccessTokenRequestIfNecessaryAndRespondWithError(
+      GoogleServiceAuthError(GoogleServiceAuthError::CONNECTION_FAILED));
+  histogram_tester.ExpectUniqueSample(
+      "OptimizationGuide.AccessTokenHelper.Result",
+      OptimizationGuideAccessTokenResult::kTransientError, 1);
+  EXPECT_EQ(1,
+            active_tabs_batch_update_hints_fetcher()->num_fetches_requested());
+  EXPECT_EQ(
+      proto::RequestContext::CONTEXT_BATCH_UPDATE_ACTIVE_TABS,
+      active_tabs_batch_update_hints_fetcher()->request_context_requested());
 }
 
 }  // namespace optimization_guide

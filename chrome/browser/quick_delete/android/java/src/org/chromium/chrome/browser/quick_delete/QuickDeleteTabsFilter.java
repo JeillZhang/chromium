@@ -55,8 +55,7 @@ class QuickDeleteTabsFilter {
     private List<Tab> getListOfAllTabsToBeClosed() {
         List<Tab> mTabList = new ArrayList<>();
         TabModel tabModel = mTabGroupModelFilter.getTabModel();
-        for (int i = 0; i < tabModel.getCount(); ++i) {
-            Tab tab = tabModel.getTabAt(i);
+        for (Tab tab : tabModel) {
             if (tab == null || tab.isCustomTab()) continue;
             mTabList.add(tab);
         }
@@ -126,8 +125,8 @@ class QuickDeleteTabsFilter {
         }
         // Use a list here since the number of elements is likely to be small and outperform a set
         // most of the time.
-        List<Token> placeholderTabGroupIds = new ArrayList<Token>();
-        List<Tab> placeholderExcludedTabList = new ArrayList<Tab>();
+        List<Token> placeholderTabGroupIds = new ArrayList<>();
+        List<Tab> placeholderExcludedTabList = new ArrayList<>();
         for (LocalTabGroupId localId : destroyedGroups.collaborationGroupsDestroyed) {
             placeholderTabGroupIds.add(localId.tabGroupId);
         }
@@ -156,8 +155,7 @@ class QuickDeleteTabsFilter {
 
         List<Tab> mTabList = new ArrayList<>();
         TabModel tabModel = mTabGroupModelFilter.getTabModel();
-        for (int i = 0; i < tabModel.getCount(); ++i) {
-            Tab tab = tabModel.getTabAt(i);
+        for (Tab tab : tabModel) {
             if (tab == null || tab.isCustomTab()) continue;
 
             final long recentNavigationTime = tab.getLastNavigationCommittedTimestampMillis();

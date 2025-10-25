@@ -42,6 +42,10 @@
 
 class SkBitmap;
 
+namespace viz {
+struct CopyOutputBitmapWithMetadata;
+}  // namespace viz
+
 namespace content {
 class DevToolsProtocolTestBindings;
 class RenderFrameHost;
@@ -182,8 +186,6 @@ class WebTestControlHost : public WebContentsObserver,
   class WebTestWindowObserver;
 
   // WebContentsObserver implementation.
-  void PluginCrashed(const base::FilePath& plugin_path,
-                     base::ProcessId plugin_pid) override;
   void TitleWasSet(NavigationEntry* entry) override;
   void DidFailLoad(RenderFrameHost* render_frame_host,
                    const GURL& validated_url,
@@ -310,7 +312,7 @@ class WebTestControlHost : public WebContentsObserver,
   void PrepareRendererForNextWebTest();
   void PrepareRendererForNextWebTestDone();
 
-  void OnPixelDumpCaptured(const SkBitmap& snapshot);
+  void OnPixelDumpCaptured(const viz::CopyOutputBitmapWithMetadata& result);
   void ReportResults();
   void EnqueueSurfaceCopyRequest();
 
@@ -426,7 +428,6 @@ class WebTestControlHost : public WebContentsObserver,
   std::string navigation_history_dump_;
   std::optional<SkBitmap> pixel_dump_;
   std::optional<std::string> layout_dump_;
-  std::string actual_pixel_hash_;
   // By default a test that opens other windows will have them closed at the end
   // of the test before checking for leaks. It may specify that it has closed
   // any windows it opened, and thus look for leaks from them with this flag.

@@ -7,7 +7,6 @@
 #include "base/check_deref.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/types/optional_ref.h"
 #include "components/autofill/core/browser/crowdsourcing/test_votes_uploader.h"
 #include "components/autofill/core/browser/data_manager/test_personal_data_manager.h"
 #include "components/autofill/core/browser/field_types.h"
@@ -36,13 +35,7 @@ TestBrowserAutofillManager::~TestBrowserAutofillManager() = default;
 
 testing::NiceMock<MockBnplManager>*
 TestBrowserAutofillManager::GetPaymentsBnplManager() {
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
-    BUILDFLAG(IS_CHROMEOS)
   return &mock_bnpl_manager_;
-#else
-  return nullptr;
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
-        // BUILDFLAG(IS_CHROMEOS)
 }
 
 void TestBrowserAutofillManager::OnLanguageDetermined(
@@ -74,6 +67,11 @@ void TestBrowserAutofillManager::OnTextFieldValueChanged(
   ASSERT_TRUE(waiter_.Wait(0));
 }
 
+void TestBrowserAutofillManager::OnDidEndTextFieldEditing() {
+  AutofillManager::OnDidEndTextFieldEditing();
+  ASSERT_TRUE(waiter_.Wait(0));
+}
+
 void TestBrowserAutofillManager::OnTextFieldDidScroll(
     const FormData& form,
     const FieldGlobalId& field_id) {
@@ -88,14 +86,21 @@ void TestBrowserAutofillManager::OnSelectControlSelectionChanged(
   ASSERT_TRUE(waiter_.Wait(0));
 }
 
+void TestBrowserAutofillManager::OnSelectFieldOptionsDidChange(
+    const FormData& form) {
+  AutofillManager::OnSelectFieldOptionsDidChange(form);
+  ASSERT_TRUE(waiter_.Wait(0));
+}
+
 void TestBrowserAutofillManager::OnAskForValuesToFill(
     const FormData& form,
     const FieldGlobalId& field_id,
     const gfx::Rect& caret_bounds,
     AutofillSuggestionTriggerSource trigger_source,
-    base::optional_ref<const PasswordSuggestionRequest> password_request) {
+    std::optional<PasswordSuggestionRequest> password_request) {
   AutofillManager::OnAskForValuesToFill(form, field_id, caret_bounds,
-                                        trigger_source, password_request);
+                                        trigger_source,
+                                        std::move(password_request));
   ASSERT_TRUE(waiter_.Wait(0));
 }
 
@@ -106,10 +111,10 @@ void TestBrowserAutofillManager::OnFocusOnFormField(
   ASSERT_TRUE(waiter_.Wait(0));
 }
 
-void TestBrowserAutofillManager::OnDidFillAutofillFormData(
+void TestBrowserAutofillManager::OnDidAutofillForm(
     const FormData& form,
     const base::TimeTicks timestamp) {
-  AutofillManager::OnDidFillAutofillFormData(form, timestamp);
+  AutofillManager::OnDidAutofillForm(form, timestamp);
   ASSERT_TRUE(waiter_.Wait(0));
 }
 
@@ -158,7 +163,7 @@ void TestBrowserAutofillManager::AddSeenForm(
       preserve_values_in_form_structure ? form : test::WithoutValues(form));
   test_api(*form_structure).SetFieldTypes(heuristic_types, server_types);
   test_api(*form_structure).AssignSections();
-  AddSeenFormStructure(std::move(form_structure));
+  test_api(*this).AddSeenFormStructure(std::move(form_structure));
   test_api(*this).OnFormsParsed({form});
   // Awaits the CrowdsourcingManager's response if OnFormsParsed() started a
   // request. This is necessary because TestAutofillManagerWaiter fails if there
@@ -169,26 +174,17 @@ void TestBrowserAutofillManager::AddSeenForm(
   ASSERT_TRUE(waiter_.Wait(0));
 }
 
-void TestBrowserAutofillManager::AddSeenFormStructure(
-    std::unique_ptr<FormStructure> form_structure) {
-  const auto id = form_structure->global_id();
-  (*mutable_form_structures())[id] = std::move(form_structure);
-}
-
-void TestBrowserAutofillManager::ClearFormStructures() {
-  mutable_form_structures()->clear();
-}
-
 void TestBrowserAutofillManager::OnAskForValuesToFillTest(
     const FormData& form,
     const FieldGlobalId& field_id,
     AutofillSuggestionTriggerSource trigger_source,
-    const std::optional<PasswordSuggestionRequest>& password_request) {
+    std::optional<PasswordSuggestionRequest> password_request) {
   gfx::PointF p =
       CHECK_DEREF(form.FindFieldByGlobalId(field_id)).bounds().origin();
   gfx::Rect caret_bounds(gfx::Point(p.x(), p.y()), gfx::Size(0, 10));
-  BrowserAutofillManager::OnAskForValuesToFill(
-      form, field_id, caret_bounds, trigger_source, password_request);
+  BrowserAutofillManager::OnAskForValuesToFill(form, field_id, caret_bounds,
+                                               trigger_source,
+                                               std::move(password_request));
   ASSERT_TRUE(waiter_.Wait(0));
 }
 

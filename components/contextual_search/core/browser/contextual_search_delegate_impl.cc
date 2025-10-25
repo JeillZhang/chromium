@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "components/contextual_search/core/browser/contextual_search_delegate_impl.h"
 
 #include <algorithm>
@@ -34,6 +29,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "net/http/http_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -431,7 +427,8 @@ std::string ContextualSearchDelegateImpl::BuildRequestUrl(
       context->GetTranslationLanguages().detected_language,
       context->GetTranslationLanguages().target_language,
       context->GetTranslationLanguages().fluent_languages,
-      context->GetRelatedSearchesStamp(), context->GetApplyLangHint());
+      context->GetRelatedSearchesStamp(), context->GetApplyLangHint(),
+      context->GetUseSnippetAsSubtitle());
 
   search_terms_args.contextual_search_params = params;
 
@@ -519,7 +516,8 @@ void ContextualSearchDelegateImpl::DecodeSearchTermFromJsonResponse(
   const std::string& proper_json =
       contains_xssi_escape ? response.substr(sizeof(kXssiEscape) - 1)
                            : response;
-  std::optional<base::Value> root = base::JSONReader::Read(proper_json);
+  std::optional<base::Value> root =
+      base::JSONReader::Read(proper_json, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   if (!root) {
     return;
   }
@@ -628,8 +626,10 @@ void ContextualSearchDelegateImpl::DecodeSearchTermFromJsonResponse(
   // for decoding.
   // TODO(donnd): remove soon (once the server is updated);
   if (const base::Value* rsearches_json_value =
-          dict->Find(kRelatedSearchesSuggestions))
-    base::JSONWriter::Write(*rsearches_json_value, related_searches_json);
+          dict->Find(kRelatedSearchesSuggestions)) {
+    *related_searches_json =
+        base::WriteJson(*rsearches_json_value).value_or("");
+  }
 }
 
 // Extract the Start/End of the mentions in the surrounding text

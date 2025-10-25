@@ -276,28 +276,53 @@ TEST(Util, NormalizeCapacity) {
   EXPECT_EQ(15 * 2 + 1, NormalizeCapacity(15 + 2));
 }
 
-TEST(Util, GrowthAndCapacity) {
-  // Verify that GrowthToCapacity gives the minimum capacity that has enough
-  // growth.
+TEST(Util, SizeToCapacitySmallValues) {
   EXPECT_EQ(SizeToCapacity(0), 0);
   EXPECT_EQ(SizeToCapacity(1), 1);
   EXPECT_EQ(SizeToCapacity(2), 3);
   EXPECT_EQ(SizeToCapacity(3), 3);
+  EXPECT_EQ(SizeToCapacity(4), 7);
+  EXPECT_EQ(SizeToCapacity(5), 7);
+  EXPECT_EQ(SizeToCapacity(6), 7);
+  if (Group::kWidth == 16) {
+    EXPECT_EQ(SizeToCapacity(7), 7);
+    EXPECT_EQ(SizeToCapacity(14), 15);
+  } else {
+    EXPECT_EQ(SizeToCapacity(7), 15);
+  }
+}
+
+TEST(Util, CapacityToGrowthSmallValues) {
+  EXPECT_EQ(CapacityToGrowth(1), 1);
+  EXPECT_EQ(CapacityToGrowth(3), 3);
+  if (Group::kWidth == 16) {
+    EXPECT_EQ(CapacityToGrowth(7), 7);
+  } else {
+    EXPECT_EQ(CapacityToGrowth(7), 6);
+  }
+  EXPECT_EQ(CapacityToGrowth(15), 14);
+  EXPECT_EQ(CapacityToGrowth(31), 28);
+  EXPECT_EQ(CapacityToGrowth(63), 55);
+}
+
+TEST(Util, GrowthAndCapacity) {
+  // Verify that GrowthToCapacity gives the minimum capacity that has enough
+  // growth.
   for (size_t growth = 1; growth < 10000; ++growth) {
     SCOPED_TRACE(growth);
     size_t capacity = SizeToCapacity(growth);
     ASSERT_TRUE(IsValidCapacity(capacity));
     // The capacity is large enough for `growth`.
-    EXPECT_THAT(CapacityToGrowth(capacity), Ge(growth));
+    ASSERT_THAT(CapacityToGrowth(capacity), Ge(growth));
     // For (capacity+1) < kWidth, growth should equal capacity.
     if (capacity + 1 < Group::kWidth) {
-      EXPECT_THAT(CapacityToGrowth(capacity), Eq(capacity));
+      ASSERT_THAT(CapacityToGrowth(capacity), Eq(capacity));
     } else {
-      EXPECT_THAT(CapacityToGrowth(capacity), Lt(capacity));
+      ASSERT_THAT(CapacityToGrowth(capacity), Lt(capacity));
     }
     if (growth != 0 && capacity > 1) {
       // There is no smaller capacity that works.
-      EXPECT_THAT(CapacityToGrowth(capacity / 2), Lt(growth));
+      ASSERT_THAT(CapacityToGrowth(capacity / 2), Lt(growth)) << capacity;
     }
   }
 
@@ -305,9 +330,9 @@ TEST(Util, GrowthAndCapacity) {
        capacity = 2 * capacity + 1) {
     SCOPED_TRACE(capacity);
     size_t growth = CapacityToGrowth(capacity);
-    EXPECT_THAT(growth, Lt(capacity));
-    EXPECT_EQ(SizeToCapacity(growth), capacity);
-    EXPECT_EQ(NormalizeCapacity(SizeToCapacity(growth)), capacity);
+    ASSERT_THAT(growth, Lt(capacity));
+    ASSERT_EQ(SizeToCapacity(growth), capacity);
+    ASSERT_EQ(NormalizeCapacity(SizeToCapacity(growth)), capacity);
   }
 }
 
@@ -386,7 +411,7 @@ struct ValuePolicy {
         std::forward<F>(f), std::forward<Args>(args)...);
   }
 
-  template <class Hash>
+  template <class Hash, bool kIsDefault>
   static constexpr HashSlotFn get_hash_slot_fn() {
     return nullptr;
   }
@@ -534,7 +559,7 @@ class StringPolicy {
                       PairArgs(std::forward<Args>(args)...));
   }
 
-  template <class Hash>
+  template <class Hash, bool kIsDefault>
   static constexpr HashSlotFn get_hash_slot_fn() {
     return nullptr;
   }
@@ -1131,7 +1156,7 @@ struct DecomposePolicy {
     return std::forward<F>(f)(x, x);
   }
 
-  template <class Hash>
+  template <class Hash, bool kIsDefault>
   static constexpr HashSlotFn get_hash_slot_fn() {
     return nullptr;
   }
@@ -2247,12 +2272,10 @@ TEST(Table, NoThrowMoveAssign) {
 }
 
 TEST(Table, NoThrowSwappable) {
-  ASSERT_TRUE(
-      container_internal::IsNoThrowSwappable<absl::Hash<absl::string_view>>());
-  ASSERT_TRUE(container_internal::IsNoThrowSwappable<
-              std::equal_to<absl::string_view>>());
-  ASSERT_TRUE(container_internal::IsNoThrowSwappable<std::allocator<int>>());
-  EXPECT_TRUE(container_internal::IsNoThrowSwappable<StringTable>());
+  ASSERT_TRUE(std::is_nothrow_swappable<absl::Hash<absl::string_view>>());
+  ASSERT_TRUE(std::is_nothrow_swappable<std::equal_to<absl::string_view>>());
+  ASSERT_TRUE(std::is_nothrow_swappable<std::allocator<int>>());
+  EXPECT_TRUE(std::is_nothrow_swappable<StringTable>());
 }
 
 TEST(Table, HeterogeneousLookup) {
@@ -2814,12 +2837,12 @@ TYPED_TEST(RawHashSamplerTest, Sample) {
   // Expect that we sampled at the requested sampling rate of ~1%.
   EXPECT_NEAR((end_size - start_size) / static_cast<double>(tables.size()),
               0.01, 0.005);
-  EXPECT_EQ(observed_checksums.size(), 5);
+  ASSERT_EQ(observed_checksums.size(), 5);
   for (const auto& [_, count] : observed_checksums) {
     EXPECT_NEAR((100 * count) / static_cast<double>(tables.size()), 0.2, 0.05);
   }
 
-  EXPECT_EQ(reservations.size(), 10);
+  ASSERT_EQ(reservations.size(), 10);
   for (const auto& [reservation, count] : reservations) {
     EXPECT_GE(reservation, 0);
     EXPECT_LT(reservation, 100);
@@ -4057,7 +4080,7 @@ TEST(Table, GrowExtremelyLargeTable) {
   CommonFields& common = RawHashSetTestOnlyAccess::GetCommon(t);
   // Set 0 seed so that H1 is always 0.
   common.set_no_seed_for_testing();
-  ASSERT_EQ(H1(t.hash_function()(75), common.seed()), 0);
+  ASSERT_EQ(H1(t.hash_function()(75)), 0);
   uint8_t inserted_till = 210;
   for (uint8_t i = 0; i < inserted_till; ++i) {
     t.insert(i);
@@ -4079,6 +4102,16 @@ TEST(Table, GrowExtremelyLargeTable) {
     }
   }
   EXPECT_EQ(t.capacity(), kTargetCapacity);
+}
+
+// Test that after calling generate_new_seed(), the high bits of the returned
+// seed are non-zero.
+TEST(PerTableSeed, HighBitsAreNonZero) {
+  HashtableSize hs(no_seed_empty_tag_t{});
+  for (int i = 0; i < 100; ++i) {
+    hs.generate_new_seed();
+    ASSERT_GT(hs.seed().seed() >> 16, 0);
+  }
 }
 
 }  // namespace

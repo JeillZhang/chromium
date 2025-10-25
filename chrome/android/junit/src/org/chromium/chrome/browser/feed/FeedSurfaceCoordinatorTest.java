@@ -18,9 +18,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationUtils.NtpBackgroundImageType.CHROME_COLOR;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationUtils.NtpBackgroundImageType.IMAGE_FROM_DISK;
+
 import android.app.Activity;
 import android.content.res.Configuration;
-import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.Matrix;
 import android.view.MotionEvent;
 import android.view.View;
 
@@ -46,10 +50,8 @@ import org.chromium.base.ActivityState;
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.Callback;
 import org.chromium.base.LocaleUtils;
-import org.chromium.base.jank_tracker.PlaceholderJankTracker;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
@@ -57,13 +59,14 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.feed.componentinterfaces.SurfaceCoordinator;
 import org.chromium.chrome.browser.feed.sections.SectionHeaderListProperties;
-import org.chromium.chrome.browser.feed.sections.SectionHeaderView;
 import org.chromium.chrome.browser.feed.webfeed.WebFeedBridge;
 import org.chromium.chrome.browser.feed.webfeed.WebFeedBridgeJni;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.native_page.NativePageNavigationDelegate;
 import org.chromium.chrome.browser.ntp.NewTabPageLaunchOrigin;
 import org.chromium.chrome.browser.ntp.cards.SignInPromo;
+import org.chromium.chrome.browser.ntp_customization.NtpCustomizationConfigManager;
+import org.chromium.chrome.browser.ntp_customization.theme.BackgroundImageInfo;
+import org.chromium.chrome.browser.ntp_customization.theme.NtpBackgroundImageView;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.privacy.settings.PrivacyPreferencesManagerImpl;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -84,20 +87,22 @@ import org.chromium.chrome.browser.xsurface.feed.FeedSurfaceScope;
 import org.chromium.chrome.browser.xsurface.feed.FeedSurfaceScopeDependencyProvider;
 import org.chromium.chrome.browser.xsurface_provider.XSurfaceProcessScopeProvider;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgePadAdjuster;
 import org.chromium.components.feature_engagement.Tracker;
 import org.chromium.components.feed.proto.wire.ReliabilityLoggingEnums.DiscoverLaunchResult;
 import org.chromium.components.prefs.PrefChangeRegistrar;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.search_engines.TemplateUrlService;
+import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.identitymanager.IdentityManager;
 import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.components.user_prefs.UserPrefsJni;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.edge_to_edge.EdgeToEdgePadAdjuster;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.function.Supplier;
 
 /** Tests for {@link FeedSurfaceCoordinator}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -108,10 +113,13 @@ import java.util.Locale;
     ChromeFeatureList.FEED_CONTAINMENT,
     ChromeFeatureList.FEED_HEADER_REMOVAL
 })
-@EnableFeatures({ChromeFeatureList.UNO_PHASE_2_FOLLOW_UP})
+@EnableFeatures({ChromeFeatureList.UNO_PHASE_2_FOLLOW_UP, SigninFeatures.ENABLE_SEAMLESS_SIGNIN})
 public class FeedSurfaceCoordinatorTest {
     private static final @SurfaceType int SURFACE_TYPE = SurfaceType.NEW_TAB_PAGE;
     private static final long SURFACE_CREATION_TIME_NS = 1234L;
+    @Mock private NtpBackgroundImageView mBackgroundImageView;
+    private BackgroundImageInfo mBackgroundImageInfo;
+    private Bitmap mBitmap;
 
     private static class TestLifecycleManager extends FeedSurfaceLifecycleManager {
         public TestLifecycleManager(Activity activity, FeedSurfaceCoordinator coordinator) {
@@ -162,13 +170,11 @@ public class FeedSurfaceCoordinatorTest {
 
     // Mocked Direct dependencies.
     @Mock private SnackbarManager mSnackbarManager;
-    @Mock private NativePageNavigationDelegate mPageNavigationDelegate;
     @Mock private BottomSheetController mBottomSheetController;
     @Mock private SnapScrollHelper mSnapHelper;
     @Mock private WindowAndroid mWindowAndroid;
     @Mock private ModalDialogManager mModalDialogManager;
     @Mock private Supplier<ShareDelegate> mShareDelegateSupplier;
-    @Mock private SectionHeaderView mSectionHeaderView;
     @Mock private FeedActionDelegate mFeedActionDelegate;
 
     // Mocked JNI.
@@ -193,7 +199,6 @@ public class FeedSurfaceCoordinatorTest {
     @Mock private PrefChangeRegistrar mPrefChangeRegistrar;
     @Mock private PrefService mPrefService;
     @Mock private TemplateUrlService mUrlService;
-    @Mock private Resources mResources;
     @Mock private RecyclerView.Adapter mAdapter;
     @Mock private FeedLaunchReliabilityLogger mLaunchReliabilityLogger;
     @Mock private PrivacyPreferencesManagerImpl mPrivacyPreferencesManager;
@@ -211,6 +216,7 @@ public class FeedSurfaceCoordinatorTest {
             new ObservableSupplierImpl<>();
 
     @Before
+    @SuppressWarnings("DirectInvocationOnMock")
     public void setUp() {
         Configuration config = new Configuration();
         config.setLocale(new Locale("en", "US"));
@@ -249,8 +255,6 @@ public class FeedSurfaceCoordinatorTest {
         when(mUserPrefsJniMock.get(any(Profile.class))).thenReturn(mPrefService);
 
         // Resources set up.
-        when(mSectionHeaderView.getResources()).thenReturn(mResources);
-        when(mResources.getString(anyInt())).thenReturn("Test");
 
         mRecyclerView = new RecyclerView(mActivity);
         mRecyclerView.setAdapter(mAdapter);
@@ -277,6 +281,9 @@ public class FeedSurfaceCoordinatorTest {
 
         // Print logs to stdout.
         ShadowLog.stream = System.out;
+
+        mBitmap = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888);
+        mBackgroundImageInfo = new BackgroundImageInfo(new Matrix(), new Matrix());
     }
 
     @After
@@ -466,10 +473,6 @@ public class FeedSurfaceCoordinatorTest {
     }
 
     @Test
-    @EnableFeatures({
-        ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN,
-        ChromeFeatureList.DRAW_KEY_NATIVE_EDGE_TO_EDGE
-    })
     public void testEdgeToEdge() {
         mEdgeToEdgeSupplier.set(mEdgeToEdgeController);
         verify(mEdgeToEdgeController).registerAdjuster(mEdgePadAdjusterCaptor.capture());
@@ -503,6 +506,20 @@ public class FeedSurfaceCoordinatorTest {
         assertEquals(1, mCoordinator.getHeaderPosition());
     }
 
+    @Test
+    @EnableFeatures(ChromeFeatureList.NEW_TAB_PAGE_CUSTOMIZATION_V2)
+    public void testSetBackground_withImageFromDisk_delegatesToView() {
+        mCoordinator.setBackgroundImageViewForTesting(mBackgroundImageView);
+        NtpCustomizationConfigManager configManager = NtpCustomizationConfigManager.getInstance();
+        configManager.setBackgroundImageTypeForTesting(CHROME_COLOR);
+
+        configManager.onBackgroundChanged(mBitmap, mBackgroundImageInfo);
+
+        // Verifies the coordinator delegates the setBackground call to the custom view.
+        verify(mBackgroundImageView)
+                .setBackground(eq(mBitmap), eq(mBackgroundImageInfo), eq(IMAGE_FROM_DISK));
+    }
+
     private boolean hasStreamBound() {
         if (mCoordinator.getMediatorForTesting().getCurrentStreamForTesting() == null) {
             return false;
@@ -520,7 +537,6 @@ public class FeedSurfaceCoordinatorTest {
                 mActivity,
                 mSnackbarManager,
                 mWindowAndroid,
-                new PlaceholderJankTracker(),
                 mSnapHelper,
                 null,
                 0,

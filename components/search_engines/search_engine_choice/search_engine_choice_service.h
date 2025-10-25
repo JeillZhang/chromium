@@ -7,27 +7,35 @@
 
 #include <optional>
 
-#include "base/debug/stack_trace.h"
-#include "base/gtest_prod_util.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
 #include "components/country_codes/country_codes.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/regional_capabilities/program_settings.h"
 #include "components/search_engines/search_engine_choice/search_engine_choice_utils.h"
 
 namespace policy {
+class ManagementService;
 class PolicyService;
+}
+namespace signin {
+class IdentityManager;
 }
 namespace variations {
 class VariationsService;
 }
 namespace regional_capabilities {
 class RegionalCapabilitiesService;
-}
+struct ChoiceScreenEligibilityConfig;
+}  // namespace regional_capabilities
 namespace TemplateURLPrepopulateData {
 class Resolver;
+}
+
+namespace user_prefs {
+class PrefRegistrySyncable;
 }
 
 class PrefRegistrySimple;
@@ -89,8 +97,15 @@ class SearchEngineChoiceService : public KeyedService {
       PrefService& profile_prefs,
       PrefService* local_state,
       regional_capabilities::RegionalCapabilitiesService& regional_capabilities,
-      TemplateURLPrepopulateData::Resolver& prepopulate_data_resolver);
+      TemplateURLPrepopulateData::Resolver& prepopulate_data_resolver,
+      signin::IdentityManager& identity_manager,
+      policy::ManagementService& platform_management_service);
   ~SearchEngineChoiceService() override;
+
+  // Runs the initialisation step for this service, checking consistency in the
+  // prefs and performing some tasks that might be needed following device state
+  // changes.
+  void Init();
 
   // Returns the choice screen eligibility condition most relevant for the
   // profile associated with `profile_prefs` and `template_url_service`. Only
@@ -98,24 +113,46 @@ class SearchEngineChoiceService : public KeyedService {
   // during a profile's lifetime. Should be checked right before showing a
   // choice screen.
   SearchEngineChoiceScreenConditions GetDynamicChoiceScreenConditions(
-      const TemplateURLService& template_url_service);
+      const TemplateURLService& template_url_service) const;
 
   // Returns the choice screen eligibility condition most relevant for the
   // profile described by `profile_properties`. Only checks static conditions,
   // such that if a non-eligible condition is returned, it would take at least a
   // restart for the state to change. So this state can be checked and cached
   // ahead of showing a choice screen.
-  // TODO(b/318801987): Remove `is_regular_profile` after fixing tests.
   SearchEngineChoiceScreenConditions GetStaticChoiceScreenConditions(
       const policy::PolicyService& policy_service,
-      bool is_regular_profile,
-      const TemplateURLService& template_url_service);
+      const TemplateURLService& template_url_service) const;
+
+  // Records the specified choice screen condition at profile initialization.
+  void RecordProfileLoadEligibility(
+      SearchEngineChoiceScreenConditions condition);
+
+#if BUILDFLAG(IS_IOS)
+  // Records only the legacy static eligibility histograms. Note that on iOS,
+  // the legacy histograms are not recorded by `RecordProfileLoadEligibility()`
+  void RecordLegacyStaticEligibility(
+      SearchEngineChoiceScreenConditions condition);
+
+  // Indicates whether the choice screen can be shown on a surface with a
+  // particular "first run experience" status.
+  bool IsSurfaceEligible(bool is_first_run_experience_surface) const;
+#endif  // BUILDFLAG(IS_IOS)
+
+  // Records the specified choice screen condition for relevant navigations.
+  void RecordTriggeringEligibility(
+      SearchEngineChoiceScreenConditions condition);
+
+  // Records the specified choice screen event.
+  void RecordChoiceScreenEvent(SearchEngineChoiceScreenEvents event);
 
   // Returns key information needed to show a search engine choice screen, like
   // the template URLs for the engines to show. See
-  // `search_engines::ChoiceScreenData` for more details.
+  // `search_engines::ChoiceScreenData` for more details. `nullptr` values for
+  // `default_search_provider` are accepted as default search might be disabled.
   std::unique_ptr<search_engines::ChoiceScreenData> GetChoiceScreenData(
-      const SearchTermsData& search_terms_data);
+      const SearchTermsData& search_terms_data,
+      const TemplateURL* default_search_provider);
 
   // Records that the choice was made by settings the timestamp if applicable.
   // Records the location from which the choice was made and the search engine
@@ -141,14 +178,46 @@ class SearchEngineChoiceService : public KeyedService {
   // Clear state e.g. when a guest session is closed.
   void ResetState();
 
-  // Clears the country id cache to be able to change countries multiple times
-  // in tests.
-  // TODO(crbug.com/328040066): Move to `//components/regional_capabilities`.
-  void ClearCountryIdCacheForTesting();
-
   // Returns a reference to the `SearchEngineChoiceService::Client` owned and
   // used by this service.
   Client& GetClientForTesting();
+
+  enum class ChoiceStatus {
+    // Metadata indicates that a search engine choice has been made and is
+    // considered valid.
+    kValid,
+    // No search engine choice has been made yet.
+    kNotMade,
+    // The current search engine choice has been made on a different device.
+    kFromRestoredDevice,
+    // There is no default search provider available, likely disabled by
+    // enterprise policies.
+    kDefaultSearchDisabled,
+    // The current default search provider is set by enterprise policies.
+    kCurrentIsSetByPolicy,
+    // The current default search provider is set by an extension.
+    kCurrentIsSetByExtension,
+    // The current default search provider is non-Google prepopulated one.
+    kCurrentIsNonGooglePrepopulated,
+    // The current default search provider is a custom, client-specified URL.
+    // For example, it could be entered manually by the user or picked up as
+    // site search.
+    kCurrentIsNotPrepopulated,
+    // The current default search provider is coming from search provider
+    // overrides set by the admin or non-standard distribution channel.
+    kCurrentIsDistributionCustom,
+    // The current default search provider has a prepopulated ID that doesn't
+    // match any of the preopulated engines currently available.
+    kCurrentIsUnknownPrepopulated,
+    // The user is not eligible for the choice screen based on their account
+    // capabilities.
+    kAccountNotEligible,
+    // The device is not eligible for the choice screen based on its management
+    // status.
+    kManaged,
+  };
+  ChoiceStatus EvaluateSearchProviderChoiceForTesting(
+      const TemplateURLService& template_url_service);
 
   // Returns whether the profile is eligible for the default search engine to be
   // used across all guest sessions.
@@ -171,35 +240,61 @@ class SearchEngineChoiceService : public KeyedService {
   // Register Local state preferences in `registry`.
   static void RegisterLocalStatePrefs(PrefRegistrySimple* registry);
 
+  // Register profile preferences in `registry`.
+  static void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);
+
  private:
-  // Checks if the search engine choice should be prompted again, based on
-  // experiment parameters. If a reprompt is needed, some preferences related to
-  // the choice are cleared, which triggers a reprompt on the next page load.
-  void PreprocessPrefsForReprompt();
+  // Checks if the search engine choice should be invalidated, based on pref
+  // inconsistencies, command line args, or experiment parameters. Returns a
+  // wipe reason if the choice should be cleared, or nullopt otherwise.
+  std::optional<SearchEngineChoiceWipeReason> CheckPrefsForWipeReason();
 
   void ProcessPendingChoiceScreenDisplayState();
 
-  std::unique_ptr<Client> client_;
+  enum class ChoiceRenewalReason {
+    kOutdated,
+    kIncompatibleProgram,
+
+    kMin = kOutdated,
+    kMax = kIncompatibleProgram,
+  };
+
+  using ChoiceRenewalReasons = base::EnumSet<ChoiceRenewalReason,
+                                             ChoiceRenewalReason::kMin,
+                                             ChoiceRenewalReason::kMax>;
+
+  // Returns the reasons why the current choice should be renewed.
+  ChoiceRenewalReasons GetChoiceRenewalReasons(
+      const regional_capabilities::ChoiceScreenEligibilityConfig&
+          eligibility_config,
+      const ChoiceCompletionMetadata& completion_metadata) const;
+
+  ChoiceStatus EvaluateSearchProviderChoice(
+      const TemplateURLService& template_url_service) const;
+
+  const std::unique_ptr<Client> client_;
   const raw_ref<PrefService> profile_prefs_;
   const raw_ptr<PrefService> local_state_;
   const raw_ref<regional_capabilities::RegionalCapabilitiesService>
       regional_capabilities_service_;
   const raw_ref<TemplateURLPrepopulateData::Resolver>
       prepopulate_data_resolver_;
+  const raw_ref<signin::IdentityManager> identity_manager_;
+  const raw_ref<policy::ManagementService> platform_management_service_;
   base::ObserverList<Observer> observers_;
 
-  // Used to ensure that the value returned from `GetCountryId` never changes
-  // in runtime (different runs can still return different values, though).
-  std::optional<int> country_id_cache_;
-
-  // Used to track caller of `MaybeRecordChoiceScreenDisplayState()` to debug
-  // some unmet expectations, see b/344899110.
-  std::unique_ptr<base::debug::StackTrace> display_state_record_caller_;
+  // Used to track whether `MaybeRecordChoiceScreenDisplayState()` has already
+  // been called for this profile, to monitor the prevalence of some unexpected
+  // behaviour, see crbug.com/390272573.
+  bool has_recorded_display_state_ = false;
 
   base::WeakPtrFactory<SearchEngineChoiceService> weak_ptr_factory_{this};
 };
 
-void MarkSearchEngineChoiceCompletedForTesting(PrefService& prefs);
+void MarkSearchEngineChoiceCompletedForTesting(
+    PrefService& prefs,
+    regional_capabilities::Program program =
+        regional_capabilities::Program::kWaffle);
 
 }  // namespace search_engines
 

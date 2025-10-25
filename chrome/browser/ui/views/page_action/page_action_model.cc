@@ -32,12 +32,13 @@ void PageActionModel::SetShowRequested(base::PassKey<PageActionController>,
   NotifyChange();
 }
 
-void PageActionModel::SetShowSuggestionChip(base::PassKey<PageActionController>,
-                                            bool show) {
-  if (show_suggestion_chip_ == show) {
+void PageActionModel::SetShouldShowSuggestionChip(
+    base::PassKey<PageActionController>,
+    bool show) {
+  if (should_show_suggestion_chip_ == show) {
     return;
   }
-  show_suggestion_chip_ = show;
+  should_show_suggestion_chip_ = show;
   NotifyChange();
 }
 
@@ -107,16 +108,19 @@ void PageActionModel::SetActionItemProperties(
 }
 
 bool PageActionModel::GetVisible() const {
-  if (should_hide_) {
-    return false;
-  }
+  const bool hidden_by_omnibox =
+      is_suppressed_by_omnibox_ && !is_exempt_from_omnibox_suppression_;
 
-  return is_tab_active_ && action_item_enabled_ && action_item_visible_ &&
-         show_requested_ && !has_pinned_icon_;
+  return is_tab_active_ && !hidden_by_omnibox && action_item_enabled_ &&
+         action_item_visible_ && show_requested_ && !has_pinned_icon_;
 }
 
-bool PageActionModel::GetShowSuggestionChip() const {
-  return show_suggestion_chip_;
+bool PageActionModel::IsChipShowing() const {
+  return is_chip_showing_;
+}
+
+bool PageActionModel::ShouldShowSuggestionChip() const {
+  return should_show_suggestion_chip_;
 }
 
 bool PageActionModel::GetShouldAnimateChip() const {
@@ -148,6 +152,10 @@ const std::u16string& PageActionModel::GetTooltipText() const {
 
 bool PageActionModel::GetActionItemIsShowingBubble() const {
   return action_item_is_showing_bubble_;
+}
+
+bool PageActionModel::GetActionActive() const {
+  return action_active_;
 }
 
 void PageActionModel::SetOverrideText(
@@ -190,14 +198,43 @@ void PageActionModel::SetOverrideTooltip(
   NotifyChange();
 }
 
-void PageActionModel::SetShouldHidePageAction(
+void PageActionModel::SetIsSuppressedByOmnibox(
     base::PassKey<PageActionController>,
-    bool should_hide) {
-  if (should_hide_ == should_hide) {
+    bool is_suppressed) {
+  if (is_suppressed_by_omnibox_ == is_suppressed) {
+    return;
+  }
+  is_suppressed_by_omnibox_ = is_suppressed;
+  NotifyChange();
+}
+
+void PageActionModel::SetExemptFromOmniboxSuppression(
+    base::PassKey<PageActionController>,
+    bool is_exempt) {
+  if (is_exempt_from_omnibox_suppression_ == is_exempt) {
+    return;
+  }
+  is_exempt_from_omnibox_suppression_ = is_exempt;
+  NotifyChange();
+}
+
+void PageActionModel::SetIsChipShowing(base::PassKey<PageActionController>,
+                                       bool is_chip_showing) {
+  if (is_chip_showing_ == is_chip_showing) {
     return;
   }
 
-  should_hide_ = should_hide;
+  is_chip_showing_ = is_chip_showing;
+  NotifyChange();
+}
+
+void PageActionModel::SetActionActive(base::PassKey<PageActionController>,
+                                      bool is_active) {
+  if (action_active_ == is_active) {
+    return;
+  }
+
+  action_active_ = is_active;
   NotifyChange();
 }
 

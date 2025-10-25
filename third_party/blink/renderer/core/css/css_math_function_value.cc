@@ -56,8 +56,7 @@ CSSMathFunctionValue* CSSMathFunctionValue::Create(const Length& length,
 }
 
 bool CSSMathFunctionValue::MayHaveRelativeUnit() const {
-  UnitType resolved_type = expression_->ResolvedUnitType();
-  return IsRelativeUnit(resolved_type) || resolved_type == UnitType::kUnknown;
+  return expression_->MayHaveRelativeUnit();
 }
 
 double CSSMathFunctionValue::ComputeDegrees(
@@ -93,7 +92,7 @@ int CSSMathFunctionValue::ComputeInteger(
   // percentages.
   DCHECK_EQ(kCalcNumber, expression_->Category());
   DCHECK(!expression_->HasPercentage());
-  return ClampTo<int>(
+  return ClampToWithNaNTo0<int>(
       ClampToPermittedRange(expression_->ComputeNumber(length_resolver)));
 }
 
@@ -134,6 +133,14 @@ double CSSMathFunctionValue::ComputeValueInCanonicalUnit(
   DCHECK(optional_value.has_value());
   double value = ClampToPermittedRange(optional_value.value());
   return std::isnan(value) ? 0.0 : value;
+}
+
+std::optional<double> CSSMathFunctionValue::GetValueIfKnown() const {
+  std::optional<double> val = expression_->GetValueIfKnown();
+  if (val.has_value()) {
+    return ClampToPermittedRange(CSSValueClampingUtils::ClampDouble(*val));
+  }
+  return val;
 }
 
 bool CSSMathFunctionValue::AccumulateLengthArray(CSSLengthArray& length_array,

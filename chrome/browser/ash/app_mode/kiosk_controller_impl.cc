@@ -44,6 +44,7 @@
 #include "chrome/browser/ash/login/screens/app_launch_splash_screen.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/ash/policy/core/device_local_account.h"
+#include "chrome/browser/chromeos/app_mode/kiosk_app_level_logs_manager_wrapper.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/common/chrome_switches.h"
@@ -52,6 +53,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "ui/ozone/public/input_controller.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/wm/core/wm_core_switches.h"
@@ -125,10 +127,18 @@ KioskApp EmptyKioskApp(const KioskAppId& app_id) {
 
 KioskControllerImpl::KioskControllerImpl(
     PrefService& local_state,
+    scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory,
     user_manager::UserManager* user_manager)
     : local_state_(local_state),
-      iwa_manager_(local_state),
-      arcvm_app_manager_(&local_state) {
+      cryptohome_remover_(&local_state),
+      iwa_manager_(local_state, &cryptohome_remover_),
+      web_app_manager_(&local_state,
+                       shared_url_loader_factory,
+                       &cryptohome_remover_),
+      chrome_app_manager_(&local_state,
+                          shared_url_loader_factory,
+                          &cryptohome_remover_),
+      arcvm_app_manager_(&local_state, &cryptohome_remover_) {
   user_manager_observation_.Observe(user_manager);
 }
 
@@ -139,6 +149,7 @@ std::vector<KioskApp> KioskControllerImpl::GetApps() const {
   AppendWebApps(apps);
   AppendChromeApps(apps);
   AppendIsolatedWebApps(apps);
+  AppendArcvmApps(apps);
   return apps;
 }
 
@@ -206,10 +217,8 @@ void KioskControllerImpl::InitializeKioskSystemSession(
       iwa_manager_.OnKioskSessionStarted(kiosk_app_id);
       break;
     case KioskAppType::kArcvmApp:
-      // TODO(crbug.com/418950414): Add background for Kiosk system session not
-      // getting created for ARCVM Kiosk. We might need Kiosk system session
-      // for ARCVM kiosk.
-      NOTREACHED();
+      arcvm_app_manager_.OnKioskSessionStarted(kiosk_app_id);
+      break;
   }
 }
 
@@ -227,8 +236,11 @@ void KioskControllerImpl::StartSession(const KioskAppId& app_id,
   DUMP_WILL_BE_CHECK(app_maybe.has_value());
   KioskApp app = std::move(app_maybe).value_or(EmptyKioskApp(app_id));
 
+  kiosk_log_manager_wrapper_ =
+      std::make_unique<chromeos::KioskAppLevelLogsManagerWrapper>(app_id);
+
   launch_controller_ = std::make_unique<KioskLaunchController>(
-      host,
+      &local_state_.get(), host,
       /*app_launched_callback=*/
       base::BindOnce(&KioskControllerImpl::OnAppLaunched,
                      base::Unretained(this)),
@@ -250,8 +262,12 @@ void KioskControllerImpl::StartSessionAfterCrash(const KioskAppId& app,
                  << " flag.";
     return;
   }
-  crash_recovery_launcher_ =
-      std::make_unique<CrashRecoveryLauncher>(CHECK_DEREF(profile), app);
+
+  kiosk_log_manager_wrapper_ =
+      std::make_unique<chromeos::KioskAppLevelLogsManagerWrapper>(profile, app);
+
+  crash_recovery_launcher_ = std::make_unique<CrashRecoveryLauncher>(
+      &local_state_.get(), CHECK_DEREF(profile), app);
   crash_recovery_launcher_->Start(
       base::BindOnce(&KioskControllerImpl::OnLaunchCompleteAfterCrash,
                      // Safe since `this` owns the `crash_recovery_launcher_`.
@@ -307,14 +323,8 @@ KioskSystemSession* KioskControllerImpl::GetKioskSystemSession() {
   return &system_session_.value();
 }
 
-kiosk_vision::TelemetryProcessor*
-KioskControllerImpl::GetKioskVisionTelemetryProcessor() {
-  return nullptr;
-}
-
-kiosk_vision::InternalsPageProcessor*
-KioskControllerImpl::GetKioskVisionInternalsPageProcessor() {
-  return nullptr;
+void KioskControllerImpl::RemoveObsoleteCryptohomes() {
+  cryptohome_remover_.RemoveObsoleteCryptohomes();
 }
 
 void KioskControllerImpl::OnUserLoggedIn(const user_manager::User& user) {
@@ -447,6 +457,14 @@ void KioskControllerImpl::AppendIsolatedWebApps(
   for (const KioskAppManagerBase::App& iwa_app : iwa_manager_.GetApps()) {
     apps.emplace_back(KioskAppId::ForIsolatedWebApp(iwa_app.account_id),
                       iwa_app.name, iwa_app.icon);
+  }
+}
+
+void KioskControllerImpl::AppendArcvmApps(std::vector<KioskApp>& apps) const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  for (const KioskAppManagerBase::App& iwa_app : arcvm_app_manager_.GetApps()) {
+    apps.emplace_back(KioskAppId::ForArcvmApp(iwa_app.account_id), iwa_app.name,
+                      iwa_app.icon);
   }
 }
 

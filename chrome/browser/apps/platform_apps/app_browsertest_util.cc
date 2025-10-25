@@ -13,7 +13,6 @@
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
-#include "chrome/browser/apps/app_service/browser_app_launcher.h"
 #include "chrome/browser/extensions/api/tabs/tabs_api.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/apps/chrome_app_delegate.h"
@@ -34,6 +33,7 @@
 #include "extensions/test/extension_test_message_listener.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/apps/app_service/chrome_app_deprecation/chrome_app_deprecation.h"
 #include "chrome/browser/ui/ash/cast_config/cast_config_controller_media_router.h"
 #include "components/media_router/browser/media_routes_observer.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -117,6 +117,11 @@ const Extension* PlatformAppBrowserTest::LoadAndLaunchPlatformApp(
       test_data_dir_.AppendASCII("platform_apps").AppendASCII(name));
   EXPECT_TRUE(extension);
 
+#if BUILDFLAG(IS_CHROMEOS)
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      extension->id());
+#endif
+
   LaunchPlatformApp(extension);
 
   EXPECT_TRUE(listener->WaitUntilSatisfied())
@@ -165,17 +170,15 @@ const Extension* PlatformAppBrowserTest::InstallAndLaunchPlatformApp(
 }
 
 void PlatformAppBrowserTest::LaunchPlatformApp(const Extension* extension) {
-  apps::AppServiceProxyFactory::GetForProfile(profile())
-      ->BrowserAppLauncher()
-      ->LaunchAppWithParamsForTesting(apps::AppLaunchParams(
+  apps::AppServiceProxyFactory::GetForProfile(profile())->LaunchAppWithParams(
+      apps::AppLaunchParams(
           extension->id(), apps::LaunchContainer::kLaunchContainerNone,
           WindowOpenDisposition::NEW_WINDOW, apps::LaunchSource::kFromTest));
 }
 
 void PlatformAppBrowserTest::LaunchHostedApp(const Extension* extension) {
-  apps::AppServiceProxyFactory::GetForProfile(profile())
-      ->BrowserAppLauncher()
-      ->LaunchAppWithParamsForTesting(CreateAppLaunchParamsUserContainer(
+  apps::AppServiceProxyFactory::GetForProfile(profile())->LaunchAppWithParams(
+      CreateAppLaunchParamsUserContainer(
           browser()->profile(), extension,
           WindowOpenDisposition::NEW_FOREGROUND_TAB,
           apps::LaunchSource::kFromCommandLine));

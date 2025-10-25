@@ -5,6 +5,7 @@
 #include "components/optimization_guide/core/model_execution/model_execution_fetcher.h"
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "components/optimization_guide/core/access_token_helper.h"
@@ -138,8 +139,45 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
     case ModelBasedCapabilityKey::kTextSafety:
       // TODO: b/330346344 - Add traffic annotation.
     case ModelBasedCapabilityKey::kPasswordChangeSubmission:
-      // TODO: b/380116258 - Add traffic annotation.
-      return MISSING_TRAFFIC_ANNOTATION;
+      return net::DefineNetworkTrafficAnnotation(
+          "password_change_submission_model_execution", R"(
+        semantics {
+          sender: "Automated Password Change"
+          description:
+            "Analyze page content to find elements that open and submit"
+            " password change forms for Chrome actuation."
+            " Lastly identities if the password change was successful."
+          trigger:
+            "User logged-in with a compromised credential and accepted "
+            "an option from the dialog to change password automatically."
+          destination: GOOGLE_OWNED_SERVICE
+          data:
+            "Title, URL, and content of the page, which may "
+            "potentially contain user input."
+          internal {
+            contacts {
+              email: "chrome-intelligence-core@google.com"
+            }
+          }
+          user_data {
+            type: ACCESS_TOKEN
+            type: SENSITIVE_URL
+            type: WEB_CONTENT
+          }
+          last_reviewed: "2026-07-03"
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "There is no dedicated setting for this feature."
+            "Users are free to choose whether to use the feature "
+            "or not when it's offered."
+          chrome_policy {
+            AutomatedPasswordChangeSettings {
+              AutomatedPasswordChangeSettings: 2
+            }
+          }
+        })");
     case ModelBasedCapabilityKey::kTest:
     case ModelBasedCapabilityKey::kBlingPrototyping:
       // Used for testing purposes. No real features use this.
@@ -222,6 +260,12 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
         }
       }
     })");
+    case ModelBasedCapabilityKey::kWalletablePassExtraction:
+      // TODO(crbug.com/441680019): Add network traffic annotation.
+      return MISSING_TRAFFIC_ANNOTATION;
+    case ModelBasedCapabilityKey::kAmountExtraction:
+      // TODO(crbug.com/445712869): Add network traffic annotation.
+      return MISSING_TRAFFIC_ANNOTATION;
     case ModelBasedCapabilityKey::kHistorySearch:
     case ModelBasedCapabilityKey::kHistoryQueryIntent:
     case ModelBasedCapabilityKey::kPromptApi:
@@ -230,6 +274,7 @@ net::NetworkTrafficAnnotationTag GetNetworkTrafficAnnotation(
     case ModelBasedCapabilityKey::kSummarize:
     case ModelBasedCapabilityKey::kWritingAssistanceApi:
     case ModelBasedCapabilityKey::kProofreaderApi:
+    case ModelBasedCapabilityKey::kOnDeviceSpeechRecognition:
       // On-device only feature.
       NOTREACHED();
   }
@@ -251,6 +296,36 @@ void AppendHeadersIfNeeded(network::ResourceRequest& request) {
   }
   request.headers.SetHeaderIfMissing(
       kOptimizationGuideModelExecutionDebugLogsHeaderKey, "");
+}
+
+// Returns whether model executions for the `feature` require an access token.
+bool IsAccessTokenRequiredForFeature(ModelBasedCapabilityKey feature) {
+  switch (feature) {
+    case ModelBasedCapabilityKey::kCompose:
+    case ModelBasedCapabilityKey::kTabOrganization:
+    case ModelBasedCapabilityKey::kWallpaperSearch:
+    case ModelBasedCapabilityKey::kTest:
+    case ModelBasedCapabilityKey::kTextSafety:
+    case ModelBasedCapabilityKey::kPromptApi:
+    case ModelBasedCapabilityKey::kHistorySearch:
+    case ModelBasedCapabilityKey::kSummarize:
+    case ModelBasedCapabilityKey::kHistoryQueryIntent:
+    case ModelBasedCapabilityKey::kBlingPrototyping:
+    case ModelBasedCapabilityKey::kPasswordChangeSubmission:
+    case ModelBasedCapabilityKey::kScamDetection:
+    case ModelBasedCapabilityKey::kPermissionsAi:
+    case ModelBasedCapabilityKey::kProofreaderApi:
+    case ModelBasedCapabilityKey::kWritingAssistanceApi:
+    case ModelBasedCapabilityKey::kEnhancedCalendar:
+    case ModelBasedCapabilityKey::kZeroStateSuggestions:
+    case ModelBasedCapabilityKey::kWalletablePassExtraction:
+    case ModelBasedCapabilityKey::kAmountExtraction:
+    case ModelBasedCapabilityKey::kOnDeviceSpeechRecognition:
+      return true;
+    case ModelBasedCapabilityKey::kFormsClassifications:
+      return !base::FeatureList::IsEnabled(
+          features::kOptimizationGuideBypassFormsClassificationAuth);
+  }
 }
 
 }  // namespace
@@ -311,19 +386,20 @@ void ModelExecutionFetcher::ExecuteModel(
   std::string serialized_request;
   execute_request.SerializeToString(&serialized_request);
 
-  RequestAccessToken(
-      identity_manager,
-      {GaiaConstants::kOptimizationGuideServiceModelExecutionOAuth2Scope},
+  HandleTokenRequestFlow(
+      IsAccessTokenRequiredForFeature(feature), identity_manager,
+      signin::OAuthConsumerId::kOptimizationGuideModelExecution,
       base::BindOnce(&ModelExecutionFetcher::OnAccessTokenReceived,
-                     weak_ptr_factory_.GetWeakPtr(), serialized_request,
-                     timeout));
+                     weak_ptr_factory_.GetWeakPtr(), feature,
+                     serialized_request, timeout));
 }
 
 void ModelExecutionFetcher::OnAccessTokenReceived(
+    ModelBasedCapabilityKey feature,
     const std::string& serialized_request,
     std::optional<base::TimeDelta> timeout,
     const std::string& access_token) {
-  if (access_token.empty()) {
+  if (IsAccessTokenRequiredForFeature(feature) && access_token.empty()) {
     RecordRequestStatusHistogram(*model_execution_feature_,
                                  FetcherRequestStatus::kUserNotSignedIn);
     std::move(model_execution_callback_)

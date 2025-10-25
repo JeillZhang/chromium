@@ -10,18 +10,14 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/lens/core/mojom/geometry.mojom.h"
-#include "chrome/browser/ui/lens/lens_overlay_controller.h"
 #include "chrome/browser/ui/lens/lens_overlay_query_controller.h"
 #include "components/lens/lens_overlay_dismissal_source.h"
 #include "components/lens/lens_overlay_invocation_source.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
-#include "components/optimization_guide/content/browser/page_context_eligibility.h"
 #include "components/tabs/public/tab_interface.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
 #include "ui/gfx/geometry/rect.h"
-
-class LensOverlayController;
-class GURL;
 
 namespace lens {
 class LensSessionMetricsLogger;
@@ -29,6 +25,7 @@ class LensOverlayEventHandler;
 class LensOverlayGen204Controller;
 class LensOverlaySidePanelCoordinator;
 class LensPermissionBubbleController;
+class LensComposeboxController;
 class LensSearchboxController;
 class LensSearchContextualizationController;
 }  // namespace lens
@@ -45,8 +42,11 @@ namespace syncer {
 class SyncService;
 }  // namespace syncer
 
+class GURL;
+class LensOverlayController;
 class PrefService;
 class ThemeService;
+enum class SidePanelEntryHideReason;
 
 // Controller for all Lens Search features in Chrome. All external entry points
 // should go through this controller.
@@ -55,6 +55,9 @@ class LensSearchController {
  public:
   explicit LensSearchController(tabs::TabInterface* tab);
   virtual ~LensSearchController();
+
+  DECLARE_USER_DATA(LensSearchController);
+  static LensSearchController* From(tabs::TabInterface* tab);
 
   // Initializes all the necessary dependencies for the LensSearchController.
   void Initialize(variations::VariationsClient* variations_client,
@@ -103,6 +106,10 @@ class LensSearchController {
       const gfx::Rect& region_bounds,
       const SkBitmap& region_bitmap);
 
+  // Opens the Lens overlay in the current session. This is a no-op if the
+  // overlay is already open or if the current Lens session is not active.
+  void OpenLensOverlayInCurrentSession();
+
   // Starts the contextualization flow without the overlay being shown to the
   // user. Virtual for testing.
   virtual void StartContextualization(
@@ -120,6 +127,26 @@ class LensSearchController {
       AutocompleteMatchType::Type match_type,
       bool is_zero_prefix_suggestion);
 
+  // Issues a zero state request for Lens to fulfill. Starts contextualization
+  // flow and once contextualization is complete, issues a Lens region request
+  // with the entire viewport selected as the region. Does not open the overlay
+  // UI.
+  void IssueZeroStateRequest(
+      lens::LensOverlayInvocationSource invocation_source);
+
+  // If `suppress_contextualization` is true, queries will not be performed with
+  // contextualization for the duration of the session. However,
+  // contextualization may still be initialized as normal.
+  // TODO(crbug.com/439082079): Remove `suppress_contextualization` after
+  // experiment completes as it is not intended to launch.
+  void IssueTextSearchRequest(
+      lens::LensOverlayInvocationSource invocation_source,
+      std::string query_text,
+      std::map<std::string, std::string> additional_query_parameters,
+      AutocompleteMatchType::Type match_type,
+      bool is_zero_prefix_suggestion,
+      bool suppress_contextualization);
+
   // Starts the closing process of the overlay. This is an asynchronous process
   // with the following sequence:
   //   (1) Close the side panel
@@ -132,11 +159,22 @@ class LensSearchController {
   // nice if the overlay is visible when this is called.
   virtual void CloseLensSync(lens::LensOverlayDismissalSource dismissal_source);
 
+  // Hides the Lens overlay. This does not close the side panel. If the overlay
+  // is open without the side panel, this will end the Lens session.
+  void HideOverlay(lens::LensOverlayDismissalSource dismissal_source);
+
+  // Same as above, but does not close the session when the overlay is closed.
+  // Can only be called when the side panel is open.
+  void HideOverlay();
+
   // Launches the survey if the user has not already seen it.
   void MaybeLaunchSurvey();
 
   // Returns true if Lens is currently active on this tab.
   bool IsActive();
+
+  // Returns true if either the overlay or the side panel is showing.
+  bool IsShowingUI();
 
   // Returns true if Lens is currently off on this tab.
   bool IsOff();
@@ -157,6 +195,12 @@ class LensSearchController {
   // Gets the page title.
   std::optional<std::string> GetPageTitle();
 
+  // Handles the creation of a new thumbnail from a bitmap.
+  void HandleThumbnailCreatedBitmap(const SkBitmap& thumbnail);
+
+  // Clears the visual selection thumbnail on the searchbox.
+  void ClearVisualSelectionThumbnail();
+
   // Returns the weak pointer to this class.
   base::WeakPtr<LensSearchController> GetWeakPtr();
 
@@ -173,10 +217,11 @@ class LensSearchController {
   // Returns the LensSearchboxController.
   lens::LensSearchboxController* lens_searchbox_controller();
 
+  // Returns the LensComposeboxController.
+  lens::LensComposeboxController* lens_composebox_controller();
+
   // Returns the event handler for this instance of the Lens Overlay.
   lens::LensOverlayEventHandler* lens_overlay_event_handler();
-
-  optimization_guide::PageContextEligibility* page_context_eligibility();
 
   // Returns the LensSearchContextualizationController.
   lens::LensSearchContextualizationController*
@@ -184,13 +229,6 @@ class LensSearchController {
 
   // Returns the LensSessionMetricsLogger.
   lens::LensSessionMetricsLogger* lens_session_metrics_logger();
-
-  // Testing function for setting the page context eligibility API for this
-  // controller.
-  void set_page_context_eligibility_for_testing(
-      optimization_guide::PageContextEligibility* page_context_eligibility) {
-    page_context_eligibility_ = page_context_eligibility;
-  }
 
   lens::LensPermissionBubbleController*
   get_lens_permission_bubble_controller_for_testing() {
@@ -238,6 +276,11 @@ class LensSearchController {
   virtual std::unique_ptr<lens::LensSearchboxController>
   CreateLensSearchboxController();
 
+  // Override these methods to be able to track calls made to the composebox
+  // controller.
+  virtual std::unique_ptr<lens::LensComposeboxController>
+  CreateLensComposeboxController();
+
   // Override these methods to be able to track calls made to the
   // contextualization controller.
   virtual std::unique_ptr<lens::LensSearchContextualizationController>
@@ -254,16 +297,19 @@ class LensSearchController {
   // cleaning up.
   void CloseLensPart2(lens::LensOverlayDismissalSource dismissal_source);
 
+  // Called on the UI thread with the processed thumbnail URI.
+  void OnThumbnailProcessed(const std::string& thumbnail_uri);
+
+  // The final step for closing the overlay. This is called after the lens
+  // overlay has faded out.
+  void OnOverlayHidden(std::optional<lens::LensOverlayDismissalSource> dismissal_source);
+
   // Called before the lens results panel begins hiding. This is called before
   // any side panel closing animations begin.
   void OnSidePanelWillHide(SidePanelEntryHideReason reason);
 
   // Called when the lens side panel has been hidden.
   void OnSidePanelHidden();
-
-  // Override these methods to be able to track calls made to the page context
-  // eligibility API.
-  virtual void CreatePageContextEligibilityAPI();
 
   // Internal state machine. States are mutually exclusive. Exposed for testing.
   enum class State {
@@ -295,8 +341,6 @@ class LensSearchController {
   State state() { return state_; }
 
  private:
-  void OnPageContextEligibilityAPILoaded(
-      optimization_guide::PageContextEligibility* page_context_eligibility);
 
   // Passes the correct callbacks and dependencies to the protected
   // CreateLensQueryController method.
@@ -305,7 +349,11 @@ class LensSearchController {
 
   // Creates all state necessary to start a Lens session. This method contains
   // shared state that is used no matter the entrypoint.
-  void StartLensSession(lens::LensOverlayInvocationSource invocation_source);
+  void StartLensSession(lens::LensOverlayInvocationSource invocation_source,
+                        bool suppress_contextualization = false);
+
+  // Shows the mobile promo if the user is eligible.
+  void MaybeShowMobilePromo();
 
   // Runs the eligibility checks necessary for Lens to open on this tab. If the
   // user has not granted permission to use Lens on this tab, the permission
@@ -340,8 +388,9 @@ class LensSearchController {
       lens::proto::LensOverlaySuggestInputs suggest_inputs);
 
   // Callback used by the query controller to pass the thumbnail bytes of a
-  // visual interaction request to the searchbox.
-  void HandleThumbnailCreated(const std::string& thumbnail_bytes);
+  // visual interaction request to the searchbox and composebox.
+  void HandleThumbnailCreated(const std::string& thumbnail_bytes,
+                              const SkBitmap& region_bitmap);
 
   // Callback used by the query controller to notify the search controller of
   // the progress of the page content upload.
@@ -362,12 +411,23 @@ class LensSearchController {
   void WillDetach(tabs::TabInterface* tab,
                   tabs::TabInterface::DetachReason reason);
 
+  // Callback to run when the page context has been updated as part of a zero
+  // state request and the region search request should now be issued.
+  void OnPageContextUpdatedForZeroStateRequest(
+      lens::LensOverlayInvocationSource invocation_source,
+      base::Time query_start_time);
+
   // Whether the LensSearchController has been initialized. Meaning, all the
   // dependencies have been initialized and the controller is ready to use.
   bool initialized_ = false;
 
   // Tracks the internal state machine.
   State state_ = State::kOff;
+
+  // Tracks the state of the Lens Search feature when the tab is backgrounded.
+  // This state is used to restore the Lens Search feature to the same state
+  // when the tab is foregrounded.
+  State backgrounded_state_ = State::kOff;
 
   // Indicates whether a trigger for the HaTS survey has occurred in the current
   // session. Note that a trigger does not mean the survey will actually be
@@ -387,9 +447,6 @@ class LensSearchController {
   std::unique_ptr<lens::LensPermissionBubbleController>
       lens_permission_bubble_controller_;
 
-  // The overlay controller for the Lens Search feature on this tab.
-  std::unique_ptr<LensOverlayController> lens_overlay_controller_;
-
   // The controller for sending gen204 pings. Owned by this class so it can
   // outlive the query controller, allowing gen204 requests to be sent upon
   // query end.
@@ -404,6 +461,9 @@ class LensSearchController {
   // interactions, without a dependency on the overlay controller.
   std::unique_ptr<lens::LensSearchboxController> lens_searchbox_controller_;
 
+  // The composebox controller for the Lens Search feature on this tab.
+  std::unique_ptr<lens::LensComposeboxController> lens_composebox_controller_;
+
   // The contextualization controller for the Lens Search feature on this tab.
   std::unique_ptr<lens::LensSearchContextualizationController>
       lens_contextualization_controller_;
@@ -415,11 +475,11 @@ class LensSearchController {
   // logic.
   std::unique_ptr<lens::LensOverlayEventHandler> lens_overlay_event_handler_;
 
+    // The overlay controller for the Lens Search feature on this tab.
+  std::unique_ptr<LensOverlayController> lens_overlay_controller_;
+
   // Holds subscriptions for TabInterface callbacks.
   std::vector<base::CallbackListSubscription> tab_subscriptions_;
-
-  // The page context eligibility API if it has been fetched. Can be nullptr.
-  raw_ptr<optimization_guide::PageContextEligibility> page_context_eligibility_;
 
   // Owned by Profile, and thus guaranteed to outlive this instance.
   raw_ptr<variations::VariationsClient> variations_client_;
@@ -441,6 +501,8 @@ class LensSearchController {
 
   // Owns this class.
   raw_ptr<tabs::TabInterface> tab_;
+
+  ui::ScopedUnownedUserData<LensSearchController> scoped_unowned_user_data_;
 
   // Must be the last member.
   base::WeakPtrFactory<LensSearchController> weak_ptr_factory_{this};

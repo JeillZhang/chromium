@@ -86,7 +86,6 @@ ASSERT_SIZE(ShapeResultCharacterData, SameSizeAsShapeResultCharacterData);
 struct SameSizeAsShapeResult {
   Vector<int> character_position_;
   Vector<UntracedMember<void*>, 1> runs_;
-  UntracedMember<void*> deprecated_ink_bounds_;
   float width;
   unsigned start_index_;
   unsigned bitfields;
@@ -429,7 +428,6 @@ ShapeResult::ShapeResult(const ShapeResult& other)
 ShapeResult::~ShapeResult() = default;
 
 void ShapeResult::Trace(Visitor* visitor) const {
-  visitor->Trace(deprecated_ink_bounds_);
   visitor->Trace(runs_);
   visitor->Trace(character_position_);
 }
@@ -596,7 +594,6 @@ void ShapeResult::OffsetForPosition(float target_x,
     if (offset_for_run >= 0 && offset_for_run < run->width_) {
       // The x value in question is within this script run.
       run->CharacterIndexForXPosition(offset_for_run, break_glyphs, result);
-      result->characters_on_left_runs = characters_so_far;
       if (IsRtl()) {
         result->left_character_index =
             characters_so_far + result->left_character_index;
@@ -626,16 +623,13 @@ void ShapeResult::OffsetForPosition(float target_x,
     result->right_character_index += characters_so_far;
   }
 
-  result->characters_on_left_runs = characters_so_far;
-
   DCHECK_LE(result->left_character_index, NumCharacters());
   DCHECK_LE(result->right_character_index, NumCharacters() + 1);
 }
 
-unsigned ShapeResult::OffsetForPosition(float x,
-                                        BreakGlyphsOption break_glyphs) const {
+unsigned ShapeResult::OffsetForPosition(float x) const {
   GlyphIndexResult result;
-  OffsetForPosition(x, break_glyphs, &result);
+  OffsetForPosition(x, BreakGlyphsOption(true), &result);
 
   // For LTR, the offset is always the left one.
   if (IsLtr())
@@ -649,15 +643,12 @@ unsigned ShapeResult::OffsetForPosition(float x,
   return result.right_character_index;
 }
 
-unsigned ShapeResult::CaretOffsetForHitTest(
-    float x,
-    const StringView& text,
-    BreakGlyphsOption break_glyphs_option) const {
-  if (break_glyphs_option)
-    EnsureGraphemes(text);
+unsigned ShapeResult::CaretOffsetForHitTest(float x,
+                                            const StringView& text) const {
+  EnsureGraphemes(text);
 
   GlyphIndexResult result;
-  OffsetForPosition(x, break_glyphs_option, &result);
+  OffsetForPosition(x, BreakGlyphsOption(true), &result);
 
   if (x - result.origin_x <= result.advance / 2)
     return result.left_character_index;
@@ -853,14 +844,15 @@ float ShapeResult::ForEachGlyph(float initial_advance,
   return total_advance;
 }
 
-unsigned ShapeResult::CountGraphemesInCluster(base::span<const UChar> str,
-                                              uint16_t start_index,
-                                              uint16_t end_index) {
+unsigned ShapeResult::CountGraphemesInClusterDeprecated(
+    base::span<const UChar> str,
+    uint16_t start_index,
+    uint16_t end_index) {
   if (start_index > end_index)
     std::swap(start_index, end_index);
   uint16_t length = end_index - start_index;
   TextBreakIterator* cursor_pos_iterator =
-      CursorMovementIterator(str.subspan(start_index, length));
+      CursorMovementIteratorDeprecated(str.subspan(start_index, length));
   if (!cursor_pos_iterator)
     return 0;
 
@@ -932,8 +924,15 @@ float ShapeResult::ForEachGraphemeClusters(const StringView& text,
               is_run_end ? run->start_index_ + run->num_characters_ + run_offset
                          : run->GlyphToCharacterIndex(i + 1) + run_offset);
         }
-        graphemes_in_cluster =
-            CountGraphemesInCluster(text.Span16(), cluster_start, cluster_end);
+        if (RuntimeEnabledFeatures::DeprecateCursorMovementIteratorEnabled()) {
+          graphemes_in_cluster = NumGraphemeClusters(
+              cluster_end >= cluster_start
+                  ? StringView(text, cluster_start, cluster_end - cluster_start)
+                  : StringView(text, cluster_end, cluster_start - cluster_end));
+        } else {
+          graphemes_in_cluster = ShapeResult::CountGraphemesInClusterDeprecated(
+              text.Span16(), cluster_start, cluster_end);
+        }
         if (!graphemes_in_cluster || !cluster_advance)
           continue;
 
@@ -947,6 +946,20 @@ float ShapeResult::ForEachGraphemeClusters(const StringView& text,
     }
   }
   return advance_so_far;
+}
+
+GlyphData ShapeResult::EmphasisMarkGlyphData(
+    const FontDescription& font_description) const {
+  for (const auto& run : runs_) {
+    DCHECK(run->font_data_);
+    if (run->glyph_data_.IsEmpty()) {
+      continue;
+    }
+    return GlyphData(run->glyph_data_[0].glyph,
+                     run->font_data_->EmphasisMarkFontData(font_description),
+                     run->CanvasRotation());
+  }
+  return GlyphData();
 }
 
 namespace {
@@ -970,12 +983,8 @@ inline bool IsCursiveScript(hb_script_t script) {
 }
 }  // anonymous namespace
 
-// TODO(kojii): VC2015 fails to explicit instantiation of a member function.
-// Typed functions + this private function are to instantiate instances.
-template <typename TextContainerType>
-float ShapeResult::ApplySpacingImpl(
-    ShapeResultSpacing<TextContainerType>& spacing,
-    int text_start_offset) {
+float ShapeResult::ApplySpacingImpl(ShapeResultSpacing& spacing,
+                                    int text_start_offset) {
   float offset = 0;
   float total_advance = 0;
   TextRunLayoutUnit space;
@@ -995,9 +1004,9 @@ float ShapeResult::ApplySpacingImpl(
         continue;
       }
 
-      typename ShapeResultSpacing<TextContainerType>::ComputeSpacingParameters
-          parameters{.index = run_start_index + glyph_data.character_index,
-                     .original_advance = glyph_data.advance};
+      ShapeResultSpacing::ComputeSpacingParameters parameters{
+          .index = run_start_index + glyph_data.character_index,
+          .original_advance = glyph_data.advance};
       space = spacing.ComputeSpacing(parameters, offset,
                                      IsCursiveScript(run->script_));
       glyph_data.AddAdvance(space);
@@ -1022,24 +1031,13 @@ float ShapeResult::ApplySpacingImpl(
   return space;
 }
 
-float ShapeResult::ApplySpacing(ShapeResultSpacing<String>& spacing,
+float ShapeResult::ApplySpacing(ShapeResultSpacing& spacing,
                                 int text_start_offset) {
   // For simplicity, we apply spacing once only. If you want to do multiple
   // time, please get rid of below |DCHECK()|.
   DCHECK(!is_applied_spacing_) << this;
   is_applied_spacing_ = true;
   return ApplySpacingImpl(spacing, text_start_offset);
-}
-
-ShapeResult* ShapeResult::ApplySpacingToCopy(
-    ShapeResultSpacing<TextRun>& spacing,
-    const TextRun& run) const {
-  unsigned index_of_sub_run = spacing.Text().IndexOfSubRun(run);
-  DCHECK_NE(std::numeric_limits<unsigned>::max(), index_of_sub_run);
-  ShapeResult* result = MakeGarbageCollected<ShapeResult>(*this);
-  if (index_of_sub_run != std::numeric_limits<unsigned>::max())
-    result->ApplySpacingImpl(spacing, index_of_sub_run);
-  return result;
 }
 
 void ShapeResult::ApplyLeadingExpansion(LayoutUnit expansion) {
@@ -1852,7 +1850,7 @@ const ShapeResult* ShapeResult::CreateForTabulationCharacters(
     unsigned start_index,
     unsigned length) {
   DCHECK_GT(length, 0u);
-  const SimpleFontData* font_data = font->PrimaryFont();
+  const SimpleFontData* font_data = font->PrimaryFontForTabSize();
   DCHECK(font_data);
   ShapeResult* result =
       MakeGarbageCollected<ShapeResult>(start_index, length, direction);
@@ -2277,17 +2275,12 @@ unsigned ShapeResult::CachedPreviousSafeToBreakOffset(unsigned offset) const {
   }
 
   // Previous safe break is at the start of the run.
-  return RuntimeEnabledFeatures::
-                 ShapeResultCachedPreviousSafeToBreakOffsetEnabled()
-             ? start_index_
-             : 0;
+  return start_index_;
 }
 
-namespace {
-
-void AddRunInfoRanges(const ShapeResultRun& run_info,
-                      float offset,
-                      Vector<CharacterRange>* ranges) {
+void ShapeResult::AddRunInfoRanges(const ShapeResultRun& run_info,
+                                   float offset,
+                                   Vector<CharacterRange>* ranges) {
   Vector<float> character_widths(run_info.num_characters_);
   for (const auto& glyph : run_info.glyph_data_) {
     // TODO(crbug.com/1147011): This should not happen, but crash logs indicate
@@ -2314,8 +2307,6 @@ void AddRunInfoRanges(const ShapeResultRun& run_info,
       ranges->push_back(CharacterRange(start, end, 0, 0));
   }
 }
-
-}  // anonymous namespace
 
 float ShapeResult::IndividualCharacterRanges(Vector<CharacterRange>* ranges,
                                              float start_x) const {

@@ -1,0 +1,59 @@
+// Copyright 2025 The Chromium Authors
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+
+#include "third_party/blink/renderer/modules/xr/xr_shaped_layer.h"
+
+#include "third_party/blink/renderer/bindings/modules/v8/v8_xr_layer_init.h"
+#include "third_party/blink/renderer/modules/xr/xr_reference_space.h"
+#include "third_party/blink/renderer/modules/xr/xr_session.h"
+
+namespace blink {
+
+XRShapedLayer::XRShapedLayer(const XRLayerInit* init,
+                             XRGraphicsBinding* binding,
+                             XRLayerDrawingContext* drawing_context)
+    : XRCompositionLayer(binding, drawing_context),
+      xr_space_(init->space()),
+      texture_width_(init->viewPixelWidth()),
+      texture_height_(init->viewPixelHeight()),
+      is_static_(init->isStatic()),
+      clear_on_access_(init->clearOnAccess()) {
+  SetLayout(init->layout());
+  SetMipLevels(init->mipLevels());
+}
+
+void XRShapedLayer::setSpace(XRSpace* space) {
+  xr_space_ = space;
+  SetModified(true);
+}
+
+device::mojom::blink::XRReferenceSpaceType
+XRShapedLayer::GetReferenceSpaceType() const {
+  if (space()->IsReferenceSpace()) {
+    return static_cast<XRReferenceSpace*>(space())->GetType();
+  }
+  // TODO(crbug.com/454041065): add non-reference space support.
+  return device::mojom::blink::XRReferenceSpaceType::kLocal;
+}
+
+void XRShapedLayer::UpdateLayerBackend() {
+  if (auto* layer_manager = session()->LayerManager(); layer_manager) {
+    device::mojom::blink::XRLayerMutableDataPtr mutable_data =
+        device::mojom::blink::XRLayerMutableData::New();
+    mutable_data->blend_texture_source_alpha = blendTextureSourceAlpha();
+    mutable_data->opacity = opacity();
+    mutable_data->reference_space_type = GetReferenceSpaceType();
+
+    // Layer Specific data.
+    mutable_data->layer_data = CreateLayerSpecificData();
+    layer_manager->UpdateCompositionLayer(layer_id(), std::move(mutable_data));
+  }
+}
+
+void XRShapedLayer::Trace(Visitor* visitor) const {
+  visitor->Trace(xr_space_);
+  XRCompositionLayer::Trace(visitor);
+}
+
+}  // namespace blink

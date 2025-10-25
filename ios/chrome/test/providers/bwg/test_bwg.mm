@@ -16,9 +16,40 @@ std::unique_ptr<network::ResourceRequest> CreateResourceRequest() {
   return nullptr;
 }
 
-void StartBwgOverlay(
-    UIViewController* base_view_controller,
-    raw_ptr<AuthenticationService> auth_service,
-    std::unique_ptr<optimization_guide::proto::PageContext> page_context) {}
+void StartBwgOverlay(BWGConfiguration* bwg_configuration) {}
+
+const std::u16string GetPageContextShouldDetachScript() {
+  return uR"JS(
+      if (window.__gCrWeb && window.__gCrWeb.pageContext) {
+        if (typeof window.__gCrWeb.pageContext.shouldDetach === 'boolean') {
+          return window.__gCrWeb.pageContext.shouldDetach;
+        }
+        if (window.__gCrWeb.pageContext.shouldTimeout) {
+          while(true);
+        }
+      }
+      return false;
+  )JS";
+}
+
+id<BWGGatewayProtocol> CreateBWGGateway() {
+  return nil;
+}
+
+void CheckGeminiEligibility(AuthenticationService* auth_service,
+                            BWGEligibilityCallback completion) {}
+
+void ResetGemini() {}
+
+void UpdatePageAttachmentState(
+    BWGPageContextAttachmentState bwg_attachment_state) {}
+
+void SetZeroStateSuggestions(NSArray<NSString*>* suggestions) {}
+
+bool IsProtectedUrl(std::string url) {
+  return false;
+}
+
+void UpdatePageContext(GeminiPageContext* gemini_page_context) {}
 
 }  // namespace ios::provider

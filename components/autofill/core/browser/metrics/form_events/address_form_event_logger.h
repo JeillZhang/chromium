@@ -22,10 +22,14 @@
 
 namespace autofill::autofill_metrics {
 
-// To measure the added value of kAccount profiles, the filling readiness and
-// assistance metrics are split by profile category.
-// Even for assistance, the `kMixed` case is possible, since the metric is
-// emitted at navigation (rather than filling) time.
+// A superset of `AutofillProfileRecordTypeCategory` that additionally contains
+// a value `kMixed`. It is used to measure key metrics, broken down by the
+// `AutofillProfileRecordTypeCategory`. This helps to answer questions like,
+// "what is the acceptance of local addresses?" or "what percentage of users are
+// only ready because of home and work addresses?".
+// Since key metrics are only emitted on navigation, it is possible that users
+// are ready/were assisted/accepted profiles of different record type
+// categories. This case is represented by the kMixed enum value.
 enum class CategoryResolvedKeyMetricBucket {
   kNone = 0,
   kLocalOrSyncable = 1,
@@ -34,7 +38,8 @@ enum class CategoryResolvedKeyMetricBucket {
   kMixed = 4,
   kAccountHome = 5,
   kAccountWork = 6,
-  kMaxValue = kAccountWork
+  kAccountNameEmail = 7,
+  kMaxValue = kAccountNameEmail
 };
 
 class AddressFormEventLogger : public FormEventLoggerBase {
@@ -45,6 +50,12 @@ class AddressFormEventLogger : public FormEventLoggerBase {
 
   void UpdateProfileAvailabilityForReadiness(
       const std::vector<const AutofillProfile*>& profiles);
+
+  void OnDidShowSuggestions(const FormStructure& form,
+                            const AutofillField& field,
+                            base::TimeTicks form_parsed_timestamp,
+                            bool off_the_record,
+                            base::span<const Suggestion> suggestions) override;
 
   void OnDidFillFormFillingSuggestion(
       const AutofillProfile& profile,
@@ -60,9 +71,10 @@ class AddressFormEventLogger : public FormEventLoggerBase {
   // For the profiles used to build the shown suggestions,
   // `profile_last_used_time_per_guid` specifies the last time each of the
   // profiles was used.
-  void OnDidShownAutofillOnTyping(
+  void OnDidShowAddressOnTyping(
       FieldGlobalId field_global_id,
       FieldTypeSet field_types_used,
+      FieldTypeSet triggering_field_types,
       std::map<std::string, base::TimeDelta> profile_last_used_time_per_guid);
 
   // `field_global_id` is the id of the field where a
@@ -72,15 +84,15 @@ class AddressFormEventLogger : public FormEventLoggerBase {
   // which `value` was derived from.
   // `profile_used_guid` specifies the profile used to build
   // the accepted suggestion.
-  void OnDidAcceptAutofillOnTyping(
-      FieldGlobalId field_global_id,
-      const std::u16string& value,
-      FieldType field_type_used_to_build_suggestion,
-      const std::string profile_used_guid);
+  void OnDidAcceptAddressOnTyping(FieldGlobalId field_global_id,
+                                  const std::u16string& value,
+                                  FieldType field_type_used_to_build_suggestion,
+                                  const std::string profile_used_guid);
   void LogAutofillAddressOnTypingCorrectnessMetrics(const FormStructure& form);
 
+  void OnDestroyed() override;
+
  protected:
-  void RecordPollSuggestions() override;
   void RecordParseForm() override;
   void RecordShowSuggestions() override;
   void OnLog(const std::string& name,
@@ -107,9 +119,10 @@ class AddressFormEventLogger : public FormEventLoggerBase {
   // suggestion.
   DenseSet<AutofillProfileRecordTypeCategory> profile_categories_filled_;
   // For fields where `SuggestionType::kAddressEntryOnTyping`
-  // suggestions were shown, store the `FieldTypeSet` used to build the
-  // suggestions keyed by the field global identifier.
-  std::map<FieldGlobalId, FieldTypeSet>
+  // suggestions were shown, stores whether the field is classified and the
+  // `FieldTypeSet` used to build the suggestions, keyed by the field global
+  // identifier.
+  std::map<FieldGlobalId, std::pair<bool, FieldTypeSet>>
       fields_where_autofill_on_typing_was_shown_;
   // For profiles that were used to build
   // `SuggestionType::kAddressEntryOnTyping` suggestions, store their last usage
@@ -126,6 +139,9 @@ class AddressFormEventLogger : public FormEventLoggerBase {
   std::map<FieldGlobalId, std::u16string> autofill_on_typing_value_used_;
 
   size_t record_type_count_ = 0;
+  bool home_profile_suggestion_present_ = false;
+  bool work_profile_suggestion_present_ = false;
+
 };
 
 }  // namespace autofill::autofill_metrics

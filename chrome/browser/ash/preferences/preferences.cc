@@ -548,11 +548,6 @@ void Preferences::RegisterProfilePrefs(
   registry->RegisterBooleanPref(::prefs::kFirstEolWarningDismissed, false);
   registry->RegisterBooleanPref(::prefs::kSecondEolWarningDismissed, false);
 
-  registry->RegisterBooleanPref(
-      ::prefs::kEolApproachingIncentiveNotificationDismissed, false);
-  registry->RegisterBooleanPref(::prefs::kEolPassedFinalIncentiveDismissed,
-                                false);
-
   // Extended Updates prefs.
   registry->RegisterBooleanPref(prefs::kExtendedUpdatesNotificationDismissed,
                                 false);
@@ -817,9 +812,8 @@ void Preferences::Init(Profile* profile, const user_manager::User* user) {
   if (user_is_primary_ && !login_input_method_id_used.empty()) {
     // Persist input method when transitioning from Login screen into the
     // session.
-    input_method::InputMethodPersistence::SetUserLastLoginInputMethodId(
-        login_input_method_id_used, input_method::InputMethodManager::Get(),
-        profile);
+    input_method::InputMethodPersistence::GetInstance()
+        ->SetUserLastLoginInputMethodId(login_input_method_id_used, profile);
   }
 
   // Note that |ime_state_| was modified by ApplyPreferences(), and
@@ -1331,13 +1325,12 @@ void Preferences::ApplyPreferences(ApplyReason reason,
         user_->IsChild()) {
       const base::Value::Dict& value =
           prefs_->GetDict(::prefs::kParentAccessCodeConfig);
-      known_user.SetPath(user_->GetAccountId(),
-                         ::prefs::kKnownUserParentAccessCodeConfig,
-                         base::Value(value.Clone()));
-      parent_access::ParentAccessService::Get().LoadConfigForUser(user_);
+      parent_access::ParentAccessService::Get().UpdateConfigForUser(
+          user_->GetAccountId(), value.Clone());
     } else {
-      known_user.RemovePref(user_->GetAccountId(),
-                            ::prefs::kKnownUserParentAccessCodeConfig);
+      // Remove the config.
+      parent_access::ParentAccessService::Get().UpdateConfigForUser(
+          user_->GetAccountId(), std::nullopt);
     }
   }
 

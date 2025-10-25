@@ -10,10 +10,8 @@
 
 #include <functional>
 #include <limits>
-#include <map>
 #include <memory>
 #include <set>
-#include <unordered_map>
 #include <vector>
 
 #include "base/containers/flat_map.h"
@@ -24,9 +22,10 @@
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "media/base/data_buffer.h"
-#include "third_party/blink/renderer/platform/allow_discouraged_type.h"
 #include "third_party/blink/renderer/platform/media/interval_map.h"
 #include "third_party/blink/renderer/platform/platform_export.h"
+#include "third_party/blink/renderer/platform/wtf/hash_map.h"
+#include "third_party/blink/renderer/platform/wtf/hash_traits.h"
 #include "third_party/blink/renderer/platform/wtf/thread_safe_ref_counted.h"
 
 namespace blink {
@@ -130,9 +129,6 @@ class PLATFORM_EXPORT MultiBuffer {
     // Ask the data provider to stop giving us data.
     // It's ok if the effect is not immediate.
     virtual void SetDeferred(bool deferred) = 0;
-
-    // Ask the provider if it has been deferred too long.
-    virtual bool IsStale() const = 0;
   };
 
   // MultiBuffers use a global shared LRU to free memory.
@@ -213,8 +209,11 @@ class PLATFORM_EXPORT MultiBuffer {
   // Identifies a block in the cache.
   // Block numbers can be calculated from byte positions as:
   // block_num = byte_pos >> block_size_shift
-  typedef MultiBufferBlockId BlockId;
-  typedef std::unordered_map<BlockId, scoped_refptr<media::DataBuffer>> DataMap;
+  using BlockId = MultiBufferBlockId;
+  using DataMap = HashMap<BlockId,
+                          scoped_refptr<media::DataBuffer>,
+                          // Block ids cannot be negative.
+                          IntHashTraits<BlockId, -1, -2>>;
 
   // Registers a reader at the given position.
   // If the cache does not already contain |pos|, it will activate
@@ -303,8 +302,6 @@ class PLATFORM_EXPORT MultiBuffer {
   // for a provider in a deferred state to wake up.
   void OnDataProviderEvent(DataProvider* provider);
 
-  size_t writer_index_size_for_testing() const { return writer_index_.size(); }
-
  protected:
   // Create a new writer at |pos| and return it.
   // Users needs to implemement this method.
@@ -337,7 +334,7 @@ class PLATFORM_EXPORT MultiBuffer {
   void ReleaseBlocks(const std::vector<MultiBufferBlockId>& blocks);
 
   // Figure out what state a writer at |pos| should be in.
-  ProviderState SuggestProviderState(const BlockId& pos, bool is_stale) const;
+  ProviderState SuggestProviderState(const BlockId& pos) const;
 
   // Returns true if a writer at |pos| is colliding with
   // output of another writer.
@@ -358,7 +355,7 @@ class PLATFORM_EXPORT MultiBuffer {
   bool is_client_audio_element_ = false;
 
   // Stores the actual data.
-  DataMap data_ ALLOW_DISCOURAGED_TYPE("TODO(crbug.com/40760651)");
+  DataMap data_;
 
   // protects data_
   // Note that because data_ is only modified on the a single thread,

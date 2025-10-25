@@ -18,9 +18,9 @@
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_component.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_execution_proto_descriptors.h"
+#include "components/optimization_guide/core/model_execution/remote_model_executor.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/core/optimization_guide_features.h"
-#include "components/optimization_guide/core/optimization_guide_model_executor.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
 #include "components/optimization_guide/machine_learning_tflite_buildflags.h"
@@ -30,7 +30,7 @@
 #include "components/optimization_guide/proto/string_value.pb.h"
 
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
-#include "components/optimization_guide/core/model_validator.h"
+#include "components/optimization_guide/core/inference/model_validator.h"
 #endif  // BUILD_WITH_TFLITE_LIB
 
 namespace {
@@ -194,11 +194,8 @@ void ModelValidatorKeyedService::PerformOnDeviceModelExecutionValidation(
   }
 
   using optimization_guide::SessionConfigParams;
-  on_device_validation_session_ = opt_guide_service->StartSession(
-      capability_key,
-      SessionConfigParams{
-          .execution_mode = SessionConfigParams::ExecutionMode::kOnDeviceOnly,
-      });
+  on_device_validation_session_ =
+      opt_guide_service->StartSession(capability_key, SessionConfigParams{});
   auto metadata = GetProtoFromAny(request.request_metadata());
   on_device_validation_session_->AddContext(*metadata);
   base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
@@ -231,7 +228,8 @@ void ModelValidatorKeyedService::OnDeviceModelExecuteResponse(
   }
   // Complete responses with empty log entry indicate errors.
   if (!result.execution_info || !result.provided_by_on_device) {
-    LOCAL_HISTOGRAM_BOOLEAN(kModelValidationErrorHistogramString, true);
+    LOCAL_HISTOGRAM_BOOLEAN(
+        "OptimizationGuide.ModelValidation.OnDevice.DidError", true);
   }
   proto::ModelValidationOutput output;
   optimization_guide::proto::ModelCall* model_call = output.add_model_calls();

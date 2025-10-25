@@ -13,9 +13,19 @@
 @protocol EditViewAnimatee;
 @protocol FakeboxButtonsSnapshotProvider;
 @protocol LocationBarAnimatee;
+@class LocationBarCoordinator;
 @protocol OmniboxPopupPresenterDelegate;
 @protocol OmniboxFocusDelegate;
 @protocol ToolbarOmniboxConsumer;
+
+// Delegate for height change.
+@protocol LocationBarCoordinatorHeightDelegate <NSObject>
+
+// Location bar in edit state required `height` changed.
+- (void)locationBarCoordinator:(LocationBarCoordinator*)coordinator
+      didChangeEditStateHeight:(CGFloat)height;
+
+@end
 
 // Location bar coordinator.
 @interface LocationBarCoordinator
@@ -27,6 +37,9 @@
 // Delegate for this coordinator.
 // TODO(crbug.com/41363340): Change this.
 @property(nonatomic, weak) id<OmniboxFocusDelegate> delegate;
+// Delegate for height changes.
+@property(nonatomic, weak) id<LocationBarCoordinatorHeightDelegate>
+    heightDelegate;
 
 @property(nonatomic, weak) id<OmniboxPopupPresenterDelegate>
     popupPresenterDelegate;
@@ -66,6 +79,9 @@
 
 // Sets whether Lens overlay is currently visible.
 - (void)setLensOverlayVisible:(BOOL)lensOverlayVisible;
+
+// Sets command dispatcher for page action menu entry point.
+- (void)setPageActionMenuEntryPointDispatcher;
 
 @end
 

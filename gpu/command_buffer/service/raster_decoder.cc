@@ -32,6 +32,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notimplemented.h"
 #include "base/numerics/checked_math.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -96,7 +97,6 @@
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
 #include "third_party/skia/include/utils/SkNoDrawCanvas.h"
 #include "ui/base/ui_base_features.h"
-#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_gl_api_implementation.h"
@@ -105,6 +105,7 @@
 
 #if BUILDFLAG(ENABLE_VULKAN)
 #include "components/viz/common/gpu/vulkan_context_provider.h"
+#include "gpu/command_buffer/service/drm_modifiers_filter_vulkan.h"
 #include "gpu/vulkan/vulkan_device_queue.h"
 #include "gpu/vulkan/vulkan_util.h"
 #endif  // BUILDFLAG(ENABLE_VULKAN)
@@ -146,9 +147,7 @@ namespace {
 base::AtomicSequenceNumber g_raster_decoder_id;
 
 // Controls whether we may yield during rasterization.
-BASE_FEATURE(kGpuYieldRasterization,
-             "GpuYieldRasterization",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kGpuYieldRasterization, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Controls how many ops are rastered before checking if we should yield.
 const base::FeatureParam<int> kGpuYieldRasterizationOpCount(
@@ -359,9 +358,7 @@ class RasterCommandsCompletedQuery : public QueryManager::Query {
         info.fFinishedContext = new base::WeakPtr<RasterCommandsCompletedQuery>(
             weak_ptr_factory_.GetWeakPtr());
         shared_context_state_->graphite_shared_context()->insertRecording(info);
-        shared_context_state_->graphite_shared_context()->submit();
 
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(SKIA_USE_DAWN)
         // Canvas typically uses Commands Completed query to implement
         // backpressures. We need to flush any delayed commands to make sure the
         // query can be completed in finite time.
@@ -370,9 +367,8 @@ class RasterCommandsCompletedQuery : public QueryManager::Query {
         // redrawn multiple times. Flushing here ensures that we send the draw
         // commands to GPU earlier, reducing the chance the canvas' rate limiter
         // kicks in.
-        shared_context_state_->dawn_context_provider()
-            ->FlushD3D11CommandsIfDelayed();
-#endif
+        shared_context_state_->graphite_shared_context()
+            ->submitAndFlushBackend();
       } else {
         finished_ = true;
       }
@@ -489,16 +485,19 @@ class RasterDecoderImpl final : public RasterDecoder,
 
   ~RasterDecoderImpl() override;
 
+  // RasterDecoder implementation.
+  ContextResult Initialize(bool enable_gpu_rasterization,
+                           bool lose_context_when_out_of_memory) override;
+  int GetRasterDecoderId() const override;
+  int DecoderIdForTest() override;
+  ServiceTransferCache* GetTransferCacheForTest() override;
+  void SetUpForRasterCHROMIUMForTest() override;
+  void SetOOMErrorForTest() override;
+  void DisableFlushWorkaroundForTest() override;
   gles2::GLES2Util* GetGLES2Util() override { return &util_; }
 
   // DecoderContext implementation.
   base::WeakPtr<DecoderContext> AsWeakPtr() override;
-  ContextResult Initialize(
-      const scoped_refptr<gl::GLSurface>& surface,
-      const scoped_refptr<gl::GLContext>& context,
-      bool offscreen,
-      const gles2::DisallowedFeatures& disallowed_features,
-      const ContextCreationAttribs& attrib_helper) override;
   void Destroy(bool have_context) override;
   bool MakeCurrent() override;
   gl::GLContext* GetGLContext() override;
@@ -600,12 +599,6 @@ class RasterDecoderImpl final : public RasterDecoder,
     NOTIMPLEMENTED();
     return false;
   }
-  int GetRasterDecoderId() const override;
-  int DecoderIdForTest() override;
-  ServiceTransferCache* GetTransferCacheForTest() override;
-  void SetUpForRasterCHROMIUMForTest() override;
-  void SetOOMErrorForTest() override;
-  void DisableFlushWorkaroundForTest() override;
 
   // ErrorClientState implementation.
   void OnContextLostError() override;
@@ -705,8 +698,10 @@ class RasterDecoderImpl final : public RasterDecoder,
                                  GLint yoffset,
                                  GLint x,
                                  GLint y,
-                                 GLsizei width,
-                                 GLsizei height,
+                                 GLsizei src_width,
+                                 GLsizei src_height,
+                                 GLsizei dst_width,
+                                 GLsizei dst_height,
                                  const volatile GLbyte* mailboxes);
   void DoWritePixelsINTERNAL(GLint x_offset,
                              GLint y_offset,
@@ -948,7 +943,7 @@ constexpr RasterDecoderImpl::CommandInfo RasterDecoderImpl::command_info[] = {
 };
 
 // static
-RasterDecoder* RasterDecoder::Create(
+std::unique_ptr<RasterDecoder> RasterDecoder::Create(
     DecoderClient* client,
     CommandBufferServiceBase* command_buffer_service,
     gles2::Outputter* outputter,
@@ -958,10 +953,10 @@ RasterDecoder* RasterDecoder::Create(
     SharedImageManager* shared_image_manager,
     scoped_refptr<SharedContextState> shared_context_state,
     bool is_privileged) {
-  return new RasterDecoderImpl(client, command_buffer_service, outputter,
-                               gpu_feature_info, gpu_preferences,
-                               std::move(memory_tracker), shared_image_manager,
-                               std::move(shared_context_state), is_privileged);
+  return std::make_unique<RasterDecoderImpl>(
+      client, command_buffer_service, outputter, gpu_feature_info,
+      gpu_preferences, std::move(memory_tracker), shared_image_manager,
+      std::move(shared_context_state), is_privileged);
 }
 
 RasterDecoder::RasterDecoder(DecoderClient* client,
@@ -1056,19 +1051,12 @@ base::WeakPtr<DecoderContext> RasterDecoderImpl::AsWeakPtr() {
 }
 
 ContextResult RasterDecoderImpl::Initialize(
-    const scoped_refptr<gl::GLSurface>& surface,
-    const scoped_refptr<gl::GLContext>& context,
-    bool offscreen,
-    const gles2::DisallowedFeatures& disallowed_features,
-    const ContextCreationAttribs& attrib_helper) {
+    bool enable_gpu_rasterization,
+    bool lose_context_when_out_of_memory) {
   TRACE_EVENT0("gpu", "RasterDecoderImpl::Initialize");
   DCHECK(shared_context_state_->IsCurrent(nullptr));
 
   set_initialized();
-
-  if (!offscreen) {
-    return ContextResult::kFatalFailure;
-  }
 
   if (gpu_preferences_.enable_gpu_debugging)
     set_debug(true);
@@ -1076,22 +1064,17 @@ ContextResult RasterDecoderImpl::Initialize(
   if (gpu_preferences_.enable_gpu_command_logging)
     SetLogCommands(true);
 
-  DCHECK_EQ(surface.get(), shared_context_state_->surface());
-  DCHECK_EQ(context.get(), shared_context_state_->context());
-
   // Create GPU Tracer for timing values.
   gpu_tracer_ = std::make_unique<gles2::GPUTracer>(
       this, shared_context_state_->GrContextIsGL());
 
-  // Save the loseContextWhenOutOfMemory context creation attribute.
-  lose_context_when_out_of_memory_ =
-      attrib_helper.lose_context_when_out_of_memory;
+  lose_context_when_out_of_memory_ = lose_context_when_out_of_memory;
 
   CHECK_GL_ERROR();
 
   query_manager_ = std::make_unique<RasterQueryManager>(shared_context_state_);
 
-  if (attrib_helper.enable_gpu_rasterization) {
+  if (enable_gpu_rasterization) {
     DCHECK(gr_context() || graphite_shared_context());
     use_gpu_raster_ = true;
     paint_cache_ = std::make_unique<cc::ServicePaintCache>();
@@ -1177,8 +1160,6 @@ Capabilities RasterDecoderImpl::GetCapabilities() {
   caps.using_vulkan_context =
       shared_context_state_->GrContextIsVulkan() ? true : false;
 
-  caps.max_copy_texture_chromium_size =
-      feature_info()->workarounds().max_copy_texture_chromium_size;
   caps.texture_format_etc1_npot =
       feature_info()->feature_flags().oes_compressed_etc1_rgb8_texture &&
       !feature_info()->workarounds().etc1_power_of_two_only;
@@ -1191,8 +1172,6 @@ Capabilities RasterDecoderImpl::GetCapabilities() {
   caps.render_buffer_format_bgra8888 =
       feature_info()->feature_flags().ext_render_buffer_format_bgra8888;
 
-  caps.angle_rgbx_internal_format =
-      feature_info()->feature_flags().angle_rgbx_internal_format;
   caps.chromium_gpu_fence = feature_info()->feature_flags().chromium_gpu_fence;
   caps.mesa_framebuffer_flip_y =
       feature_info()->feature_flags().mesa_framebuffer_flip_y;
@@ -1797,55 +1776,6 @@ error::Error RasterDecoderImpl::HandleEndQueryEXT(
   return error::kNoError;
 }
 
-error::Error RasterDecoderImpl::HandleQueryCounterEXT(
-    uint32_t immediate_data_size,
-    const volatile void* cmd_data) {
-  const volatile raster::cmds::QueryCounterEXT& c =
-      *static_cast<const volatile raster::cmds::QueryCounterEXT*>(cmd_data);
-  GLenum target = static_cast<GLenum>(c.target);
-  GLuint client_id = static_cast<GLuint>(c.id);
-  int32_t sync_shm_id = static_cast<int32_t>(c.sync_data_shm_id);
-  uint32_t sync_shm_offset = static_cast<uint32_t>(c.sync_data_shm_offset);
-  uint32_t submit_count = static_cast<GLuint>(c.submit_count);
-
-  if (target != GL_COMMANDS_ISSUED_TIMESTAMP_CHROMIUM) {
-    LOCAL_SET_GL_ERROR(GL_INVALID_ENUM, "glQueryCounterEXT",
-                       "unknown query target");
-    return error::kNoError;
-  }
-
-  scoped_refptr<Buffer> buffer = GetSharedMemoryBuffer(sync_shm_id);
-  if (!buffer)
-    return error::kInvalidArguments;
-  QuerySync* sync = static_cast<QuerySync*>(
-      buffer->GetDataAddress(sync_shm_offset, sizeof(QuerySync)));
-  if (!sync)
-    return error::kOutOfBounds;
-
-  QueryManager::Query* query = query_manager_->GetQuery(client_id);
-  if (!query) {
-    if (!query_manager_->IsValidQuery(client_id)) {
-      LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, "glQueryCounterEXT",
-                         "id not made by glGenQueriesEXT");
-      return error::kNoError;
-    }
-    query =
-        query_manager_->CreateQuery(target, client_id, std::move(buffer), sync);
-  } else {
-    if (query->target() != target) {
-      LOCAL_SET_GL_ERROR(GL_INVALID_OPERATION, "glQueryCounterEXT",
-                         "target does not match");
-      return error::kNoError;
-    } else if (query->sync() != sync) {
-      DLOG(ERROR) << "Shared memory used by query not the same as before";
-      return error::kInvalidArguments;
-    }
-  }
-  query_manager_->QueryCounter(query, submit_count);
-
-  return error::kNoError;
-}
-
 void RasterDecoderImpl::DoFinish() {
   shared_context_state_->FlushAndSubmit(/*sync_to_cpu=*/true);
   ProcessPendingQueries(/*did_finish=*/true);
@@ -1942,13 +1872,16 @@ void RasterDecoderImpl::DoCopySharedImageINTERNAL(
     GLint yoffset,
     GLint x,
     GLint y,
-    GLsizei width,
-    GLsizei height,
+    GLsizei src_width,
+    GLsizei src_height,
+    GLsizei dst_width,
+    GLsizei dst_height,
     const volatile GLbyte* mailboxes) {
   CopySharedImageHelper helper(&shared_image_representation_factory_,
                                shared_context_state_.get());
   auto result =
-      helper.CopySharedImage(xoffset, yoffset, x, y, width, height, mailboxes);
+      helper.CopySharedImage(xoffset, yoffset, x, y, src_width, src_height,
+                             dst_width, dst_height, mailboxes);
   if (!result.has_value()) {
     LOCAL_SET_GL_ERROR(result.error().gl_error,
                        result.error().function_name.c_str(),
@@ -3046,6 +2979,7 @@ error::Error RasterDecoderImpl::DoRasterCHROMIUM(GLuint raster_shm_id,
   }
 
   cc::PlaybackParams playback_params(nullptr, SkM44());
+  playback_params.destination_hdr_headroom = sk_surface_hdr_headroom_;
   TransferCacheDeserializeHelperImpl impl(raster_decoder_id_, transfer_cache());
   cc::PaintOp::DeserializeOptions options{
       .transfer_cache = &impl,
@@ -3055,7 +2989,6 @@ error::Error RasterDecoderImpl::DoRasterCHROMIUM(GLuint raster_shm_id,
           *shared_context_state_->scratch_deserialization_buffer(),
       .crash_dump_on_failure = !gpu_preferences_.disable_oopr_debug_crash_dump,
       .is_privileged = is_privileged_,
-      .hdr_headroom = sk_surface_hdr_headroom_,
       .shared_image_provider = paint_op_shared_image_provider_.get()};
 
   alignas(cc::PaintOpBuffer::kPaintOpAlign) char

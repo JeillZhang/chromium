@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_PASSWORDS_BUBBLE_CONTROLLERS_SAVE_UPDATE_BUBBLE_CONTROLLER_H_
 #define CHROME_BROWSER_UI_PASSWORDS_BUBBLE_CONTROLLERS_SAVE_UPDATE_BUBBLE_CONTROLLER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/passwords/bubble_controllers/common_saved_account_manager_bubble_controller.h"
 
 namespace base {
@@ -34,10 +35,6 @@ class SaveUpdateBubbleController
   // depending on the user input. |state_| only captures the correct state on
   // creation. This method returns true iff the current state is "update".
   bool IsCurrentStateUpdate() const;
-
-  // Returns true iff the bubble is supposed to show the footer about syncing
-  // to Google account.
-  bool ShouldShowFooter() const;
 
   // This method returns true iff the current state is "save" or "update" to a
   // password that is synced to the Google Account. This method covers

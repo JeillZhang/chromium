@@ -41,7 +41,7 @@ import org.chromium.components.browser_ui.site_settings.WebsitePermissionsFetche
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.util.TraceEventVectorDrawableCompat;
-import org.chromium.components.content_settings.ContentSettingValues;
+import org.chromium.components.content_settings.ContentSetting;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.ui.text.ChromeClickableSpan;
 import org.chromium.ui.text.SpanApplier;
@@ -220,7 +220,7 @@ public class TrackingProtectionSettings extends PrivacySandboxBaseFragment
                 ContentSettingsType.COOKIES,
                 primaryPattern,
                 secondaryPattern,
-                ContentSettingValues.ALLOW);
+                ContentSetting.ALLOW);
 
         String hostname = primaryPattern.equals(SITE_WILDCARD) ? secondaryPattern : primaryPattern;
         Toast.makeText(
@@ -249,7 +249,11 @@ public class TrackingProtectionSettings extends PrivacySandboxBaseFragment
     private void onExceptionsFetched(Collection<Website> sites) {
         List<WebsiteExceptionRowPreference> websites = new ArrayList<>();
         for (Website site : sites) {
-            if (mSearch == null || mSearch.isEmpty() || site.getTitle().contains(mSearch)) {
+            // Filter out any exceptions for first-party cookies.
+            if (site.representsThirdPartiesOnSite()
+                    && (mSearch == null
+                            || mSearch.isEmpty()
+                            || site.getTitle().contains(mSearch))) {
                 WebsiteExceptionRowPreference preference =
                         new WebsiteExceptionRowPreference(
                                 getContext(), site, mDelegate, this::refreshBlockingExceptions);

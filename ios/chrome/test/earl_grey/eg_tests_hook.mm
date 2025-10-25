@@ -2,22 +2,32 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import <MaterialComponents/MaterialSnackbar.h>
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
+// clang-format off
+#import "ios/chrome/app/tests_hook.h"
+// clang-format on
 
 #import "base/command_line.h"
 #import "base/files/file_path.h"
 #import "base/files/file_util.h"
 #import "base/logging.h"
 #import "base/strings/string_number_conversions.h"
+#import "base/strings/string_split.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/allow_check_is_test_for_testing.h"
 #import "base/time/time.h"
+#import "components/commerce/core/mock_shopping_service.h"
+#import "components/commerce/core/shopping_service.h"
 #import "components/data_sharing/public/data_sharing_service.h"
 #import "components/data_sharing/test_support/mock_preview_server_proxy.h"
 #import "components/feature_engagement/public/feature_activation.h"
 #import "components/password_manager/core/browser/sharing/fake_recipients_fetcher.h"
 #import "components/password_manager/ios/fake_bulk_leak_check_service.h"
-#import "components/plus_addresses/fake_plus_address_service.h"
+#import "components/plus_addresses/core/browser/fake_plus_address_service.h"
 #import "components/saved_tab_groups/delegate/tab_group_sync_delegate.h"
 #import "components/saved_tab_groups/internal/saved_tab_group_model.h"
 #import "components/saved_tab_groups/internal/tab_group_sync_coordinator.h"
@@ -29,7 +39,6 @@
 #import "components/signin/internal/identity_manager/profile_oauth2_token_service.h"
 #import "components/signin/internal/identity_manager/profile_oauth2_token_service_delegate.h"
 #import "components/sync_device_info/device_info_sync_service.h"
-#import "ios/chrome/app/tests_hook.h"
 #import "ios/chrome/browser/drive/model/test_drive_service.h"
 #import "ios/chrome/browser/flags/chrome_switches.h"
 #import "ios/chrome/browser/optimization_guide/model/optimization_guide_service.h"
@@ -42,7 +51,7 @@
 #import "ios/chrome/browser/shared/model/browser/browser_list.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list_factory.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
+#import "ios/chrome/browser/shared/public/snackbar/snackbar_constants.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity_manager.h"
 #import "ios/chrome/browser/signin/model/identity_manager_factory.h"
@@ -53,8 +62,14 @@
 #import "ios/chrome/test/app/signin_test_util.h"
 #import "ios/chrome/test/earl_grey/test_switches.h"
 #import "ios/chrome/test/providers/signin/fake_trusted_vault_client_backend.h"
+#import "testing/gmock/include/gmock/gmock.h"
+#import "ui/base/test/ios/ui_image_test_utils.h"
 
 namespace tests_hook {
+
+bool DisableGeminiEligibilityCheck() {
+  return true;
+}
 
 bool DisableAppGroupAccess() {
   return true;
@@ -118,9 +133,9 @@ std::unique_ptr<ProfileOAuth2TokenService> GetOverriddenTokenService(
   return token_service;
 }
 
-bool DisableUpgradeSigninPromo() {
+bool DisableFullscreenSigninPromo() {
   return !base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kEnableUpgradeSigninPromo);
+      switches::kEnableFullscreenSigninPromo);
 }
 
 bool DisableUpdateService() {
@@ -190,8 +205,7 @@ std::unique_ptr<tab_groups::TabGroupSyncService> CreateTabGroupSyncService(
     ProfileIOS* profile) {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
 
-  if (!IsTabGroupSyncEnabled() ||
-      !command_line->HasSwitch(test_switches::kEnableFakeTabGroupSyncService)) {
+  if (!command_line->HasSwitch(test_switches::kEnableFakeTabGroupSyncService)) {
     return nullptr;
   }
 
@@ -220,6 +234,38 @@ std::unique_ptr<tab_groups::TabGroupSyncService> CreateTabGroupSyncService(
   sync_service->SetTabGroupSyncDelegate(std::move(delegate));
 
   return sync_service;
+}
+
+std::unique_ptr<commerce::ShoppingService> CreateShoppingService(
+    ProfileIOS* profile) {
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (!command_line->HasSwitch(test_switches::kMockShoppingService)) {
+    return nullptr;
+  }
+
+  auto service =
+      std::make_unique<testing::NiceMock<commerce::MockShoppingService>>();
+
+  const std::vector<std::string> args = base::SplitString(
+      command_line->GetSwitchValueASCII(test_switches::kMockShoppingService),
+      ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  for (const std::string& value : args) {
+    if (value == "is-eligible") {
+      service->SetIsShoppingListEligible(true);
+      continue;
+    }
+
+    if (value == "has-empty-price-tracked-bookmarks-results") {
+      service->SetGetAllPriceTrackedBookmarksCallbackValue({});
+      continue;
+    }
+    if (value == "has-empty-subscriptions-results") {
+      service->SetGetAllSubscriptionsCallbackValue({});
+      continue;
+    }
+  }
+
+  return service;
 }
 
 void DataSharingServiceHooks(
@@ -284,12 +330,6 @@ void SignalAppLaunched() {
 base::TimeDelta PasswordCheckMinimumDuration() {
   // No delays for eg tests.
   return base::Seconds(0);
-}
-
-base::TimeDelta GetOverriddenSnackbarDuration() {
-  // Increase the snackbar duration for EGTests for test to catch it more
-  // easily.
-  return base::Seconds(MDCSnackbarMessageDurationMax);
 }
 
 std::unique_ptr<drive::DriveService> GetOverriddenDriveService() {
@@ -361,6 +401,17 @@ void WipeProfileIfRequested(int argc, char* argv[]) {
 base::TimeDelta
 GetOverriddenDelayForRequestingTurningOnCredentialProviderExtension() {
   return base::Seconds(2);
+}
+
+base::TimeDelta GetSnackbarMessageDuration() {
+  // Makes the snackbar duration longer for EGTests to make sure there is time
+  // detect it, and avoid flakiness.
+  return base::Seconds(30);
+}
+
+UIImage* GetPHPickerViewControllerImage() {
+  return ui::test::uiimage_utils::UIImageWithSizeAndSolidColor(
+      CGSizeMake(1000, 1000), UIColor.greenColor);
 }
 
 }  // namespace tests_hook

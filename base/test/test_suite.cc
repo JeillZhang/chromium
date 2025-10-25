@@ -96,6 +96,7 @@
 #include <windows.h>
 
 #include "base/debug/handle_hooks_win.h"
+#include "base/win/win_util.h"
 #endif  // BUILDFLAG(IS_WIN)
 
 #if PA_BUILDFLAG(USE_PARTITION_ALLOC)
@@ -159,8 +160,12 @@ class ResetCommandLineBetweenTests : public testing::EmptyTestEventListener {
 // to initialize them manually.
 class FeatureListScopedToEachTest : public testing::EmptyTestEventListener {
  public:
-  FeatureListScopedToEachTest() = default;
-  ~FeatureListScopedToEachTest() override = default;
+  FeatureListScopedToEachTest() {
+    instance_ = this;
+  }
+  ~FeatureListScopedToEachTest() override {
+    instance_ = nullptr;
+  }
 
   FeatureListScopedToEachTest(const FeatureListScopedToEachTest&) = delete;
   FeatureListScopedToEachTest& operator=(const FeatureListScopedToEachTest&) =
@@ -182,9 +187,19 @@ class FeatureListScopedToEachTest : public testing::EmptyTestEventListener {
     scoped_feature_list_.Reset();
   }
 
+  static void Reset() {
+    if (instance_) {
+      instance_->scoped_feature_list_.Reset();
+    }
+  }
+
  private:
   test::ScopedFeatureList scoped_feature_list_;
+
+  static FeatureListScopedToEachTest* instance_;
 };
+
+FeatureListScopedToEachTest* FeatureListScopedToEachTest::instance_ = nullptr;
 
 class CheckForLeakedGlobals : public testing::EmptyTestEventListener {
  public:
@@ -444,6 +459,10 @@ void TestSuite::DisableCheckForLeakedGlobals() {
   check_for_leaked_globals_ = false;
 }
 
+void TestSuite::ResetScopedFeatureListInstance() {
+  FeatureListScopedToEachTest::Reset();
+}
+
 void TestSuite::UnitTestAssertHandler(const char* file,
                                       int line,
                                       std::string_view summary,
@@ -541,7 +560,21 @@ void TestSuite::Initialize() {
   // ASAN.
 #if PA_BUILDFLAG(USE_PARTITION_ALLOC) && !defined(ADDRESS_SANITIZER)
   allocator::PartitionAllocSupport::Get()->ReconfigureForTests();
-#endif  // BUILDFLAG(IS_WIN)
+
+#if GTEST_HAS_DEATH_TEST
+  // Unfortunately GTEST does not call event listeners at all inside child
+  // processes. In such case do reconfiguration here instead of inside
+  // `FeatureListScopedToEachTest`. FeatureList is not fully initialized but
+  // better than never reconfigured.
+  // TODO(https://crbug.com/432019338): Remove this once fixed.
+  if (::testing::internal::InDeathTestChild()) {
+    allocator::PartitionAllocSupport::Get()->ReconfigureAfterFeatureListInit(
+        "",
+        /*configure_dangling_pointer_detector=*/true,
+        /*is_in_death_test_child=*/true);
+  }
+#endif  // GTEST_HAS_DEATH_TEST
+#endif  // PA_BUILDFLAG(USE_PARTITION_ALLOC) && !defined(ADDRESS_SANITIZER)
 
   test::ScopedRunLoopTimeout::SetAddGTestFailureOnTimeout();
 
@@ -577,6 +610,11 @@ void TestSuite::Initialize() {
   // Make sure we run with high resolution timer to minimize differences
   // between production code and test code.
   Time::EnableHighResolutionTimer(true);
+
+  if (!command_line->HasSwitch(
+          ::switches::kDisableStrictHandleCheckingForTesting)) {
+    PCHECK(win::EnableStrictHandleCheckingForCurrentProcess());
+  }
 #endif  // BUILDFLAG(IS_WIN)
 
   // In some cases, we do not want to see standard error dialogs.

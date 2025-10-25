@@ -8,6 +8,8 @@ import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.text.format.DateUtils;
 import android.view.LayoutInflater;
+import android.view.MotionEvent;
+import android.view.TouchDelegate;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
@@ -23,6 +25,7 @@ import androidx.annotation.VisibleForTesting;
 import org.chromium.base.Log;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.readaloud.ReadAloudFeatures;
 import org.chromium.chrome.browser.readaloud.player.Colors;
 import org.chromium.chrome.browser.readaloud.player.InteractionHandler;
@@ -37,6 +40,9 @@ import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.widget.Toast;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @NullMarked
 public class ExpandedPlayerSheetContent implements BottomSheetContent {
@@ -77,6 +83,10 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
 
     private final PlaybackModeIphController mPlaybackModeIphController;
 
+    private int mElapsedSeconds;
+    private int mTotalDurationSeconds;
+    private @Nullable TouchDelegate mTouchDelegate;
+
     public ExpandedPlayerSheetContent(
             Context context,
             BottomSheetController bottomSheetController,
@@ -86,7 +96,11 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
                 context,
                 bottomSheetController,
                 LayoutInflater.from(context)
-                        .inflate(R.layout.readaloud_expanded_player_layout, null),
+                        .inflate(
+                                ChromeFeatureList.isEnabled(ChromeFeatureList.FEED_AUDIO_OVERVIEWS)
+                                        ? R.layout.readaloud_expanded_player_with_navigation_layout
+                                        : R.layout.readaloud_expanded_player_layout,
+                                null),
                 model,
                 playbackModeIphController);
     }
@@ -155,7 +169,20 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
                             int oldTop,
                             int oldRight,
                             int oldBottom) {
-                        TouchDelegateUtil.setBiggerTouchTarget(publisherButton);
+                        if (mTouchDelegate == null) {
+                            mTouchDelegate =
+                                    TouchDelegateUtil.createTouchDelegate(
+                                            mContentView, publisherButton);
+                        }
+                    }
+                });
+        mContentView.setOnTouchListener(
+                new View.OnTouchListener() {
+                    @Override
+                    public boolean onTouch(View v, MotionEvent event) {
+                        return v == publisherButton
+                                && mTouchDelegate != null
+                                && mTouchDelegate.onTouchEvent(event);
                     }
                 });
 
@@ -187,7 +214,7 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
         case PlaybackListener.State.ERROR:
           showErrorLayout();
           break;
-         case PlaybackListener.State.BUFFERING:
+         case PlaybackListener.State.PLAYBACK_CREATION:
            showLoadingLayout();
            break;
         default:
@@ -259,7 +286,7 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
       if (playbackMode == PlaybackMode.OVERVIEW) {
             mIsModeActive = true;
             mModeSelectorButton.setSelected(true);
-            mModeSelectorButton.setContentDescription(mContext.getString(R.string.readaloud_playback_mode_selector_overview));
+            mModeSelectorButton.setContentDescription(mContext.getString(R.string.readaloud_playback_mode_selector_classic));
             chromeNowPlaying.setText(
                     mContext.getString(R.string.readaloud_chrome_now_playing_audio_overview));
             if (ReadAloudFeatures.isAudioOverviewsFeedbackAllowed()) {
@@ -271,11 +298,21 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
         } else {
             mIsModeActive = false;
             mModeSelectorButton.setSelected(false);
-            mModeSelectorButton.setContentDescription(mContext.getString(R.string.readaloud_playback_mode_selector_classic));
+            mModeSelectorButton.setContentDescription(mContext.getString(R.string.readaloud_playback_mode_selector_overview));
             chromeNowPlaying.setText(mContext.getString(R.string.readaloud_chrome_now_playing));
             hideFeedbackButtons();
             showMoreOptions();
         }
+    }
+
+    void setRequestedPlaybackMode(PlaybackMode playbackMode) {
+      if  (playbackMode == PlaybackMode.OVERVIEW) {
+        mLoadingTextView.setText(mContext.getString(R.string.readaloud_mini_player_loading_ai_playback));
+        mLoadingTextView.setContentDescription(mContext.getString(R.string.readaloud_mini_player_loading_ai_playback));
+      } else {
+        mLoadingTextView.setText(mContext.getString(R.string.readaloud_playback_loading));
+        mLoadingTextView.setContentDescription(mContext.getString(R.string.readaloud_playback_loading));
+      }
     }
 
     void showFeedbackButtons() {
@@ -332,11 +369,13 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
     }
 
     void setElapsed(Long nanos) {
+        mElapsedSeconds = (int) (nanos / 1_000_000_000L);
         ((TextView) mContentView.findViewById(R.id.readaloud_player_time))
                 .setText(formatTimeNanos(nanos));
     }
 
     void setDuration(Long nanos) {
+        mTotalDurationSeconds = (int) (nanos / 1_000_000_000L);
         ((TextView) mContentView.findViewById(R.id.readaloud_player_duration))
                 .setText(formatTimeNanos(nanos));
     }
@@ -354,12 +393,16 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
         setOnClickListener(R.id.readaloud_play_pause_button, handler::onPlayPauseClick);
         setOnClickListener(R.id.readaloud_seek_back_button, handler::onSeekBackClick);
         setOnClickListener(R.id.readaloud_seek_forward_button, handler::onSeekForwardClick);
-        setOnClickListener(R.id.readaloud_expanded_player_publisher, handler::onPublisherClick);
-        setOnClickListener(R.id.readaloud_playback_speed, this::showSpeedMenu);
+        setOnClickListener(R.id.readaloud_player_publisher_container, handler::onPublisherClick);
+        setOnClickListener(R.id.readaloud_playback_speed_container, this::showSpeedMenu);
         setOnClickListener(R.id.readaloud_more_button, this::showOptionsMenu);
         setOnClickListener(R.id.readaloud_mode_selector, () -> onPlaybackModeChangeClick(handler));
         setOnClickListener(R.id.readaloud_thumb_down_button, () -> showNegativeFeedbackMenu());
         setOnClickListener(R.id.readaloud_thumb_up_button, () -> handlePositiveFeedback(handler));
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.FEED_AUDIO_OVERVIEWS)) {
+            setOnClickListener(R.id.readaloud_previous_button, handler::onMoveToPreviousClick);
+            setOnClickListener(R.id.readaloud_next_button, handler::onMoveToNextClick);
+        }
 
         SeekBar seekBar =
                 (SeekBar) mContentView.findViewById(R.id.readaloud_expanded_player_seek_bar);
@@ -411,7 +454,43 @@ public class ExpandedPlayerSheetContent implements BottomSheetContent {
      */
     public void setProgress(float percent) {
         mSeekBar.setProgress((int) (percent * mSeekBar.getMax()), true);
+        mSeekBar.setContentDescription(mContext.getString(R.string.readaloud_seek_bar, formatDuration(mElapsedSeconds), formatDuration(mTotalDurationSeconds)));
     }
+
+    @VisibleForTesting
+    static String formatDuration(int totalSeconds) {
+        if (totalSeconds < 0) {
+            return "Invalid duration";
+        }
+        if (totalSeconds == 0) {
+            return "0 seconds";
+        }
+
+        int hours = totalSeconds / 3600;
+        int minutes = (totalSeconds % 3600) / 60;
+        int seconds = totalSeconds % 60;
+
+        List<String> parts = new ArrayList<>();
+
+        if (hours > 0) {
+            parts.add(hours + (hours == 1 ? " hour" : " hours"));
+        }
+        if (minutes > 0) {
+            parts.add(minutes + (minutes == 1 ? " minute" : " minutes"));
+        }
+        if (seconds > 0 || parts.isEmpty()) {
+            parts.add(seconds + (seconds == 1 ? " second" : " seconds"));
+        }
+
+        if (parts.size() == 1) {
+            return parts.get(0);
+        }
+
+        String lastPart = parts.remove(parts.size() - 1);
+        // String.join is available in Java 8+ (or with Android desugaring)
+        return String.join(", ", parts) + " and " + lastPart;
+    }
+
 
     @Nullable
     OptionsMenuSheetContent getOptionsMenu() {

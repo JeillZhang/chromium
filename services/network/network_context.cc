@@ -19,6 +19,7 @@
 #include "base/check.h"
 #include "base/check_op.h"
 #include "base/command_line.h"
+#include "base/containers/flat_set.h"
 #include "base/containers/to_vector.h"
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/dcheck_is_on.h"
@@ -107,9 +108,10 @@
 #include "services/network/cookie_manager.h"
 #include "services/network/data_remover_util.h"
 #include "services/network/device_bound_session_manager.h"
+#include "services/network/devtools_durable_msg_collector.h"
 #include "services/network/disk_cache/mojo_backend_file_operations_factory.h"
 #include "services/network/host_resolver.h"
-#include "services/network/http_auth_cache_copier.h"
+#include "services/network/http_auth_cache_proxy_copier.h"
 #include "services/network/http_server_properties_pref_delegate.h"
 #include "services/network/ignore_errors_cert_verifier.h"
 #include "services/network/is_browser_initiated.h"
@@ -224,6 +226,21 @@ class WrappedTestingCertVerifier : public net::CertVerifier {
     }
     return g_cert_verifier_for_testing->Verify(
         params, verify_result, std::move(callback), out_req, net_log);
+  }
+  void Verify2QwacBinding(
+      const std::string& binding,
+      const std::string& hostname,
+      const scoped_refptr<net::X509Certificate>& tls_cert,
+      base::OnceCallback<void(const scoped_refptr<net::X509Certificate>&)>
+          callback,
+      const net::NetLogWithSource& net_log) override {
+    if (!g_cert_verifier_for_testing) {
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, base::BindOnce(std::move(callback), nullptr));
+      return;
+    }
+    g_cert_verifier_for_testing->Verify2QwacBinding(
+        binding, hostname, tls_cert, std::move(callback), net_log);
   }
   void SetConfig(const Config& config) override {
     if (!g_cert_verifier_for_testing) {
@@ -460,11 +477,12 @@ void TestVerifyCertCallback(
   std::move(callback).Run(result);
 }
 
-std::string HashesToBase64String(const net::HashValueVector& hashes) {
+std::string HashesToBase64String(
+    const absl::flat_hash_set<net::SHA256HashValue>& hashes) {
   std::vector<std::string> strings;
   strings.reserve(hashes.size());
   for (const auto& hash : hashes) {
-    strings.push_back(hash.ToString());
+    strings.push_back(net::HashValue(hash).ToString());
   }
   return base::JoinString(strings, ",");
 }
@@ -776,9 +794,6 @@ NetworkContext::NetworkContext(
 
   InitializeCorsParams();
 
-  SetSplitAuthCacheByNetworkAnonymizationKey(
-      params_->split_auth_cache_by_network_anonymization_key);
-
 #if BUILDFLAG(IS_CT_SUPPORTED)
   if (params_->ct_policy) {
     SetCTPolicy(std::move(params_->ct_policy));
@@ -1011,7 +1026,7 @@ void NetworkContext::CreateURLLoaderFactory(
     mojom::URLLoaderFactoryParamsPtr params) {
   scoped_refptr<ResourceSchedulerClient> resource_scheduler_client =
       base::MakeRefCounted<ResourceSchedulerClient>(
-          ResourceScheduler::ClientId::Create(params->top_frame_id),
+          ResourceScheduler::ClientId::Create(),
           IsBrowserInitiated(params->process_id == mojom::kBrowserProcessId),
           resource_scheduler_.get(),
           url_request_context_->network_quality_estimator());
@@ -1372,6 +1387,19 @@ void NetworkContext::ComputeHttpCacheSize(
                      base::Unretained(this), std::move(callback))));
 }
 
+void NetworkContext::NotifyBrowserIdle() {
+  net::HttpCache* htp_cache =
+      url_request_context_->http_transaction_factory()->GetCache();
+  if (!htp_cache) {
+    return;
+  }
+  disk_cache::Backend* backend = htp_cache->GetCurrentBackend();
+  if (!backend) {
+    return;
+  }
+  backend->OnBrowserIdle();
+}
+
 void NetworkContext::ClearCorsPreflightCache(
     mojom::ClearDataFilterPtr filter,
     ClearCorsPreflightCacheCallback callback) {
@@ -1725,17 +1753,44 @@ void NetworkContext::CloseIdleConnections(
 
 void NetworkContext::SetNetworkConditions(
     const base::UnguessableToken& throttling_profile_id,
-    mojom::NetworkConditionsPtr conditions) {
-  std::unique_ptr<NetworkConditions> network_conditions;
-  if (conditions) {
-    network_conditions = std::make_unique<NetworkConditions>(
-        conditions->offline, conditions->latency.InMillisecondsF(),
-        conditions->download_throughput, conditions->upload_throughput,
-        conditions->packet_loss, conditions->packet_queue_length,
-        conditions->packet_reordering);
+    std::vector<mojom::MatchedNetworkConditionsPtr> conditions) {
+  std::vector<MatchedNetworkConditions> network_conditions;
+  for (auto& condition : conditions) {
+    network_conditions.emplace_back(
+        std::move(condition->pattern),
+        NetworkConditions{condition->conditions->offline,
+                          condition->conditions->latency.InMillisecondsF(),
+                          condition->conditions->download_throughput,
+                          condition->conditions->upload_throughput,
+                          condition->conditions->packet_loss,
+                          condition->conditions->packet_queue_length,
+                          condition->conditions->packet_reordering,
+                          condition->conditions->rule_id});
   }
   ThrottlingController::SetConditions(throttling_profile_id,
                                       std::move(network_conditions));
+}
+
+void NetworkContext::OnDevToolsDurableMessageClientsDisconnected(
+    const base::UnguessableToken& throttling_profile_id) {
+  devtools_profile_to_durable_message_collectors_.erase(throttling_profile_id);
+}
+
+void NetworkContext::EnableDurableMessageCollector(
+    const base::UnguessableToken& throttling_profile_id,
+    mojo::PendingReceiver<network::mojom::DurableMessageCollector> receiver) {
+  auto [it, inserted] =
+      devtools_profile_to_durable_message_collectors_.try_emplace(
+          throttling_profile_id);
+  if (inserted) {
+    auto disconnect_callback = base::BindOnce(
+        &NetworkContext::OnDevToolsDurableMessageClientsDisconnected,
+        base::Unretained(this), throttling_profile_id);
+    it->second = std::make_unique<DevtoolsDurableMessageCollector>(
+        std::move(disconnect_callback));
+  }
+
+  it->second->AddReceiver(std::move(receiver));
 }
 
 void NetworkContext::SetAcceptLanguage(const std::string& new_accept_language) {
@@ -1807,11 +1862,12 @@ void NetworkContext::CreateRestrictedUDPSocket(
     mojom::RestrictedUDPSocketParamsPtr params,
     mojo::PendingReceiver<mojom::RestrictedUDPSocket> receiver,
     mojo::PendingRemote<mojom::UDPSocketListener> listener,
+    bool allow_multicast,
     CreateRestrictedUDPSocketCallback callback) {
   // SimpleHostResolver is transitively owned by |this|.
   socket_factory_->CreateRestrictedUDPSocket(
       addr, mode, traffic_annotation, std::move(params), std::move(receiver),
-      std::move(listener), SimpleHostResolver::Create(this),
+      std::move(listener), SimpleHostResolver::Create(this), allow_multicast,
       std::move(callback));
 }
 
@@ -1904,6 +1960,7 @@ void NetworkContext::CreateWebSocket(
     std::vector<mojom::HttpHeaderPtr> additional_headers,
     int32_t process_id,
     const url::Origin& origin,
+    network::mojom::ClientSecurityStatePtr client_security_state,
     uint32_t options,
     const net::MutableNetworkTrafficAnnotationTag& traffic_annotation,
     mojo::PendingRemote<mojom::WebSocketHandshakeClient> handshake_client,
@@ -1922,7 +1979,7 @@ void NetworkContext::CreateWebSocket(
   websocket_factory_->CreateWebSocket(
       url, requested_protocols, site_for_cookies, storage_access_api_status,
       isolation_info, std::move(additional_headers), process_id, origin,
-      options,
+      std::move(client_security_state), options,
       static_cast<net::NetworkTrafficAnnotationTag>(traffic_annotation),
       std::move(handshake_client), std::move(url_loader_network_observer),
       std::move(auth_handler), std::move(header_client), throttling_profile_id);
@@ -1934,8 +1991,12 @@ void NetworkContext::CreateWebTransport(
     const url::Origin& origin,
     const net::NetworkAnonymizationKey& key,
     std::vector<mojom::WebTransportCertificateFingerprintPtr> fingerprints,
+    const std::vector<std::string>& application_protocols,
     mojo::PendingRemote<mojom::WebTransportHandshakeClient>
-        pending_handshake_client) {
+        pending_handshake_client,
+    mojo::PendingRemote<mojom::URLLoaderNetworkServiceObserver>
+        url_loader_network_observer,
+    mojom::ClientSecurityStatePtr client_security_state) {
   if (!IsNetworkForNonceAndUrlAllowed(
           key.GetNonce().value_or(base::UnguessableToken::Null()), url)) {
     mojo::Remote<mojom::WebTransportHandshakeClient> remote_handshake_client(
@@ -1944,9 +2005,11 @@ void NetworkContext::CreateWebTransport(
         net::WebTransportError(net::ERR_NETWORK_ACCESS_REVOKED));
     return;
   }
-  web_transports_.insert(
-      std::make_unique<WebTransport>(url, origin, key, fingerprints, this,
-                                     std::move(pending_handshake_client)));
+  web_transports_.insert(std::make_unique<WebTransport>(
+      url, origin, key, fingerprints, application_protocols, this,
+      std::move(pending_handshake_client),
+      std::move(url_loader_network_observer),
+      std::move(client_security_state)));
 }
 
 void NetworkContext::CreateNetLogExporter(
@@ -1972,8 +2035,8 @@ void NetworkContext::ResolveHost(
     remote_response_client->OnComplete(
         net::ERR_NETWORK_ACCESS_REVOKED,
         net::ResolveErrorInfo(net::ERR_NETWORK_ACCESS_REVOKED),
-        /*resolved_addresses=*/std::nullopt,
-        /*endpoint_results_with_metadata=*/std::nullopt);
+        /*resolved_addresses=*/{},
+        /*alternative_endpoints=*/{});
     return;
   }
 
@@ -2083,6 +2146,21 @@ void NetworkContext::VerifyCertForSignedExchange(
     VerifyCertCallback callback) {
   VerifyCertInternal(certificate, host_port, ocsp_result, sct_list,
                      CTVerificationMode::kSignedExchange, std::move(callback));
+}
+
+void NetworkContext::Verify2QwacCertBinding(
+    const std::string& binding,
+    const std::string& hostname,
+    const scoped_refptr<net::X509Certificate>& tls_certificate,
+    Verify2QwacCertBindingCallback callback) {
+  net::CertVerifier* cert_verifier =
+      g_cert_verifier_for_testing ? g_cert_verifier_for_testing
+                                  : url_request_context_->cert_verifier();
+  cert_verifier->Verify2QwacBinding(
+      binding, hostname, tls_certificate, std::move(callback),
+      net::NetLogWithSource::Make(
+          url_request_context_->net_log(),
+          net::NetLogSourceType::CERT_VERIFIER_2QWAC_JOB));
 }
 
 void NetworkContext::NotifyExternalCacheHit(const GURL& url,
@@ -2349,7 +2427,8 @@ void NetworkContext::PreconnectSockets(
   net::HttpNetworkSession* session = factory->GetSession();
   net::HttpStreamFactory* http_stream_factory = session->http_stream_factory();
   http_stream_factory->PreconnectStreams(
-      base::saturated_cast<int32_t>(num_streams), request_info);
+      base::saturated_cast<int32_t>(num_streams), request_info,
+      base::OnceClosure());
 }
 
 #if BUILDFLAG(IS_P2P_ENABLED)
@@ -2419,7 +2498,7 @@ void NetworkContext::SaveHttpAuthCacheProxyEntries(
           ->GetSession()
           ->http_auth_cache();
   base::UnguessableToken cache_key =
-      network_service_->http_auth_cache_copier()->SaveHttpAuthCache(
+      network_service_->http_auth_cache_proxy_copier()->SaveHttpAuthCache(
           *http_auth_cache);
   std::move(callback).Run(cache_key);
 }
@@ -2431,7 +2510,7 @@ void NetworkContext::LoadHttpAuthCacheProxyEntries(
       url_request_context_->http_transaction_factory()
           ->GetSession()
           ->http_auth_cache();
-  network_service_->http_auth_cache_copier()->LoadHttpAuthCache(
+  network_service_->http_auth_cache_proxy_copier()->LoadHttpAuthCache(
       cache_key, http_auth_cache);
   std::move(callback).Run();
 }
@@ -2462,24 +2541,6 @@ void NetworkContext::SetCorsNonWildcardRequestHeadersSupport(bool value) {
   }
   cors_non_wildcard_request_headers_support_ =
       cors::NonWildcardRequestHeadersSupport(value);
-}
-
-void NetworkContext::LookupServerBasicAuthCredentials(
-    const GURL& url,
-    const net::NetworkAnonymizationKey& network_anonymization_key,
-    LookupServerBasicAuthCredentialsCallback callback) {
-  net::HttpAuthCache* http_auth_cache =
-      url_request_context_->http_transaction_factory()
-          ->GetSession()
-          ->http_auth_cache();
-  net::HttpAuthCache::Entry* entry = http_auth_cache->LookupByPath(
-      url::SchemeHostPort(url), net::HttpAuth::AUTH_SERVER,
-      network_anonymization_key, url.path());
-  if (entry && entry->scheme() == net::HttpAuth::AUTH_SCHEME_BASIC) {
-    std::move(callback).Run(entry->credentials());
-  } else {
-    std::move(callback).Run(std::nullopt);
-  }
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -2570,9 +2631,10 @@ void NetworkContext::OnHttpAuthDynamicParamsChanged(
       http_auth_dynamic_network_service_params->allow_gssapi_library_load);
 #endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
   if (http_auth_dynamic_network_service_params->allowed_schemes.has_value()) {
-    http_auth_merged_preferences_.set_allowed_schemes(std::set<std::string>(
-        http_auth_dynamic_network_service_params->allowed_schemes->begin(),
-        http_auth_dynamic_network_service_params->allowed_schemes->end()));
+    http_auth_merged_preferences_.set_allowed_schemes(
+        base::flat_set<std::string>(
+            http_auth_dynamic_network_service_params->allowed_schemes->begin(),
+            http_auth_dynamic_network_service_params->allowed_schemes->end()));
   } else {
     http_auth_merged_preferences_.set_allowed_schemes(std::nullopt);
   }
@@ -2650,7 +2712,8 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext(
   auto* mdl_manager = network_service_->masked_domain_list_manager();
   auto* prt_registry = network_service_->probabilistic_reveal_token_registry();
   bool requires_ipp_proxy_delegate =
-      mdl_manager->IsEnabled() &&
+      (mdl_manager->IsEnabled() ||
+       !net::features::kIpPrivacyUnconditionalProxyDomainList.Get().empty()) &&
       (params_->ip_protection_core_host ||
        net::features::kIpPrivacyAlwaysCreateCore.Get());
   if (requires_ipp_proxy_delegate) {
@@ -2666,10 +2729,15 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext(
             std::move(params_->ip_protection_control), core_host_remote,
             mdl_manager, prt_registry, params_->enable_ip_protection,
             params_->ip_protection_incognito,
+            std::move(params_->initial_ip_protection_tokens),
             params_->ip_protection_data_directory);
     builder.set_proxy_delegate(
         std::make_unique<ip_protection::IpProtectionProxyDelegate>(
             ip_protection_core_impl.get()));
+    // Set tracking protection content settings if there are any provided.
+    ip_protection_core_impl->SetTrackingProtectionContentSetting(
+        params_->tracking_protection_content_settings);
+
     ip_protection_core_ = std::move(ip_protection_core_impl);
   } else if (params_->initial_custom_proxy_config ||
              params_->custom_proxy_config_client_receiver) {
@@ -2734,9 +2802,9 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext(
   }
 
 #if BUILDFLAG(IS_WIN)
-  if (params_->windows_system_proxy_resolver) {
+  if (params_->system_proxy_resolver) {
     builder.SetMojoWindowsSystemProxyResolver(
-        std::move(params_->windows_system_proxy_resolver));
+        std::move(params_->system_proxy_resolver));
   }
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -2761,7 +2829,12 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext(
     } else {
       // Network-bound NetworkContexts should not persist state on disk.
       CHECK(!is_network_bound);
+
       cache_params.path = params_->file_paths->http_cache_directory->path();
+      if (params_->file_paths->no_vary_search_directory) {
+        cache_params.no_vary_search_path =
+            params_->file_paths->no_vary_search_directory->path();
+      }
       cache_params.type = network_session_configurator::ChooseCacheType();
       if (params_->http_cache_file_operations_factory) {
         cache_params.file_operations_factory =
@@ -2926,14 +2999,8 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext(
   session_params.disable_idle_sockets_close_on_memory_pressure =
       params_->disable_idle_sockets_close_on_memory_pressure;
 
-  if (network_service_) {
-    session_params.key_auth_cache_server_entries_by_network_anonymization_key =
-        network_service_->split_auth_cache_by_network_isolation_key();
-  }
-
   session_params.key_auth_cache_server_entries_by_network_anonymization_key =
-      base::FeatureList::IsEnabled(
-          features::kSplitAuthCacheByNetworkIsolationKey);
+      params_->split_auth_cache_by_network_anonymization_key;
 
   builder.set_http_network_session_params(session_params);
   builder.set_quic_context(std::move(quic_context));
@@ -2950,8 +3017,25 @@ URLRequestContextOwner NetworkContext::MakeURLRequestContext(
             std::move(network_layer));
       }));
 
-  builder.set_host_mapping_rules(
-      command_line->GetSwitchValueASCII(switches::kHostResolverRules));
+  if (command_line->HasSwitch(switches::kHostResolverRules)) {
+    builder.set_host_mapping_rules(
+        command_line->GetSwitchValueASCII(switches::kHostResolverRules));
+  } else if (command_line->HasSwitch(switches::kHostRules)) {
+    LOG(WARNING)
+        << "The --" << switches::kHostRules
+        << " command line switch is deprecated, and now has the same behavior "
+           "as --"
+        << switches::kHostResolverRules << ". Use --"
+        << switches::kHostResolverRules
+        << " directly to avoid this LOG message. If you get certificate error "
+           "where --"
+        << switches::kHostRules
+        << " previously did not give one, you need to ensure the server has a "
+           "valid certificate for the mapped hostname, not the destination "
+           "hostname.";
+    builder.set_host_mapping_rules(
+        command_line->GetSwitchValueASCII(switches::kHostRules));
+  }
 
 #if BUILDFLAG(IS_WIN)
   if (params_->socket_brokers) {
@@ -3078,7 +3162,12 @@ NetworkContext::MakeSessionCleanupCookieStore() const {
       crypto_delegate = std::make_unique<CookieOSCryptAsyncDelegate>(
           std::move(params_->cookie_encryption_provider));
     } else {
-      crypto_delegate = cookie_config::GetCookieCryptoDelegate();
+#if !BUILDFLAG(IS_ANDROID)
+      // A cookie crypto delegate should not be created on Android to
+      // match the behavior of cookie_config::GetCookieCryptoDelegate().
+      // See https://crbug.com/449652881
+      NOTREACHED();
+#endif
     }
   }
 
@@ -3161,7 +3250,7 @@ GURL NetworkContext::GetHSTSRedirectForPreconnect(const GURL& original_url) {
   // top-level navigation so we need to disallow HSTS upgrades for every
   // preconnect.
   if (!url_request_context_->transport_security_state()->ShouldUpgradeToSSL(
-          original_url.host(), /*is_top_level_nav=*/false)) {
+          original_url.GetHost(), /*is_top_level_nav=*/false)) {
     RecordHSTSPreconnectUpgradeReason(
         HSTSRedirectUpgradeReason::kNotUpgradedNoHSTSPin);
     return original_url;
@@ -3185,6 +3274,14 @@ void NetworkContext::DestroySocketManager(P2PSocketManager* socket_manager) {
 void NetworkContext::CanUploadDomainReliability(
     const url::Origin& origin,
     base::OnceCallback<void(bool)> callback) {
+  // If the NetworkContextClient hasn't been set yet or has disconnected for
+  // some reason, just return `false`. This could occur in the case of CCT for
+  // captive portal -- see crbug.com/446496025 for more details, do the similar
+  // check to CanSendSCTAuditingReport().
+  if (!client_) {
+    std::move(callback).Run(false);
+    return;
+  }
   client_->OnCanSendDomainReliabilityUpload(
       origin,
       base::BindOnce([](base::OnceCallback<void(bool)> callback,
@@ -3361,12 +3458,6 @@ void NetworkContext::HasPreloadedSharedDictionaryInfoForTesting(
       shared_dictionary_manager_->HasPreloadedSharedDictionaryInfo());
 }
 
-void NetworkContext::ResourceSchedulerClientVisibilityChanged(
-    const base::UnguessableToken& client_token,
-    bool visible) {
-  resource_scheduler_->OnClientVisibilityChanged(client_token, visible);
-}
-
 void NetworkContext::FlushCachedClientCertIfNeeded(
     const net::HostPortPair& host,
     const scoped_refptr<net::X509Certificate>& certificate) {
@@ -3476,6 +3567,65 @@ void NetworkContext::GetDeviceBoundSessionManager(
   }
 }
 
+void NetworkContext::AddQuicHints(
+    const std::vector<url::SchemeHostPort>& origins,
+    const net::NetworkAnonymizationKey& network_anonymization_key) {
+  CHECK(url_request_context_);
+
+  for (const auto& origin : origins) {
+    url::CanonHostInfo host_info;
+    std::string canonical_host(
+        net::CanonicalizeHost(origin.host(), &host_info));
+    if (!host_info.IsIPAddress() &&
+        !net::IsCanonicalizedHostCompliant(canonical_host)) {
+      LOG(ERROR) << "Invalid QUIC hint host: " << origin.host();
+      continue;
+    }
+
+    // The AlternativeService hostname can be used to signal a change of host.
+    // By passing in an empty host, the origin's host will be used.
+    net::AlternativeService alternative_service(net::NextProto::kProtoQUIC, "",
+                                                origin.port());
+
+    url::SchemeHostPort canonical_origin(url::kHttpsScheme, canonical_host,
+                                         origin.port());
+    url_request_context_->http_server_properties()->SetQuicAlternativeService(
+        canonical_origin, network_anonymization_key, alternative_service,
+        base::Time::Max(), quic::ParsedQuicVersionVector());
+  }
+}
+
+void NetworkContext::GetIpProxyStatus(GetIpProxyStatusCallback callback) {
+  ip_protection::IpProxyStatus status =
+      ip_protection::IpProxyStatus::kUnavailable;
+
+  if (!base::FeatureList::IsEnabled(net::features::kEnableIpProtectionProxy)) {
+    status = ip_protection::IpProxyStatus::kFeatureNotEnabled;
+    std::move(callback).Run(status);
+    return;
+  }
+  if (!base::FeatureList::IsEnabled(features::kMaskedDomainList)) {
+    status = ip_protection::IpProxyStatus::kMaskedDomainListNotEnabled;
+    std::move(callback).Run(status);
+    return;
+  }
+  if (ip_protection_core()) {
+    // ip_protection_core() should be null if either of the above features are
+    // disabled, so check beforehand
+    status = ip_protection_core()->GetIpProxyStatus();
+    std::move(callback).Run(status);
+    return;
+  }
+
+  std::move(callback).Run(status);
+}
+
+void NetworkContext::SetBypassIpProtectionProxy(bool bypass_proxy) {
+  if (ip_protection_core()) {
+    ip_protection_core()->SetBypassProxy(bypass_proxy);
+  }
+}
+
 bool NetworkContext::IsNetworkForNonceAndUrlAllowed(
     const base::UnguessableToken& nonce,
     const GURL& url) const {
@@ -3499,6 +3649,23 @@ void NetworkContext::InitializePrefetchURLLoaderFactory() {
       prefetch_url_loader_factory_remote_.BindNewPipeAndPassReceiver();
   CreateURLLoaderFactory(std::move(pending_receiver),
                          CreateURLLoaderFactoryParamsForPrefetch());
+}
+
+base::WeakPtr<DevtoolsDurableMessage> NetworkContext::MaybeCreateDurableMessage(
+    const std::optional<base::UnguessableToken>& throttling_profile_id,
+    const std::optional<std::string>& devtools_request_id) {
+  if (!throttling_profile_id.has_value() || !devtools_request_id.has_value()) {
+    return nullptr;
+  }
+
+  auto collector_it = devtools_profile_to_durable_message_collectors_.find(
+      throttling_profile_id.value());
+  if (collector_it == devtools_profile_to_durable_message_collectors_.end()) {
+    return nullptr;
+  }
+
+  return collector_it->second->CreateDurableMessage(
+      devtools_request_id.value());
 }
 
 }  // namespace network

@@ -7,8 +7,8 @@
 
 #include <optional>
 
-#include "mojo/public/cpp/bindings/receiver.h"
-#include "mojo/public/cpp/bindings/remote.h"
+#include "mojo/public/cpp/bindings/pending_receiver.h"
+#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "services/network/public/mojom/url_loader.mojom-forward.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
 
@@ -91,7 +91,11 @@ using OnPrefetchResponseStartedCallback =
     base::OnceCallback<std::optional<PrefetchErrorOnResponseReceived>(
         network::mojom::URLResponseHead* head)>;
 
+// Called when `PrefetchResponseReader::LoadState` reaches:
+// - `kCompleted` (`is_success` is true) or
+// - `kFailed` (`is_success` is false).
 using OnPrefetchResponseCompletedCallback = base::OnceCallback<void(
+    bool is_success,
     const network::URLLoaderCompletionStatus& completion_status)>;
 
 // This callback is used by the owner to determine if the redirect should be

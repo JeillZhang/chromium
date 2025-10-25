@@ -122,8 +122,10 @@ SimplifiedLayoutAlgorithm::SimplifiedLayoutAlgorithm(
         physical_fragment.HasCollapsedBorders());
 
     if (const auto* table_column_geometries =
-            physical_fragment.TableColumnGeometries())
-      container_builder_.SetTableColumnGeometries(*table_column_geometries);
+            physical_fragment.TableColumnGeometries()) {
+      container_builder_.SetTableColumnGeometries(
+          TableColumnGeometries(*table_column_geometries));
+    }
 
     if (const auto* table_collapsed_borders =
             physical_fragment.TableCollapsedBorders())
@@ -145,7 +147,7 @@ SimplifiedLayoutAlgorithm::SimplifiedLayoutAlgorithm(
     }
   }
 
-  if (physical_fragment.IsGrid()) {
+  if (physical_fragment.IsGrid() || physical_fragment.IsMasonry()) {
     container_builder_.TransferGridLayoutData(
         std::make_unique<GridLayoutData>(*result.GetGridLayoutData()));
   } else if (physical_fragment.IsFrameSet()) {

@@ -159,7 +159,7 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
 
   void Trace(Visitor*) const override;
 
-  virtual WTF::TextEncoding Encoding() const { return WTF::TextEncoding(); }
+  virtual TextEncoding Encoding() const { return TextEncoding(); }
   // If a BackgroundResponseProcessor consumed the body data on the background
   // thread, this method is called with a SegmentedBuffer data. Otherwise, it is
   // called with a span<const char> data several times.
@@ -207,11 +207,13 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
   // - `first` is the priority with the fix of https://crbug.com/1369823.
   // - `second` is the priority without the fix, ignoring the priority from
   //   ImageLoader.
-  virtual std::pair<ResourcePriority, ResourcePriority> PriorityFromObservers()
-      const {
-    return std::make_pair(ResourcePriority(), ResourcePriority());
+  virtual std::pair<std::optional<ResourcePriority>,
+                    std::optional<ResourcePriority>>
+  PriorityFromObservers() const {
+    return std::make_pair(std::nullopt, std::nullopt);
   }
 
+  virtual bool HasNonDegenerateContentSize() const { return false; }
   virtual bool IsAboveSpeculativeDecodeSizeThreshold() const { return false; }
 
   // If this Resource is already finished when AddClient is called, the
@@ -310,12 +312,11 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
   // Returns true if |this| resource is matched with the given parameters.
   virtual void MatchPreload(const FetchParameters&);
 
-  bool CanReuseRedirectChain(UseCounter& use_counter) const;
-  bool MustRevalidateDueToCacheHeaders(bool allow_stale,
-                                       UseCounter& use_counter) const;
-  bool ShouldRevalidateStaleResponse(UseCounter& use_counter) const;
+  bool CanReuseRedirectChain() const;
+  bool MustRevalidateDueToCacheHeaders(bool allow_stale) const;
+  bool ShouldRevalidateStaleResponse() const;
   virtual bool CanUseCacheValidator() const;
-  base::TimeDelta FreshnessLifetime(UseCounter& use_counter) const;
+  base::TimeDelta FreshnessLifetime() const;
   bool IsCacheValidator() const {
     return revalidation_status_ == RevalidationStatus::kRevalidating;
   }
@@ -530,6 +531,10 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
 
   virtual void SetEncoding(const String&) {}
 
+  // Call this when the resource is successfully retrieved from MemoryCache.
+  void IncrementMemoryCacheHitCount() { ++memory_cache_hit_count_; }
+  uint32_t MemoryCacheHitCount() const { return memory_cache_hit_count_; }
+
  private:
   friend class ResourceLoader;
   friend class MemoryCache;
@@ -543,7 +548,7 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
   String ReasonNotDeletable() const;
 
   // MemoryPressureListener overrides:
-  void OnPurgeMemory() override;
+  void OnMemoryPressure(base::MemoryPressureLevel) override;
 
   void CheckResourceIntegrity();
   void TriggerNotificationForFinishObservers(base::SingleThreadTaskRunner*);
@@ -575,6 +580,8 @@ class PLATFORM_EXPORT Resource : public GarbageCollected<Resource>,
   bool is_unused_preload_ = false;
   bool stale_revalidation_started_ = false;
   bool is_preloaded_by_early_hints_ = false;
+
+  uint32_t memory_cache_hit_count_ = 0;
 
   enum class RevalidationStatus {
     kNoRevalidatingOrFailed,  // not in revalidate procedure or

@@ -48,14 +48,16 @@ class TestDragDropRequestHandler
       Profile* profile,
       GURL url,
       Type type,
-      safe_browsing::DeepScanAccessPoint access_point,
+      enterprise_connectors::DeepScanAccessPoint access_point,
       enterprise_connectors::ContentMetaData::CopiedTextSource clipboard_source,
+      std::string source_content_area_email,
       std::string content_transfer_method,
       std::string data,
       CompletionCallback callback) {
     auto handler = base::WrapUnique(new TestDragDropRequestHandler(
         content_analysis_info, upload_service, profile, std::move(url), type,
         access_point, std::move(clipboard_source),
+        std::move(source_content_area_email),
         std::move(content_transfer_method), std::move(data),
         std::move(callback)));
     handler->delegate_ = delegate;
@@ -259,7 +261,13 @@ class ChromeWebContentsViewDelegateHandleOnPerformingDrop
                   EXPECT_TRUE(successful_file_paths.count(filename.path));
                 }
                 if (successful_text_scan) {
-                  EXPECT_EQ(result_data->url_title, data.url_title);
+                  if (data.url_infos.empty()) {
+                    EXPECT_TRUE(result_data->url_infos.empty());
+                  } else {
+                    ASSERT_FALSE(result_data->url_infos.empty());
+                    EXPECT_EQ(result_data->url_infos.front().title,
+                              data.url_infos.front().title);
+                  }
                   EXPECT_EQ(result_data->text, data.text);
                   EXPECT_EQ(result_data->html, data.html);
                 }
@@ -349,7 +357,8 @@ TEST_F(ChromeWebContentsViewDelegateHandleOnPerformingDrop,
 TEST_F(ChromeWebContentsViewDelegateHandleOnPerformingDrop, UrlTitle) {
   content::DropData data;
   data.document_is_handling_drag = true;
-  data.url_title = base::UTF8ToUTF16(large_text());
+  data.url_infos = {ui::ClipboardUrlInfo(GURL("https://example.com"),
+                                         base::UTF8ToUTF16(large_text()))};
 
   SetExpectedRequestsCount(0);
   RunTest(data, /*enable=*/false, /*successful_text_scan=*/true,
@@ -361,7 +370,7 @@ TEST_F(ChromeWebContentsViewDelegateHandleOnPerformingDrop, UrlTitle) {
   RunTest(data, /*enable=*/true, /*successful_text_scan=*/true,
           /*successful_file_paths*/ {});
 
-  data.url_title = base::UTF8ToUTF16(small_text());
+  data.url_infos.front().title = base::UTF8ToUTF16(small_text());
   SetExpectedRequestsCount(0);
   RunTest(data, /*enable=*/true, /*successful_text_scan=*/true,
           /*successful_file_paths*/ {});

@@ -10,12 +10,13 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/types/pass_key.h"
 #include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/actor/ui/actor_ui_metrics.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window.h"
-#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tabs/organization/tab_declutter_controller.h"
@@ -31,10 +32,12 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/commerce/core/commerce_feature_list.h"
+#include "components/tabs/public/tab_interface.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/gfx/animation/tween.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/background.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/mouse_watcher.h"
@@ -42,14 +45,17 @@
 #include "ui/views/view_class_properties.h"
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/browser_ui/glic_vector_icon_manager.h"
-#include "chrome/browser/glic/glic_enabling.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/glic_profile_manager.h"
 #include "chrome/browser/glic/host/glic.mojom.h"
+#include "chrome/browser/glic/host/host.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/glic/public/glic_instance.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/resources/grit/glic_browser_resources.h"
+#include "chrome/browser/ui/tabs/glic_actor_task_icon_manager_factory.h"
 #include "chrome/browser/ui/tabs/tab_style.h"
+#include "chrome/grit/branded_strings.h"
 #endif  // BUILDFLAG(ENABLE_GLIC)
 namespace {
 
@@ -76,6 +82,8 @@ constexpr char kDeclutterTriggerBucketedCTRName[] =
 
 #if BUILDFLAG(ENABLE_GLIC)
 constexpr int kLargeSpaceBetweenButtons = 6;
+constexpr int kInsideBorderAroundGlicButtons = 2;
+constexpr int kOutsideBorderAroundGlicButtons = 11;
 #if !BUILDFLAG(IS_MAC)
 constexpr int kLargeSpaceBetweenSeparatorRight = 8;
 constexpr int kLargeSpaceBetweenSeparatorLeft = 2;
@@ -96,7 +104,8 @@ TabStripActionContainer::TabStripNudgeAnimationSession::
       opacity_animation_(container),
       session_type_(session_type),
       on_animation_ended_(std::move(on_animation_ended)),
-      is_opacity_animated_(is_opacity_animated) {
+      is_opacity_animated_(is_opacity_animated),
+      is_executing_show_or_hide_(false) {
   if (session_type_ == AnimationSessionType::HIDE) {
     expansion_animation_.Reset(1);
     if (is_opacity_animated) {
@@ -136,6 +145,7 @@ void TabStripActionContainer::TabStripNudgeAnimationSession::
 }
 
 void TabStripActionContainer::TabStripNudgeAnimationSession::Show() {
+  base::AutoReset<bool> resetter(&is_executing_show_or_hide_, true);
   expansion_animation_.SetTweenType(gfx::Tween::Type::ACCEL_20_DECEL_100);
   if (is_opacity_animated_) {
     opacity_animation_.SetTweenType(gfx::Tween::Type::LINEAR);
@@ -157,6 +167,7 @@ void TabStripActionContainer::TabStripNudgeAnimationSession::Show() {
 }
 
 void TabStripActionContainer::TabStripNudgeAnimationSession::Hide() {
+  base::AutoReset<bool> resetter(&is_executing_show_or_hide_, true);
   // Animate and hide existing chip.
   if (session_type_ ==
       TabStripNudgeAnimationSession::AnimationSessionType::SHOW) {
@@ -215,7 +226,12 @@ void TabStripActionContainer::TabStripNudgeAnimationSession::MarkAnimationDone(
 
   if (expansion_animation_done_ && opacity_animation_not_running) {
     if (on_animation_ended_) {
-      std::move(on_animation_ended_).Run();
+      if (is_executing_show_or_hide_) {
+        base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, std::move(on_animation_ended_));
+      } else {
+        std::move(on_animation_ended_).Run();
+      }
     }
   }
 }
@@ -229,6 +245,8 @@ TabStripActionContainer::TabStripActionContainer(
       tab_declutter_controller_(tab_declutter_controller),
       glic_nudge_controller_(glic_nudge_controller),
       tab_strip_controller_(tab_strip_controller) {
+  SetProperty(views::kElementIdentifierKey, kTabStripActionContainerElementId);
+
   mouse_watcher_ = std::make_unique<views::MouseWatcher>(
       std::make_unique<views::MouseWatcherViewHost>(locked_expansion_view_,
                                                     gfx::Insets()),
@@ -272,8 +290,8 @@ TabStripActionContainer::TabStripActionContainer(
     product_specifications_button =
         std::make_unique<ProductSpecificationsButton>(
             tab_strip_controller, browser_window_interface->GetTabStripModel(),
-            browser_window_interface->GetFeatures()
-                .product_specifications_entry_point_controller(),
+            commerce::ProductSpecificationsEntryPointController::From(
+                browser_window_interface),
             /*render_tab_search_before_tab_strip_*/ false, this);
     product_specifications_button->SetProperty(views::kCrossAxisAlignmentKey,
                                                views::LayoutAlignment::kCenter);
@@ -285,6 +303,13 @@ TabStripActionContainer::TabStripActionContainer(
 #if BUILDFLAG(ENABLE_GLIC)
   if (glic::GlicEnabling::IsProfileEligible(
           tab_strip_controller->GetProfile())) {
+    if (features::kGlicActorUiTaskIcon.Get()) {
+      glic_actor_button_container_ =
+          AddChildView(CreateGlicActorButtonContainer());
+      glic_actor_task_icon_ = glic_actor_button_container_->AddChildView(
+          CreateGlicActorTaskIcon(tab_strip_controller));
+      glic_actor_button_container_->SetVisible(false);
+    }
     glic_button_ = AddChildView(CreateGlicButton(tab_strip_controller));
 
     SetupButtonProperties(glic_button_);
@@ -342,7 +367,8 @@ TabStripActionContainer::CreateTabDeclutterButton(
       features::IsTabstripDedupeEnabled()
           ? l10n_util::GetStringUTF16(IDS_TAB_DECLUTTER)
           : l10n_util::GetStringUTF16(IDS_TAB_DECLUTTER_NO_DEDUPE),
-      kTabDeclutterButtonElementId, Edge::kNone, gfx::VectorIcon::EmptyIcon());
+      kTabDeclutterButtonElementId, Edge::kNone, gfx::VectorIcon::EmptyIcon(),
+      /*show_close_button=*/true);
 
   button->SetTooltipText(
       features::IsTabstripDedupeEnabled()
@@ -369,7 +395,7 @@ TabStripActionContainer::CreateAutoTabGroupButton(
           &TabStripActionContainer::OnAutoTabGroupButtonDismissed,
           base::Unretained(this)),
       l10n_util::GetStringUTF16(IDS_TAB_ORGANIZE), kAutoTabGroupButtonElementId,
-      Edge::kNone, gfx::VectorIcon::EmptyIcon());
+      Edge::kNone, gfx::VectorIcon::EmptyIcon(), /*show_close_button=*/true);
   button->SetTooltipText(l10n_util::GetStringUTF16(IDS_TOOLTIP_TAB_ORGANIZE));
   button->GetViewAccessibility().SetName(
       l10n_util::GetStringUTF16(IDS_ACCNAME_TAB_ORGANIZE));
@@ -381,6 +407,11 @@ TabStripActionContainer::CreateAutoTabGroupButton(
 #if BUILDFLAG(ENABLE_GLIC)
 std::unique_ptr<glic::GlicButton> TabStripActionContainer::CreateGlicButton(
     TabStripController* tab_strip_controller) {
+  glic::GlicKeyedService* service =
+      glic::GlicKeyedService::Get(tab_strip_controller_->GetProfile());
+  std::u16string tooltip_text = l10n_util::GetStringUTF16(
+      service->IsWindowOrFreShowing() ? IDS_GLIC_TAB_STRIP_BUTTON_TOOLTIP_CLOSE
+                                      : IDS_GLIC_TAB_STRIP_BUTTON_TOOLTIP);
   std::unique_ptr<glic::GlicButton> glic_button =
       std::make_unique<glic::GlicButton>(
           tab_strip_controller,
@@ -392,14 +423,79 @@ std::unique_ptr<glic::GlicButton> TabStripActionContainer::CreateGlicButton(
                               base::Unretained(this)),
           base::BindRepeating(&TabStripActionContainer::OnGlicButtonMouseDown,
                               base::Unretained(this)),
-          glic::GlicVectorIconManager::GetVectorIcon(
-              IDR_GLIC_BUTTON_VECTOR_ICON),
-          l10n_util::GetStringUTF16(IDS_GLIC_TAB_STRIP_BUTTON_TOOLTIP));
+          base::BindRepeating(
+              &TabStripActionContainer::OnGlicButtonAnimationEnded,
+              base::Unretained(this)),
+          tooltip_text);
 
   glic_button->SetProperty(views::kCrossAxisAlignmentKey,
                            views::LayoutAlignment::kCenter);
 
   return glic_button;
+}
+
+std::unique_ptr<glic::GlicActorTaskIcon>
+TabStripActionContainer::CreateGlicActorTaskIcon(
+    TabStripController* tab_strip_controller) {
+  std::unique_ptr<glic::GlicActorTaskIcon> glic_actor_task_icon =
+      std::make_unique<glic::GlicActorTaskIcon>(
+          tab_strip_controller,
+          base::BindRepeating(
+              &TabStripActionContainer::OnGlicActorTaskIconClicked,
+              base::Unretained(this)));
+
+  glic_actor_task_icon->SetProperty(views::kCrossAxisAlignmentKey,
+                                    views::LayoutAlignment::kCenter);
+
+  return glic_actor_task_icon;
+}
+
+// TODO(crbug.com/431015299): Clean up when GlicButton and GlicActorTaskIcon
+// have been combined.
+std::unique_ptr<views::FlexLayoutView>
+TabStripActionContainer::CreateGlicActorButtonContainer() {
+  auto glic_actor_button_container = std::make_unique<views::FlexLayoutView>();
+  glic_actor_button_container->SetCollapseMargins(true);
+  glic_actor_button_container->SetCrossAxisAlignment(
+      views::LayoutAlignment::kCenter);
+  glic_actor_button_container->SetBackground(views::CreateRoundedRectBackground(
+      kColorNewTabButtonCRBackgroundFrameActive, gfx::RoundedCornersF(12),
+      gfx::Insets::VH(4, 8)));
+
+  // Should be hidden until a task starts.
+  glic_actor_button_container->SetVisible(false);
+
+  return glic_actor_button_container;
+}
+
+void TabStripActionContainer::UpdateGlicActorButtonContainerBorders() {
+  CHECK(glic_button_);
+  gfx::Insets glic_border;
+  // GlicActorTaskIcon will only ever be shown alongside the GlicButton.
+  if (glic_actor_task_icon_ && glic_actor_task_icon_->IsDrawn()) {
+    gfx::Insets task_icon_border;
+    const gfx::Insets right_icon_border = gfx::Insets().set_left_right(
+        kInsideBorderAroundGlicButtons, kOutsideBorderAroundGlicButtons);
+    const gfx::Insets left_icon_border = gfx::Insets().set_left_right(
+        kOutsideBorderAroundGlicButtons, kInsideBorderAroundGlicButtons);
+    if (features::kGlicActorUiNudgeRedesign.Get()) {
+      task_icon_border = right_icon_border + border_insets_;
+      // If the GlicActorTaskIcon is also present, adjust the border on the
+      // GlicButton to allow the two buttons to sit closer together.
+      glic_border = left_icon_border + border_insets_;
+    } else {
+      task_icon_border = left_icon_border + border_insets_;
+      glic_border = right_icon_border + border_insets_;
+    }
+    glic_actor_task_icon_->SetBorder(
+        views::CreateEmptyBorder(task_icon_border));
+  } else {
+    // Reset GlicButton border if Task Icon is hidden.
+    glic_border = gfx::Insets().set_left_right(border_insets_.top(),
+                                               border_insets_.bottom()) +
+                  border_insets_;
+  }
+  glic_button_->SetBorder(views::CreateEmptyBorder(glic_border));
 }
 
 #endif  // BUILDFLAG(ENABLE_GLIC)
@@ -452,19 +548,25 @@ void TabStripActionContainer::OnGlicButtonClicked() {
   // Indicate that the glic button was pressed so that we can either close the
   // IPH promo (if present) or note that it has already been used to prevent
   // unnecessarily displaying the promo.
-  tab_strip_controller_->GetBrowserWindowInterface()
-      ->GetUserEducationInterface()
+  BrowserUserEducationInterface::From(
+      tab_strip_controller_->GetBrowserWindowInterface())
       ->NotifyFeaturePromoFeatureUsed(
           feature_engagement::kIPHGlicPromoFeature,
           FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
 
+  std::optional<std::string> prompt_suggestion;
+  if (glic_nudge_controller_) {
+    prompt_suggestion = glic_nudge_controller_->GetPromptSuggestion();
+    glic_nudge_controller_->ClearPromptSuggestion();
+  }
   glic::GlicKeyedServiceFactory::GetGlicKeyedService(
       tab_strip_controller_->GetProfile())
       ->ToggleUI(tab_strip_controller_->GetBrowserWindowInterface(),
                  /*prevent_close=*/false,
                  glic_button_->GetIsShowingNudge()
                      ? glic::mojom::InvocationSource::kNudge
-                     : glic::mojom::InvocationSource::kTopChromeButton);
+                     : glic::mojom::InvocationSource::kTopChromeButton,
+                 prompt_suggestion);
 
   if (glic_button_->GetIsShowingNudge()) {
     glic_nudge_controller_->OnNudgeActivity(
@@ -472,7 +574,6 @@ void TabStripActionContainer::OnGlicButtonClicked() {
   }
 
   ExecuteHideTabStripNudge(glic_button_);
-  glic_button_->SetText(std::u16string());
   // Reset state manually since there wont be a mouse up event as the animation
   // moves the button out of the way.
   glic_button_->SetState(views::Button::ButtonState::STATE_NORMAL);
@@ -484,14 +585,16 @@ void TabStripActionContainer::OnGlicButtonDismissed() {
 
   // Force hide the button when pressed, bypassing locked expansion mode.
   ExecuteHideTabStripNudge(glic_button_);
-  glic_button_->SetText(std::u16string());
 }
 
 void TabStripActionContainer::OnGlicButtonHovered() {
   Profile* profile = tab_strip_controller_->GetProfile();
   glic::GlicKeyedService* glic_service =
       glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile);
-  glic_service->PrepareForOpen();
+  if (auto* instance = glic_service->GetInstanceForActiveTab(
+          tab_strip_controller_->GetBrowserWindowInterface())) {
+    instance->host().instance_delegate().PrepareForOpen();
+  }
 }
 
 void TabStripActionContainer::OnGlicButtonMouseDown() {
@@ -500,12 +603,54 @@ void TabStripActionContainer::OnGlicButtonMouseDown() {
     // Do not do this optimization if user has not consented to GLIC.
     return;
   }
-  // This prefetches the results and allows the underlying implementation to
-  // cache the results for future calls. Which is why the callback does nothing.
-  glic::GlicKeyedService* glic_service =
-      glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile);
-  glic_service->FetchZeroStateSuggestions(false, base::DoNothing());
+  auto* glic_service = glic::GlicKeyedService::Get(profile);
+
+  // TODO(crbug.com/445934142): Create the instance here so that suggestions can
+  // be fetched, but don't show it yet.
+  if (auto* instance = glic_service->GetInstanceForActiveTab(
+          tab_strip_controller_->GetBrowserWindowInterface())) {
+    // This prefetches the results and allows the underlying implementation to
+    // cache the results for future calls. Which is why the callback does
+    // nothing.
+    instance->host().instance_delegate().FetchZeroStateSuggestions(
+        /*is_first_run=*/false, /*supported_tools=*/std::nullopt,
+        base::DoNothing());
+  }
 }
+
+void TabStripActionContainer::OnGlicButtonAnimationEnded() {
+  if (!glic_button_->GetIsShowingNudge()) {
+    scoped_tab_strip_modal_ui_.reset();
+
+    if (locked_expansion_button_) {
+      locked_expansion_button_->SetIsShowingNudge(false);
+    }
+  }
+}
+
+void TabStripActionContainer::OnGlicActorTaskIconClicked() {
+  Profile* profile = tab_strip_controller_->GetProfile();
+  glic::GlicKeyedServiceFactory::GetGlicKeyedService(profile)->ToggleUI(
+      tab_strip_controller_->GetBrowserWindowInterface(),
+      /*prevent_close=*/false, glic::mojom::InvocationSource::kActorTaskIcon);
+
+  if (glic_actor_task_icon_->GetIsShowingNudge()) {
+    // If a nudge is showing, activate the last actuated tab on click of the
+    // Task Icon.
+    if (tabs::TabInterface* last_updated_tab =
+            tabs::GlicActorTaskIconManagerFactory::GetForProfile(profile)
+                ->GetLastUpdatedTab()) {
+      TabStripModel* tab_strip_model =
+          tab_strip_controller_->GetBrowserWindowInterface()
+              ->GetTabStripModel();
+      int tab_index = tab_strip_model->GetIndexOfTab(last_updated_tab);
+      tab_strip_model->ActivateTabAt(tab_index);
+    }
+  }
+
+  actor::ui::LogTaskIconClick();
+}
+
 #endif  // BUILDFLAG(ENABLE_GLIC)
 
 void TabStripActionContainer::OnTriggerGlicNudgeUI(std::string label) {
@@ -513,12 +658,20 @@ void TabStripActionContainer::OnTriggerGlicNudgeUI(std::string label) {
 
   CHECK(glic_button_);
   if (!label.empty()) {
-    glic_button_->SetText(base::UTF8ToUTF16(label));
+    glic_button_->SetNudgeLabel(std::move(label));
     ShowTabStripNudge(glic_button_);
-  } else {
-    HideTabStripNudge(glic_button_);
-    glic_button_->SetText(base::UTF8ToUTF16(label));
   }
+
+#else
+  NOTREACHED();
+#endif  // BUILDFLAG(ENABLE_GLIC)
+}
+
+void TabStripActionContainer::OnHideGlicNudgeUI() {
+#if BUILDFLAG(ENABLE_GLIC)
+
+  CHECK(glic_button_);
+  HideTabStripNudge(glic_button_);
 
 #else
   NOTREACHED();
@@ -530,6 +683,93 @@ bool TabStripActionContainer::GetIsShowingGlicNudge() {
   return glic_button_ && glic_button_->GetIsShowingNudge();
 #else
   return false;
+#endif  // BUILDFLAG(ENABLE_GLIC)
+}
+
+#if BUILDFLAG(ENABLE_GLIC)
+void TabStripActionContainer::TriggerGlicActorNudge(
+    const std::u16string nudge_text) {
+  CHECK(glic_actor_task_icon_);
+  ShowGlicActorTaskIcon();
+  glic_actor_task_icon_->ShowNudgeLabel(nudge_text);
+  HighlightGlicActorTaskIcon();
+  ShowTabStripNudge(glic_actor_task_icon_);
+}
+#endif  // BUILDFLAG(ENABLE_GLIC)
+
+void TabStripActionContainer::ShowGlicActorTaskIcon() {
+#if BUILDFLAG(ENABLE_GLIC)
+  CHECK(glic_actor_button_container_);
+  CHECK(glic_button_);
+  // If the nudge is showing (ex: previous state was CheckTasks), hide the nudge
+  // and reset the icon
+  if (glic_actor_task_icon_->GetIsShowingNudge()) {
+    HideTabStripNudge(glic_actor_task_icon_);
+    glic_actor_task_icon_->SetTaskIconToDefault();
+  }
+  glic_button_ =
+      glic_actor_button_container_->AddChildView(std::move(glic_button_));
+  // When kGlicActorUiNudgeRedesign is enabled, the GlicButton should be to the
+  // left of the GlicActorTaskIcon.
+  if (features::kGlicActorUiNudgeRedesign.Get()) {
+    glic_actor_task_icon_->SetVisible(true);
+    glic_actor_button_container_->ReorderChildView(glic_button_, 0u);
+  }
+
+  glic_actor_button_container_->SetVisible(true);
+  UpdateGlicActorButtonContainerBorders();
+#else
+  NOTREACHED();
+#endif  // BUILDFLAG(ENABLE_GLIC)
+}
+
+void TabStripActionContainer::HideGlicActorTaskIcon() {
+#if BUILDFLAG(ENABLE_GLIC)
+  CHECK(glic_actor_button_container_);
+  CHECK(glic_button_);
+  CHECK(glic_actor_task_icon_);
+
+  if (glic_actor_task_icon_->GetIsShowingNudge()) {
+    HideTabStripNudge(glic_actor_task_icon_);
+  }
+  glic_actor_task_icon_->SetTaskIconToDefault();
+  glic_button_ = AddChildView(std::move(glic_button_));
+  glic_actor_button_container_->SetVisible(false);
+  UpdateGlicActorButtonContainerBorders();
+#if !BUILDFLAG(IS_MAC)
+  // Re-add the separator so it's ordered after the GlicButton.
+  separator_ = AddChildView(std::move(separator_));
+#endif  // !BUILDFLAG(IS_MAC)
+#else
+  NOTREACHED();
+#endif  // BUILDFLAG(ENABLE_GLIC)
+}
+
+bool TabStripActionContainer::GetIsShowingGlicActorTaskIconNudge() {
+#if BUILDFLAG(ENABLE_GLIC)
+  return glic_actor_task_icon_ && glic_actor_task_icon_->GetIsShowingNudge();
+#else
+  return false;
+#endif  // BUILDFLAG(ENABLE_GLIC)
+}
+
+void TabStripActionContainer::HighlightGlicActorTaskIcon() {
+#if BUILDFLAG(ENABLE_GLIC)
+  CHECK(glic_actor_task_icon_);
+
+  glic_actor_task_icon_->HighlightTaskIcon();
+#else
+  NOTREACHED();
+#endif  // BUILDFLAG(ENABLE_GLIC)
+}
+
+void TabStripActionContainer::UnhighlightGlicActorTaskIcon() {
+#if BUILDFLAG(ENABLE_GLIC)
+  CHECK(glic_actor_task_icon_);
+
+  glic_actor_task_icon_->SetDefaultColors();
+#else
+  NOTREACHED();
 #endif  // BUILDFLAG(ENABLE_GLIC)
 }
 
@@ -621,7 +861,10 @@ void TabStripActionContainer::ExecuteShowTabStripNudge(
   button->SetIsShowingNudge(true);
 
 #if BUILDFLAG(ENABLE_GLIC)
-  if (glic_button_ && glic_button_->GetVisible() && button != glic_button_) {
+  // Only change the margins between the GlicButton and nudges that are NOT
+  // coming from the GlicActorTaskIcon.
+  if (glic_button_ && glic_button_->GetVisible() && button != glic_button_ &&
+      button != glic_actor_task_icon_) {
     const int space_between_buttons = kLargeSpaceBetweenButtons;
     gfx::Insets margin;
     margin.set_right(space_between_buttons);
@@ -634,12 +877,14 @@ void TabStripActionContainer::ExecuteShowTabStripNudge(
   scoped_tab_strip_modal_ui_.reset();
   scoped_tab_strip_modal_ui_ = tab_strip_controller_->ShowModalUI();
 
-  animation_session_ = std::make_unique<TabStripNudgeAnimationSession>(
-      button, this, TabStripNudgeAnimationSession::AnimationSessionType::SHOW,
-      base::BindOnce(&TabStripActionContainer::OnAnimationSessionEnded,
-                     base::Unretained(this)),
-      button != glic_button_);
-  animation_session_->Start();
+  if (!ButtonOwnsAnimation(button)) {
+    animation_session_ = std::make_unique<TabStripNudgeAnimationSession>(
+        button, this, TabStripNudgeAnimationSession::AnimationSessionType::SHOW,
+        base::BindOnce(&TabStripActionContainer::OnAnimationSessionEnded,
+                       base::Unretained(this)),
+        (button != glic_button_ && button != glic_actor_task_icon_));
+    animation_session_->Start();
+  }
 
   if (button == tab_declutter_button_) {
     LogDeclutterTriggerBucket(false);
@@ -663,9 +908,10 @@ void TabStripActionContainer::ExecuteHideTabStripNudge(
     return;
   }
   // Since the glic button is still visible in it's hidden state we need to have
-  // a sepacial case to query if it's in its Hide state.
+  // a special case to query if it's in its Hide state.
 #if BUILDFLAG(ENABLE_GLIC)
-  if (button == glic_button_ && button->GetWidthFactor() == 0.0) {
+  if (button == glic_button_ && button->GetWidthFactor() == 0.0 &&
+      !ButtonOwnsAnimation(button)) {
     return;
   }
 #endif  // BUILDFLAG(ENABLE_GLIC)
@@ -674,12 +920,14 @@ void TabStripActionContainer::ExecuteHideTabStripNudge(
   // Stop the timer since the chip might be getting hidden on user actions like
   // dismissal or click and not timeout.
   hide_tab_strip_nudge_timer_.Stop();
-  animation_session_ = std::make_unique<TabStripNudgeAnimationSession>(
-      button, this, TabStripNudgeAnimationSession::AnimationSessionType::HIDE,
-      base::BindOnce(&TabStripActionContainer::OnAnimationSessionEnded,
-                     base::Unretained(this)),
-      button != glic_button_);
-  animation_session_->Start();
+  if (!ButtonOwnsAnimation(button)) {
+    animation_session_ = std::make_unique<TabStripNudgeAnimationSession>(
+        button, this, TabStripNudgeAnimationSession::AnimationSessionType::HIDE,
+        base::BindOnce(&TabStripActionContainer::OnAnimationSessionEnded,
+                       base::Unretained(this)),
+        (button != glic_button_ && button != glic_actor_task_icon_));
+    animation_session_->Start();
+  }
 }
 
 void TabStripActionContainer::SetLockedExpansionMode(
@@ -763,6 +1011,11 @@ void TabStripActionContainer::AnimationCanceled(
 void TabStripActionContainer::AnimationEnded(const gfx::Animation* animation) {
   animation_session_->ApplyAnimationValue(animation);
   animation_session_->MarkAnimationDone(animation);
+#if BUILDFLAG(ENABLE_GLIC)
+  if (glic_button_) {
+    glic_button_->OnAnimationEnded();
+  }
+#endif
 }
 
 void TabStripActionContainer::OnAnimationSessionEnded() {
@@ -787,6 +1040,8 @@ void TabStripActionContainer::AnimationProgressed(
 
 void TabStripActionContainer::UpdateButtonBorders(
     const gfx::Insets border_insets) {
+  border_insets_ = border_insets;
+
   if (auto_tab_group_button_) {
     auto_tab_group_button_->SetBorder(views::CreateEmptyBorder(border_insets));
   }
@@ -798,10 +1053,11 @@ void TabStripActionContainer::UpdateButtonBorders(
         views::CreateEmptyBorder(border_insets));
   }
   if (glic_button_) {
-    gfx::Insets glic_border = gfx::Insets().set_left_right(
-                                  border_insets.top(), border_insets.bottom()) +
-                              border_insets;
-    glic_button_->SetBorder(views::CreateEmptyBorder(glic_border));
+#if BUILDFLAG(ENABLE_GLIC)
+    UpdateGlicActorButtonContainerBorders();
+#else
+    NOTREACHED();
+#endif  // BUILDFLAG(ENABLE_GLIC)
   }
 }
 
@@ -814,10 +1070,12 @@ void TabStripActionContainer::SetGlicShowState(bool show) {
   }
 }
 
-void TabStripActionContainer::SetGlicIcon(const gfx::VectorIcon& icon) {
+void TabStripActionContainer::SetGlicDetached(bool detached) {
+#if BUILDFLAG(ENABLE_GLIC)
   if (glic_button_) {
-    glic_button_->SetVectorIcon(icon);
+    glic_button_->SetGlicDetached(detached);
   }
+#endif  // BUILDFLAG(ENABLE_GLIC)
 }
 
 void TabStripActionContainer::DidBecomeActive(BrowserWindowInterface* browser) {
@@ -827,6 +1085,16 @@ void TabStripActionContainer::DidBecomeActive(BrowserWindowInterface* browser) {
 void TabStripActionContainer::DidBecomeInactive(
     BrowserWindowInterface* browser) {
   separator_->SetColorId(kColorTabDividerFrameInactive);
+}
+
+bool TabStripActionContainer::ButtonOwnsAnimation(
+    const TabStripNudgeButton* button) const {
+#if BUILDFLAG(ENABLE_GLIC)
+  return button == glic_button_ &&
+         base::FeatureList::IsEnabled(features::kGlicEntrypointVariations);
+#else
+  return false;
+#endif
 }
 
 BEGIN_METADATA(TabStripActionContainer)

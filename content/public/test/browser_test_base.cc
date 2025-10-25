@@ -87,8 +87,10 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "services/network/network_service.h"
 #include "services/network/public/cpp/features.h"
+#include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/mojom/network_service_test.mojom.h"
 #include "services/tracing/public/cpp/trace_startup.h"
+#include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
@@ -103,10 +105,12 @@
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/task_scheduler/post_task_android.h"
+#include "base/memory_coordinator/memory_consumer_registry.h"
 #include "components/discardable_memory/service/discardable_shared_memory_manager.h"  // nogncheck
 #include "content/app/content_main_runner_impl.h"
 #include "content/app/mojo/mojo_init.h"
 #include "content/app/mojo_ipc_support.h"
+#include "content/browser/memory_coordinator/browser_memory_consumer_registry.h"
 #include "content/public/app/content_main_delegate.h"
 #include "content/public/common/content_paths.h"
 #include "testing/android/native_test/native_browser_test_support.h"
@@ -307,11 +311,6 @@ BrowserTestBase::BrowserTestBase() {
 }
 
 BrowserTestBase::~BrowserTestBase() {
-#if BUILDFLAG(IS_ANDROID)
-  // DiscardableSharedMemoryManager destruction can block the current thread.
-  base::ScopedAllowBaseSyncPrimitivesForTesting allow_wait;
-  discardable_shared_memory_manager_.reset();
-#endif
   CHECK(set_up_called_ || IsSkipped() || HasFatalFailure())
       << "SetUp was not called. This probably means that the "
          "developer has overridden the method and not called "
@@ -334,8 +333,20 @@ void BrowserTestBase::SetUp() {
 
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
 
-  if (!command_line->HasSwitch(switches::kUseFakeDeviceForMediaStream))
+  // Force all EmbeddedTestServers started into the public address space. This
+  // avoids Local Network Access (LNA) checks on tests that don't intend to
+  // exercise LNA functionality.
+  //
+  // Don't overwrite any IP address overrides that test have already set.
+  if (!command_line->HasSwitch(network::switches::kIpAddressSpaceOverrides)) {
+    command_line->AppendSwitchASCII(network::switches::kIpAddressSpaceOverrides,
+                                    "127.0.0.1:0=public,[::1]:0=public");
+  }
+
+  if (use_fake_media_stream_devices_ &&
+      !command_line->HasSwitch(switches::kUseFakeDeviceForMediaStream)) {
     command_line->AppendSwitch(switches::kUseFakeDeviceForMediaStream);
+  }
 
   // Features that depend on external factors (e.g. memory pressure monitor) can
   // disable themselves based on the switch below (to ensure that browser tests
@@ -369,6 +380,10 @@ void BrowserTestBase::SetUp() {
   // occlusion when running browser tests.
   command_line->AppendSwitch(
       switches::kDisableBackgroundingOccludedWindowsForTesting);
+
+  // Disable IgnoreDuplicateNavs by default to ensure tests run with predictable
+  // navigation behavior and don't have navigations unintentionally ignored.
+  command_line->AppendSwitch(switches::kDisableIgnoreDuplicateNavsForTesting);
 
   if (enable_pixel_output_) {
     DCHECK(!command_line->HasSwitch(switches::kForceDeviceScaleFactor))
@@ -468,10 +483,25 @@ void BrowserTestBase::SetUp() {
 
   SetUpInProcessBrowserTestFixture();
 
-  // Should not use CommandLine to modify features. Please use ScopedFeatureList
-  // instead.
-  DCHECK(!command_line->HasSwitch(switches::kEnableFeatures));
-  DCHECK(!command_line->HasSwitch(switches::kDisableFeatures));
+  std::string command_line_enable_features;
+  std::string command_line_disable_features;
+  if (allow_features_switches_) {
+    if (command_line->HasSwitch(switches::kEnableFeatures)) {
+      command_line_enable_features =
+          command_line->GetSwitchValueASCII(switches::kEnableFeatures);
+      command_line->RemoveSwitch(switches::kEnableFeatures);
+    }
+    if (command_line->HasSwitch(switches::kDisableFeatures)) {
+      command_line_disable_features =
+          command_line->GetSwitchValueASCII(switches::kDisableFeatures);
+      command_line->RemoveSwitch(switches::kDisableFeatures);
+    }
+  } else {
+    // Should not use CommandLine to modify features. Please use
+    // ScopedFeatureList instead.
+    DCHECK(!command_line->HasSwitch(switches::kEnableFeatures));
+    DCHECK(!command_line->HasSwitch(switches::kDisableFeatures));
+  }
 
   // At this point, copy features to the command line, since BrowserMain will
   // wipe out the current feature list.
@@ -480,6 +510,15 @@ void BrowserTestBase::SetUp() {
   if (base::FeatureList::GetInstance()) {
     base::FeatureList::GetInstance()->GetFeatureOverrides(&enabled_features,
                                                           &disabled_features);
+  }
+
+  if (!command_line_enable_features.empty()) {
+    enabled_features =
+        base::StrCat({command_line_enable_features, ",", enabled_features});
+  }
+  if (!command_line_disable_features.empty()) {
+    disabled_features =
+        base::StrCat({command_line_disable_features, ",", disabled_features});
   }
 
   if (!enabled_features.empty()) {
@@ -568,6 +607,8 @@ void BrowserTestBase::SetUp() {
   // things up manually. A meager re-implementation of ContentMainRunnerImpl
   // follows.
 
+  base::ScopedMemoryConsumerRegistry<BrowserMemoryConsumerRegistry> registry;
+
   // Unlike other platforms, android_browsertests can reuse the same process for
   // multiple tests. Need to reset startup metrics to allow recording them
   // again.
@@ -583,9 +624,6 @@ void BrowserTestBase::SetUp() {
 
   std::optional<int> startup_error = delegate->BasicStartupComplete();
   ASSERT_FALSE(startup_error.has_value());
-
-  // We can only setup startup tracing after mojo is initialized above.
-  tracing::EnableStartupTracingIfNeeded();
 
   {
     ContentClient::SetBrowserClientAlwaysAllowForTesting(
@@ -614,7 +652,7 @@ void BrowserTestBase::SetUp() {
 
     auto* provider = delegate->CreateVariationsIdsProvider();
     if (!provider) {
-      variations::VariationsIdsProvider::Create(
+      variations::VariationsIdsProvider::CreateInstance(
           variations::VariationsIdsProvider::Mode::kUseSignedInState);
     }
 
@@ -622,9 +660,13 @@ void BrowserTestBase::SetUp() {
         delegate->PostEarlyInitialization(invoked_in_browser);
     ASSERT_FALSE(post_early_initialization_exit_code.has_value());
 
+    // We can only setup startup tracing after feature list is initialized
+    // above.
+    tracing::InitTracingPostFeatureList(/*enable_consumer=*/true,
+                                        /*will_trace_thread_restart=*/false);
+
     StartBrowserThreadPool();
 
-    tracing::InitTracingPostFeatureList(/*enable_consumer=*/true);
     InitializeBrowserMemoryInstrumentationClient();
   }
 
@@ -674,7 +716,9 @@ void BrowserTestBase::SetUp() {
 
     // Waits for Java to finish initialization, then we can run the test.
     loop.Run();
+  }
 
+  {
     // The BrowserMainLoop startup tasks will call DisallowUnresponsiveTasks().
     // So when we run the ProxyRunTestOnMainThreadLoop() we no longer can block,
     // but tests should be allowed to. So we undo that blocking inside here.
@@ -687,11 +731,26 @@ void BrowserTestBase::SetUp() {
   }
 
   {
+    // We need to finish the Activity before this function returns because
+    // otherwise we will crash when finishing the Activity as too much
+    // infrastructure has been torn down.
+    base::RunLoop loop{base::RunLoop::Type::kNestableTasksAllowed};
+    testing::android::RunActivityTeardownCallback();
+    WaitUntilActivityTeardownIsFinished(loop.QuitClosure(),
+                                        TestTimeouts::action_max_timeout());
+    loop.Run();
+  }
+
+  {
     base::ScopedAllowBaseSyncPrimitivesForTesting allow_wait;
     // Shutting these down will block the thread.
     ShutDownNetworkService();
     ipc_support.reset();
   }
+
+  // Can hang if run after BrowserTaskExecutor is shut down.
+  base::ScopedAllowBaseSyncPrimitivesForTesting allow_wait;
+  discardable_shared_memory_manager_.reset();
 
   // Like in BrowserMainLoop::ShutdownThreadsAndCleanUp(), allow IO during main
   // thread tear down.
@@ -779,7 +838,26 @@ void BrowserTestBase::WaitUntilJavaIsReady(
                      base::Unretained(this), std::move(quit_closure),
                      wait_retry_left - retry_interval),
       retry_interval);
-  return;
+}
+
+void BrowserTestBase::WaitUntilActivityTeardownIsFinished(
+    base::OnceClosure quit_closure,
+    const base::TimeDelta& wait_retry_left) {
+  CHECK_GE(wait_retry_left.InMilliseconds(), 0)
+      << "WaitUntilActivityTeardownIsFinished() timed out.";
+
+  if (testing::android::JavaActivityTeardownCompleteForBrowserTests()) {
+    std::move(quit_closure).Run();
+    return;
+  }
+
+  base::TimeDelta retry_interval = base::Milliseconds(100);
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(&BrowserTestBase::WaitUntilActivityTeardownIsFinished,
+                     base::Unretained(this), std::move(quit_closure),
+                     wait_retry_left - retry_interval),
+      retry_interval);
 }
 #endif
 
@@ -813,10 +891,32 @@ void BrowserTestBase::ProxyRunTestOnMainThreadLoop() {
 
 #if BUILDFLAG(IS_POSIX)
   g_browser_process_pid = base::GetCurrentProcId();
-  signal(SIGSEGV, SignalHandler);
 
-  if (handle_sigterm_)
-    signal(SIGTERM, SignalHandler);
+  struct sigaction action;
+  action.sa_handler = SignalHandler;
+  sigemptyset(&action.sa_mask);
+  action.sa_flags = 0;
+
+  struct sigaction old_action;
+
+  std::optional<struct sigaction> old_sigsegv_action =
+      sigaction(SIGSEGV, &action, &old_action) == 0 ? std::optional(old_action)
+                                                    : std::nullopt;
+
+  std::optional<struct sigaction> old_sigterm_action =
+      handle_sigterm_ && sigaction(SIGTERM, &action, &old_action) == 0
+          ? std::optional(old_action)
+          : std::nullopt;
+
+  absl::Cleanup restore_signal_handlers = [&old_sigsegv_action,
+                                           &old_sigterm_action] {
+    if (old_sigsegv_action) {
+      sigaction(SIGSEGV, &*old_sigsegv_action, nullptr);
+    }
+    if (old_sigterm_action) {
+      sigaction(SIGTERM, &*old_sigterm_action, nullptr);
+    }
+  };
 
   ShutdownHandler = base::BindOnce(&BrowserTestBase::SignalRunTestOnMainThread,
                                    base::Unretained(this));
@@ -1014,6 +1114,11 @@ void BrowserTestBase::EnablePixelOutput(float force_device_scale_factor) {
   force_device_scale_factor_ = force_device_scale_factor;
 }
 
+void BrowserTestBase::SetUseFakeMediaStreamDevices(
+    bool use_fake_media_stream_devices) {
+  use_fake_media_stream_devices_ = use_fake_media_stream_devices;
+}
+
 void BrowserTestBase::UseSoftwareCompositing() {
   use_software_compositing_ = true;
 }
@@ -1021,6 +1126,11 @@ void BrowserTestBase::UseSoftwareCompositing() {
 void BrowserTestBase::SetInitialWebContents(WebContents* web_contents) {
   DCHECK(!initial_web_contents_);
   initial_web_contents_ = web_contents->GetWeakPtr();
+}
+
+void BrowserTestBase::SetAllowFeaturesSwitches(bool allow) {
+  DCHECK(!set_up_called_);
+  allow_features_switches_ = allow;
 }
 
 void BrowserTestBase::AssertThatNetworkServiceDidNotCrash() {

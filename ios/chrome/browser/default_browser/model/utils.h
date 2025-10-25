@@ -313,16 +313,9 @@ bool IsLikelyInterestedDefaultBrowserUser(DefaultPromoType type);
 // see another one.
 bool UserInFullscreenPromoCooldown();
 
-// Returns YES if the user has seen a non-modal promo recently, and shouldn't
-// see another one.
-bool UserInNonModalPromoCooldown();
-
 // List of all key used to store data in NSUserDefaults. Still used as key
 // in the NSDictionary stored under `kBrowserDefaultsKey`.
 const NSArray<NSString*>* DefaultBrowserUtilsLegacyKeysForTesting();
-
-// Returns the impression limit for the non-modal default browser promo.
-int GetNonModalDefaultBrowserPromoImpressionLimit();
 
 // Returns true if it was determined that the user is eligible for the
 // post restore default browser promo.
@@ -435,5 +428,15 @@ NSDate* LastTimeUserInteractedWithNonModalPromo();
 // Returns the last action, if any, that the user took when a Default Browser
 // Promo was presented.
 std::optional<IOSDefaultBrowserPromoAction> DefaultBrowserPromoLastAction();
+
+// Opens the appropriate iOS settings to set Chromium as default browser. If
+// the relevant feature flags are enabled or if
+// `force_default_apps_if_available` is set to true, the new Default Apps page
+// will be used as the destination if the device supports it. Otherwise, the
+// Chromium settings will be used. The second parameter is to facilitate mocking
+// in unit testing.
+void OpenIOSDefaultBrowserSettingsPage(
+    bool force_default_apps_if_available = false,
+    UIApplication* ui_application_to_use = nil);
 
 #endif  // IOS_CHROME_BROWSER_DEFAULT_BROWSER_MODEL_UTILS_H_

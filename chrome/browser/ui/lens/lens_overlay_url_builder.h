@@ -11,12 +11,13 @@
 
 #include "base/time/time.h"
 #include "components/lens/lens_overlay_invocation_source.h"
-#include "third_party/lens_server_proto/lens_overlay_cluster_info.pb.h"
-#include "third_party/lens_server_proto/lens_overlay_request_id.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_selection_type.pb.h"
 #include "url/gurl.h"
 
 namespace lens {
+
+class LensOverlayClusterInfo;
+class LensOverlayRequestId;
 
 void AppendTranslateParamsToMap(std::map<std::string, std::string>& params,
                                 const std::string& query,
@@ -61,11 +62,11 @@ GURL BuildLensSearchURL(
 
 // Returns the value of the text query parameter value from the provided search
 // URL if any. Empty string otherwise.
-const std::string GetTextQueryParameterValue(const GURL& url);
+const std::string ExtractTextQueryParameterValue(const GURL& url);
 
 // Returns the value of the lens mode parameter value from the provided search
 // URL if any. Empty string otherwise.
-const std::string GetLensModeParameterValue(const GURL& url);
+const std::string ExtractLensModeParameterValue(const GURL& url);
 
 // Returns true if the two URLs have the same base url, and the same query
 // parameters. This differs from comparing two GURLs using == since this method
@@ -82,6 +83,9 @@ bool HasCommonSearchQueryParameters(const GURL& url);
 // could differ from values in common APIs since the search URL is set via a
 // finch configured flag.
 bool IsValidSearchResultsUrl(const GURL& url);
+
+// Returns whether the given |url| is an AIM URL.
+bool IsAimQuery(const GURL& url);
 
 // Returns whether the `url` is a valid lens overlay search URL but contains
 // parameters known not to be supported in the side panel and thus should be
@@ -111,7 +115,8 @@ GURL GetSidePanelNewTabUrl(const GURL& side_panel_url, std::string vsrid);
 
 // Builds the appropriate translate service URL for fetching supported
 // languages.
-GURL BuildTranslateLanguagesURL(std::string country, std::string language);
+GURL BuildTranslateLanguagesURL(std::string_view country,
+                                std::string_view language);
 
 // Returns whether |lens_selection_type| should be considered as a text-only
 // selection type.
@@ -131,6 +136,13 @@ GURL AddPDFScrollToParametersToUrl(
     const GURL& url,
     const std::vector<std::string>& text_fragments,
     int pdf_page_number);
+
+// Return the time from a `t=` parameter if it exists.
+std::optional<base::TimeDelta> ExtractTimeInSecondsFromQueryIfExists(
+    const GURL& target);
+
+// Return the video ID if it's set in `url`.
+std::optional<std::string> ExtractVideoNameIfExists(const GURL& url);
 
 }  // namespace lens
 

@@ -19,19 +19,22 @@ namespace content {
 class MediaSession;
 class WebContents;
 class RenderFrameHost;
+struct FocusedNodeDetails;
 
 // Extends WebContentsObserver for providing a public Java API for some of the
 // the calls it receives.
 class WebContentsObserverProxy : public WebContentsObserver {
  public:
-  WebContentsObserverProxy(JNIEnv* env, jobject obj, WebContents* web_contents);
+  WebContentsObserverProxy(JNIEnv* env,
+                           const base::android::JavaRef<jobject>& obj,
+                           WebContents* web_contents);
 
   WebContentsObserverProxy(const WebContentsObserverProxy&) = delete;
   WebContentsObserverProxy& operator=(const WebContentsObserverProxy&) = delete;
 
   ~WebContentsObserverProxy() override;
 
-  void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
+  void Destroy(JNIEnv* env);
 
  private:
   void RenderFrameCreated(RenderFrameHost* render_frame_host) override;
@@ -83,7 +86,10 @@ class WebContentsObserverProxy : public WebContentsObserver {
   void VirtualKeyboardModeChanged(ui::mojom::VirtualKeyboardMode mode) override;
   void OnWebContentsFocused(RenderWidgetHost*) override;
   void OnWebContentsLostFocus(RenderWidgetHost*) override;
+  void OnFocusChangedInPage(const FocusedNodeDetails&) override;
   void MediaSessionCreated(MediaSession* media_session) override;
+  void DidUpdateAudioMutingState(bool muted) override;
+  void WasDiscarded() override;
 
   base::android::ScopedJavaGlobalRef<jobject> java_observer_;
   GURL base_url_of_last_started_data_url_;

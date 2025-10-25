@@ -6,9 +6,9 @@ package org.chromium.chrome.browser.bookmarks;
 
 import android.content.ComponentName;
 
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.back_press.BackPressManager;
 import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
 import org.chromium.chrome.browser.price_tracking.PriceDropNotificationManagerFactory;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -18,6 +18,7 @@ import org.chromium.chrome.browser.ui.native_page.NativePageHost;
 import org.chromium.components.embedder_support.util.UrlConstants;
 
 /** A native page holding a {@link BookmarkManagerCoordinator} on _tablet_. */
+@NullMarked
 public class BookmarkPage extends BasicNativePage {
     private final BookmarkManagerCoordinator mBookmarkManagerCoordinator;
     private final BookmarkOpener mBookmarkOpener;
@@ -32,11 +33,13 @@ public class BookmarkPage extends BasicNativePage {
      * @param host A NativePageHost to load urls.
      */
     public BookmarkPage(
-            @NonNull SnackbarManager snackbarManager,
-            @NonNull Profile profile,
-            @NonNull NativePageHost host,
-            @Nullable ComponentName componentName) {
+            SnackbarManager snackbarManager,
+            Profile profile,
+            NativePageHost host,
+            @Nullable ComponentName componentName,
+            BackPressManager backPressManager) {
         super(host);
+
         mTitle = host.getContext().getString(R.string.bookmarks);
 
         mBookmarkOpener =
@@ -44,6 +47,10 @@ public class BookmarkPage extends BasicNativePage {
                         () -> BookmarkModel.getForProfile(profile),
                         /* context= */ host.getContext(),
                         componentName);
+
+        // Provide the BackPressManager to the coordinator so it can manage itself.
+        // The logic in the coordinator ensures that there is only one NATIVE_PAGE handler set
+        // at a time.
         mBookmarkManagerCoordinator =
                 new BookmarkManagerCoordinator(
                         host.getContext(),
@@ -53,9 +60,14 @@ public class BookmarkPage extends BasicNativePage {
                         new BookmarkUiPrefs(ChromeSharedPreferences.getInstance()),
                         mBookmarkOpener,
                         new BookmarkManagerOpenerImpl(),
-                        PriceDropNotificationManagerFactory.create(profile));
+                        PriceDropNotificationManagerFactory.create(profile),
+                        host::createEdgeToEdgePadAdjuster,
+                        backPressManager);
+
         mBookmarkManagerCoordinator.setBasicNativePage(this);
         initWithView(mBookmarkManagerCoordinator.getView());
+
+        setBackPressHandler(mBookmarkManagerCoordinator, backPressManager);
     }
 
     @Override
@@ -75,10 +87,13 @@ public class BookmarkPage extends BasicNativePage {
     }
 
     @Override
+    public boolean supportsEdgeToEdge() {
+        return true;
+    }
+
+    @Override
     public void destroy() {
         super.destroy();
-
-        mBookmarkOpener.destroy();
         mBookmarkManagerCoordinator.onDestroyed();
     }
 

@@ -23,7 +23,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/discardable_memory_allocator.h"
 #include "base/memory/memory_pressure_listener.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/structured_shared_memory.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/observer_list.h"
@@ -37,7 +37,6 @@
 #include "content/child/child_thread_impl.h"
 #include "content/common/agent_scheduling_group.mojom.h"
 #include "content/common/content_export.h"
-#include "content/common/frame.mojom.h"
 #include "content/common/render_message_filter.mojom.h"
 #include "content/common/renderer.mojom.h"
 #include "content/common/renderer_host.mojom.h"
@@ -64,7 +63,7 @@
 #include "third_party/blink/public/platform/scheduler/web_thread_scheduler.h"
 #include "third_party/blink/public/platform/url_loader_throttle_provider.h"
 #include "third_party/blink/public/platform/web_connection_type.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 namespace blink {
 class WebVideoCaptureImplManager;
@@ -122,7 +121,8 @@ class CONTENT_EXPORT RenderThreadImpl
       public ChildThreadImpl,
       public mojom::Renderer,
       public viz::mojom::CompositingModeWatcher,
-      public base::trace_event::TraceLog::AsyncEnabledStateObserver {
+      public base::trace_event::TraceLog::AsyncEnabledStateObserver,
+      public base::MemoryPressureListener {
  public:
   static RenderThreadImpl* current();
 
@@ -156,17 +156,6 @@ class CONTENT_EXPORT RenderThreadImpl
   // base::trace_event::TraceLog::AsyncEnabledStateObserver implementation:
   void OnTraceLogEnabled() override;
   void OnTraceLogDisabled() override;
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  IPC::SyncMessageFilter* GetSyncMessageFilter() override;
-  void AddRoute(int32_t routing_id, IPC::Listener* listener) override;
-  void AttachTaskRunnerToRoute(
-      int32_t routing_id,
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner) override;
-  void RemoveRoute(int32_t routing_id) override;
-  void AddFilter(IPC::MessageFilter* filter) override;
-  void RemoveFilter(IPC::MessageFilter* filter) override;
-#endif
 
   bool GenerateFrameRoutingID(int32_t& routing_id,
                               blink::LocalFrameToken& frame_token,
@@ -378,16 +367,13 @@ class CONTENT_EXPORT RenderThreadImpl
   void OnChannelError() override;
 
   // ChildThread
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-  bool OnControlMessageReceived(const IPC::Message& msg) override;
-#endif
   void RecordAction(const base::UserMetricsAction& action) override;
   void RecordComputedAction(const std::string& action) override;
 
 #if BUILDFLAG(IS_ANDROID)
   // ChildThreadImpl
   void OnMemoryPressureFromBrowserReceived(
-      base::MemoryPressureListener::MemoryPressureLevel level) override;
+      base::MemoryPressureLevel level) override;
 #endif
   void SetBatterySaverMode(bool battery_saver_mode_enabled) override;
 
@@ -439,7 +425,7 @@ class CONTENT_EXPORT RenderThreadImpl
   void SetWebUIResourceUrlToCodeCacheMap(
       const base::flat_map<GURL, int>& resource_map) override;
   void OnMemoryPressure(
-      base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
+      base::MemoryPressureLevel memory_pressure_level) override;
 
   bool RendererIsHidden() const;
   void OnRendererHidden();
@@ -448,9 +434,6 @@ class CONTENT_EXPORT RenderThreadImpl
   bool RendererIsBackgrounded() const;
   void OnRendererBackgrounded();
   void OnRendererForegrounded();
-
-  void OnSyncMemoryPressure(
-      base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
 
   void OnRendererInterfaceReceiver(
       mojo::PendingAssociatedReceiver<mojom::Renderer> receiver);
@@ -543,7 +526,8 @@ class CONTENT_EXPORT RenderThreadImpl
 
   HistogramCustomizer histogram_customizer_;
 
-  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
+  std::unique_ptr<base::SyncMemoryPressureListenerRegistration>
+      memory_pressure_listener_registration_;
 
   std::unique_ptr<viz::Gpu> gpu_;
 

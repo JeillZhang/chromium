@@ -7,17 +7,24 @@
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "base/base_export.h"
 #include "base/check_op.h"
 #include "base/compiler_specific.h"
+#include "base/feature_list.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/memory/raw_ref.h"
+#include "base/sampling_heap_profiler/lock_free_bloom_filter.h"
 #include "base/synchronization/lock.h"
 #include "base/thread_annotations.h"
+#include "base/types/optional_util.h"
 
 namespace base {
+
+// If enabled, LockFreeAddressHashSet will use the bloom filter.
+BASE_EXPORT BASE_DECLARE_FEATURE(kUseLockFreeBloomFilter);
 
 // A hash set container that provides lock-free version of |Contains| operation.
 // It does not support concurrent write operations |Insert| and |Remove|.
@@ -47,6 +54,21 @@ namespace base {
 // N-1: {*}--> {keyM,*}--> NULL
 class BASE_EXPORT LockFreeAddressHashSet {
  public:
+  // Stats about the hash set's buckets, for metrics.
+  struct BASE_EXPORT BucketStats {
+    BucketStats(std::vector<size_t> lengths, double chi_squared);
+    ~BucketStats();
+
+    BucketStats(const BucketStats&);
+    BucketStats& operator=(const BucketStats&);
+
+    // Length of each bucket (ie. number of key slots that must be searched).
+    std::vector<size_t> lengths;
+
+    // Result of a chi-squared test that measures uniformity of bucket usage.
+    double chi_squared = 0.0;
+  };
+
   // Creates a hash set with `buckets_count` buckets. `lock` is a lock that
   // must be held by callers of |Insert|, |Remove| and |Copy|. |Contains| is
   // lock-free.
@@ -54,18 +76,34 @@ class BASE_EXPORT LockFreeAddressHashSet {
 
   ~LockFreeAddressHashSet();
 
-  // Checks if the |key| is in the set. Can be executed concurrently with
-  // |Insert|, |Remove|, and |Contains| operations.
-  ALWAYS_INLINE bool Contains(void* key) const;
+  enum class ContainsResult {
+    // The key is in the hash set. If the kUseLockFreeBloomFilter feature is
+    // enabled, it's also in the supplemental Bloom filter.
+    kFound,
+    // The key is not in the hash set. If the kUseLockFreeBloomFilter feature is
+    // enabled, it's also not in the supplemental Bloom filter.
+    kNotFound,
+    // The key was matched in the supplemental Bloom filter, but not the hash
+    // set. (A Bloom filter false positive.) This is only returned if the
+    // kUseLockFreeBloomFilter feature is enabled, and is mainly useful for
+    // tracking statistics of the Bloom filter usage.
+    kNotFoundButMatchedInBloomFilter,
+  };
 
-  // Removes the |key| from the set. The key must be present in the set before
-  // the invocation.
-  // Concurrent execution of |Insert|, |Remove|, or |Copy| is not supported.
+  // Checks if the |key|, which must not be nullptr, is in the set. Checks the
+  // bloom filter first if it's enabled. Can be executed concurrently with
+  // |Insert|, |Remove|, and |Contains| operations.
+  ALWAYS_INLINE ContainsResult Contains(void* key) const;
+
+  // Removes the |key|, which must not be nullptr, from the set. The key must be
+  // present in the set before the invocation. Concurrent execution of |Insert|,
+  // |Remove|, or |Copy| is not supported.
   ALWAYS_INLINE void Remove(void* key);
 
-  // Inserts the |key| into the set. The key must not be present in the set
-  // before the invocation.
-  // Concurrent execution of |Insert|, |Remove|, or |Copy| is not supported.
+  // Inserts the |key|, which must not be nullptr, into the set. The key must
+  // not be present in the set before the invocation. Also adds the key to the
+  // bloom filter if it's enabled. Concurrent execution of |Insert|, |Remove|,
+  // or |Copy| is not supported.
   void Insert(void* key);
 
   // Copies contents of |other| set into the current set. The current set
@@ -90,37 +128,58 @@ class BASE_EXPORT LockFreeAddressHashSet {
     return 1.f * size() / buckets_.size();
   }
 
-  // Returns the lengths of all buckets. Must not be called concurrently with
+  // Returns stats about the buckets. Must not be called concurrently with
   // |Insert|, |Remove| or |Copy|.
-  std::vector<size_t> GetBucketLengths() const;
+  BucketStats GetBucketStats() const;
+
+  LockFreeBloomFilter* bloom_filter() { return base::OptionalToPtr(filter_); }
+  const LockFreeBloomFilter* bloom_filter() const {
+    return base::OptionalToPtr(filter_);
+  }
 
  private:
   friend class LockFreeAddressHashSetTest;
 
   struct Node {
-    ALWAYS_INLINE Node(void* key, Node* next);
+    ALWAYS_INLINE Node(void* k, Node* next) : next(next) {
+      key.store(k, std::memory_order_relaxed);
+    }
+
     std::atomic<void*> key;
+
     // This field is not a raw_ptr<> to avoid out-of-line destructor.
     RAW_PTR_EXCLUSION Node* next;
   };
 
+  // Returns the node containing `key` (which must not be null), or nullptr if
+  // it's not in the hash set.
+  ALWAYS_INLINE Node* FindNode(void* key);
+  ALWAYS_INLINE const Node* FindNode(void* key) const;
+
+  // Returns the hash of `key`.
   ALWAYS_INLINE static uint32_t Hash(void* key);
-  ALWAYS_INLINE Node* FindNode(void* key) const;
 
   raw_ref<Lock> lock_;
 
   std::vector<std::atomic<Node*>> buckets_;
   size_t size_ GUARDED_BY(lock_) = 0;
   const size_t bucket_mask_;
+
+  // A bloom filter to speed up lookups of addresses not in the hash set.
+  std::optional<LockFreeBloomFilter> filter_;
 };
 
-ALWAYS_INLINE LockFreeAddressHashSet::Node::Node(void* key, Node* next)
-    : next(next) {
-  this->key.store(key, std::memory_order_relaxed);
-}
-
-ALWAYS_INLINE bool LockFreeAddressHashSet::Contains(void* key) const {
-  return FindNode(key) != nullptr;
+ALWAYS_INLINE LockFreeAddressHashSet::ContainsResult
+LockFreeAddressHashSet::Contains(void* key) const {
+  if (!filter_) {
+    return FindNode(key) ? ContainsResult::kFound : ContainsResult::kNotFound;
+  }
+  if (filter_->MaybeContains(key)) {
+    // The filter may have false positives, so need to check the hash set.
+    return FindNode(key) ? ContainsResult::kFound
+                         : ContainsResult::kNotFoundButMatchedInBloomFilter;
+  }
+  return ContainsResult::kNotFound;
 }
 
 ALWAYS_INLINE void LockFreeAddressHashSet::Remove(void* key) {
@@ -132,10 +191,12 @@ ALWAYS_INLINE void LockFreeAddressHashSet::Remove(void* key) {
   // Instead we just mark it as empty, so |Insert| can reuse it later.
   node->key.store(nullptr, std::memory_order_relaxed);
   --size_;
+  // Keys can't be removed from the bloom filter. Old keys will be cleared out
+  // when the hash set is resized.
 }
 
 ALWAYS_INLINE LockFreeAddressHashSet::Node* LockFreeAddressHashSet::FindNode(
-    void* key) const {
+    void* key) {
   DCHECK_NE(key, nullptr);
   const std::atomic<Node*>& bucket = buckets_[Hash(key) & bucket_mask_];
   // It's enough to use std::memory_order_consume ordering here, as the
@@ -158,6 +219,11 @@ ALWAYS_INLINE LockFreeAddressHashSet::Node* LockFreeAddressHashSet::FindNode(
     }
   }
   return nullptr;
+}
+
+ALWAYS_INLINE const LockFreeAddressHashSet::Node*
+LockFreeAddressHashSet::FindNode(void* key) const {
+  return const_cast<LockFreeAddressHashSet*>(this)->FindNode(key);
 }
 
 // static

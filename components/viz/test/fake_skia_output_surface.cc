@@ -10,6 +10,7 @@
 
 #include "base/functional/bind.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/task/bind_post_task.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
@@ -20,22 +21,17 @@
 #include "components/viz/common/resources/transferable_resource.h"
 #include "components/viz/service/display/output_surface_client.h"
 #include "components/viz/service/display/output_surface_frame.h"
-#include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/common/swap_buffers_complete_params.h"
-#include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
-#include "third_party/khronos/GLES2/gl2ext.h"
+#include "third_party/skia/include/core/SkCPURecorder.h"
 #include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkPixelRef.h"
 #include "third_party/skia/include/gpu/GpuTypes.h"
 #include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
-#include "third_party/skia/include/gpu/ganesh/GrDirectContext.h"
 #include "third_party/skia/include/gpu/ganesh/SkImageGanesh.h"
 #include "third_party/skia/include/gpu/ganesh/SkSurfaceGanesh.h"
-#include "third_party/skia/include/gpu/ganesh/gl/GrGLBackendSurface.h"
-#include "third_party/skia/include/gpu/ganesh/gl/GrGLTypes.h"
 #include "ui/gfx/gpu_fence_handle.h"
 #include "ui/gfx/presentation_feedback.h"
 #include "ui/gfx/swap_result.h"
@@ -260,7 +256,7 @@ void FakeSkiaOutputSurface::CopyOutput(
   }
 
   if (request->result_destination() ==
-      CopyOutputResult::Destination::kNativeTextures) {
+      CopyOutputResult::Destination::kSharedImage) {
     // NOTE: This implementation is incomplete and doesn't copy anything into
     // the mailbox, but currently the only tests that use this don't actually
     // check the returned texture data. A corollary to this fact is that the
@@ -277,22 +273,21 @@ void FakeSkiaOutputSurface::CopyOutput(
     CHECK(client_shared_image);
     gpu::Mailbox local_mailbox = client_shared_image->mailbox();
 
-    CopyOutputResult::ReleaseCallbacks release_callbacks;
-    release_callbacks.push_back(
+    ReleaseCallback release_callback =
         base::BindPostTaskToCurrentDefault(base::BindOnce(
             &FakeSkiaOutputSurface::DestroyCopyOutputTexture,
-            weak_ptr_factory_.GetWeakPtr(), std::move(client_shared_image))));
+            weak_ptr_factory_.GetWeakPtr(), std::move(client_shared_image)));
 
-    request->SendResult(std::make_unique<CopyOutputTextureResult>(
-        CopyOutputResult::Format::RGBA, geometry.result_bounds,
-        CopyOutputResult::TextureResult(local_mailbox, color_space),
-        std::move(release_callbacks)));
+    request->SendResult(std::make_unique<CopyOutputSharedImageResult>(
+        CopyOutputResult::Format::RGBA, geometry.result_bounds, local_mailbox,
+        color_space, "CopyOutput", std::move(release_callback)));
     return;
   }
 
   GrDirectContext* direct = GrAsDirectContext(gr_context());
   auto copy_image = surface->makeImageSnapshot()->makeSubset(
-      direct, RectToSkIRect(geometry.sampling_bounds));
+      direct ? direct->asRecorder() : skcpu::Recorder::TODO(),
+      RectToSkIRect(geometry.sampling_bounds), {});
   // Send copy request by copying into a bitmap.
   SkBitmap bitmap;
   copy_image->asLegacyBitmap(&bitmap);
@@ -342,16 +337,13 @@ bool FakeSkiaOutputSurface::GetGrBackendTexture(
     GrBackendTexture* backend_texture) {
   DCHECK(!image_context.mailbox().IsZero());
 
-  auto* gl = context_provider()->ContextGL();
-  auto texture_id = gl->CreateAndTexStorage2DSharedImageCHROMIUM(
-      image_context.mailbox().name);
-  auto gl_format_desc = gpu::GLFormatCaps().ToGLFormatDesc(
-      image_context.format(), /*plane_index=*/0);
-  GrGLTextureInfo gl_texture_info = {image_context.texture_target(), texture_id,
-                                     gl_format_desc.storage_internal_format};
-  *backend_texture = GrBackendTextures::MakeGL(
-      image_context.size().width(), image_context.size().height(),
-      skgpu::Mipmapped::kNo, gl_texture_info);
+  static int next_id = 0;
+  GrMockTextureInfo mock_texture_info = GrMockTextureInfo(
+      SkColorTypeToGrColorType(ToClosestSkColorType(image_context.format())),
+      SkTextureCompressionType::kNone, ++next_id);
+  *backend_texture = GrBackendTexture(image_context.size().width(),
+                                      image_context.size().height(),
+                                      skgpu::Mipmapped::kNo, mock_texture_info);
   return true;
 }
 

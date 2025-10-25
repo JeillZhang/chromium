@@ -5,7 +5,7 @@
 #import "ios/chrome/browser/omnibox/ui/popup/omnibox_popup_view_controller.h"
 
 #import "base/test/task_environment.h"
-#import "ios/chrome/browser/omnibox/model/autocomplete_suggestion_group_impl.h"
+#import "ios/chrome/browser/omnibox/model/suggestions/autocomplete_suggestion_group_impl.h"
 #import "ios/chrome/browser/omnibox/ui/popup/omnibox_popup_consumer.h"
 #import "ios/chrome/browser/omnibox/ui/popup/omnibox_popup_mutator.h"
 #import "testing/gtest_mac.h"
@@ -59,7 +59,8 @@ class OmniboxPopupViewControllerTest : public PlatformTest {
   void SetUp() override {
     PlatformTest::SetUp();
     mutator_ = [OCMockObject mockForProtocol:@protocol(OmniboxPopupMutator)];
-    popup_view_controller_ = [[OmniboxPopupViewController alloc] init];
+    popup_view_controller_ = [[OmniboxPopupViewController alloc]
+        initWithPresentationContext:OmniboxPresentationContext::kLocationBar];
     popup_view_controller_.mutator = mutator_;
     // Force view initialisation since this view controller is never added into
     // the hierarchy in this unit test.

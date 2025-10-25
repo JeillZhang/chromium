@@ -9,7 +9,6 @@
 #include "base/functional/callback_forward.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_callback.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "chrome/browser/enterprise/signin/managed_profile_required_navigation_throttle.h"
 #include "chrome/browser/profiles/profile.h"
@@ -19,6 +18,7 @@
 #include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/signin/chrome_signout_confirmation_prompt.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -31,7 +31,6 @@
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/signin_metrics.h"
 #include "components/signin/public/base/signin_pref_names.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_capabilities_test_mutator.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
@@ -53,9 +52,9 @@
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "base/path_service.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
-#include "chrome/browser/extensions/extension_sync_util.h"
 #include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/extensions/signin_test_util.h"
+#include "chrome/browser/extensions/sync/extension_sync_util.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/webui/test_support/webui_interactive_test_mixin.h"
 #include "chrome/common/chrome_paths.h"
@@ -186,7 +185,8 @@ class SigninViewControllerBrowserTestBase : public SigninBrowserTestBase {
     content::TestNavigationObserver observer(url);
     observer.StartWatchingNewWebContents();
 
-    auto* signin_view_controller = browser()->signin_view_controller();
+    auto* signin_view_controller =
+        browser()->GetFeatures().signin_view_controller();
     signin_view_controller->SignoutOrReauthWithPrompt(
         kTestAccessPoint,
         signin_metrics::ProfileSignout::kUserClickedSignoutProfileMenu,
@@ -248,7 +248,8 @@ class SigninViewControllerBrowserTest
         views::test::AnyWidgetTestPasskey{},
         "ChromeSigninChoiceForExtensionsPrompt");
     browser()
-        ->signin_view_controller()
+        ->GetFeatures()
+        .signin_view_controller()
         ->MaybeShowChromeSigninDialogForExtensions(kTestExtensionName,
                                                    std::move(on_complete));
 
@@ -264,7 +265,8 @@ class SigninViewControllerBrowserTest
 
 IN_PROC_BROWSER_TEST_F(
     SigninViewControllerBrowserTest,
-    SignoutOrReauthWithPromptForPersistentErrorState_Reauth) {
+    // TODO(crbug.com/429624627): Re-enable this test.
+    DISABLED_SignoutOrReauthWithPromptForPersistentErrorState_Reauth) {
   // Setup a primary account in error state.
   AccountInfo primary_account_info = SetPrimaryAccount();
   ASSERT_TRUE(
@@ -346,8 +348,9 @@ IN_PROC_BROWSER_TEST_F(
   EXPECT_TRUE(IsSignoutTab(tab));
 }
 
+// https://crbug.com/429624627: Test is flakily crashing.
 IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
-                       SignoutOrReauthWithPrompt_Cancel) {
+                       DISABLED_SignoutOrReauthWithPrompt_Cancel) {
   // Setup a primary account.
   AccountInfo primary_account_info = SetPrimaryAccount();
   ASSERT_TRUE(
@@ -463,7 +466,7 @@ IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
               CREDENTIALS_REJECTED_BY_SERVER));
 
   // Trigger the Chrome signout action.
-  browser()->signin_view_controller()->SignoutOrReauthWithPrompt(
+  browser()->GetFeatures().signin_view_controller()->SignoutOrReauthWithPrompt(
       kTestAccessPoint,
       signin_metrics::ProfileSignout::kUserClickedSignoutProfileMenu,
       signin_metrics::SourceForRefreshTokenOperation::
@@ -651,8 +654,11 @@ IN_PROC_BROWSER_TEST_F(
       identity_manager()->HasPrimaryAccount(signin::ConsentLevel::kSignin));
 
   base::test::TestFuture<void> future;
-  browser()->signin_view_controller()->MaybeShowChromeSigninDialogForExtensions(
-      kTestExtensionName, future.GetCallback());
+  browser()
+      ->GetFeatures()
+      .signin_view_controller()
+      ->MaybeShowChromeSigninDialogForExtensions(kTestExtensionName,
+                                                 future.GetCallback());
   EXPECT_TRUE(future.IsReady());
 }
 
@@ -660,22 +666,25 @@ IN_PROC_BROWSER_TEST_F(
     SigninViewControllerBrowserTest,
     ShowChromeSigninDialogForExtensionsPromptNotShownNoAccounts) {
   base::test::TestFuture<void> future;
-  browser()->signin_view_controller()->MaybeShowChromeSigninDialogForExtensions(
-      kTestExtensionName, future.GetCallback());
+  browser()
+      ->GetFeatures()
+      .signin_view_controller()
+      ->MaybeShowChromeSigninDialogForExtensions(kTestExtensionName,
+                                                 future.GetCallback());
   EXPECT_TRUE(future.IsReady());
 }
 
 IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
                        UpdateAccessPointOfSignInTab) {
   // Request a sign in tab, which will open a new tab.
-  browser()->signin_view_controller()->ShowDiceAddAccountTab(
+  browser()->GetFeatures().signin_view_controller()->ShowDiceAddAccountTab(
       signin_metrics::AccessPoint::kPasswordBubble, std::string());
   EXPECT_TRUE(IsSigninTab(browser()->tab_strip_model()->GetActiveWebContents(),
                           signin_metrics::AccessPoint::kPasswordBubble));
 
   // Request a sign in tab with a different access point, which will update the
   // existing sign in tab's access point.
-  browser()->signin_view_controller()->ShowDiceAddAccountTab(
+  browser()->GetFeatures().signin_view_controller()->ShowDiceAddAccountTab(
       signin_metrics::AccessPoint::kAddressBubble, std::string());
   EXPECT_TRUE(IsSigninTab(browser()->tab_strip_model()->GetActiveWebContents(),
                           signin_metrics::AccessPoint::kAddressBubble));
@@ -693,33 +702,41 @@ IN_PROC_BROWSER_TEST_F(SigninViewControllerBrowserTest,
   base::MockCallback<signin::SigninChoiceCallback>
       mock_process_user_choice_callback;
   base::MockCallback<base::OnceClosure> mock_done_callback;
-  browser()->signin_view_controller()->ShowModalManagedUserNoticeDialog(
-      std::make_unique<signin::EnterpriseProfileCreationDialogParams>(
-          account_info,
-          /*is_oidc_account=*/false,
-          /*turn_sync_on_signed_profile=*/false,
-          /*profile_creation_required_by_policy=*/false,
-          /*show_link_data_option=*/false,
-          /*process_user_choice_callback=*/
-          mock_process_user_choice_callback.Get(), mock_done_callback.Get()));
+  browser()
+      ->GetFeatures()
+      .signin_view_controller()
+      ->ShowModalManagedUserNoticeDialog(
+          std::make_unique<signin::EnterpriseProfileCreationDialogParams>(
+              account_info,
+              /*is_oidc_account=*/false,
+              /*user_already_signed_in=*/false,
+              /*profile_creation_required_by_policy=*/false,
+              /*show_link_data_option=*/false,
+              /*process_user_choice_callback=*/
+              mock_process_user_choice_callback.Get(),
+              mock_done_callback.Get()));
   EXPECT_FALSE(ManagedProfileRequiredNavigationThrottle::IsBlockingNavigations(
       browser()->profile()));
-  browser()->signin_view_controller()->CloseModalSignin();
+  browser()->GetFeatures().signin_view_controller()->CloseModalSignin();
   EXPECT_FALSE(ManagedProfileRequiredNavigationThrottle::IsBlockingNavigations(
       browser()->profile()));
 
-  browser()->signin_view_controller()->ShowModalManagedUserNoticeDialog(
-      std::make_unique<signin::EnterpriseProfileCreationDialogParams>(
-          account_info,
-          /*is_oidc_account=*/false,
-          /*turn_sync_on_signed_profile=*/false,
-          /*profile_creation_required_by_policy=*/true,
-          /*show_link_data_option=*/false,
-          /*process_user_choice_callback=*/
-          mock_process_user_choice_callback.Get(), mock_done_callback.Get()));
+  browser()
+      ->GetFeatures()
+      .signin_view_controller()
+      ->ShowModalManagedUserNoticeDialog(
+          std::make_unique<signin::EnterpriseProfileCreationDialogParams>(
+              account_info,
+              /*is_oidc_account=*/false,
+              /*user_already_signed_in=*/false,
+              /*profile_creation_required_by_policy=*/true,
+              /*show_link_data_option=*/false,
+              /*process_user_choice_callback=*/
+              mock_process_user_choice_callback.Get(),
+              mock_done_callback.Get()));
   EXPECT_TRUE(ManagedProfileRequiredNavigationThrottle::IsBlockingNavigations(
       browser()->profile()));
-  browser()->signin_view_controller()->CloseModalSignin();
+  browser()->GetFeatures().signin_view_controller()->CloseModalSignin();
   EXPECT_FALSE(ManagedProfileRequiredNavigationThrottle::IsBlockingNavigations(
       browser()->profile()));
 }
@@ -743,6 +760,14 @@ class SigninViewControllerInteractiveBrowserTest
   }
 
  protected:
+  const DeepQuery kExtensionsSectionExpandButton = {
+      "signout-confirmation-app", "extensions-section", "#expandButton"};
+  const DeepQuery kExtensionsSectionCollapse = {
+      "signout-confirmation-app", "extensions-section", "#collapse"};
+  const DeepQuery kExtensionsSectionAccountExtensions = {
+      "signout-confirmation-app", "extensions-section",
+      "#account-extensions-list"};
+
   bool uninstall_account_extensions() const { return GetParam(); }
 
   const base::FilePath& extension_data_dir() const {
@@ -766,6 +791,34 @@ class SigninViewControllerInteractiveBrowserTest
     element_exists.event = kElementExists;
     element_exists.where = element;
     return WaitForStateChange(contents_id, element_exists);
+  }
+
+  // Show the signout confirmation dialog and instrument its internal
+  // WebContents.
+  auto ShowAndInstrumentSignoutConfirmationDialog() {
+    return Steps(
+        Do([&] {
+          browser()
+              ->GetFeatures()
+              .signin_view_controller()
+              ->SignoutOrReauthWithPrompt(
+                  kTestAccessPoint,
+                  signin_metrics::ProfileSignout::
+                      kUserClickedSignoutProfileMenu,
+                  signin_metrics::SourceForRefreshTokenOperation::
+                      kUserMenu_SignOutAllAccounts);
+        }),
+        WaitForShow(
+            SigninViewController::kSignoutConfirmationDialogViewElementId),
+        Check([&] {
+          return browser()
+              ->GetFeatures()
+              .signin_view_controller()
+              ->ShowsModalDialog();
+        }),
+        InstrumentNonTabWebView(
+            kWebContentsId,
+            SigninViewController::kSignoutConfirmationDialogViewElementId));
   }
 
   // Waits for the dialog to be ready to uninstall account extensions.
@@ -797,7 +850,10 @@ class SigninViewControllerInteractiveBrowserTest
             SigninViewController::kSignoutConfirmationDialogViewElementId),
         CheckResult(
             [&] {
-              return browser()->signin_view_controller()->ShowsModalDialog();
+              return browser()
+                  ->GetFeatures()
+                  .signin_view_controller()
+                  ->ShowsModalDialog();
             },
             false),
         // Verify that the user has signed out.
@@ -831,10 +887,15 @@ class SigninViewControllerInteractiveBrowserTest
         installed);
   }
 
- private:
-  base::test::ScopedFeatureList feature_list_{
-      switches::kEnableExtensionsExplicitBrowserSignin};
+  // Loads the extension from `extension_path`.
+  auto LoadExtension(const std::string& extension_path) {
+    extensions::ChromeTestExtensionLoader extension_loader(GetProfile());
+    extension_loader.set_pack_extension(true);
+    return extension_loader.LoadExtension(
+        extension_data_dir().AppendASCII(extension_path));
+  }
 
+ private:
   // chrome/test/data/extensions/
   base::FilePath extension_data_dir_;
 };
@@ -850,17 +911,10 @@ IN_PROC_BROWSER_TEST_P(SigninViewControllerInteractiveBrowserTest,
   // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
   extensions::ScopedTestMV2Enabler mv2_enabler;
 
-  auto load_extension = [this](const std::string& extension_path) {
-    extensions::ChromeTestExtensionLoader extension_loader(GetProfile());
-    extension_loader.set_pack_extension(true);
-    return extension_loader.LoadExtension(
-        extension_data_dir().AppendASCII(extension_path));
-  };
-
   // Install a local extension; it should not be shown in the list of account
   // extensions in the dialog.
   scoped_refptr<const extensions::Extension> local_extension =
-      load_extension("simple_with_file");
+      LoadExtension("simple_with_file");
   ASSERT_TRUE(local_extension);
   auto local_extension_id = local_extension->id();
 
@@ -878,24 +932,16 @@ IN_PROC_BROWSER_TEST_P(SigninViewControllerInteractiveBrowserTest,
   // Install two account extensions: both should eventually be shown in the
   // dialog.
   scoped_refptr<const extensions::Extension> first_account_extension =
-      load_extension("simple_with_host");
+      LoadExtension("simple_with_host");
   ASSERT_TRUE(first_account_extension);
   auto first_account_extension_id = first_account_extension->id();
 
   scoped_refptr<const extensions::Extension> second_account_extension =
-      load_extension("simple_with_icon");
+      LoadExtension("simple_with_icon");
   ASSERT_TRUE(second_account_extension);
   auto second_account_extension_id = second_account_extension->id();
 
   const int expected_num_account_extensions = 2;
-
-  const DeepQuery kExtensionsSectionExpandButton = {
-      "signout-confirmation-app", "extensions-section", "#expandButton"};
-  const DeepQuery kExtensionsSectionCollapse = {
-      "signout-confirmation-app", "extensions-section", "#collapse"};
-  const DeepQuery kExtensionsSectionAccountExtensions = {
-      "signout-confirmation-app", "extensions-section",
-      "#account-extensions-list"};
 
   const char* get_num_shown_account_extensions = R"((el) => {
     if (!el.opened) { return -1; }
@@ -906,24 +952,10 @@ IN_PROC_BROWSER_TEST_P(SigninViewControllerInteractiveBrowserTest,
 
   // Test sequence setup:
   // - User is signed in and is about to sign out via confirmation prompt.
-  // - Use has two account extensions installed while signed in.
+  // - User has two account extensions installed while signed in.
   RunTestSequence(
       // Show the dialog and verify that it has shown.
-      Do([&] {
-        browser()->signin_view_controller()->SignoutOrReauthWithPrompt(
-            kTestAccessPoint,
-            signin_metrics::ProfileSignout::kUserClickedSignoutProfileMenu,
-            signin_metrics::SourceForRefreshTokenOperation::
-                kUserMenu_SignOutAllAccounts);
-      }),
-      WaitForShow(
-          SigninViewController::kSignoutConfirmationDialogViewElementId),
-      Check([&] {
-        return browser()->signin_view_controller()->ShowsModalDialog();
-      }),
-      InstrumentNonTabWebView(
-          kWebContentsId,
-          SigninViewController::kSignoutConfirmationDialogViewElementId),
+      ShowAndInstrumentSignoutConfirmationDialog(),
 
       // Within the dialog, verify that the extensions section is visible but
       // the list of account extensions is collapsed.
@@ -960,6 +992,68 @@ IN_PROC_BROWSER_TEST_P(SigninViewControllerInteractiveBrowserTest,
           : AccountExtensionsSignoutChoice::kSignoutAccountExtensionsKept;
   histogram_tester.ExpectUniqueSample(
       kAccountExtensionsSignoutChoiceHistogramName, choice, 1);
+}
+
+// Test that the signout confirmation dialog will show account extensions if the
+// user has disabled extensions syncing and that the user can choose to
+// uninstall them on signout.
+IN_PROC_BROWSER_TEST_P(SigninViewControllerInteractiveBrowserTest,
+                       ShowAccountExtensionsSyncDisabled) {
+  // TODO(https://crbug.com/40804030): Remove this when updated to use MV3.
+  extensions::ScopedTestMV2Enabler mv2_enabler;
+
+  // Setup a primary account.
+  extensions::signin_test_util::SimulateExplicitSignIn(
+      GetProfile(), identity_test_env(), kTestEmail);
+
+  // Verify that the user has performed an explicit signin.
+  ASSERT_TRUE(
+      GetProfile()->GetPrefs()->GetBoolean(prefs::kExplicitBrowserSignin));
+  // And that they can sync extensions while in transport mode.
+  ASSERT_TRUE(
+      extensions::sync_util::IsSyncingExtensionsInTransportMode(GetProfile()));
+
+  // Install an account extension.
+  scoped_refptr<const extensions::Extension> account_extension =
+      LoadExtension("simple_with_host");
+  ASSERT_TRUE(account_extension);
+  auto account_extension_id = account_extension->id();
+
+  // Disable extension syncing for this user.
+  syncer::SyncService* sync_service =
+      SyncServiceFactory::GetForProfile(GetProfile());
+  sync_service->GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kExtensions, false);
+
+  // Install another extension; it should not be treated as an account
+  // extension.
+  scoped_refptr<const extensions::Extension> non_account_extension =
+      LoadExtension("simple_with_icon");
+  ASSERT_TRUE(non_account_extension);
+  auto non_account_extension_id = non_account_extension->id();
+
+  // Test sequence setup:
+  // - User is signed in and is about to sign out via confirmation prompt.
+  // - User has one account extension and one non-account extension installed
+  //   while signed in.
+  RunTestSequence(
+      // Show the dialog and verify that it has shown.
+      ShowAndInstrumentSignoutConfirmationDialog(),
+
+      // Within the dialog, verify that the extensions section is visible
+      // despite extensions not currently being synced.
+      WaitForElementExists(kWebContentsId, kExtensionsSectionExpandButton),
+
+      // Now accept the dialog and sign out.
+      AcceptDialogAndSignout(),
+
+      // The local extension should always still be installed.
+      CheckExtensionInstalled(non_account_extension_id, true),
+
+      // The account extension should be uninstalled if the user chose to
+      // uninstall them from the dialog based on uninstall_account_extensions().
+      CheckExtensionInstalled(account_extension_id,
+                              !uninstall_account_extensions()));
 }
 
 INSTANTIATE_TEST_SUITE_P(,

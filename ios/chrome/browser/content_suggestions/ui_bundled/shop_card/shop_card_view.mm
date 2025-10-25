@@ -216,12 +216,10 @@ const CGFloat kGradientOverlayBottomAlpha = 0.14;
   _priceNotificationsChip.isAccessibilityElement = YES;
   _titleLabel.accessibilityTraits |= UIAccessibilityTraitHeader;
   // For larger font size, hide price chip.
-  if (@available(iOS 17, *)) {
-    NSArray<UITrait>* traits = TraitCollectionSetForTraits(
-        @[ UITraitPreferredContentSizeCategory.class ]);
-    [self registerForTraitChanges:traits
-                       withAction:@selector(hideDomainOnTraitChange)];
-  }
+  NSArray<UITrait>* traits = TraitCollectionSetForTraits(
+      @[ UITraitPreferredContentSizeCategory.class ]);
+  [self registerForTraitChanges:traits
+                     withAction:@selector(hideDomainOnTraitChange)];
 }
 
 - (void)hideDomainOnTraitChange {
@@ -387,8 +385,7 @@ const CGFloat kGradientOverlayBottomAlpha = 0.14;
 - (void)addProductImageEmptyGray {
   _productAndFaviconContainer = [[UIView alloc] init];
   _productImage = [[UIImageView alloc] init];
-  _productImage.backgroundColor =
-      [UIColor colorNamed:kTertiaryBackgroundColor];
+  _productImage.backgroundColor = [UIColor colorNamed:kGrey100Color];
   _productImage.contentMode = UIViewContentModeScaleAspectFill;
   _productImage.translatesAutoresizingMaskIntoConstraints = NO;
   _productImage.layer.borderWidth = 0;

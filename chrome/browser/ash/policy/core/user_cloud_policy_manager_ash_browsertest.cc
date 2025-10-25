@@ -13,7 +13,6 @@
 #include <vector>
 
 #include "base/containers/flat_set.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/values.h"
 #include "chrome/browser/ash/login/test/logged_in_user_mixin.h"
 #include "chrome/browser/browser_process.h"
@@ -22,10 +21,10 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
 #include "chromeos/ash/experiences/arc/arc_prefs.h"
-#include "components/policy/core/common/remote_commands/remote_commands_constants.h"
 #include "components/policy/proto/policy_common_definitions.pb.h"
 #include "components/prefs/pref_service.h"
 #include "components/session_manager/core/session_manager.h"
@@ -156,29 +155,13 @@ struct FeaturesTestParam {
 
 // Test scenarios for child user signing in for the first time.
 class UserCloudPolicyManagerNewChildUserTest
-    : public UserCloudPolicyManagerTestBase,
-      public testing::WithParamInterface<FeaturesTestParam> {
+    : public UserCloudPolicyManagerTestBase {
  protected:
   UserCloudPolicyManagerNewChildUserTest()
       : UserCloudPolicyManagerTestBase(
             ash::LoggedInUserMixin::LogInType::kChild,
-            /*user_existed_before=*/false) {
-    scoped_feature_list_.InitWithFeatures(GetParam().enabled_features,
-                                          GetParam().disabled_features);
-  }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
+            /*user_existed_before=*/false) {}
 };
-
-INSTANTIATE_TEST_SUITE_P(
-    /* no prefix */,
-    UserCloudPolicyManagerNewChildUserTest,
-    testing::Values(
-        FeaturesTestParam{},
-        FeaturesTestParam{
-            .enabled_features = {
-                kUserRemoteCommandsInvalidationWithDirectMessagesEnabled}}));
 
 IN_PROC_BROWSER_TEST_F(UserCloudPolicyManagerNewManagedUserTest, StartSession) {
   // User hasn't signed in yet, so shouldn't know if the user requires policy.
@@ -204,12 +187,10 @@ IN_PROC_BROWSER_TEST_F(UserCloudPolicyManagerNewManagedUserTest, StartSession) {
   StartUserLogIn(true /*wait_for_active_session*/);
 
   // Check that the startup pages specified in policy were opened.
-  BrowserList* browser_list = BrowserList::GetInstance();
-  EXPECT_EQ(1U, browser_list->size());
-  Browser* browser = browser_list->get(0);
-  ASSERT_TRUE(browser);
+  EXPECT_EQ(1U, BrowserList::GetInstance()->size());
+  ASSERT_TRUE(browser());
 
-  TabStripModel* tabs = browser->tab_strip_model();
+  TabStripModel* const tabs = browser()->GetTabStripModel();
   ASSERT_TRUE(tabs);
   const int expected_tab_count = static_cast<int>(std::size(kStartupURLs));
   EXPECT_EQ(expected_tab_count, tabs->count());
@@ -281,7 +262,7 @@ IN_PROC_BROWSER_TEST_F(UserCloudPolicyManagerExistingConsumerUserTest,
             GetProfileRequiresPolicy());
 }
 
-IN_PROC_BROWSER_TEST_P(UserCloudPolicyManagerNewChildUserTest,
+IN_PROC_BROWSER_TEST_F(UserCloudPolicyManagerNewChildUserTest,
                        PolicyForChildUser) {
   // If a user signs in with a known non-enterprise account there should be no
   // policy in case user type is child.
@@ -305,7 +286,7 @@ IN_PROC_BROWSER_TEST_P(UserCloudPolicyManagerNewChildUserTest,
           arc::prefs::kArcEnabled));
 }
 
-IN_PROC_BROWSER_TEST_P(UserCloudPolicyManagerNewChildUserTest,
+IN_PROC_BROWSER_TEST_F(UserCloudPolicyManagerNewChildUserTest,
                        PolicyForChildUserMissing) {
   // If a user signs in with a known non-enterprise account there should be no
   // policy in case user type is child.

@@ -24,12 +24,24 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+dictionary CanvasHitTestRect {
+  double x;
+  double y;
+  double? width;
+  double? height;
+};
+
+dictionary CanvasElementHitTestRegion {
+  Element element;
+  CanvasHitTestRect rect;
+};
+
 // https://html.spec.whatwg.org/C/canvas.html#htmlcanvaselement
 [
-    Exposed=Window,
-    HTMLConstructor
+    Exposed=Window
 ] interface HTMLCanvasElement : HTMLElement
 {
+    [HTMLConstructor] constructor();
     // Note: Due to dependecies on modules, getContext is defined in a partial
     // interface in html_canvas_element_module.idl
 

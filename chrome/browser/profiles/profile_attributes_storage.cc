@@ -31,6 +31,7 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_avatar_downloader.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/profiles/profile_metrics.h"
@@ -196,7 +197,9 @@ MultiProfileUserType GetMultiProfileUserType(
     return MultiProfileUserType::kSingleProfile;
 
   int active_count =
-      std::ranges::count_if(entries, &ProfileMetrics::IsProfileActive);
+      std::ranges::count_if(entries, [](ProfileAttributesEntry* entry) {
+        return ProfileMetrics::IsProfileActive(entry);
+      });
 
   if (active_count <= 1)
     return MultiProfileUserType::kLatentMultiProfile;
@@ -608,7 +611,7 @@ ProfileAttributesStorage::GetAllProfilesAttributesSortedForDisplay() const {
 
 std::vector<ProfileAttributesEntry*> ProfileAttributesStorage::
     GetAllProfilesAttributesSortedByLocalProfileNameWithCheck() const {
-  if (base::FeatureList::IsEnabled(kProfilesReordering)) {
+  if (base::FeatureList::IsEnabled(switches::kProfilesReordering)) {
     return GetAllProfilesAttributesSortedForDisplay();
   }
   return GetAllProfilesAttributesSortedByLocalProfileName();
@@ -617,7 +620,7 @@ std::vector<ProfileAttributesEntry*> ProfileAttributesStorage::
 std::vector<ProfileAttributesEntry*>
 ProfileAttributesStorage::GetAllProfilesAttributesSortedByNameWithCheck()
     const {
-  if (base::FeatureList::IsEnabled(kProfilesReordering)) {
+  if (base::FeatureList::IsEnabled(switches::kProfilesReordering)) {
     return GetAllProfilesAttributesSortedForDisplay();
   }
   return GetAllProfilesAttributesSortedByName();
@@ -822,6 +825,15 @@ void ProfileAttributesStorage::RecordProfilesState() {
                          profile_metrics::StateSuffix::kAllUnmanagedDevice);
     }
 
+    if (entry->UserAcceptedAccountManagement()) {
+      RecordProfileState(
+          entry, profile_metrics::StateSuffix::kManagementDisclaimerAccepted);
+    } else {
+      RecordProfileState(
+          entry,
+          profile_metrics::StateSuffix::kManagementDisclaimerNotAccepted);
+    }
+
     switch (type) {
       case MultiProfileUserType::kSingleProfile:
         RecordProfileState(entry, profile_metrics::StateSuffix::kSingleProfile);
@@ -897,6 +909,13 @@ void ProfileAttributesStorage::NotifyProfileHostedDomainChanged(
     const base::FilePath& profile_path) const {
   for (auto& observer : observer_list_)
     observer.OnProfileHostedDomainChanged(profile_path);
+}
+
+void ProfileAttributesStorage::NotifyProfileIsManagedChanged(
+    const base::FilePath& profile_path) const {
+  for (auto& observer : observer_list_) {
+    observer.OnProfileIsManagedChanged(profile_path);
+  }
 }
 
 void ProfileAttributesStorage::NotifyOnProfileHighResAvatarLoaded(

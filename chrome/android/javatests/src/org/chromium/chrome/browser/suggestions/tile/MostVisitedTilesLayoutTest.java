@@ -40,7 +40,6 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
-import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
@@ -67,7 +66,6 @@ import org.chromium.chrome.test.util.browser.offlinepages.FakeOfflinePageBridge;
 import org.chromium.chrome.test.util.browser.suggestions.SuggestionsDependenciesRule;
 import org.chromium.chrome.test.util.browser.suggestions.mostvisited.FakeMostVisitedSites;
 import org.chromium.net.test.EmbeddedTestServerRule;
-import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.test.util.NightModeTestUtils;
 import org.chromium.url.GURL;
 
@@ -102,7 +100,6 @@ public class MostVisitedTilesLayoutTest {
                     .build();
 
     @Mock ActivityLifecycleDispatcher mActivityLifecycleDispatcher;
-    @Mock WindowAndroid mWindowAndroid;
     @Mock TouchEnabledDelegate mTouchEnabledDelegate;
 
     private static final String[] FAKE_MOST_VISITED_URLS =
@@ -165,7 +162,7 @@ public class MostVisitedTilesLayoutTest {
                 makeAndSetUpFakeSuggestions(FAKE_MOST_VISITED_URLS.length);
 
         MvtsFacility mvts = mActivityTestRule.startOnNtp().focusOnMvts(siteSuggestions);
-        mRenderTestRule.render(mvts.tilesLayoutElement.get(), "ntp_tile_layout" + suffix);
+        mRenderTestRule.render(mvts.tilesLayoutElement.value(), "ntp_tile_layout" + suffix);
     }
 
     @Test
@@ -217,10 +214,6 @@ public class MostVisitedTilesLayoutTest {
     @Test
     @MediumTest
     @Feature({"NewTabPage", "RenderTest"})
-    @DisabledTest(
-            message =
-                    "This test is flaky not only on the Nougat emulator but also on Ubuntu-22.04"
-                            + " when building android-x86-rel., see crbug.com/1450693")
     public void testModernTilesLayoutAppearance_Two() throws IOException, InterruptedException {
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
@@ -311,10 +304,7 @@ public class MostVisitedTilesLayoutTest {
                     ViewGroup containerLayout =
                             (ViewGroup)
                                     LayoutInflater.from(contentView.getContext())
-                                            .inflate(
-                                                    R.layout.mv_tiles_container,
-                                                    contentView,
-                                                    false);
+                                            .inflate(R.layout.mv_tiles_layout, contentView, false);
                     containerLayout.setVisibility(View.VISIBLE);
                     contentView.addView(containerLayout);
                     initializeCoordinator(containerLayout);
@@ -363,12 +353,7 @@ public class MostVisitedTilesLayoutTest {
 
         MostVisitedTilesCoordinator coordinator =
                 new MostVisitedTilesCoordinator(
-                        activity,
-                        mActivityLifecycleDispatcher,
-                        containerLayout,
-                        mWindowAndroid,
-                        null,
-                        null);
+                        activity, mActivityLifecycleDispatcher, containerLayout, null, null);
         coordinator.initWithNative(profile, uiDelegate, delegate, mTouchEnabledDelegate);
     }
 }

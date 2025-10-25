@@ -12,15 +12,17 @@ import org.chromium.base.SysUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.library_loader.LibraryLoader;
-import org.chromium.base.library_loader.LibraryPrefetcher;
 import org.chromium.base.library_loader.LibraryProcessType;
 import org.chromium.base.task.ChainedTasks;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.browser.signin.SigninCheckerProvider;
 import org.chromium.components.background_task_scheduler.BackgroundTaskSchedulerFactory;
 import org.chromium.content_public.browser.BrowserStartupController;
+import org.chromium.content_public.browser.BrowserStartupController.StartupMetrics;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,12 +32,13 @@ import java.util.List;
  * classes should override the {@link BrowserParts} interface for any additional initialization
  * tasks for the initialization to work as intended.
  */
+@NullMarked
 public class ChromeBrowserInitializer {
     private static final String TAG = "BrowserInitializer";
     private static ChromeBrowserInitializer sChromeBrowserInitializer =
             new ChromeBrowserInitializer();
-    private static BrowserStartupController sBrowserStartupController;
-    private List<Runnable> mTasksToRunWithFullBrowser;
+    private static @Nullable BrowserStartupController sBrowserStartupController;
+    private @Nullable List<Runnable> mTasksToRunWithFullBrowser;
 
     private boolean mPostInflationStartupComplete;
     private boolean mFullBrowserInitializationComplete;
@@ -239,7 +242,7 @@ public class ChromeBrowserInitializer {
                         }
 
                         @Override
-                        public void onSuccess() {
+                        public void onSuccess(@Nullable StartupMetrics metrics) {
                             tasks.start(false);
                         }
                     });
@@ -260,6 +263,8 @@ public class ChromeBrowserInitializer {
                             LibraryProcessType.PROCESS_BROWSER,
                             startGpuProcess,
                             startMinimalBrowser,
+                            /* singleProcess= */ false,
+                            /* scheduleFlushStartupTasks= */ false,
                             callback);
         } finally {
             TraceEvent.end("ChromeBrowserInitializer.startChromeBrowserProcessesAsync");
@@ -273,7 +278,6 @@ public class ChromeBrowserInitializer {
             StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
             LibraryLoader.getInstance().ensureInitialized();
             StrictMode.setThreadPolicy(oldPolicy);
-            LibraryPrefetcher.asyncPrefetchLibrariesToMemory();
             getBrowserStartupController()
                     .startBrowserProcessesSync(
                             LibraryProcessType.PROCESS_BROWSER,

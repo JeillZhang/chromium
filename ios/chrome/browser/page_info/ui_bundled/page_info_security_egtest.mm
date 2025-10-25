@@ -10,7 +10,6 @@
 #import "components/strings/grit/components_branded_strings.h"
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
-#import "ios/chrome/browser/page_info/ui_bundled/features.h"
 #import "ios/chrome/browser/page_info/ui_bundled/page_info_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_actions.h"
@@ -57,6 +56,7 @@
 - (id<GREYMatcher>)securityBackButton {
   return grey_allOf(
       testing::NavigationBarBackButton(),
+      grey_kindOfClassName(@"_UIButtonBarButton"),
       grey_ancestor(grey_accessibilityID(
           kPageInfoSecurityViewNavigationBarAccessibilityIdentifier)),
       nil);
@@ -87,7 +87,7 @@
 
   // Check that the help center article was opened.
   GREYAssertEqual(std::string("support.google.com"),
-                  [ChromeEarlGrey webStateVisibleURL].host(),
+                  [ChromeEarlGrey webStateVisibleURL].GetHost(),
                   @"Did not navigate to the help center article.");
 
   GREYAssertNil(
@@ -125,7 +125,7 @@
   [[EarlGrey selectElementWithMatcher:
                  grey_text([NSString
                      stringWithCString:[ChromeEarlGrey webStateVisibleURL]
-                                           .host()
+                                           .GetHost()
                                            .c_str()
                               encoding:[NSString defaultCStringEncoding]])]
       assertWithMatcher:grey_sufficientlyVisible()];

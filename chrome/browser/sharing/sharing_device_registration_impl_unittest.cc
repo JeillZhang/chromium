@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "base/notimplemented.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
@@ -29,7 +30,6 @@
 #include "components/sync_device_info/fake_device_info_sync_service.h"
 #include "components/sync_preferences/pref_service_mock_factory.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
-#include "crypto/ec_private_key.h"
 #include "google_apis/gcm/engine/account_mapping.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"

@@ -17,6 +17,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -97,6 +98,9 @@ public class UrlBarUnitTest {
     private @Mock Layout mLayout;
     private @Mock TextPaint mPaint;
 
+    private int mLastTextDirection;
+    private int mLastTextAlignment;
+
     private final String mShortPath = "/aaaa";
     private final String mLongPath =
             "/" + TextUtils.join("", Collections.nCopies(MIN_LENGTH_FOR_TRUNCATION, "a"));
@@ -113,6 +117,16 @@ public class UrlBarUnitTest {
                         ContextUtils.getApplicationContext(), R.style.Theme_BrowserUI_DayNight);
         mUrlBar = spy(new UrlBarApi26(ctx, null));
         mUrlBar.setDelegate(mUrlBarDelegate);
+
+        mLastTextDirection = -1;
+        mLastTextAlignment = -1;
+
+        doAnswer(i -> mLastTextDirection = i.getArgument(0))
+                .when(mUrlBar)
+                .setTextDirection(anyInt());
+        doAnswer(i -> mLastTextAlignment = i.getArgument(0))
+                .when(mUrlBar)
+                .setTextAlignment(anyInt());
 
         lenient().doReturn(1).when(mLayout).getLineCount();
         lenient()
@@ -815,15 +829,14 @@ public class UrlBarUnitTest {
     /**
      * Simulate specific font metrics.
      *
-     * @param useElegantText whether Android can increase the line height by up to 60% to show text
      * @param fontActualHeight the desired actual difference between top and the bottom pixel ever
      *     drawn by the font
      */
-    private void applyFontMetrics(boolean useElegantText, float fontActualHeight) {
+    private void applyFontMetrics(float fontActualHeight) {
         mUrlBar.setTextSize(TypedValue.COMPLEX_UNIT_PX, FONT_HEIGHT_NOMINAL);
-        float lineHeightScaleFactor =
-                useElegantText ? LINE_HEIGHT_ELEGANT_FACTOR : LINE_HEIGHT_REGULAR_FACTOR;
-        doReturn((int) (FONT_HEIGHT_NOMINAL * lineHeightScaleFactor)).when(mUrlBar).getLineHeight();
+        doReturn((int) (FONT_HEIGHT_NOMINAL * LINE_HEIGHT_ELEGANT_FACTOR))
+                .when(mUrlBar)
+                .getLineHeight();
         // Respect the font height, but simulate that it's shifted 10px up.
         mFontMetrics.top = -10;
         mFontMetrics.bottom = fontActualHeight - 10;
@@ -834,149 +847,69 @@ public class UrlBarUnitTest {
     /**
      * Compute the expected font height given the Url bar constraints.
      *
-     * @param useElegantText whether Android can increase the line height by up to 60% to show text
      * @param fontActualHeight the desired actual difference between top and the bottom pixel ever
      *     drawn by the font
      * @param urlBarHeight the usable area of the UrlBar that will accommodate the text
      */
-    private float computeExpectedFontHeight(
-            boolean useElegantText, float fontActualHeight, int urlBarHeight) {
-        float lineHeightScaleFactor =
-                useElegantText ? LINE_HEIGHT_ELEGANT_FACTOR : LINE_HEIGHT_REGULAR_FACTOR;
+    private float computeExpectedFontHeight(float fontActualHeight, int urlBarHeight) {
+        float lineHeightScaleFactor = LINE_HEIGHT_ELEGANT_FACTOR;
         return FONT_HEIGHT_NOMINAL * (urlBarHeight / (fontActualHeight * lineHeightScaleFactor));
     }
 
     @Test
-    public void enforceMaxTextHeight_shrinkTallFontToFit_noElegantText_noPadding() {
-        doReturn(false).when(mPaint).isElegantTextHeight();
-        measureAndLayoutUrlBar();
-        applyFontMetrics(false, FONT_HEIGHT_ACTUAL_TALL);
-
-        mUrlBar.setPaddingRelative(0, 0, 0, 0);
-        mUrlBar.enforceMaxTextHeight();
-
-        assertEquals(
-                computeExpectedFontHeight(false, FONT_HEIGHT_ACTUAL_TALL, URL_BAR_HEIGHT),
-                mUrlBar.getTextSize(),
-                MathUtils.EPSILON);
-    }
-
-    @Test
-    public void enforceMaxTextHeight_shrinkTallFontToFit_noElegantText_withPadding() {
-        doReturn(false).when(mPaint).isElegantTextHeight();
-        measureAndLayoutUrlBar();
-        applyFontMetrics(false, FONT_HEIGHT_ACTUAL_TALL);
-
-        mUrlBar.setPaddingRelative(0, 5, 0, 15);
-        mUrlBar.enforceMaxTextHeight();
-
-        assertEquals(
-                computeExpectedFontHeight(false, FONT_HEIGHT_ACTUAL_TALL, URL_BAR_HEIGHT - 20),
-                mUrlBar.getTextSize(),
-                MathUtils.EPSILON);
-    }
-
-    @Test
-    public void enforceMaxTextHeight_shrinkShortFontToFit_noElegantText_noPadding() {
-        doReturn(false).when(mPaint).isElegantTextHeight();
-        applyFontMetrics(false, FONT_HEIGHT_ACTUAL_SHORT);
-        measureAndLayoutUrlBar();
-
-        mUrlBar.setPaddingRelative(0, 0, 0, 0);
-        mUrlBar.enforceMaxTextHeight();
-
-        assertEquals(
-                computeExpectedFontHeight(false, FONT_HEIGHT_ACTUAL_SHORT, URL_BAR_HEIGHT),
-                mUrlBar.getTextSize(),
-                MathUtils.EPSILON);
-    }
-
-    @Test
-    public void enforceMaxTextHeight_shrinkShortFontToFit_noElegantText_withPadding() {
-        doReturn(false).when(mPaint).isElegantTextHeight();
-        applyFontMetrics(false, FONT_HEIGHT_ACTUAL_SHORT);
-        measureAndLayoutUrlBar();
-
-        mUrlBar.setPaddingRelative(0, 5, 0, 15);
-        mUrlBar.enforceMaxTextHeight();
-
-        assertEquals(
-                computeExpectedFontHeight(false, FONT_HEIGHT_ACTUAL_SHORT, URL_BAR_HEIGHT - 20),
-                mUrlBar.getTextSize(),
-                MathUtils.EPSILON);
-    }
-
-    @Test
     public void enforceMaxTextHeight_shrinkTallFontToFit_withElegantText_noPadding() {
-        doReturn(true).when(mPaint).isElegantTextHeight();
         measureAndLayoutUrlBar();
-        applyFontMetrics(true, FONT_HEIGHT_ACTUAL_TALL);
+        applyFontMetrics(FONT_HEIGHT_ACTUAL_TALL);
 
         mUrlBar.setPaddingRelative(0, 0, 0, 0);
         mUrlBar.enforceMaxTextHeight();
 
         assertEquals(
-                computeExpectedFontHeight(true, FONT_HEIGHT_ACTUAL_TALL, URL_BAR_HEIGHT),
+                computeExpectedFontHeight(FONT_HEIGHT_ACTUAL_TALL, URL_BAR_HEIGHT),
                 mUrlBar.getTextSize(),
                 MathUtils.EPSILON);
     }
 
     @Test
     public void enforceMaxTextHeight_shrinkTallFontToFit_withElegantText_withPadding() {
-        doReturn(true).when(mPaint).isElegantTextHeight();
         measureAndLayoutUrlBar();
-        applyFontMetrics(true, FONT_HEIGHT_ACTUAL_TALL);
+        applyFontMetrics(FONT_HEIGHT_ACTUAL_TALL);
 
         mUrlBar.setPaddingRelative(0, 5, 0, 15);
         mUrlBar.enforceMaxTextHeight();
 
         assertEquals(
-                computeExpectedFontHeight(true, FONT_HEIGHT_ACTUAL_TALL, URL_BAR_HEIGHT - 20),
+                computeExpectedFontHeight(FONT_HEIGHT_ACTUAL_TALL, URL_BAR_HEIGHT - 20),
                 mUrlBar.getTextSize(),
                 MathUtils.EPSILON);
     }
 
     @Test
     public void enforceMaxTextHeight_shrinkShortFontToFit_withElegantText_noPadding() {
-        doReturn(true).when(mPaint).isElegantTextHeight();
         measureAndLayoutUrlBar();
-        applyFontMetrics(true, FONT_HEIGHT_ACTUAL_SHORT);
+        applyFontMetrics(FONT_HEIGHT_ACTUAL_SHORT);
 
         mUrlBar.setPaddingRelative(0, 0, 0, 0);
         mUrlBar.enforceMaxTextHeight();
 
         assertEquals(
-                computeExpectedFontHeight(true, FONT_HEIGHT_ACTUAL_SHORT, URL_BAR_HEIGHT),
+                computeExpectedFontHeight(FONT_HEIGHT_ACTUAL_SHORT, URL_BAR_HEIGHT),
                 mUrlBar.getTextSize(),
                 MathUtils.EPSILON);
     }
 
     @Test
     public void enforceMaxTextHeight_shrinkShortFontToFit_withElegantText_withPadding() {
-        doReturn(true).when(mPaint).isElegantTextHeight();
         measureAndLayoutUrlBar();
-        applyFontMetrics(true, FONT_HEIGHT_ACTUAL_SHORT);
+        applyFontMetrics(FONT_HEIGHT_ACTUAL_SHORT);
 
         mUrlBar.setPaddingRelative(0, 5, 0, 15);
         mUrlBar.enforceMaxTextHeight();
 
         assertEquals(
-                computeExpectedFontHeight(true, FONT_HEIGHT_ACTUAL_SHORT, URL_BAR_HEIGHT - 20),
+                computeExpectedFontHeight(FONT_HEIGHT_ACTUAL_SHORT, URL_BAR_HEIGHT - 20),
                 mUrlBar.getTextSize(),
                 MathUtils.EPSILON);
-    }
-
-    @Test
-    public void enforceMaxTextHeight_growToFitCurrentlyDisabled() {
-        doReturn(false).when(mPaint).isElegantTextHeight();
-        measureAndLayoutUrlBarForSize(URL_BAR_WIDTH, 50);
-        mUrlBar.setPaddingRelative(0, 0, 0, 0);
-        mUrlBar.setTextSize(TypedValue.COMPLEX_UNIT_PX, 40);
-        mFontMetrics.top = 0;
-        mFontMetrics.bottom = 40;
-
-        mUrlBar.enforceMaxTextHeight();
-        assertEquals(40, mUrlBar.getTextSize(), MathUtils.EPSILON);
     }
 
     @Test
@@ -987,9 +920,99 @@ public class UrlBarUnitTest {
     }
 
     @Test
+    public void layout_adjustFontSizeLayoutRequested() {
+        mUrlBar.setLayoutParams(new LayoutParams(123, 123));
+        mUrlBar.layout(0, 0, 123, 123);
+        verify(mUrlBar).post(mUrlBar.mEnforceMaxTextHeight);
+
+        mUrlBar.forceLayout();
+        mUrlBar.enforceMaxTextHeight();
+        verify(mUrlBar, times(2)).post(mUrlBar.mEnforceMaxTextHeight);
+    }
+
+    @Test
     public void layout_fixedFontSizeWithWrappingHeight() {
         mUrlBar.setLayoutParams(new LayoutParams(123, LayoutParams.WRAP_CONTENT));
         mUrlBar.layout(0, 0, 123, 123);
         verify(mUrlBar, never()).post(mUrlBar.mEnforceMaxTextHeight);
+    }
+
+    @Test
+    public void fixupTextDirection_unfocusedWithText() {
+        mUrlBar.onFocusChanged(false, 0, null);
+        mUrlBar.setText("test");
+        assertEquals(View.TEXT_DIRECTION_LTR, mLastTextDirection);
+        assertEquals(View.TEXT_ALIGNMENT_TEXT_START, mLastTextAlignment);
+    }
+
+    @Test
+    public void fixupTextDirection_focusedWithText() {
+        mUrlBar.onFocusChanged(true, 0, null);
+        mUrlBar.setText("test");
+        assertEquals(View.TEXT_DIRECTION_INHERIT, mLastTextDirection);
+        assertEquals(View.TEXT_ALIGNMENT_TEXT_START, mLastTextAlignment);
+    }
+
+    @Test
+    public void fixupTextDirection_unfocusedWithoutText() {
+        mUrlBar.onFocusChanged(false, 0, null);
+        mUrlBar.setText("");
+        assertEquals(View.TEXT_DIRECTION_INHERIT, mLastTextDirection);
+        assertEquals(View.TEXT_ALIGNMENT_VIEW_START, mLastTextAlignment);
+    }
+
+    @Test
+    public void fixupTextDirection_focusedWithoutText() {
+        mUrlBar.onFocusChanged(true, 0, null);
+        mUrlBar.setText("");
+        assertEquals(View.TEXT_DIRECTION_INHERIT, mLastTextDirection);
+        assertEquals(View.TEXT_ALIGNMENT_VIEW_START, mLastTextAlignment);
+    }
+
+    @Test
+    public void getTextWithAutocomplete_modelNotInitialized() {
+        mUrlBar.setText("some autocomplete text");
+        assertNull(mUrlBar.getModelForTesting());
+        assertEquals("some autocomplete text", mUrlBar.getTextWithAutocomplete());
+    }
+
+    @Test
+    public void getTextWithoutAutocomplete_modelNotInitialized() {
+        mUrlBar.setText("some text");
+        assertNull(mUrlBar.getModelForTesting());
+        assertEquals("some text", mUrlBar.getTextWithoutAutocomplete());
+    }
+
+    @Test
+    public void getTextWithAutocomplete_modelInitialized() {
+        AutocompleteEditTextModelBase model = mock(AutocompleteEditTextModelBase.class);
+        doReturn("model autocomplete text").when(model).getTextWithAutocomplete();
+        mUrlBar.setText("user input");
+        mUrlBar.setModelForTesting(model);
+        assertEquals("model autocomplete text", mUrlBar.getTextWithAutocomplete());
+    }
+
+    @Test
+    public void getTextWithoutAutocomplete_modelInitialized() {
+        AutocompleteEditTextModelBase model = mock(AutocompleteEditTextModelBase.class);
+        doReturn("model non-autocomplete text").when(model).getTextWithoutAutocomplete();
+        mUrlBar.setText("user input");
+        mUrlBar.setModelForTesting(model);
+        assertEquals("model non-autocomplete text", mUrlBar.getTextWithoutAutocomplete());
+    }
+
+    @Test
+    public void multiline() {
+        mUrlBar.requestFocus();
+        mUrlBar.setText(" ");
+        assertEquals(UrlBar.MULTILINE_EDIT_MAX_LINES, mUrlBar.getMaxLines());
+        assertFalse(mUrlBar.isSingleLine());
+
+        mUrlBar.setText("");
+        assertEquals(1, mUrlBar.getMaxLines());
+        assertTrue(mUrlBar.isSingleLine());
+
+        mUrlBar.setText(" ");
+        mUrlBar.clearFocus();
     }
 }

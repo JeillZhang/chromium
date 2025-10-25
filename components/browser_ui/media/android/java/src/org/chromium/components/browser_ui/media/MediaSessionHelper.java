@@ -402,7 +402,7 @@ public class MediaSessionHelper implements MediaImageCallback {
          * Creates a {@link MediaNotificationInfo.Builder} with basic embedder-specific
          * initialization.
          */
-        public MediaNotificationInfo.Builder createMediaNotificationInfoBuilder();
+        MediaNotificationInfo.Builder createMediaNotificationInfoBuilder();
 
         /** Shows a notification with the given metadata. */
         void showMediaNotification(MediaNotificationInfo notificationInfo);
@@ -515,7 +515,7 @@ public class MediaSessionHelper implements MediaImageCallback {
      * Updates the best favicon if the given icon is better and the favicon is shown in
      * notification.
      */
-    public void updateFavicon(Bitmap icon) {
+    public void updateFavicon(@Nullable Bitmap icon) {
         if (icon == null) return;
 
         mMaybeHasFavicon = true;

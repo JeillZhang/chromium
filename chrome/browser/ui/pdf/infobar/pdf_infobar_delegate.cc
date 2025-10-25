@@ -8,6 +8,7 @@
 
 #include "base/metrics/histogram_functions.h"
 #include "base/path_service.h"
+#include "base/task/task_traits.h"
 #include "base/task/thread_pool.h"
 #include "chrome/browser/infobars/confirm_infobar_creator.h"
 #include "chrome/browser/shell_integration.h"
@@ -20,7 +21,7 @@
 #include "components/vector_icons/vector_icons.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "chrome/installer/util/shell_util.h"
@@ -86,7 +87,8 @@ bool PdfInfoBarDelegate::Accept() {
       infobars::ContentInfoBarManager::WebContentsFromInfoBar(infobar())
           ->GetTopLevelNativeWindow();
   base::ThreadPool::PostTask(
-      FROM_HERE, {base::MayBlock()},
+      FROM_HERE,
+      {base::MayBlock(), base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(base::IgnoreResult(
                          &ShellUtil::ShowSetDefaultForFileExtensionSystemUI),
                      base::PathService::CheckedGet(base::FILE_EXE),

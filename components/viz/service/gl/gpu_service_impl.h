@@ -26,7 +26,6 @@
 #include "components/viz/service/display_embedder/compositor_gpu_thread.h"
 #include "components/viz/service/gl/exit_code.h"
 #include "components/viz/service/viz_service_export.h"
-#include "gpu/command_buffer/client/gpu_memory_buffer_manager.h"
 #include "gpu/command_buffer/common/shm_count.h"
 #include "gpu/command_buffer/service/sequence_id.h"
 #include "gpu/config/gpu_info.h"
@@ -52,23 +51,15 @@
 #include "skia/buildflags.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/gpu_extra_info.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "ui/gl/direct_composition_support.h"
 #endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(IS_CHROMEOS)
-namespace arc {
-class ProtectedBufferManager;
-}
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
 namespace gpu {
 class DawnContextProvider;
-class GpuMemoryBufferFactory;
 class GpuWatchdogThread;
-class ImageDecodeAcceleratorWorker;
 class Scheduler;
 class SharedContextState;
 class SharedImageManager;
@@ -173,32 +164,21 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
   void EstablishGpuChannel(int32_t client_id,
                            uint64_t client_tracing_id,
                            bool is_gpu_host,
+                           bool enable_extra_handles_validation,
                            EstablishGpuChannelCallback callback) override;
   void SetChannelClientPid(int32_t client_id,
                            base::ProcessId client_pid) override;
   void SetChannelDiskCacheHandle(
       int32_t client_id,
       const gpu::GpuDiskCacheHandle& handle) override;
+  void SetChannelPersistentCacheParams(
+      int32_t client_id,
+      const gpu::GpuDiskCacheHandle& handle,
+      persistent_cache::BackendParams backend_params) override;
   void OnDiskCacheHandleDestoyed(
       const gpu::GpuDiskCacheHandle& handle) override;
   void CloseChannel(int32_t client_id) override;
 #if BUILDFLAG(IS_CHROMEOS)
-#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
-  void CreateArcVideoDecodeAccelerator(
-      mojo::PendingReceiver<arc::mojom::VideoDecodeAccelerator> vda_receiver)
-      override;
-  void CreateArcVideoDecoder(
-      mojo::PendingReceiver<arc::mojom::VideoDecoder> vd_receiver) override;
-  void CreateArcVideoEncodeAccelerator(
-      mojo::PendingReceiver<arc::mojom::VideoEncodeAccelerator> vea_receiver)
-      override;
-  void CreateArcVideoProtectedBufferAllocator(
-      mojo::PendingReceiver<arc::mojom::VideoProtectedBufferAllocator>
-          pba_receiver) override;
-  void CreateArcProtectedBufferManager(
-      mojo::PendingReceiver<arc::mojom::ProtectedBufferManager> pbm_receiver)
-      override;
-#endif  // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
   void CreateJpegDecodeAccelerator(
       mojo::PendingReceiver<chromeos_camera::mojom::MjpegDecodeAccelerator>
           jda_receiver) override;
@@ -226,9 +206,6 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
 
   void GetVideoMemoryUsageStats(
       GetVideoMemoryUsageStatsCallback callback) override;
-  void AddVideoMemoryUsageStatsOnCompositorGpu(
-      GetVideoMemoryUsageStatsCallback callback,
-      gpu::VideoMemoryUsageStats video_memory_usage_stats);
 
   // These methods can be called from the CrBrowserMain thread and the
   // VizCompositorThread (with InputVizard) for PeakGpuMemory tracking.
@@ -242,7 +219,7 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
                   const std::string& key,
                   const std::string& data) override;
   void WakeUpGpu() override;
-  void GpuSwitched(gl::GpuPreference active_gpu_heuristic) override;
+  void GpuSwitched() override;
   void DisplayAdded() override;
   void DisplayRemoved() override;
   void DisplayMetricsChanged() override;
@@ -251,8 +228,7 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
   void OnBackgrounded() override;
   void OnForegrounded() override;
 #if !BUILDFLAG(IS_ANDROID)
-  void OnMemoryPressure(
-      base::MemoryPressureListener::MemoryPressureLevel level) override;
+  void OnMemoryPressure(base::MemoryPressureLevel level) override;
 #endif
 #if BUILDFLAG(IS_APPLE)
   void BeginCATransaction() override;
@@ -321,10 +297,6 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
 
   CompositorGpuThread* compositor_gpu_thread() {
     return compositor_gpu_thread_.get();
-  }
-
-  gpu::GpuMemoryBufferFactory* gpu_memory_buffer_factory() {
-    return gpu_memory_buffer_factory_.get();
   }
 
   gpu::SharedImageManager* shared_image_manager() {
@@ -433,21 +405,6 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
   bool IsNativeBufferSupported(gfx::BufferFormat format,
                                gfx::BufferUsage usage);
 
-#if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
-  void CreateArcVideoDecodeAcceleratorOnMainThread(
-      mojo::PendingReceiver<arc::mojom::VideoDecodeAccelerator> vda_receiver);
-  void CreateArcVideoDecoderOnMainThread(
-      mojo::PendingReceiver<arc::mojom::VideoDecoder> vd_receiver);
-  void CreateArcVideoEncodeAcceleratorOnMainThread(
-      mojo::PendingReceiver<arc::mojom::VideoEncodeAccelerator> vea_receiver);
-  void CreateArcVideoProtectedBufferAllocatorOnMainThread(
-      mojo::PendingReceiver<arc::mojom::VideoProtectedBufferAllocator>
-          pba_receiver);
-  void CreateArcProtectedBufferManagerOnMainThread(
-      mojo::PendingReceiver<arc::mojom::ProtectedBufferManager> pbm_receiver);
-#endif  // BUILDFLAG(IS_CHROMEOS) &&
-        // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
-
 #if BUILDFLAG(IS_WIN)
   void RequestDXGIInfoOnMainThread(RequestDXGIInfoCallback callback);
 #endif
@@ -527,6 +484,8 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
   // Information about the GPU process populated on creation.
   gfx::GpuExtraInfo gpu_extra_info_;
 
+  gpu::GpuProcessShmCount use_shader_cache_shm_count_;
+
   mojo::SharedRemote<mojom::GpuHost> gpu_host_;
   std::unique_ptr<gpu::GpuChannelManager> gpu_channel_manager_;
   std::unique_ptr<media::MediaGpuChannelManager> media_gpu_channel_manager_;
@@ -567,8 +526,6 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
 
   std::unique_ptr<webnn::WebNNContextProviderImpl> webnn_context_provider_;
 
-  std::unique_ptr<gpu::GpuMemoryBufferFactory> gpu_memory_buffer_factory_;
-
   // An event that will be signalled when we shutdown. On some platforms it
   // comes from external sources.
   std::unique_ptr<base::WaitableEvent> owned_shutdown_event_;
@@ -579,11 +536,6 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
 
   base::AtomicFlag is_exiting_;
 
-  // Used for performing hardware decode acceleration of images. This is shared
-  // by all the GPU channels.
-  std::unique_ptr<gpu::ImageDecodeAcceleratorWorker>
-      image_decode_accelerator_worker_;
-
   base::TimeTicks start_time_;
 
   // Used to track the task to bind |receiver_| on the IO thread.
@@ -593,11 +545,6 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
 
   gpu::GpuMemoryBufferConfigurationSet supported_gmb_configurations_;
   bool supported_gmb_configurations_inited_ = false;
-
-#if BUILDFLAG(IS_CHROMEOS) && BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
-  scoped_refptr<arc::ProtectedBufferManager> protected_buffer_manager_;
-#endif  // BUILDFLAG(IS_CHROMEOS) &&
-        // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
 
   VisibilityChangedCallback visibility_changed_callback_;
 

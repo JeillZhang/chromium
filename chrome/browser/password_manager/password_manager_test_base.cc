@@ -24,12 +24,10 @@
 #include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/sync_service_factory.h"
-#include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/autofill/content/browser/content_autofill_client.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/password_manager/core/browser/password_form.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
@@ -146,11 +144,6 @@ bool BubbleObserver::WaitForFallbackForSaving() const {
     return true;
   }
   return false;
-}
-
-void BubbleObserver::WaitForSaveUnsyncedCredentialsPrompt() const {
-  WaitForState(
-      password_manager::ui::WILL_DELETE_UNSYNCED_ACCOUNT_PASSWORDS_STATE);
 }
 
 void BubbleObserver::WaitForState(
@@ -469,6 +462,7 @@ void PasswordManagerBrowserTestBase::AddHSTSHost(const std::string& host) {
 void PasswordManagerBrowserTestBase::CheckThatCredentialsStored(
     const std::string& username,
     const std::string& password,
+    std::optional<std::string> backup_password,
     std::optional<password_manager::PasswordForm::Type> type) {
   SCOPED_TRACE(::testing::Message() << username << ", " << password);
   scoped_refptr<password_manager::TestPasswordStore> password_store =
@@ -483,6 +477,10 @@ void PasswordManagerBrowserTestBase::CheckThatCredentialsStored(
   const password_manager::PasswordForm& form = passwords_vector[0];
   EXPECT_EQ(base::ASCIIToUTF16(username), form.username_value);
   EXPECT_EQ(base::ASCIIToUTF16(password), form.password_value);
+  if (backup_password.has_value()) {
+    EXPECT_EQ(base::ASCIIToUTF16(backup_password.value()),
+              form.GetPasswordBackup());
+  }
   if (type.has_value()) {
     EXPECT_EQ(type.value(), form.type);
   }

@@ -27,6 +27,7 @@
 #include "components/supervised_user/core/common/supervised_user_constants.h"
 #include "google_apis/common/api_key_request_util.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader.h"
@@ -223,7 +224,7 @@ void FetchProcess::StartUrlLoader(
 
 void FetchProcess::OnSimpleUrlLoaderComplete(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-    std::unique_ptr<std::string> response_body) {
+    std::optional<std::string> response_body) {
   // In best-effort mode we must retry on auth error in order that the request
   // can proceed without credentials.
   if (config_->access_token_config.has_value() &&

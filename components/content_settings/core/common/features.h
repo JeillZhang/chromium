@@ -38,12 +38,6 @@ BASE_DECLARE_FEATURE(
 COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
 BASE_DECLARE_FEATURE(kActiveContentSettingExpiry);
 
-// Determines the frequency at which permissions of sites are checked whether
-// they are unused.
-COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
-extern const base::FeatureParam<base::TimeDelta>
-    kSafetyCheckUnusedSitePermissionsRepeatedUpdateInterval;
-
 // When enabled, site permissions will be considered as unused immediately in
 // order to facilitate testing.
 COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
@@ -55,18 +49,11 @@ COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
 extern const base::FeatureParam<bool>
     kSafetyCheckUnusedSitePermissionsWithDelay;
 
-// Determines the time interval after which sites are considered to be unused
-// and its permissions will be revoked.
 COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
-extern const base::FeatureParam<base::TimeDelta>
-    kSafetyCheckUnusedSitePermissionsRevocationThreshold;
+BASE_DECLARE_FEATURE(kApproximateGeolocationPermission);
 
-// Determines the time interval after which the revoked permissions of unused
-// sites are cleaned up and no longer shown to users, starting from the point
-// in time that permissions for a site were revoked.
 COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
-extern const base::FeatureParam<base::TimeDelta>
-    kSafetyCheckUnusedSitePermissionsRevocationCleanUpThreshold;
+extern const base::FeatureParam<int> kApproximateGeolocationPermissionPromptArm;
 
 // Feature to enable the feedback button in the User Bypass UI.
 COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
@@ -116,6 +103,11 @@ BASE_DECLARE_FEATURE(kTrackingProtection3pcd);
 // Forces unpartitioned storage access with third-party cookie blocking.
 COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
 BASE_DECLARE_FEATURE(kNativeUnpartitionedStoragePermittedWhen3PCOff);
+
+// Shows the option to disable the v8 optimizer for unfamiliar sites on the
+// site settings page.
+COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
+BASE_DECLARE_FEATURE(kBlockV8OptimizerOnUnfamiliarSitesSetting);
 
 ////////////////////////////////////////////////////////////
 // Start of third-party cookie access heuristics features //
@@ -237,11 +229,6 @@ extern const base::FeatureParam<bool>
 //////////////////////////////////////////////////////////
 // End of third-party cookie access heuristics features //
 //////////////////////////////////////////////////////////
-
-// Whether we should partition content settings (by StoragePartitions for
-// non-ios platforms).
-COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
-BASE_DECLARE_FEATURE(kContentSettingsPartitioning);
 
 COMPONENT_EXPORT(CONTENT_SETTINGS_FEATURES)
 extern const char kUseTestMetadataName[];

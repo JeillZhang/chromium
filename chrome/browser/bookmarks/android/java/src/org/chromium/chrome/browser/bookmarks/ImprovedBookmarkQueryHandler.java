@@ -30,7 +30,7 @@ public class ImprovedBookmarkQueryHandler implements BookmarkQueryHandler {
     private final BookmarkModel mBookmarkModel;
     private final BasicBookmarkQueryHandler mBasicBookmarkQueryHandler;
     private final BookmarkUiPrefs mBookmarkUiPrefs;
-    private final ShoppingService mShoppingService;
+    private final @Nullable ShoppingService mShoppingService;
 
     /**
      * Constructs a handle that operates on the given backend.
@@ -43,7 +43,7 @@ public class ImprovedBookmarkQueryHandler implements BookmarkQueryHandler {
     public ImprovedBookmarkQueryHandler(
             BookmarkModel bookmarkModel,
             BookmarkUiPrefs bookmarkUiPrefs,
-            ShoppingService shoppingService,
+            @Nullable ShoppingService shoppingService,
             @BookmarkNodeMaskBit int rootFolderForceVisibleMask) {
         mBookmarkModel = bookmarkModel;
         mBookmarkUiPrefs = bookmarkUiPrefs;
@@ -187,10 +187,11 @@ public class ImprovedBookmarkQueryHandler implements BookmarkQueryHandler {
 
     private boolean isPriceTracked(BookmarkListEntry bookmarkListEntry) {
         PowerBookmarkMeta meta = bookmarkListEntry.getPowerBookmarkMeta();
-        if (!PowerBookmarkUtils.isShoppingListItem(mShoppingService, meta)) return false;
+        if (mShoppingService == null
+                || !PowerBookmarkUtils.isShoppingListItem(mShoppingService, meta)) return false;
         return mShoppingService.isSubscribedFromCache(
                 PowerBookmarkUtils.createCommerceSubscriptionForShoppingSpecifics(
-                        assumeNonNull(meta).getShoppingSpecifics()));
+                        meta.getShoppingSpecifics()));
     }
 
     private List<BookmarkListEntry> collectLeafNodes(BookmarkId parentId) {

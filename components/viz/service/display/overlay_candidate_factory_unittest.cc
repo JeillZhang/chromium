@@ -23,6 +23,7 @@
 #include "components/viz/service/display/display_resource_provider_null.h"
 #include "components/viz/service/display/overlay_candidate.h"
 #include "components/viz/test/test_context_provider.h"
+#include "gpu/command_buffer/client/client_shared_image.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/point_f.h"
@@ -73,10 +74,16 @@ class OverlayCandidateFactoryTestBase : public testing::Test {
 
     child_context_provider->BindToCurrentSequence();
 
-    auto resource = TransferableResource::MakeGpu(
-        gpu::Mailbox::Generate(), GL_TEXTURE_2D, gpu::SyncToken(),
-        gfx::Size(1, 1), SinglePlaneFormat::kRGBA_8888, is_overlay_candidate);
-    resource.origin = origin;
+    gpu::SharedImageUsageSet usage = gpu::SHARED_IMAGE_USAGE_DISPLAY_READ;
+    if (is_overlay_candidate) {
+      usage |= gpu::SHARED_IMAGE_USAGE_SCANOUT;
+    }
+    auto resource = TransferableResource::Make(
+        gpu::ClientSharedImage::CreateForTesting(
+            {SinglePlaneFormat::kRGBA_8888, gfx::Size(1, 1), gfx::ColorSpace(),
+             origin, kPremul_SkAlphaType, usage},
+            GL_TEXTURE_2D),
+        TransferableResource::ResourceSource::kTest, gpu::SyncToken());
 
     ResourceId resource_id =
         child_resource_provider_.ImportResource(resource, base::DoNothing());
@@ -88,8 +95,11 @@ class OverlayCandidateFactoryTestBase : public testing::Test {
     std::vector<ResourceId> resource_ids_to_transfer;
     resource_ids_to_transfer.push_back(resource_id);
     std::vector<TransferableResource> list;
+
+    CHECK(child_context_provider);
     child_resource_provider_.PrepareSendToParent(
-        resource_ids_to_transfer, &list, child_context_provider.get());
+        resource_ids_to_transfer, &list,
+        child_context_provider->SharedImageInterface());
     resource_provider_.ReceiveFromChild(child_id, list);
 
     // Delete it in the child so it won't be leaked, and will be released once

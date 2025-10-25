@@ -16,6 +16,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "chromeos/strings/grit/chromeos_strings.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "ui/webui/resources/grit/webui_resources.h"
 
@@ -24,7 +25,7 @@ namespace {
 // This function chooses which view should be shown based on the url. The done
 // page is only shown if the url query is set to "done".
 bool ShowDone(const GURL url) {
-  bool show_done = url.has_query() && url.query() == "done";
+  bool show_done = url.has_query() && url.GetQuery() == "done";
   if (show_done) {
     base::UmaHistogramEnumeration("Sanitize.SanitizeEvent",
                                   ash::SanitizeEvent::kSanitizeDoneScreen);

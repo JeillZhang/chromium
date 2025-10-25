@@ -15,6 +15,7 @@
 #import "ios/chrome/browser/infobars/ui_bundled/banners/infobar_banner_delegate.h"
 #import "ios/chrome/browser/infobars/ui_bundled/banners/infobar_banner_view_controller.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
+#import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/show_signin_command.h"
@@ -61,6 +62,8 @@ constexpr CGFloat kLogoSize = 22;
   if (self) {
     CHECK(viewController, base::NotFatalUntil::M145);
     CHECK(browser, base::NotFatalUntil::M145);
+    CHECK_EQ(browser->type(), Browser::Type::kRegular,
+             base::NotFatalUntil::M145);
     self.shouldUseDefaultDismissal = NO;
     _promoType = promoType;
     _tracker = feature_engagement::TrackerFactory::GetForProfile(self.profile);
@@ -99,17 +102,20 @@ constexpr CGFloat kLogoSize = 22;
 
 #pragma mark - Private Methods
 
+// Stops and cleans up the sign-in coordinator.
 - (void)stopSigninCoordinator {
   [_signinCoordinator stop];
   _signinCoordinator = nil;
 }
 
+// Handles sign-in coordinator completion by cleaning and dismissing the promo.
 - (void)signinCoordinatorCompletion {
   [self stopSigninCoordinator];
   [self.delegate dismissNonModalSignInPromo:self];
 }
 
-- (void)sendPromoDismissalNotification {
+// Notifies the feature engagement tracker that the promo has been dismissed.
+- (void)notifyFeatureEngagementDismissed {
   if (self.bannerWasPresented) {
     switch (_promoType) {
       case SignInPromoType::kPassword:
@@ -122,7 +128,10 @@ constexpr CGFloat kLogoSize = 22;
         break;
     }
   }
+}
 
+// Stops timers, hides banner UI, and dismisses the coordinator if needed.
+- (void)cleanupUIAndDismiss {
   [_mediator stopTimeOutTimers];
 
   [self hideBannerUI];
@@ -131,12 +140,15 @@ constexpr CGFloat kLogoSize = 22;
   }
 }
 
+// Dismisses the banner view controller when interaction is finished.
 - (void)hideBannerUI {
   if (self.bannerViewController) {
     [self.bannerViewController dismissWhenInteractionIsFinished];
   }
 }
 
+// Configures the banner with title, subtitle, button text, and icon based on
+// promo type.
 - (void)configureBanner {
   NSString* title =
       l10n_util::GetNSString(IDS_IOS_NON_MODAL_SIGNIN_PROMO_PROMPT);
@@ -208,7 +220,7 @@ constexpr CGFloat kLogoSize = 22;
     return;
   }
 
-  [self sendPromoDismissalNotification];
+  [self cleanupUIAndDismiss];
 }
 
 #pragma mark - InfobarCoordinatorImplementation
@@ -244,6 +256,17 @@ constexpr CGFloat kLogoSize = 22;
 - (void)performInfobarAction {
   if (!_infobarUntapped) {
     // Double tap. Ignore
+    return;
+  }
+
+  AuthenticationService* authService =
+      AuthenticationServiceFactory::GetForProfile(self.profile);
+  if (signin::SigninIsPossible(authService)) {
+    // The promo is not scheduled if the user is signed-in or if sign-in is
+    // disabled. Still, due to asynchronicity, the state could have changed in
+    // the meantime, so we need to check again before displaying the sign-in
+    // coordinator.
+    [self cleanupUIAndDismiss];
     return;
   }
   _infobarUntapped = NO;
@@ -286,7 +309,6 @@ constexpr CGFloat kLogoSize = 22;
 
 - (void)actionCallback {
   [self stopSigninCoordinator];
-  [self sendPromoDismissalNotification];
 }
 
 - (void)infobarBannerWillBeDismissed:(BOOL)userInitiated {
@@ -299,7 +321,8 @@ constexpr CGFloat kLogoSize = 22;
 }
 
 - (void)infobarWasDismissed {
-  [self sendPromoDismissalNotification];
+  [self notifyFeatureEngagementDismissed];
+  [self cleanupUIAndDismiss];
   self.bannerViewController = nil;
 }
 

@@ -15,6 +15,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/scoped_observation.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "chromeos/ui/base/app_types.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/user_activity/user_activity_detector.h"
@@ -85,9 +86,10 @@ class ASH_EXPORT DemoSessionMetricsRecorder
     kSumo = 40,
     kAdobeSpark = 41,
     kMinecraft = 42,
+    kGemini = 43,
     // Add future entries above this comment, in sync with enums.xml.
     // Update kMaxValue to the last value.
-    kMaxValue = kMinecraft,
+    kMaxValue = kGemini,
   };
 
   enum class ExitSessionFrom {

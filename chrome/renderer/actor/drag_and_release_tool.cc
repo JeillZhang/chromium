@@ -5,6 +5,7 @@
 #include "chrome/renderer/actor/drag_and_release_tool.h"
 
 #include "base/time/time.h"
+#include "base/types/expected.h"
 #include "chrome/common/actor/action_result.h"
 #include "chrome/common/actor/actor_logging.h"
 #include "chrome/renderer/actor/tool_utils.h"
@@ -27,93 +28,142 @@ using ::blink::WebInputEvent;
 using ::blink::WebInputEventResult;
 using ::blink::WebLocalFrame;
 using ::blink::WebMouseEvent;
+using ::blink::WebWidget;
 using ::blink::mojom::EventType;
 
-DragAndReleaseTool::DragAndReleaseTool(content::RenderFrame& frame,
-                                       Journal::TaskId task_id,
-                                       Journal& journal,
-                                       mojom::DragAndReleaseActionPtr action)
-    : ToolBase(frame, task_id, journal), action_(std::move(action)) {}
+DragAndReleaseTool::DragAndReleaseTool(
+    content::RenderFrame& frame,
+    TaskId task_id,
+    Journal& journal,
+    mojom::DragAndReleaseActionPtr action,
+    mojom::ToolTargetPtr target,
+    mojom::ObservedToolTargetPtr observed_target)
+    : ToolBase(frame,
+               task_id,
+               journal,
+               std::move(target),
+               std::move(observed_target)),
+      action_(std::move(action)) {}
 
 DragAndReleaseTool::~DragAndReleaseTool() = default;
 
-mojom::ActionResultPtr DragAndReleaseTool::Execute() {
+void DragAndReleaseTool::Execute(ToolFinishedCallback callback) {
   ValidatedResult validated_result = Validate();
   if (!validated_result.has_value()) {
-    return std::move(validated_result.error());
+    std::move(callback).Run(std::move(validated_result.error()));
+    return;
   }
 
-  gfx::PointF from_point = validated_result->from;
-  gfx::PointF to_point = validated_result->to;
+  ResolvedTarget from_target = validated_result->from;
+  ResolvedTarget to_target = validated_result->to;
+
+  WebWidget* widget = from_target.GetWidget(*this);
+  CHECK(widget);
 
   // TODO(crbug.com/409333494): How should partial success be returned.
 
   // Move and press down the mouse on the from_point.
-  if (!InjectMouseEvent(EventType::kMouseMove, from_point,
+  if (!InjectMouseEvent(*widget, from_target.widget_point,
+                        EventType::kMouseMove,
                         WebMouseEvent::Button::kNoButton)) {
-    return MakeResult(
-        mojom::ActionResultCode::kDragAndReleaseFromMoveSuppressed);
+    std::move(callback).Run(
+        MakeResult(mojom::ActionResultCode::kDragAndReleaseFromMoveSuppressed));
+    return;
   }
 
-  if (!InjectMouseEvent(EventType::kMouseDown, from_point,
-                        WebMouseEvent::Button::kLeft)) {
-    return MakeResult(mojom::ActionResultCode::kDragAndReleaseDownSuppressed);
+  // Re-check widget after each input since it could be destroyed as part of
+  // input handling.
+  widget = from_target.GetWidget(*this);
+  if (!widget) {
+    std::move(callback).Run(
+        MakeResult(mojom::ActionResultCode::kFrameWentAway));
+    return;
+  }
+
+  if (!InjectMouseEvent(*widget, from_target.widget_point,
+                        EventType::kMouseDown, WebMouseEvent::Button::kLeft)) {
+    std::move(callback).Run(
+        MakeResult(mojom::ActionResultCode::kDragAndReleaseDownSuppressed,
+                   /*requires_page_stabilization=*/true));
+    return;
+  }
+
+  widget = from_target.GetWidget(*this);
+  if (!widget) {
+    std::move(callback).Run(
+        MakeResult(mojom::ActionResultCode::kFrameWentAway));
+    return;
   }
 
   // Move and release the mouse on the to_point.
-  if (!InjectMouseEvent(EventType::kMouseMove, to_point,
+  if (!InjectMouseEvent(*widget, to_target.widget_point, EventType::kMouseMove,
                         WebMouseEvent::Button::kLeft)) {
-    return MakeResult(mojom::ActionResultCode::kDragAndReleaseToMoveSuppressed);
+    std::move(callback).Run(
+        MakeResult(mojom::ActionResultCode::kDragAndReleaseToMoveSuppressed,
+                   /*requires_page_stabilization=*/true));
+    return;
   }
 
-  if (!InjectMouseEvent(EventType::kMouseUp, to_point,
-                        WebMouseEvent::Button::kLeft)) {
-    return MakeResult(mojom::ActionResultCode::kDragAndReleaseUpSuppressed);
+  widget = from_target.GetWidget(*this);
+  if (!widget) {
+    std::move(callback).Run(
+        MakeResult(mojom::ActionResultCode::kFrameWentAway));
+    return;
   }
 
-  return MakeOkResult();
+  if (!InjectMouseEvent(*widget, to_target.widget_point, EventType::kMouseUp,
+                        WebMouseEvent::Button::kLeft)) {
+    std::move(callback).Run(
+        MakeResult(mojom::ActionResultCode::kDragAndReleaseUpSuppressed,
+                   /*requires_page_stabilization=*/true));
+    return;
+  }
+
+  std::move(callback).Run(MakeOkResult());
 }
 
 std::string DragAndReleaseTool::DebugString() const {
   return absl::StrFormat("DragAndReleaseTool[from-%s -> to-%s]",
-                         ToDebugString(action_->from_target),
+                         ToDebugString(target_),
                          ToDebugString(action_->to_target));
 }
 
 DragAndReleaseTool::ValidatedResult DragAndReleaseTool::Validate() const {
-  if (!frame_->GetWebFrame() || !frame_->GetWebFrame()->FrameWidget()) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kFrameWentAway));
-  }
-  mojom::ToolTargetPtr& from_target = action_->from_target;
-  mojom::ToolTargetPtr& to_target = action_->to_target;
+  CHECK(frame_->GetWebFrame());
+  CHECK(frame_->GetWebFrame()->FrameWidget());
 
-  if (from_target->is_dom_node_id() || to_target->is_dom_node_id()) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kArgumentsInvalid,
-                   "DomNodeId target not supported"));
-  }
+  const mojom::ToolTargetPtr& from_target = target_;
+  const mojom::ToolTargetPtr& to_target = action_->to_target;
 
-  gfx::PointF from_point = gfx::PointF(from_target->get_coordinate());
-  gfx::PointF to_point = gfx::PointF(to_target->get_coordinate());
+  CHECK(from_target);
+  CHECK(to_target);
 
-  if (!IsPointWithinViewport(from_point, frame_.get())) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kDragAndReleaseFromOffscreen,
-                   absl::StrFormat("Point [%s]", from_point.ToString())));
+  ResolveResult resolved_from = ResolveTarget(*from_target);
+  ResolveResult resolved_to = ResolveTarget(*to_target);
+
+  if (!resolved_from.has_value()) {
+    return base::unexpected(std::move(resolved_from.error()));
   }
 
-  if (!IsPointWithinViewport(to_point, frame_.get())) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kDragAndReleaseToOffscreen,
-                   absl::StrFormat("Point [%s]", to_point.ToString())));
+  if (!resolved_to.has_value()) {
+    return base::unexpected(std::move(resolved_to.error()));
   }
 
-  return DragParams{from_point, to_point};
+  if (resolved_from->GetWidget(*this) != resolved_to->GetWidget(*this)) {
+    // Drag across widgets (i.e. between frame and popup) isn't currently
+    // supported.
+    return base::unexpected(MakeErrorResult());
+  }
+
+  // TODO(b/450018073): This should be checking the targets for time-of-use
+  // validity.
+
+  return DragParams{resolved_from.value(), resolved_to.value()};
 }
 
-bool DragAndReleaseTool::InjectMouseEvent(WebInputEvent::Type type,
-                                          const gfx::PointF& position_in_widget,
+bool DragAndReleaseTool::InjectMouseEvent(WebWidget& widget,
+                                          gfx::PointF& position_in_widget,
+                                          WebInputEvent::Type type,
                                           WebMouseEvent::Button button) {
   WebMouseEvent mouse_event(type, WebInputEvent::kNoModifiers,
                             ui::EventTimeForNow());
@@ -125,9 +175,8 @@ bool DragAndReleaseTool::InjectMouseEvent(WebInputEvent::Type type,
     mouse_event.click_count = 1;
   }
 
-  WebInputEventResult result =
-      frame_->GetWebFrame()->FrameWidget()->HandleInputEvent(
-          WebCoalescedInputEvent(mouse_event, ui::LatencyInfo()));
+  WebInputEventResult result = widget.HandleInputEvent(
+      WebCoalescedInputEvent(mouse_event, ui::LatencyInfo()));
   return result != WebInputEventResult::kHandledSuppressed;
 }
 

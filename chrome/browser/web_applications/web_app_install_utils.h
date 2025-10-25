@@ -22,12 +22,6 @@
 
 class GURL;
 
-namespace blink {
-namespace mojom {
-class Manifest;
-}  // namespace mojom
-}  // namespace blink
-
 namespace content {
 class WebContents;
 }
@@ -65,16 +59,6 @@ void PopulateFileHandlerInfoFromManifest(
     const GURL& app_scope,
     WebAppInstallInfo* web_app_info);
 
-// Update the given WebAppInstallInfo with information from the manifest.
-// Will sanitise the manifest fields to be suitable for installation to prevent
-// sites from using arbitrarily large amounts of disk space.
-void UpdateWebAppInfoFromManifest(const blink::mojom::Manifest& manifest,
-                                  WebAppInstallInfo* web_app_info);
-
-// Same as above, but returns a fresh WebAppInstallInfo.
-WebAppInstallInfo CreateWebAppInfoFromManifest(
-    const blink::mojom::Manifest& manifest);
-
 // Populate non-product icons in WebAppInstallInfo using the IconsMap. This
 // currently covers shortcut item icons and file handler icons. It ignores
 // icons that might have already existed in `web_app_info`.
@@ -89,6 +73,13 @@ void PopulateOtherIcons(WebAppInstallInfo* web_app_info,
 // `web_app_info` may be retained, and even used to generate missing icons.
 void PopulateProductIcons(WebAppInstallInfo* web_app_info,
                           const IconsMap* icons_map);
+
+// Populates `web_app_info.trusted_icon_bitmaps`, using the information in
+// `trusted_icons` from the downloaded icons in `icons_map`. It is possible that
+// at the end of the call, the `web_app_info.trusted_icon_bitmaps` field might
+// not be populated due to various factors like icon downloading failure etc.
+void PopulateTrustedIconBitmaps(WebAppInstallInfo& web_app_info,
+                                const IconsMap& icons_map);
 
 // Records downloaded icons result and http code and code class.
 void RecordDownloadedIconsResultAndHttpStatusCodes(
@@ -123,13 +114,19 @@ WebAppManagement::Type ConvertInstallSurfaceToWebAppSource(
 void CreateWebAppInstallTabHelpers(content::WebContents* web_contents);
 
 // Updates |web_app| using |web_app_info|
-void SetWebAppManifestFields(const WebAppInstallInfo& web_app_info,
-                             WebApp& web_app,
-                             bool skip_icons_on_download_failure = false);
+// TODO(http://crbug.com/447607762): Move the logic for
+// `should_consider_manifest_icons_as_trusted` into the creation of the
+// WebAppInstallInfo, to remove the need for this here.
+void SetWebAppManifestFields(
+    const WebAppInstallInfo& web_app_info,
+    WebApp& web_app,
+    bool skip_icons_on_download_failure = false,
+    bool should_consider_manifest_icons_as_trusted = false);
 
 // Updates product icon fields of |web_app| using |web_app_info|.
 void SetWebAppProductIconFields(const WebAppInstallInfo& web_app_info,
-                                WebApp& web_app);
+                                WebApp& web_app,
+                                bool should_consider_manifest_icons_as_trusted);
 
 // Update |web_app_info| using |install_params|.
 // TODO(crbug.com/354981650): Remove this method after moving fields that modify

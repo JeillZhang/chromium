@@ -60,7 +60,6 @@
 #include "third_party/blink/renderer/platform/supplementable.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
-#include "third_party/blink/renderer/platform/wtf/uuid.h"
 
 namespace blink {
 
@@ -72,6 +71,7 @@ class DocumentInit;
 class DOMSelection;
 class DOMViewport;
 class DOMVisualViewport;
+class CrashReportStorage;
 class Element;
 class ExceptionState;
 class External;
@@ -188,6 +188,8 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   const BrowserInterfaceBrokerProxy& GetBrowserInterfaceBroker() const final;
   FrameOrWorkerScheduler* GetScheduler() final;
   scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner(TaskType) final;
+  // TODO(crbug.com/451479061): Consider moving the following function
+  // under trustedTypes/
   TrustedTypePolicyFactory* GetTrustedTypes() const final {
     return GetTrustedTypesForWorld(*GetCurrentWorld());
   }
@@ -243,6 +245,9 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   // Checks if navigation to Javascript URL is allowed. This check should run
   // before any action is taken (e.g. creating new window) for all
   // same-origin navigations.
+  bool AllowInlineJavascriptUrl(const DOMWrapperWorld* world,
+                                const KURL& url,
+                                Element* element);
   String CheckAndGetJavascriptUrl(
       const DOMWrapperWorld* world,
       const KURL& url,
@@ -331,14 +336,20 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
 
   // FIXME: ScrollBehaviorSmooth is currently unsupported in VisualViewport.
   // crbug.com/434497
-  void scrollBy(double x, double y) const;
-  void scrollBy(const ScrollToOptions*) const;
-  void scrollTo(double x, double y) const;
-  void scrollTo(const ScrollToOptions*) const;
-  void scroll(double x, double y) const { scrollTo(x, y); }
-  void scroll(const ScrollToOptions* scroll_to_options) const {
-    scrollTo(scroll_to_options);
-  }
+  ScriptPromise<IDLUndefined> scrollBy(ScriptState* script_state,
+                                       double x,
+                                       double y) const;
+  ScriptPromise<IDLUndefined> scrollBy(ScriptState* script_state,
+                                       const ScrollToOptions*) const;
+  ScriptPromise<IDLUndefined> scrollTo(ScriptState* script_state,
+                                       double x,
+                                       double y) const;
+  ScriptPromise<IDLUndefined> scrollTo(ScriptState* script_state,
+                                       const ScrollToOptions*) const;
+
+  void scrollByForTesting(double x, double y) const;
+  void scrollToForTesting(double x, double y) const;
+
   void moveBy(int x, int y) const;
   void moveTo(int x, int y) const;
 
@@ -406,7 +417,7 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
       scoped_refptr<const SecurityOrigin> intended_target_origin,
       SourceLocation* location,
       const base::UnguessableToken& source_agent_cluster_id,
-      scheduler::TaskAttributionInfo* parent_task);
+      scheduler::TaskAttributionInfo* task_state);
 
   void DispatchMessageEventWithOriginCheck(
       const SecurityOrigin* intended_target_origin,
@@ -432,7 +443,7 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   void EnqueueNonPersistedPageshowEvent();
   void EnqueueHashchangeEvent(const String& old_url, const String& new_url);
   void DispatchPopstateEvent(scoped_refptr<SerializedScriptValue>,
-                             scheduler::TaskAttributionInfo* parent_task,
+                             scheduler::TaskAttributionInfo* task_state,
                              bool has_ua_visual_transition);
   void DispatchWindowLoadEvent();
   void DocumentWasClosed();
@@ -444,7 +455,6 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   Event* CurrentEvent() const;
   void SetCurrentEvent(Event*);
 
-  TrustedTypePolicyFactory* trustedTypes(ScriptState*) const;
   TrustedTypePolicyFactory* GetTrustedTypesForWorld(
       const DOMWrapperWorld&) const;
 
@@ -514,13 +524,11 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
 
   Fence* fence();
 
+  CrashReportStorage* crashReport();
+
   CloseWatcher::WatcherStack* closewatcher_stack() {
     return closewatcher_stack_.Get();
   }
-
-  void GenerateNewNavigationId();
-
-  String GetNavigationId() const { return navigation_id_; }
 
   NavigationApi* navigation();
 
@@ -553,6 +561,8 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   SoftNavigationHeuristics* GetSoftNavigationHeuristics() {
     return soft_navigation_heuristics_.Get();
   }
+
+  void requestResize(ExceptionState&);
 
  protected:
   // EventTarget overrides.
@@ -678,6 +688,8 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   // https://github.com/shivanigithub/fenced-frame/issues/14
   Member<Fence> fence_;
 
+  Member<CrashReportStorage> crash_report_storage_;
+
   Member<CloseWatcher::WatcherStack> closewatcher_stack_;
 
   Member<SoftNavigationHeuristics> soft_navigation_heuristics_;
@@ -685,11 +697,6 @@ class CORE_EXPORT LocalDOMWindow final : public DOMWindow,
   // If set, this window is a Document Picture in Picture window.
   // https://wicg.github.io/document-picture-in-picture/
   bool is_picture_in_picture_window_ = false;
-
-  // The navigation id of a document is to identify navigation of special types
-  // like bfcache navigation or soft navigation. It changes when navigations
-  // of these types occur.
-  String navigation_id_;
 
   // Records this window's Storage Access API status. It cannot be downgraded.
   net::StorageAccessApiStatus storage_access_api_status_ =

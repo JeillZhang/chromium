@@ -14,6 +14,7 @@
 #include "components/performance_manager/public/performance_manager.h"
 #include "components/performance_manager/test_support/performance_manager_browsertest_harness.h"
 #include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -236,6 +237,9 @@ IN_PROC_BROWSER_TEST_F(V8ContextTrackerTest, DetachedContext) {
   // Get pointers to the RFHs for each frame.
   content::RenderFrameHost* rfha = contents->GetPrimaryMainFrame();
 
+  content::RenderFrameHost* iframe = ChildFrameAt(rfha, 0);
+  content::RenderFrameDeletedObserver iframe_deleted_observer(iframe);
+
   // Keep a pointer to the window associated with the child iframe, but
   // unload it.
   ASSERT_TRUE(ExecJs(rfha,
@@ -243,6 +247,8 @@ IN_PROC_BROWSER_TEST_F(V8ContextTrackerTest, DetachedContext) {
                      "document.body.leakyRef = iframe.contentWindow.window; "
                      "iframe.parentNode.removeChild(iframe); "
                      "console.log('detached and leaked iframe');"));
+
+  iframe_deleted_observer.WaitUntilDeleted();
 
   ExpectCountIncrease({
       .detached_v8_context_count = 1,

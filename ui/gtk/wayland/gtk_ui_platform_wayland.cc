@@ -9,6 +9,7 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "ui/base/glib/glib_cast.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/event_utils.h"
@@ -82,9 +83,8 @@ GtkUiPlatformWayland::CreateInputMethodContext(
 }
 
 bool GtkUiPlatformWayland::IncludeFontScaleInDeviceScale() const {
-  // Assume font scaling will be handled by Ozone/Wayland when WaylandUiScale
-  // feature is enabled.
-  return base::FeatureList::IsEnabled(features::kWaylandUiScale);
+  // Assume font scaling will be handled by Ozone/Wayland.
+  return true;
 }
 
 bool GtkUiPlatformWayland::IncludeScaleInCursorSize() const {

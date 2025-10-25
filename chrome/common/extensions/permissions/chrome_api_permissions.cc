@@ -83,6 +83,7 @@ constexpr APIPermissionInfo::InitInfo permissions_to_register[] = {
      APIPermissionInfo::kFlagDoesNotRequireManagedSessionFullLoginWarning},
     {APIPermissionID::kEnterpriseKioskInput, "enterprise.kioskInput",
      APIPermissionInfo::kFlagDoesNotRequireManagedSessionFullLoginWarning},
+    {APIPermissionID::kEnterpriseLogin, "enterprise.login"},
     {APIPermissionID::kEnterpriseNetworkingAttributes,
      "enterprise.networkingAttributes",
      APIPermissionInfo::kFlagDoesNotRequireManagedSessionFullLoginWarning},
@@ -205,10 +206,6 @@ constexpr APIPermissionInfo::InitInfo permissions_to_register[] = {
      APIPermissionInfo::kFlagImpliesFullURLAccess |
          APIPermissionInfo::kFlagCannotBeOptional |
          APIPermissionInfo::kFlagRequiresManagementUIWarning},
-    {APIPermissionID::kDevtools, "devtools",
-     APIPermissionInfo::kFlagImpliesFullURLAccess |
-         APIPermissionInfo::kFlagCannotBeOptional |
-         APIPermissionInfo::kFlagInternal},
     {APIPermissionID::kPageCapture, "pageCapture",
      APIPermissionInfo::kFlagImpliesFullURLAccess},
     {APIPermissionID::kProxy, "proxy",

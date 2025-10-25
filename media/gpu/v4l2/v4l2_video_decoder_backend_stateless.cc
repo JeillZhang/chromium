@@ -475,7 +475,7 @@ bool V4L2StatelessVideoDecoderBackend::PumpDecodeTask() {
         }
 
         decoder_->SetStream(current_decode_request_->bitstream_id,
-                            *current_decode_request_->buffer);
+                            current_decode_request_->buffer);
         break;
 
       case AcceleratedVideoDecoder::kRanOutOfSurfaces:
@@ -607,7 +607,6 @@ bool V4L2StatelessVideoDecoderBackend::ApplyResolution(
   format.fmt.pix_mp.width = pic_size.width();
   format.fmt.pix_mp.height = pic_size.height();
   if (device_->Ioctl(VIDIOC_S_FMT, &format) != 0) {
-    RecordVidiocIoctlErrorUMA(VidiocIoctlRequests::kVidiocSFmt);
     VPLOGF(1) << "Failed setting OUTPUT format";
     return false;
   }
@@ -746,7 +745,7 @@ bool V4L2StatelessVideoDecoderBackend::CreateDecoder() {
     decoder_ = std::make_unique<VP9Decoder>(
         std::make_unique<V4L2VideoDecoderDelegateVP9>(this, device_.get()),
         profile_, color_space_);
-#if BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(USE_AV1_HW_DECODER)
   } else if (profile_ >= AV1PROFILE_MIN && profile_ <= AV1PROFILE_MAX) {
     decoder_ = std::make_unique<AV1Decoder>(
         std::make_unique<V4L2VideoDecoderDelegateAV1>(this, device_.get()),

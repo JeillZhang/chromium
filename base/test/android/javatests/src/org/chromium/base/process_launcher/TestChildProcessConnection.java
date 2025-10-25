@@ -8,6 +8,9 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.os.Bundle;
 
+import org.chromium.base.ChildBindingState;
+import org.chromium.build.annotations.Nullable;
+
 /** An implementation of ChildProcessConnection that does not connect to a real service. */
 public class TestChildProcessConnection extends ChildProcessConnection {
     private static class MockChildServiceConnection implements ChildServiceConnection {
@@ -20,8 +23,11 @@ public class TestChildProcessConnection extends ChildProcessConnection {
         }
 
         @Override
-        public void unbindServiceConnection() {
+        public void unbindServiceConnection(@Nullable Runnable onStateChangeCallback) {
             mBound = false;
+            if (onStateChangeCallback != null) {
+                onStateChangeCallback.run();
+            }
         }
 
         @Override
@@ -36,6 +42,9 @@ public class TestChildProcessConnection extends ChildProcessConnection {
 
         @Override
         public void retire() {}
+
+        @Override
+        public void rebindService(int bindFlags) {}
     }
 
     private int mPid;
@@ -85,8 +94,8 @@ public class TestChildProcessConnection extends ChildProcessConnection {
 
     // We don't have a real service so we have to mock the connection status.
     @Override
-    public void start(boolean useStrongBinding, ServiceCallback serviceCallback) {
-        super.start(useStrongBinding, serviceCallback);
+    public void start(@ChildBindingState int initialBindingState, ServiceCallback serviceCallback) {
+        super.start(initialBindingState, serviceCallback);
         mConnected = true;
         mServiceCallback = serviceCallback;
     }

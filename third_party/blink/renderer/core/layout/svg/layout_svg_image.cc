@@ -28,6 +28,7 @@
 #include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_image_resource.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_replaced.h"
 #include "third_party/blink/renderer/core/layout/natural_sizing_info.h"
 #include "third_party/blink/renderer/core/layout/pointer_events_hit_rules.h"
@@ -59,8 +60,10 @@ void LayoutSVGImage::Trace(Visitor* visitor) const {
   LayoutSVGModelObject::Trace(visitor);
 }
 
-void LayoutSVGImage::StyleDidChange(StyleDifference diff,
-                                    const ComputedStyle* old_style) {
+void LayoutSVGImage::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
   TransformHelper::UpdateOffsetPath(*GetElement(), old_style);
   transform_uses_reference_box_ =
@@ -78,7 +81,7 @@ void LayoutSVGImage::StyleDidChange(StyleDifference diff,
     }
   }
 
-  LayoutSVGModelObject::StyleDidChange(diff, old_style);
+  LayoutSVGModelObject::StyleDidChange(diff, old_style, style_change_context);
 }
 
 void LayoutSVGImage::WillBeDestroyed() {

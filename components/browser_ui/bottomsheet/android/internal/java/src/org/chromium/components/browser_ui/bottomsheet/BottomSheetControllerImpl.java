@@ -6,17 +6,18 @@ package org.chromium.components.browser_ui.bottomsheet;
 
 import static org.chromium.build.NullUtil.assumeNonNull;
 
+import android.graphics.Color;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 
+import androidx.annotation.ColorInt;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.MonotonicNonNull;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -35,6 +36,7 @@ import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.PriorityQueue;
+import java.util.function.Supplier;
 
 /**
  * This class is responsible for managing the content shown by the {@link BottomSheet}. Features
@@ -202,6 +204,7 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController, ScrimCo
 
     /**
      * Do the actual initialization of the bottom sheet.
+     *
      * @param initializedCallback A callback for the creation of the sheet.
      * @param window A means of accessing the screen size.
      * @param keyboardDelegate A means of hiding the keyboard.
@@ -213,6 +216,9 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController, ScrimCo
             KeyboardVisibilityDelegate keyboardDelegate,
             Supplier<ViewGroup> root) {
         mBottomSheetContainer = root.get();
+        if (mBottomSheetContainer == null) {
+            return;
+        }
         mBottomSheetContainer.setVisibility(View.VISIBLE);
 
         LayoutInflater.from(root.get().getContext())
@@ -333,7 +339,6 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController, ScrimCo
             mBottomSheet.addObserver(mPendingSheetObservers.get(i));
         }
         mPendingSheetObservers.clear();
-
         mSheetInitializer = null;
     }
 
@@ -346,9 +351,10 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController, ScrimCo
     public void setBottomControlsHeight(int bottomControlsHeight) {
         if (mBottomControlsHeight == bottomControlsHeight) return;
         mBottomControlsHeight = bottomControlsHeight;
-        if (mScrimManagerSupplier.hasValue()) {
+        var scrimManager = mScrimManagerSupplier.get();
+        if (scrimManager != null) {
             // Set the appropriate offset for the current scrim state.
-            scrimVisibilityChanged(mScrimManagerSupplier.get().isShowingScrim());
+            scrimVisibilityChanged(scrimManager.isShowingScrim());
         }
     }
 
@@ -534,9 +540,10 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController, ScrimCo
         if (content == null) {
             throw new RuntimeException("Attempting to show null content in the sheet!");
         }
-
         if (mBottomSheet == null) assumeNonNull(mSheetInitializer).run();
-        assumeNonNull(mBottomSheet);
+        if (mBottomSheet == null) {
+            return false;
+        }
         assumeNonNull(mContentQueue);
 
         // If already showing (or queued to show) the requested content, do nothing.
@@ -695,15 +702,33 @@ class BottomSheetControllerImpl implements ManagedBottomSheetController, ScrimCo
 
     @Override
     public @Nullable Integer getSheetBackgroundColor() {
-        if (mBottomSheet == null
-                || getCurrentSheetContent() == null
-                || !getCurrentSheetContent().hasSolidBackgroundColor()) {
+        if (mBottomSheet == null) {
             return null;
+        }
+
+        BottomSheetContent content = getCurrentSheetContent();
+        if (content == null || !content.hasSolidBackgroundColor()) {
+            return null;
+        }
+
+        @ColorInt int overrideColor = content.getSheetBackgroundColorOverride();
+        if (overrideColor != Color.TRANSPARENT) {
+            return overrideColor;
         }
         return mBottomSheet.getSheetBackgroundColor();
     }
 
+    @Override
+    public void onSheetBackgroundColorOverrideChanged() {
+        if (mBottomSheet == null) {
+            return;
+        }
+
+        mBottomSheet.onSheetBackgroundColorOverrideChanged();
+    }
+
     // ScrimCoordinator.Observer
+
     @Override
     public void scrimVisibilityChanged(boolean scrimVisible) {
         if (mBottomSheet == null) return;

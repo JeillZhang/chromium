@@ -16,7 +16,6 @@
 #include "base/version_info/version_info.h"
 #include "chrome/browser/extensions/api/webstore_private/webstore_private_api.h"
 #include "chrome/browser/extensions/extension_install_prompt_show_params.h"
-#include "chrome/browser/extensions/install_approval.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/supervised_user/supervised_user_test_util.h"
 #include "chrome/common/extensions/extension_constants.h"
@@ -37,7 +36,9 @@
 #include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/browser/install_approval.h"
 #include "extensions/browser/pref_names.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_features.h"
 #include "services/data_decoder/public/cpp/test_support/in_process_data_decoder.h"
@@ -46,6 +47,8 @@
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/mv2_experiment_stage.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 namespace {
@@ -56,8 +59,8 @@ constexpr char kExtensionManifest[] = R"({
   \"name\" : \"Extension\",
   \"manifest_version\": 3,
   \"version\": \"0.1\",
-  \"permissions\": [ \"example.com\", \"downloads\"],
-  \"optional_permissions\" : [\"audio\"]})";
+  \"permissions\": [ \"example.com\", \"cookies\"],
+  \"optional_permissions\" : [\"notifications\"]})";
 
 constexpr char kBlockAllExtensionSettings[] = R"({
   "*": {
@@ -77,13 +80,13 @@ constexpr char kBlockedManifestTypeExtensionSettings[] = R"({
   }
 })";
 
-constexpr char kBlockedDownloadsPermissionsExtensionSettings[] = R"({
+constexpr char kBlockedCookiesPermissionsExtensionSettings[] = R"({
   "*": {
-    "blocked_permissions": ["downloads"]
+    "blocked_permissions": ["cookies"]
   }
 })";
 
-constexpr char kBlockedAudioPermissionsExtensionSettings[] = R"({
+constexpr char kBlockedNotificationsPermissionsExtensionSettings[] = R"({
   "*": {
     "blocked_permissions": ["audio"]
   }
@@ -138,7 +141,8 @@ void VerifyPendingList(const std::map<ExtensionId, ExtensionRequestData>&
 
 void SetExtensionSettings(const std::string& settings_string,
                           TestingProfile* profile) {
-  std::optional<base::Value> settings = base::JSONReader::Read(settings_string);
+  std::optional<base::Value> settings = base::JSONReader::Read(
+      settings_string, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   ASSERT_TRUE(settings.has_value());
   profile->GetTestingPrefService()->SetManagedPref(
       pref_names::kExtensionManagement,
@@ -297,8 +301,7 @@ TEST_F(WebstorePrivateGetExtensionStatusTest, ExtensionBlockedByManifestType) {
 }
 
 TEST_F(WebstorePrivateGetExtensionStatusTest, ExtensionBlockedByPermission) {
-  SetExtensionSettings(kBlockedDownloadsPermissionsExtensionSettings,
-                       profile());
+  SetExtensionSettings(kBlockedCookiesPermissionsExtensionSettings, profile());
   auto function =
       base::MakeRefCounted<WebstorePrivateGetExtensionStatusFunction>();
   std::optional<base::Value> response = RunFunctionAndReturnValue(
@@ -308,7 +311,8 @@ TEST_F(WebstorePrivateGetExtensionStatusTest, ExtensionBlockedByPermission) {
 
 TEST_F(WebstorePrivateGetExtensionStatusTest,
        ExtensionNotBlockedByOptionalPermission) {
-  SetExtensionSettings(kBlockedAudioPermissionsExtensionSettings, profile());
+  SetExtensionSettings(kBlockedNotificationsPermissionsExtensionSettings,
+                       profile());
   auto function =
       base::MakeRefCounted<WebstorePrivateGetExtensionStatusFunction>();
   std::optional<base::Value> response = RunFunctionAndReturnValue(
@@ -380,8 +384,8 @@ class WebstorePrivateBeginInstallWithManifest3Test
   }
 
   void SetExtensionSettings(const std::string& settings_string) {
-    std::optional<base::Value> settings =
-        base::JSONReader::Read(settings_string);
+    std::optional<base::Value> settings = base::JSONReader::Read(
+        settings_string, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
     ASSERT_TRUE(settings);
     profile()->GetTestingPrefService()->SetManagedPref(
         pref_names::kExtensionManagement,
@@ -628,7 +632,7 @@ TEST_F(WebstorePrivateBeginInstallWithManifest3Test,
 
 TEST_F(WebstorePrivateBeginInstallWithManifest3Test,
        ExtensionBlockedByPermission) {
-  SetExtensionSettings(kBlockedDownloadsPermissionsExtensionSettings);
+  SetExtensionSettings(kBlockedCookiesPermissionsExtensionSettings);
 
   std::unique_ptr<content::WebContents> web_contents =
       content::WebContentsTester::CreateTestWebContents(profile(), nullptr);
@@ -645,7 +649,7 @@ TEST_F(WebstorePrivateBeginInstallWithManifest3Test,
 
 TEST_F(WebstorePrivateBeginInstallWithManifest3Test,
        ExtensionNotBlockedByOptionalPermission) {
-  SetExtensionSettings(kBlockedAudioPermissionsExtensionSettings);
+  SetExtensionSettings(kBlockedNotificationsPermissionsExtensionSettings);
 
   std::unique_ptr<content::WebContents> web_contents =
       content::WebContentsTester::CreateTestWebContents(profile(), nullptr);
@@ -840,17 +844,7 @@ WebstorePrivateManifestV2DeprecationUnitTest::
   std::vector<base::test::FeatureRef> enabled_features;
   std::vector<base::test::FeatureRef> disabled_features;
   switch (GetParam()) {
-    case MV2ExperimentStage::kNone:
-      disabled_features.push_back(
-          extensions_features::kExtensionManifestV2DeprecationWarning);
-      disabled_features.push_back(
-          extensions_features::kExtensionManifestV2Disabled);
-      disabled_features.push_back(
-          extensions_features::kExtensionManifestV2Unsupported);
-      break;
     case MV2ExperimentStage::kWarning:
-      enabled_features.push_back(
-          extensions_features::kExtensionManifestV2DeprecationWarning);
       disabled_features.push_back(
           extensions_features::kExtensionManifestV2Disabled);
       disabled_features.push_back(
@@ -860,8 +854,6 @@ WebstorePrivateManifestV2DeprecationUnitTest::
       enabled_features.push_back(
           extensions_features::kExtensionManifestV2Disabled);
       disabled_features.push_back(
-          extensions_features::kExtensionManifestV2DeprecationWarning);
-      disabled_features.push_back(
           extensions_features::kExtensionManifestV2Unsupported);
       break;
     case MV2ExperimentStage::kUnsupported:
@@ -869,8 +861,6 @@ WebstorePrivateManifestV2DeprecationUnitTest::
           extensions_features::kExtensionManifestV2Unsupported);
       disabled_features.push_back(
           extensions_features::kExtensionManifestV2Disabled);
-      disabled_features.push_back(
-          extensions_features::kExtensionManifestV2DeprecationWarning);
       break;
   }
 
@@ -880,14 +870,11 @@ WebstorePrivateManifestV2DeprecationUnitTest::
 INSTANTIATE_TEST_SUITE_P(
     ,
     WebstorePrivateManifestV2DeprecationUnitTest,
-    testing::Values(MV2ExperimentStage::kNone,
-                    MV2ExperimentStage::kWarning,
+    testing::Values(MV2ExperimentStage::kWarning,
                     MV2ExperimentStage::kDisableWithReEnable,
                     MV2ExperimentStage::kUnsupported),
     [](const testing::TestParamInfo<MV2ExperimentStage>& info) {
       switch (info.param) {
-        case MV2ExperimentStage::kNone:
-          return "ExperimentDisabled";
         case MV2ExperimentStage::kWarning:
           return "WarningExperiment";
         case MV2ExperimentStage::kDisableWithReEnable:
@@ -909,9 +896,6 @@ TEST_P(WebstorePrivateManifestV2DeprecationUnitTest,
 
   std::string expected;
   switch (GetParam()) {
-    case MV2ExperimentStage::kNone:
-      expected = "inactive";
-      break;
     case MV2ExperimentStage::kWarning:
       expected = "warning";
       break;

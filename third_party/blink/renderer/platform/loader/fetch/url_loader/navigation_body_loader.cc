@@ -663,6 +663,7 @@ void WebNavigationBodyLoader::FillNavigationParamsResponseAndBodyLoader(
         redirect_info, std::move(redirect_response));
     if (url.ProtocolIsData())
       redirect.redirect_response.SetHttpStatusCode(200);
+
     redirect.new_url = KURL(redirect_info.new_url);
     // WebString treats default and empty strings differently while std::string
     // does not. A default value is expected for new_referrer rather than empty.
@@ -674,8 +675,13 @@ void WebNavigationBodyLoader::FillNavigationParamsResponseAndBodyLoader(
     url = KURL(redirect_info.new_url);
   }
 
-  navigation_params->response = WebURLResponse::Create(
-      url, *response_head, response_head->ssl_info.has_value(), request_id);
+  // `common_params->url` is the actual URL to commit for the navigation as
+  // determined by the navigation code. Do not use the last URL in the
+  // redirect chain, even if it happens to be the same, in case of divergence
+  // of behavior in the future.
+  navigation_params->response =
+      WebURLResponse::Create(KURL(common_params->url), *response_head,
+                             response_head->ssl_info.has_value(), request_id);
   if (url.ProtocolIsData())
     navigation_params->response.SetHttpStatusCode(200);
 

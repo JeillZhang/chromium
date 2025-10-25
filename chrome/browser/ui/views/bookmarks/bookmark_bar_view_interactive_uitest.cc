@@ -18,6 +18,7 @@
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -192,18 +193,25 @@ class BookmarkBarDragAndDropInteractiveTest : public InteractiveBrowserTest {
                        press_loop.QuitClosure()));
                    press_loop.Run();
 
+// On Mac, no initial mouse movement is needed. Doing so results in an initial
+// drag event which does not complete prior to the start of the second drag
+// event to `target_location`, which causes issues in the case of nested drag
+// events.
+#if !BUILDFLAG(IS_MAC)
                    gfx::Rect bounds = view->GetBoundsInScreen();
                    gfx::Point start_location(bounds.width() / 2,
                                              bounds.height() / 2);
 
                    // Send an initial mouse movement to start the drag.
-                   gfx::Point target_location =
+                   gfx::Point initial_target_location =
                        start_location + gfx::Vector2d(10, 10);
-                   EXPECT_TRUE(ui_controls::SendMouseMove(target_location.x(),
-                                                          target_location.y()));
+                   EXPECT_TRUE(
+                       ui_controls::SendMouseMove(initial_target_location.x(),
+                                                  initial_target_location.y()));
+#endif  // !BUILDFLAG(IS_MAC)
 
                    // Send another mouse movement to the target desitnation.
-                   target_location = std::move(pos).Run(view);
+                   gfx::Point target_location = std::move(pos).Run(view);
                    EXPECT_TRUE(ui_controls::SendMouseMove(target_location.x(),
                                                           target_location.y()));
 
@@ -230,7 +238,9 @@ class BookmarkBarDragAndDropInteractiveTest : public InteractiveBrowserTest {
 // completion because the native widget's state is not properly updated.
 // TODO(crbug.com/388531778): DND tests are fail on Windows and Wayland. This
 // should be re-enabled once fix.
-#if BUILDFLAG(IS_OZONE_X11) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_OZONE_WAYLAND)
+// TODO(crbug.com/448993919): Re-enable this test on Mac.
+#if BUILDFLAG(IS_OZONE_X11) || BUILDFLAG(IS_WIN) || \
+    BUILDFLAG(IS_OZONE_WAYLAND) || BUILDFLAG(IS_MAC)
 #define MAYBE_DISABLED(test_name) DISABLED_##test_name
 #else
 #define MAYBE_DISABLED(test_name) test_name
@@ -268,8 +278,21 @@ IN_PROC_BROWSER_TEST_F(BookmarkBarDragAndDropInteractiveTest,
       CheckViewProperty(kBNodeMenuId, &views::MenuItemView::title, u"b"));
 }
 
+// TODO(crbug.com/375959961): For X11, the menu is always closed on drag
+// completion because the native widget's state is not properly updated.
+// TODO(crbug.com/388531778): DND tests are fail on Windows and Wayland. This
+// should be re-enabled once fix.
+// TODO(crbug.com/448993919): Re-enable this test on Mac.
+#if BUILDFLAG(IS_OZONE_X11) || BUILDFLAG(IS_WIN) || \
+    BUILDFLAG(IS_OZONE_WAYLAND) || BUILDFLAG(IS_MAC)
+#define MAYBE_BookmarksDragAndDropToNestedFolder \
+  DISABLED_BookmarksDragAndDropToNestedFolder
+#else
+#define MAYBE_BookmarksDragAndDropToNestedFolder \
+  BookmarksDragAndDropToNestedFolder
+#endif
 IN_PROC_BROWSER_TEST_F(BookmarkBarDragAndDropInteractiveTest,
-                       MAYBE_DISABLED(BookmarksDragAndDropToNestedFolder)) {
+                       MAYBE_BookmarksDragAndDropToNestedFolder) {
   // Add two bookmarks nodes to the bookmarks bar.
   bookmarks::BookmarkModel* const model =
       BookmarkModelFactory::GetForBrowserContext(browser()->profile());

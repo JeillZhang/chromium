@@ -291,6 +291,11 @@
     "type": "additional_compile_target",
     "skip_usage_check": True,
   },
+  "cast_browser_dist_aar": {
+    "label": "//chromecast:cast_browser_dist_aar",
+    "type": "additional_compile_target",
+    "skip_usage_check": True,
+  },
   "cast_cast_core_unittests": {
     "label": "//chromecast/cast_core:cast_cast_core_unittests",
     "type": "console_test_launcher",
@@ -462,11 +467,6 @@
   "chrome_java_test_pagecontroller_junit_tests": {
     "label": "//chrome/test/android:chrome_java_test_pagecontroller_junit_tests",
     "type": "generated_script",
-    "skip_usage_check": True,
-  },
-  "chrome_java_test_wpr_tests": {
-    "label": "//chrome/test/android:chrome_java_test_wpr_tests",
-    "type": "console_test_launcher",
     "skip_usage_check": True,
   },
   "chrome_junit_tests": {
@@ -712,6 +712,11 @@
     "type": "additional_compile_target",
     "skip_usage_check": True,
   },
+  "content_shell": {
+    "label": "//content/shell:content_shell",
+    "type": "additional_compile_target",
+    "skip_usage_check": True,
+  },
   "content_shell_crash_test": {
     "label": "//content/shell:content_shell_crash_test",
     "type": "script",
@@ -752,11 +757,6 @@
   },
   "cronet_package_ci": {
     "label": "//components/cronet/android:cronet_package_ci",
-    "type": "additional_compile_target",
-    "skip_usage_check": True,
-  },
-  "cronet_perf_test_apk": {
-    "label": "//components/cronet/android:cronet_perf_test_apk",
     "type": "additional_compile_target",
     "skip_usage_check": True,
   },
@@ -867,6 +867,11 @@
   "device_junit_tests": {
     "label": "//device:device_junit_tests",
     "type": "generated_script",
+    "skip_usage_check": True,
+  },
+  "device_realtarget_browsertests": {
+    "label": "//chrome/test:device_realtarget_browsertests",
+    "type": "console_test_launcher",
     "skip_usage_check": True,
   },
   "device_unittests": {
@@ -1159,6 +1164,11 @@
     "type": "generated_script",
     "skip_usage_check": True,
   },
+  "ios_credential_provider_extension_unittests": {
+    "label": "//ios/chrome/test/extensions:ios_credential_provider_extension_unittests",
+    "type": "generated_script",
+    "skip_usage_check": True,
+  },
   "ios_net_unittests": {
     "label": "//ios/net:ios_net_unittests",
     "type": "generated_script",
@@ -1185,18 +1195,13 @@
     "skip_usage_check": True,
   },
   "ios_web_view_inttests": {
-    "label": "//ios/web_view:ios_web_view_inttests",
+    "label": "//ios/web_view/test:ios_web_view_inttests",
     "type": "generated_script",
     "skip_usage_check": True,
   },
   "ios_web_view_unittests": {
-    "label": "//ios/web_view:ios_web_view_unittests",
+    "label": "//ios/web_view/test:ios_web_view_unittests",
     "type": "generated_script",
-    "skip_usage_check": True,
-  },
-  "ipc_fuzzer": {
-    "label": "//tools/ipc_fuzzer/fuzzer:ipc_fuzzer",
-    "type": "additional_compile_target",
     "skip_usage_check": True,
   },
   "ipc_tests": {
@@ -1228,10 +1233,6 @@
   },
   "leveldb_unittests": {
     "label": "//third_party/leveldatabase:leveldb_unittests",
-    "type": "console_test_launcher",
-  },
-  "libcups_unittests": {
-    "label": "//chrome/services/cups_proxy:libcups_unittests",
     "type": "console_test_launcher",
   },
   "libjingle_xmpp_unittests": {
@@ -1341,21 +1342,6 @@
       "../../mojo/public/tools/run_all_python_unittests.py",
     ],
   },
-  "mojo_rust": {
-    "label": "//mojo/public/rust:mojo_rust",
-    "type": "additional_compile_target",
-    "skip_usage_check": True,
-  },
-  "mojo_rust_integration_unittests": {
-    "label": "//mojo/public/rust:mojo_rust_integration_unittests",
-    "type": "console_test_launcher",
-    "skip_usage_check": True,
-  },
-  "mojo_rust_unittests": {
-    "label": "//mojo/public/rust:mojo_rust_unittests",
-    "type": "console_test_launcher",
-    "skip_usage_check": True,
-  },
   "mojo_test_apk": {
     "label": "//mojo/public/java/system:mojo_test_apk",
     "type": "console_test_launcher",
@@ -1411,10 +1397,6 @@
     "type": "additional_compile_target",
     "skip_usage_check": True,
   },
-  "nacl_loader_unittests": {
-    "label": "//components/nacl/loader:nacl_loader_unittests",
-    "type": "console_test_launcher",
-  },
   "native_theme_unittests": {
     "label": "//ui/native_theme:native_theme_unittests",
     "type": "windowed_test_launcher",
@@ -1447,6 +1429,10 @@
     "label": "//components/optimization_guide/internal:ondevice_model_benchmark",
     "type": "additional_compile_target",
   },
+  "ondevice_model_benchmark_tests": {
+    "label": "//components/optimization_guide/internal/testing:ondevice_model_benchmark_tests",
+    "type": "generated_script",
+  },
   "ondevice_stability_tests": {
     "label": "//components/optimization_guide/internal/testing:ondevice_stability_tests",
     "type": "generated_script",
@@ -1454,6 +1440,11 @@
   "ondevice_stability_tests_light": {
     "label": "//components/optimization_guide/internal/testing:ondevice_stability_tests_light",
     "type": "generated_script",
+  },
+  "one_time_tokens_junit_tests": {
+    "label": "//components/one_time_tokens/android/backend/sms:one_time_tokens_junit_tests",
+    "type": "generated_script",
+    "skip_usage_check": True,
   },
   "openscreen_unittests": {
     "label": "//chrome/browser/media/router:openscreen_unittests",
@@ -1486,11 +1477,6 @@
   },
   "paint_preview_junit_tests": {
     "label": "//components/paint_preview/player/android:paint_preview_junit_tests",
-    "type": "generated_script",
-    "skip_usage_check": True,
-  },
-  "password_check_junit_tests": {
-    "label": "//chrome/browser/password_check/android:password_check_junit_tests",
     "type": "generated_script",
     "skip_usage_check": True,
   },
@@ -1586,10 +1572,6 @@
     "label": "//tools/mac/power:power_sampler_unittests",
     "type": "console_test_launcher",
     "skip_usage_check": True,
-  },
-  "ppapi_unittests": {
-    "label": "//ppapi:ppapi_unittests",
-    "type": "console_test_launcher",
   },
   "previous_version_mini_installer": {
     "label": "//chrome/installer/mini_installer:previous_version_mini_installer",

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "base/metrics/statistics_recorder.h"
 
 #include <algorithm>
@@ -24,6 +19,7 @@
 #include "base/metrics/metrics_hashes.h"
 #include "base/metrics/persistent_histogram_allocator.h"
 #include "base/metrics/record_histogram_checker.h"
+#include "base/no_destructor.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
@@ -38,9 +34,6 @@ bool HistogramNameLesser(const base::HistogramBase* a,
 }
 
 }  // namespace
-
-// static
-LazyInstance<Lock>::Leaky StatisticsRecorder::lock_ = LAZY_INSTANCE_INITIALIZER;
 
 // static
 StatisticsRecorder* StatisticsRecorder::top_ = nullptr;
@@ -72,6 +65,18 @@ StatisticsRecorder::ScopedHistogramSampleObserver::
 }
 
 StatisticsRecorder::ScopedHistogramSampleObserver::
+    ScopedHistogramSampleObserver(std::string_view name,
+                                  base::RepeatingClosure callback)
+    : histogram_name_(name),
+      callback_(
+          base::IgnoreArgs<std::optional<uint64_t>,
+                           std::string_view,
+                           uint64_t,
+                           HistogramBase::Sample32>(std::move(callback))) {
+  StatisticsRecorder::AddHistogramSampleObserver(histogram_name_, this);
+}
+
+StatisticsRecorder::ScopedHistogramSampleObserver::
     ~ScopedHistogramSampleObserver() {
   StatisticsRecorder::RemoveHistogramSampleObserver(histogram_name_, this);
 }
@@ -82,6 +87,19 @@ void StatisticsRecorder::ScopedHistogramSampleObserver::RunCallback(
     HistogramBase::Sample32 sample,
     std::optional<uint64_t> event_id) {
   callback_.Run(event_id, histogram_name, name_hash, sample);
+}
+
+StatisticsRecorder::HistogramWaiter::HistogramWaiter(std::string_view metric_name) {
+  histogram_observer_ =
+      std::make_unique<base::StatisticsRecorder::ScopedHistogramSampleObserver>(
+          metric_name,
+          run_loop_.QuitClosure());
+}
+
+StatisticsRecorder::HistogramWaiter::~HistogramWaiter() = default;
+
+void StatisticsRecorder::HistogramWaiter::Wait() {
+  run_loop_.Run();
 }
 
 StatisticsRecorder::~StatisticsRecorder() {
@@ -308,6 +326,17 @@ void StatisticsRecorder::PrepareDeltas(
 void StatisticsRecorder::InitLogOnShutdown() {
   const AutoLock auto_lock(GetLock());
   InitLogOnShutdownWhileLocked();
+}
+
+// static
+Lock& StatisticsRecorder::GetLock() {
+  static base::NoDestructor<Lock> lock;
+  return *lock;
+}
+
+// static
+void StatisticsRecorder::AssertLockHeld() {
+  GetLock().AssertAcquired();
 }
 
 HistogramBase* StatisticsRecorder::FindHistogramByHashInternal(
@@ -561,9 +590,7 @@ StatisticsRecorder::Histograms StatisticsRecorder::WithName(
   // Erase the non-matching histograms. Note that `histograms` was passed by
   // value so we can efficiently remove the unwanted elements and return the
   // local instance.
-  histograms.erase(std::remove_if(histograms.begin(), histograms.end(),
-                                  histogram_name_does_not_contain_query),
-                   histograms.end());
+  std::erase_if(histograms, histogram_name_does_not_contain_query);
   return histograms;
 }
 

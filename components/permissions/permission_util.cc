@@ -14,7 +14,9 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
 #include "build/build_config.h"
+#include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
+#include "components/content_settings/core/common/features.h"
 #include "components/permissions/features.h"
 #include "components/permissions/permission_request.h"
 #include "components/permissions/permission_uma_util.h"
@@ -60,8 +62,9 @@ PermissionDelegationMode GetPermissionDelegationMode(
   // TODO(crbug.com/40637582): Generalize this to other "background
   // permissions", that is, permissions that can be used by a service worker.
   // This includes durable storage, background sync, etc.
-  if (permission == ContentSettingsType::NOTIFICATIONS)
+  if (permission == ContentSettingsType::NOTIFICATIONS) {
     return PermissionDelegationMode::kUndelegated;
+  }
   if (permission == ContentSettingsType::STORAGE_ACCESS ||
       permission == ContentSettingsType::TOP_LEVEL_STORAGE_ACCESS) {
     return PermissionDelegationMode::kDoubleKeyed;
@@ -100,7 +103,7 @@ std::string PermissionUtil::GetPermissionString(
     ContentSettingsType content_type) {
   PermissionType permission;
   bool success = PermissionUtil::GetPermissionType(content_type, &permission);
-  DCHECK(success);
+  DCHECK(success) << content_type;
 
   return blink::GetPermissionString(permission);
 }
@@ -144,10 +147,9 @@ RequestTypeForUma PermissionUtil::GetUmaValueForRequestType(
     // TODO(crbug.com/40214907): Enable on Android
     case RequestType::kLocalFonts:
       return RequestTypeForUma::PERMISSION_LOCAL_FONTS;
-    // TODO(crbug.com/400455013): Enable on Android.
+#endif
     case RequestType::kLocalNetworkAccess:
       return RequestTypeForUma::PERMISSION_LOCAL_NETWORK_ACCESS;
-#endif
     case RequestType::kGeolocation:
       return RequestTypeForUma::PERMISSION_GEOLOCATION;
     case RequestType::kHandTracking:
@@ -194,10 +196,8 @@ RequestTypeForUma PermissionUtil::GetUmaValueForRequestType(
     case RequestType::kWebPrinting:
       return RequestTypeForUma::PERMISSION_WEB_PRINTING;
 #endif
-#if !BUILDFLAG(IS_ANDROID)
     case RequestType::kWindowManagement:
       return RequestTypeForUma::PERMISSION_WINDOW_MANAGEMENT;
-#endif
     case RequestType::kTopLevelStorageAccess:
       return RequestTypeForUma::PERMISSION_TOP_LEVEL_STORAGE_ACCESS;
     case RequestType::kFileSystemAccess:
@@ -233,8 +233,21 @@ bool PermissionUtil::GetPermissionType(ContentSettingsType type,
                                        PermissionType* out) {
   switch (type) {
     case ContentSettingsType::GEOLOCATION:
-      *out = PermissionType::GEOLOCATION;
-      break;
+      if (!base::FeatureList::IsEnabled(
+              content_settings::features::kApproximateGeolocationPermission)) {
+        *out = PermissionType::GEOLOCATION;
+        break;
+      } else {
+        return false;
+      }
+    case ContentSettingsType::GEOLOCATION_WITH_OPTIONS:
+      if (base::FeatureList::IsEnabled(
+              content_settings::features::kApproximateGeolocationPermission)) {
+        *out = PermissionType::GEOLOCATION;
+        break;
+      } else {
+        return false;
+      }
     case ContentSettingsType::NOTIFICATIONS:
       *out = PermissionType::NOTIFICATIONS;
       break;
@@ -448,7 +461,10 @@ ContentSettingsType PermissionUtil::PermissionTypeToContentSettingsTypeSafe(
     case PermissionType::NOTIFICATIONS:
       return ContentSettingsType::NOTIFICATIONS;
     case PermissionType::GEOLOCATION:
-      return ContentSettingsType::GEOLOCATION;
+      return base::FeatureList::IsEnabled(
+                 content_settings::features::kApproximateGeolocationPermission)
+                 ? ContentSettingsType::GEOLOCATION_WITH_OPTIONS
+                 : ContentSettingsType::GEOLOCATION;
     case PermissionType::PROTECTED_MEDIA_IDENTIFIER:
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN) || \
     BUILDFLAG(IS_FUCHSIA)
@@ -560,6 +576,34 @@ ContentSetting PermissionUtil::PermissionStatusToContentSetting(
   }
 }
 
+blink::mojom::PermissionStatus
+PermissionUtil::PermissionDecisionToPermissionStatus(
+    PermissionDecision decision) {
+  content::PermissionStatus status = content::PermissionStatus::ASK;
+  switch (decision) {
+    case PermissionDecision::kAllow:
+    case PermissionDecision::kAllowThisTime:
+      return status = content::PermissionStatus::GRANTED;
+    case PermissionDecision::kDeny:
+      return content::PermissionStatus::DENIED;
+    case PermissionDecision::kNone:
+      return content::PermissionStatus::ASK;
+  }
+}
+
+ContentSetting PermissionUtil::PermissionDecisionToContentSetting(
+    PermissionDecision decision) {
+  switch (decision) {
+    case PermissionDecision::kAllow:
+    case PermissionDecision::kAllowThisTime:
+      return CONTENT_SETTING_ALLOW;
+    case PermissionDecision::kDeny:
+      return CONTENT_SETTING_BLOCK;
+    case PermissionDecision::kNone:
+      return CONTENT_SETTING_ASK;
+  }
+}
+
 blink::mojom::PermissionStatus PermissionUtil::ContentSettingToPermissionStatus(
     ContentSetting setting) {
   switch (setting) {
@@ -570,7 +614,6 @@ blink::mojom::PermissionStatus PermissionUtil::ContentSettingToPermissionStatus(
     case CONTENT_SETTING_ASK:
       return blink::mojom::PermissionStatus::ASK;
     case CONTENT_SETTING_SESSION_ONLY:
-    case CONTENT_SETTING_DETECT_IMPORTANT_CONTENT:
     case CONTENT_SETTING_DEFAULT:
     case CONTENT_SETTING_NUM_SETTINGS:
       break;
@@ -608,8 +651,9 @@ GURL PermissionUtil::GetCanonicalOrigin(ContentSettingsType permission,
   std::optional<GURL> override_origin =
       PermissionsClient::Get()->OverrideCanonicalOrigin(requesting_origin,
                                                         embedding_origin);
-  if (override_origin)
+  if (override_origin) {
     return override_origin.value();
+  }
 
   switch (GetPermissionDelegationMode(permission)) {
     case PermissionDelegationMode::kDelegated:
@@ -632,21 +676,24 @@ bool PermissionUtil::HasUserGesture(PermissionPrompt::Delegate* delegate) {
 bool PermissionUtil::CanPermissionRequestIgnoreStatus(
     const std::unique_ptr<PermissionRequestData>& request,
     content::PermissionStatusSource source) {
-  if (!request->embedded_permission_element_initiated) {
+  if (!request->IsEmbeddedPermissionElementInitiated()) {
     return false;
   }
 
   switch (source) {
     case content::PermissionStatusSource::KILL_SWITCH:
+    case content::PermissionStatusSource::ACTOR_OVERRIDE:
     case content::PermissionStatusSource::FEATURE_POLICY:
     case content::PermissionStatusSource::FENCED_FRAME:
     case content::PermissionStatusSource::INSECURE_ORIGIN:
     case content::PermissionStatusSource::VIRTUAL_URL_DIFFERENT_ORIGIN:
+    case content::PermissionStatusSource::HEURISTIC_GRANT:
       return false;
     case content::PermissionStatusSource::MULTIPLE_DISMISSALS:
     case content::PermissionStatusSource::MULTIPLE_IGNORES:
     case content::PermissionStatusSource::RECENT_DISPLAY:
     case content::PermissionStatusSource::UNSPECIFIED:
+    case content::PermissionStatusSource::APP_LEVEL_SETTINGS:
       return true;
   }
 
@@ -660,6 +707,16 @@ bool PermissionUtil::DoesPlatformSupportChip() {
 #else
   return true;
 #endif
+}
+
+// static
+ContentSettingsType PermissionUtil::GetGeolocationType() {
+  if (base::FeatureList::IsEnabled(
+          content_settings::features::kApproximateGeolocationPermission)) {
+    return ContentSettingsType::GEOLOCATION_WITH_OPTIONS;
+  } else {
+    return ContentSettingsType::GEOLOCATION;
+  }
 }
 
 }  // namespace permissions

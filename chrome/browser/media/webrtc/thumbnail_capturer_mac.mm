@@ -27,6 +27,7 @@
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task/bind_post_task.h"
+#include "base/task/single_thread_task_runner.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/media/webrtc/delegated_source_list_capturer.h"
 #include "chrome/browser/media/webrtc/desktop_capturer_wrapper.h"
@@ -48,12 +49,9 @@ namespace {
 // entire screen. This is distinct from `kUseSCContentSharingPicker`, which uses
 // the native macOS picker.
 BASE_FEATURE(kScreenCaptureKitStreamPickerSonoma,
-             "ScreenCaptureKitStreamPickerSonoma",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kScreenCaptureKitPickerScreen,
-             "ScreenCaptureKitPickerScreen",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kScreenCaptureKitPickerScreen, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Default max frame rate that is used when capturing thumbnails. This is per
 // source so the combined frame rate can be higher if there are multiple

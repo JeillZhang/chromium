@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "content/browser/renderer_host/navigation_controller_impl.h"
 
 #include <stddef.h>
@@ -18,6 +13,7 @@
 #include <tuple>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
 #include "base/memory/ptr_util.h"
@@ -100,8 +96,8 @@ bool DoImagesMatch(const gfx::Image& a, const gfx::Image& b) {
   // memcmp(nullptr, nullptr, 0) is undefined, so empty bitmaps must be
   // special-cased.
   return a_bitmap.computeByteSize() == 0 ||
-         memcmp(a_bitmap.getPixels(), b_bitmap.getPixels(),
-                a_bitmap.computeByteSize()) == 0;
+         UNSAFE_TODO(memcmp(a_bitmap.getPixels(), b_bitmap.getPixels(),
+                            a_bitmap.computeByteSize())) == 0;
 }
 
 class MockPageBroadcast : public blink::mojom::PageBroadcast {
@@ -165,6 +161,16 @@ class MockPageBroadcast : public blink::mojom::PageBroadcast {
   MOCK_METHOD(void,
               SetPageAttributionSupport,
               (network::mojom::AttributionSupport support),
+              (override));
+
+  MOCK_METHOD(void,
+              UpdateCanvasNoiseToken,
+              (std::optional<blink::NoiseToken> canvas_noise_token),
+              (override));
+
+  MOCK_METHOD(void,
+              SetSupportsDraggableRegions,
+              (bool supports_draggable_regions),
               (override));
 
   mojo::PendingAssociatedRemote<blink::mojom::PageBroadcast> GetRemote() {
@@ -240,13 +246,6 @@ TEST(TimeSmoother, ClockBackwardsJump) {
 class NavigationControllerTest : public RenderViewHostImplTestHarness,
                                  public WebContentsObserver {
  public:
-  NavigationControllerTest() {
-    // Disable BackForward cache size overwritten by
-    // `kBackForwardCacheSize` so that it won't break some tests assumption.
-    scoped_feature_list_.InitWithFeaturesAndParameters({},
-                                                       {kBackForwardCacheSize});
-  }
-
   void SetUp() override {
     RenderViewHostImplTestHarness::SetUp();
     WebContents* web_contents = RenderViewHostImplTestHarness::web_contents();
@@ -1160,9 +1159,15 @@ TEST_F(NavigationControllerTest, LoadURL_IgnorePreemptsPending) {
   EXPECT_EQ(-1, controller.GetPendingEntryIndex());
   EXPECT_FALSE(controller.GetPendingEntry());
   // The pending entry deletion and commit of the new NavigationEntry both
-  // counts as "navigation state change".
+  // count as "navigation state change", though only one notification will be
+  // sent if kSkipRedundantNavigationStateNotification is enabled.
   EXPECT_EQ(0, controller.GetLastCommittedEntryIndex());
-  EXPECT_EQ(3, delegate->navigation_state_change_count());
+  if (base::FeatureList::IsEnabled(
+          features::kSkipRedundantNavigationStateNotification)) {
+    EXPECT_EQ(2, delegate->navigation_state_change_count());
+  } else {
+    EXPECT_EQ(3, delegate->navigation_state_change_count());
+  }
 
   contents()->SetDelegate(nullptr);
 }
@@ -2344,6 +2349,7 @@ TEST_F(NavigationControllerTest, SameDocument_Replace) {
   params->method = "GET";
   params->page_state = blink::PageState::CreateFromURL(url2);
   params->post_id = -1;
+  params->document_sequence_number = 1;
 
   // This should NOT generate a new entry, nor prune the list.
   LoadCommittedDetailsObserver observer(contents());
@@ -2368,6 +2374,7 @@ TEST_F(NavigationControllerTest, PushStateWithOnlyInitialEntry) {
   params->method = "GET";
   params->should_update_history = true;
   params->post_id = -1;
+  params->document_sequence_number = 1;
   main_test_rfh()->SendRendererInitiatedNavigationRequest(
       url, false /* has_user_gesture */);
   main_test_rfh()->PrepareForCommit();
@@ -3297,36 +3304,33 @@ TEST_F(NavigationControllerTest, HistoryNavigate) {
   NavigateAndCommit(url3);
   controller.GoBack();
   contents()->CommitPendingNavigation();
-  process()->sink().ClearMessages();
 
   // Simulate the page calling history.back(). It should create a pending entry.
-  main_test_rfh()->GoToEntryAtOffset(-1, false, std::nullopt);
+  main_test_rfh()->GoToEntryAtOffset(-1, false, base::TimeTicks::Now(),
+                                     std::nullopt);
   EXPECT_EQ(0, controller.GetPendingEntryIndex());
 
   // Also make sure we told the page to navigate.
   GURL nav_url = GetLastNavigationURL();
   EXPECT_EQ(url1, nav_url);
   contents()->CommitPendingNavigation();
-  process()->sink().ClearMessages();
 
   // Now test history.forward()
-  main_test_rfh()->GoToEntryAtOffset(2, false, std::nullopt);
+  main_test_rfh()->GoToEntryAtOffset(2, false, base::TimeTicks::Now(),
+                                     std::nullopt);
   EXPECT_EQ(2, controller.GetPendingEntryIndex());
 
   nav_url = GetLastNavigationURL();
   EXPECT_EQ(url3, nav_url);
   contents()->CommitPendingNavigation();
-  process()->sink().ClearMessages();
 
   controller.DiscardNonCommittedEntries();
 
   // Make sure an extravagant history.go() doesn't break.
-  main_test_rfh()->GoToEntryAtOffset(120, false,
+  main_test_rfh()->GoToEntryAtOffset(120, false, base::TimeTicks::Now(),
                                      std::nullopt);  // Out of bounds.
   EXPECT_EQ(-1, controller.GetPendingEntryIndex());
-  // TODO(crbug.com/40780539): Figure out why HasNavigationRequest() is
-  // true when back/forward cache is enabled.
-  EXPECT_EQ(IsBackForwardCacheEnabled(), HasNavigationRequest());
+  EXPECT_FALSE(HasNavigationRequest());
 }
 
 // Test call to PruneAllButLastCommitted for the only entry.
@@ -3606,6 +3610,7 @@ TEST_F(NavigationControllerTest, PushStateUpdatesTitleAndFavicon) {
   params->method = "GET";
   params->should_update_history = true;
   params->post_id = -1;
+  params->document_sequence_number = 1;
   main_test_rfh()->SendNavigateWithParams(std::move(params), true);
 
   // The title should immediately be visible on the new NavigationEntry.

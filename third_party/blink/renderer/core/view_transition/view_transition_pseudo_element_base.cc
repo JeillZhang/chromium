@@ -69,7 +69,7 @@ ViewTransitionPseudoElementBase::CustomStyleForLayoutObject(
     style_request.pseudo_id = kPseudoIdNone;
     return StyleForPseudoElement(style_recalc_context, style_request);
   }
-  // Use the originating element to get the style for the pseudo element.
+  // Use the originating element to get the style for the pseudo-element.
   return UltimateOriginatingElement().StyleForPseudoElement(
       style_recalc_context, style_request);
 }
@@ -92,6 +92,11 @@ ViewTransitionPseudoElementBase::GetViewTransitionNames() const {
 const Vector<AtomicString>
 ViewTransitionPseudoElementBase::GetContainedViewTransitionNames() const {
   return style_tracker_->ComputeContainedGroupNames(view_transition_name());
+}
+
+const AtomicString& ViewTransitionPseudoElementBase::GetContainingGroupName(
+    const AtomicString& target) const {
+  return style_tracker_->GetContainingGroupName(target);
 }
 
 }  // namespace blink

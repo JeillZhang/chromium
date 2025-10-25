@@ -73,8 +73,8 @@ void AudioWorkletGlobalScope::registerProcessor(
   if (processor_definition_map_.Contains(name)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kNotSupportedError,
-        WTF::StrCat({"An AudioWorkletProcessor with name:\"", name,
-                     "\" is already registered."}));
+        StrCat({"An AudioWorkletProcessor with name:\"", name,
+                "\" is already registered."}));
     return;
   }
 
@@ -82,8 +82,8 @@ void AudioWorkletGlobalScope::registerProcessor(
   //    a TypeError .
   if (!processor_ctor->IsConstructor()) {
     exception_state.ThrowTypeError(
-        WTF::StrCat({"The provided class definition of \"", name,
-                     "\" AudioWorkletProcessor is not a constructor."}));
+        StrCat({"The provided class definition of \"", name,
+                "\" AudioWorkletProcessor is not a constructor."}));
     return;
   }
 
@@ -140,7 +140,7 @@ void AudioWorkletGlobalScope::registerProcessor(
       if (!sanitized_names.insert(new_param_name).is_new_entry) {
         exception_state.ThrowDOMException(
             DOMExceptionCode::kNotSupportedError,
-            WTF::StrCat(
+            StrCat(
                 {"Found a duplicate name \"", new_param_name,
                  "\" in parameterDescriptors() from the AudioWorkletProcessor "
                  "definition of \"",
@@ -155,13 +155,12 @@ void AudioWorkletGlobalScope::registerProcessor(
       if ((default_value < min_value) || (default_value > max_value)) {
         exception_state.ThrowDOMException(
             DOMExceptionCode::kInvalidStateError,
-            WTF::StrCat(
-                {"The default value, ", String::Number(default_value),
-                 ", in \"", new_param_name,
-                 "\" parameterDescriptors() from the AudioWorkletProcessor "
-                 "is out of the range [",
-                 String::Number(min_value), ", ", String::Number(max_value),
-                 "]."}));
+            StrCat({"The default value, ", String::Number(default_value),
+                    ", in \"", new_param_name,
+                    "\" parameterDescriptors() from the AudioWorkletProcessor "
+                    "is out of the range [",
+                    String::Number(min_value), ", ", String::Number(max_value),
+                    "]."}));
         return;
       }
 
@@ -250,7 +249,7 @@ AudioWorkletProcessor* AudioWorkletGlobalScope::CreateProcessor(
 }
 
 AudioWorkletProcessorDefinition* AudioWorkletGlobalScope::FindDefinition(
-    const String& name) {
+    const String& name) const {
   const auto it = processor_definition_map_.find(name);
   if (it == processor_definition_map_.end()) {
     return nullptr;
@@ -258,7 +257,7 @@ AudioWorkletProcessorDefinition* AudioWorkletGlobalScope::FindDefinition(
   return it->value.Get();
 }
 
-unsigned AudioWorkletGlobalScope::NumberOfRegisteredDefinitions() {
+unsigned AudioWorkletGlobalScope::NumberOfRegisteredDefinitions() const {
   return processor_definition_map_.size();
 }
 
@@ -266,10 +265,10 @@ std::unique_ptr<Vector<CrossThreadAudioWorkletProcessorInfo>>
 AudioWorkletGlobalScope::WorkletProcessorInfoListForSynchronization() {
   auto processor_info_list =
       std::make_unique<Vector<CrossThreadAudioWorkletProcessorInfo>>();
-  for (auto definition_entry : processor_definition_map_) {
-    if (!definition_entry.value->IsSynchronized()) {
-      definition_entry.value->MarkAsSynchronized();
-      processor_info_list->emplace_back(*definition_entry.value);
+  for (auto definition : processor_definition_map_.Values()) {
+    if (!definition->IsSynchronized()) {
+      definition->MarkAsSynchronized();
+      processor_info_list->emplace_back(*definition);
     }
   }
   return processor_info_list;
@@ -286,6 +285,11 @@ void AudioWorkletGlobalScope::SetCurrentFrame(size_t current_frame) {
 
 void AudioWorkletGlobalScope::SetSampleRate(float sample_rate) {
   sample_rate_ = sample_rate;
+}
+
+void AudioWorkletGlobalScope::SetRenderQuantumSize(
+    uint32_t render_quantum_size) {
+  render_quantum_size_ = render_quantum_size;
 }
 
 double AudioWorkletGlobalScope::currentTime() const {

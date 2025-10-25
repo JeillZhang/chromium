@@ -68,14 +68,14 @@ MATCHER_P(TabGuidEq, expected_tab, "") {
 
 tab_groups::SavedTabGroup CreateTestSharedTabGroup() {
   tab_groups::SavedTabGroup group = tab_groups::test::CreateTestSavedTabGroup();
-  group.SetCollaborationId(tab_groups::CollaborationId("collab_id"));
+  group.SetCollaborationId(syncer::CollaborationId("collab_id"));
   return group;
 }
 
 tab_groups::SavedTabGroup CreateTestSharedTabGroupWithNoTabs() {
   tab_groups::SavedTabGroup group =
       tab_groups::test::CreateTestSavedTabGroupWithNoTabs();
-  group.SetCollaborationId(tab_groups::CollaborationId("collab_id"));
+  group.SetCollaborationId(syncer::CollaborationId("collab_id"));
   return group;
 }
 }  // namespace
@@ -418,42 +418,6 @@ TEST_F(TabGroupChangeNotifierImplTest, TestTabGroupsAvailableOnStartup) {
             tab_group_4_received_title.title());
   EXPECT_EQ(tab_group_4_title_and_color_changed.color(),
             tab_group_4_received_color.color());
-}
-
-TEST_F(TabGroupChangeNotifierImplTest,
-       TestHadSharedTabGroupsOnStartup_OpenGroups) {
-  tab_groups::SavedTabGroup tab_group_1 = CreateTestSharedTabGroup();
-  tab_group_1.SetLocalGroupId(tab_groups::test::GenerateRandomTabGroupID());
-  InitializeNotifier({tab_group_1}, /*init_tab_groups=*/{});
-
-  EXPECT_TRUE(notifier_->HadSharedTabGroupsLastSession(
-      /*open_shared_tab_groups=*/false));
-  EXPECT_TRUE(notifier_->HadSharedTabGroupsLastSession(
-      /*open_shared_tab_groups=*/true));
-}
-
-TEST_F(TabGroupChangeNotifierImplTest,
-       TestHadSharedTabGroupsOnStartup_NoOpenGroups) {
-  tab_groups::SavedTabGroup tab_group_1 = CreateTestSharedTabGroup();
-  InitializeNotifier({tab_group_1},
-                     /*init_tab_groups=*/{});
-
-  EXPECT_TRUE(notifier_->HadSharedTabGroupsLastSession(
-      /*open_shared_tab_groups=*/false));
-  EXPECT_FALSE(notifier_->HadSharedTabGroupsLastSession(
-      /*open_shared_tab_groups=*/true));
-}
-
-TEST_F(TabGroupChangeNotifierImplTest,
-       TestHadSharedTabGroupsOnStartup_NoGroups) {
-  InitializeNotifier(
-      /*startup_tab_groups=*/{},
-      /*init_tab_groups=*/{});
-
-  EXPECT_FALSE(notifier_->HadSharedTabGroupsLastSession(
-      /*open_shared_tab_groups=*/false));
-  EXPECT_FALSE(notifier_->HadSharedTabGroupsLastSession(
-      /*open_shared_tab_groups=*/true));
 }
 
 TEST_F(TabGroupChangeNotifierImplTest, TestTabGroupsAddedLocally) {

@@ -97,16 +97,6 @@ void OverlayProcessorInterface::RecordOverlayDamageRectHistograms(
   }
 }
 
-OverlayProcessorInterface::OutputSurfaceOverlayPlane::
-    OutputSurfaceOverlayPlane() = default;
-OverlayProcessorInterface::OutputSurfaceOverlayPlane::OutputSurfaceOverlayPlane(
-    const OutputSurfaceOverlayPlane&) = default;
-OverlayProcessorInterface::OutputSurfaceOverlayPlane&
-OverlayProcessorInterface::OutputSurfaceOverlayPlane::operator=(
-    const OutputSurfaceOverlayPlane&) = default;
-OverlayProcessorInterface::OutputSurfaceOverlayPlane::
-    ~OutputSurfaceOverlayPlane() = default;
-
 std::unique_ptr<OverlayProcessorInterface>
 OverlayProcessorInterface::CreateOverlayProcessor(
     OutputSurface* output_surface,
@@ -133,7 +123,11 @@ OverlayProcessorInterface::CreateOverlayProcessor(
   DCHECK(display_controller);
   DCHECK(display_controller->skia_dependency());
   return std::make_unique<OverlayProcessorWin>(
-      capabilities.dc_support_level, debug_settings,
+      capabilities.dc_support_level,
+      display_controller->skia_dependency()
+          ->GetGpuDriverBugWorkarounds()
+          .disable_direct_composition_letterbox_video_optimization,
+      debug_settings,
       std::make_unique<DCLayerOverlayProcessor>(
           capabilities.allowed_yuv_overlay_count,
           display_controller->skia_dependency()
@@ -192,8 +186,7 @@ bool OverlayProcessorInterface::DisableSplittingQuads() const {
   return false;
 }
 
-OverlayProcessorInterface::OutputSurfaceOverlayPlane
-OverlayProcessorInterface::ProcessOutputSurfaceAsOverlay(
+OverlayCandidate OverlayProcessorInterface::ProcessOutputSurfaceAsOverlay(
     const gfx::Size& viewport_size,
     const gfx::Size& resource_size,
     const SharedImageFormat si_format,
@@ -201,16 +194,21 @@ OverlayProcessorInterface::ProcessOutputSurfaceAsOverlay(
     bool has_alpha,
     float opacity,
     const gpu::Mailbox& mailbox) {
-  OutputSurfaceOverlayPlane overlay_plane;
+  OverlayCandidate overlay_plane;
+  overlay_plane.is_root_render_pass = true;
+#if BUILDFLAG(IS_APPLE) || BUILDFLAG(IS_WIN)
+  overlay_plane.transform = gfx::Transform();
+#else
   overlay_plane.transform = gfx::OverlayTransform::OVERLAY_TRANSFORM_NONE;
+#endif
   overlay_plane.uv_rect = gfx::RectF(
       0.f, 0.f,
       viewport_size.width() / static_cast<float>(resource_size.width()),
       viewport_size.height() / static_cast<float>(resource_size.height()));
-  overlay_plane.resource_size = resource_size;
+  overlay_plane.resource_size_in_pixels = resource_size;
   overlay_plane.format = si_format;
   overlay_plane.color_space = color_space;
-  overlay_plane.enable_blending = has_alpha;
+  overlay_plane.is_opaque = !has_alpha;
   overlay_plane.opacity = opacity;
   overlay_plane.mailbox = mailbox;
   overlay_plane.priority_hint = gfx::OverlayPriorityHint::kRegular;
@@ -222,7 +220,7 @@ OverlayProcessorInterface::ProcessOutputSurfaceAsOverlay(
 
 #if BUILDFLAG(ALWAYS_ENABLE_BLENDING_FOR_PRIMARY)
   // On Chromecast, always use RGBA as the scanout format for the primary plane.
-  overlay_plane.enable_blending = true;
+  overlay_plane.is_opaque = false;
 #endif
   return overlay_plane;
 }

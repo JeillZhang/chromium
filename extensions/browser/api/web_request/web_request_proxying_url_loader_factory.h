@@ -22,6 +22,8 @@
 #include "extensions/browser/api/web_request/extension_web_request_event_router.h"
 #include "extensions/browser/api/web_request/web_request_api.h"
 #include "extensions/browser/api/web_request/web_request_info.h"
+#include "extensions/buildflags/buildflags.h"
+#include "ipc/constants.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/receiver.h"
@@ -39,6 +41,8 @@
 #include "services/network/public/mojom/url_response_head.mojom.h"
 #include "url/gurl.h"
 #include "url/origin.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace content {
 class BrowserContext;
@@ -212,8 +216,8 @@ class WebRequestProxyingURLLoaderFactory
     const std::optional<url::Origin> original_initiator_;
     const uint64_t request_id_ = 0;
     const int32_t network_service_request_id_ = 0;
-    const int32_t view_routing_id_ = MSG_ROUTING_NONE;
-    const int32_t frame_routing_id_ = MSG_ROUTING_NONE;
+    const int32_t view_routing_id_ = IPC::mojom::kRoutingIdNone;
+    const int32_t frame_routing_id_ = IPC::mojom::kRoutingIdNone;
     const uint32_t options_ = 0;
     const ukm::SourceIdObj ukm_source_id_;
     const net::MutableNetworkTrafficAnnotationTag traffic_annotation_;
@@ -359,6 +363,7 @@ class WebRequestProxyingURLLoaderFactory
 
   bool IsForServiceWorkerScript() const;
   bool IsForDownload() const;
+  bool IsForPrefetch() const;
 
   static void EnsureAssociatedFactoryBuilt();
 

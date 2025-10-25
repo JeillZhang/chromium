@@ -20,8 +20,7 @@ namespace autofill {
 class TestAutofillExternalDelegate : public AutofillExternalDelegate {
  public:
   explicit TestAutofillExternalDelegate(
-      BrowserAutofillManager* autofill_manager,
-      bool call_parent_methods);
+      BrowserAutofillManager* autofill_manager);
 
   TestAutofillExternalDelegate(const TestAutofillExternalDelegate&) = delete;
   TestAutofillExternalDelegate& operator=(const TestAutofillExternalDelegate&) =
@@ -39,10 +38,7 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
                bool update_datalist) override;
   void OnSuggestionsReturned(
       FieldGlobalId field_id,
-      const std::vector<Suggestion>& suggestions,
-      std::optional<autofill_metrics::SuggestionRankingContext>
-          suggestion_ranking_context =
-              autofill_metrics::SuggestionRankingContext()) override;
+      const std::vector<Suggestion>& suggestions) override;
   bool HasActiveScreenReader() const override;
   void OnAutofillAvailabilityEvent(
       mojom::AutofillSuggestionAvailability suggestion_availability) override;
@@ -83,10 +79,6 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
   bool has_suggestions_available_on_field_focus() const;
 
  private:
-  // If true, calls AutofillExternalDelegate::OnQuery and
-  // AutofillExternalDelegate::OnSuggestionsReturned.
-  bool call_parent_methods_;
-
   // Records if OnQuery has been called yet.
   bool on_query_seen_ = false;
 
@@ -103,11 +95,6 @@ class TestAutofillExternalDelegate : public AutofillExternalDelegate {
 
   // The results returned by the most recent Autofill query.
   std::vector<Suggestion> suggestions_;
-
-  // Contains information on the ranking of suggestions using the new and old
-  // ranking algorithm. Used for metrics logging.
-  std::optional<autofill_metrics::SuggestionRankingContext>
-      suggestion_ranking_context_;
 
   // |true| if the popup is hidden, |false| if the popup is shown.
   bool popup_hidden_ = true;

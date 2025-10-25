@@ -15,9 +15,9 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/bind.h"
+#include "base/test/gmock_callback_support.h"
 #include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
-#include "base/test/with_feature_override.h"
 #include "build/build_config.h"
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client.h"
 #include "chrome/browser/enterprise/connectors/reporting/realtime_reporting_client_factory.h"
@@ -35,7 +35,6 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
-#include "chrome/test/base/scoped_testing_local_state.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
@@ -47,7 +46,6 @@
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
 #include "components/password_manager/core/browser/password_reuse_detector.h"
 #include "components/password_manager/core/browser/password_store/mock_password_store_interface.h"
-#include "components/password_manager/core/browser/split_stores_and_local_upm.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
@@ -58,12 +56,14 @@
 #include "components/safe_browsing/core/browser/verdict_cache_manager.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/utils.h"
+#include "components/signin/public/identity_manager/account_capabilities_test_mutator.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/signin_constants.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/sync/model/data_type_controller_delegate.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/sync_user_events/fake_user_event_service.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/mock_navigation_handle.h"
@@ -74,7 +74,7 @@
 #include "ui/base/l10n/l10n_util.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/device_info.h"
 #include "chrome/browser/password_manager/android/mock_password_checkup_launcher_helper.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "components/enterprise/connectors/core/features.h"
@@ -260,6 +260,9 @@ class MockChromePasswordProtectionService
     account_info.account_id = CoreAccountId::FromGaiaId(account_info.gaia);
     account_info.email = username;
     account_info.hosted_domain = hosted_domain;
+    AccountCapabilitiesTestMutator(&account_info.capabilities)
+        .set_is_subject_to_enterprise_features(hosted_domain !=
+                                               kNoHostedDomainFound);
     account_info_ = account_info;
   }
 
@@ -282,8 +285,7 @@ class ChromePasswordProtectionServiceTest
     : public ChromeRenderViewHostTestHarness {
  public:
   ChromePasswordProtectionServiceTest()
-      : profile_manager_(TestingBrowserProcess::GetGlobal(), &local_state_),
-        local_state_(TestingBrowserProcess::GetGlobal()) {
+      : profile_manager_(TestingBrowserProcess::GetGlobal()) {
     EXPECT_TRUE(profile_manager_.SetUp());
   }
 
@@ -361,8 +363,9 @@ class ChromePasswordProtectionServiceTest
     base::RunLoop().RunUntilIdle();
     service_.reset();
     request_ = nullptr;
-    if (account_password_store_)
+    if (account_password_store_) {
       account_password_store_->ShutdownOnUIThread();
+    }
     password_store_->ShutdownOnUIThread();
     identity_test_env_profile_adaptor_.reset();
     cache_manager_.reset();
@@ -529,7 +532,6 @@ class ChromePasswordProtectionServiceTest
   std::unique_ptr<policy::MockCloudPolicyClient> client_;
   std::unique_ptr<VerdictCacheManager> cache_manager_;
   TestingProfileManager profile_manager_;
-  ScopedTestingLocalState local_state_;
   base::MockCallback<
       ChromePasswordProtectionService::ChangePhishedCredentialsCallback>
       mock_add_callback_;
@@ -665,6 +667,27 @@ TEST_F(ChromePasswordProtectionServiceTest,
   profile()->GetPrefs()->SetInteger(prefs::kPasswordProtectionWarningTrigger,
                                     PASSWORD_REUSE);
   EXPECT_TRUE(service_->IsPingingEnabled(
+      LoginReputationClientRequest::PASSWORD_REUSE_EVENT,
+      reused_password_type));
+}
+
+TEST_F(ChromePasswordProtectionServiceTest,
+       VerifyAlertModeForEnterprisePasswordEntryPing) {
+  ReusedPasswordAccountType reused_password_type;
+  reused_password_type.set_account_type(
+      ReusedPasswordAccountType::NON_GAIA_ENTERPRISE);
+  profile()->GetPrefs()->SetInteger(prefs::kPasswordProtectionWarningTrigger,
+                                    PASSWORD_REUSE);
+
+  service_->ConfigService(/*is_incognito=*/false,
+                          /*is_extended_reporting=*/false);
+  EXPECT_FALSE(service_->IsPingingEnabled(
+      LoginReputationClientRequest::PASSWORD_REUSE_EVENT,
+      reused_password_type));
+
+  service_->ConfigService(/*is_incognito=*/false,
+                          /*is_extended_reporting=*/true);
+  EXPECT_FALSE(service_->IsPingingEnabled(
       LoginReputationClientRequest::PASSWORD_REUSE_EVENT,
       reused_password_type));
 }
@@ -1299,10 +1322,7 @@ TEST_F(ChromePasswordProtectionServiceTest,
 
 TEST_F(ChromePasswordProtectionServiceTest,
        VerifyOnPolicySpecifiedPasswordChangedEvent) {
-#if BUILDFLAG(IS_ANDROID)
-  scoped_feature_list_.InitAndEnableFeature(
-      enterprise_connectors::kEnterpriseSecurityEventReportingOnAndroid);
-#else
+#if !BUILDFLAG(IS_ANDROID)
   TestExtensionEventObserver event_observer(test_event_router_);
 #endif
 
@@ -1312,9 +1332,12 @@ TEST_F(ChromePasswordProtectionServiceTest,
   service_->SetIsAccountSignedIn(true);
 
   // Simulates change password.
-  EXPECT_CALL(*client_, UploadSecurityEventReport).Times(1);
+  base::RunLoop run_loop;
+  EXPECT_CALL(*client_, UploadSecurityEventReport)
+      .Times(1)
+      .WillOnce(base::test::RunOnceClosure(run_loop.QuitClosure()));
   service_->OnGaiaPasswordChanged("foo@example.com", false);
-  base::RunLoop().RunUntilIdle();
+  run_loop.Run();
 
 #if !BUILDFLAG(IS_ANDROID)
   ASSERT_EQ(1, test_event_router_->GetEventCount(
@@ -1340,23 +1363,23 @@ TEST_F(ChromePasswordProtectionServiceTest,
 TEST_F(
     ChromePasswordProtectionServiceTest,
     VerifyTriggerOnPolicySpecifiedPasswordReuseDetectedForEnterprisePasswordWithAlertMode) {
-#if BUILDFLAG(IS_ANDROID)
-  scoped_feature_list_.InitAndEnableFeature(
-      enterprise_connectors::kEnterpriseSecurityEventReportingOnAndroid);
-#else
+#if !BUILDFLAG(IS_ANDROID)
   TestExtensionEventObserver event_observer(test_event_router_);
 #endif
 
   profile()->GetPrefs()->SetInteger(prefs::kPasswordProtectionWarningTrigger,
                                     PASSWORD_REUSE);
-  EXPECT_CALL(*client_, UploadSecurityEventReport).Times(1);
+  base::RunLoop run_loop;
+  EXPECT_CALL(*client_, UploadSecurityEventReport)
+      .Times(1)
+      .WillOnce(base::test::RunOnceClosure(run_loop.QuitClosure()));
   NavigateAndCommit(GURL(kPasswordReuseURL));
   PrepareRequest(LoginReputationClientRequest::PASSWORD_REUSE_EVENT,
                  PasswordType::ENTERPRISE_PASSWORD,
                  /*is_warning_showing=*/false);
   SimulateRequestFinished(LoginReputationClientResponse::SAFE,
                           RequestOutcome::PASSWORD_ALERT_MODE);
-  base::RunLoop().RunUntilIdle();
+  run_loop.Run();
 #if !BUILDFLAG(IS_ANDROID)
   ASSERT_EQ(1, test_event_router_->GetEventCount(
                    OnPolicySpecifiedPasswordReuseDetected::kEventName));
@@ -1366,22 +1389,22 @@ TEST_F(
 TEST_F(
     ChromePasswordProtectionServiceTest,
     VerifyTriggerOnPolicySpecifiedPasswordReuseDetectedForEnterprisePasswordOnChromeExtension) {
-#if BUILDFLAG(IS_ANDROID)
-  scoped_feature_list_.InitAndEnableFeature(
-      enterprise_connectors::kEnterpriseSecurityEventReportingOnAndroid);
-#else
+#if !BUILDFLAG(IS_ANDROID)
   TestExtensionEventObserver event_observer(test_event_router_);
 #endif
 
   profile()->GetPrefs()->SetInteger(prefs::kPasswordProtectionWarningTrigger,
                                     PASSWORD_REUSE);
-  EXPECT_CALL(*client_, UploadSecurityEventReport).Times(1);
+  base::RunLoop run_loop;
+  EXPECT_CALL(*client_, UploadSecurityEventReport)
+      .Times(1)
+      .WillOnce(base::test::RunOnceClosure(run_loop.QuitClosure()));
   service_->MaybeStartProtectedPasswordEntryRequest(
       web_contents(),
       /*main_frame_url=*/GURL("chrome-extension://some-fab-extension"),
       /*username=*/"enterprise_user", PasswordType::ENTERPRISE_PASSWORD,
       /*matching_reused_credentials=*/{}, /*password_field_exists=*/false);
-  base::RunLoop().RunUntilIdle();
+  run_loop.Run();
 #if !BUILDFLAG(IS_ANDROID)
   ASSERT_EQ(1, test_event_router_->GetEventCount(
                    OnPolicySpecifiedPasswordReuseDetected::kEventName));
@@ -1390,10 +1413,7 @@ TEST_F(
 
 TEST_F(ChromePasswordProtectionServiceTest,
        VerifyTriggerOnPolicySpecifiedPasswordReuseDetectedForGsuiteUser) {
-#if BUILDFLAG(IS_ANDROID)
-  scoped_feature_list_.InitAndEnableFeature(
-      enterprise_connectors::kEnterpriseSecurityEventReportingOnAndroid);
-#else
+#if !BUILDFLAG(IS_ANDROID)
   TestExtensionEventObserver event_observer(test_event_router_);
 #endif
 
@@ -1406,13 +1426,16 @@ TEST_F(ChromePasswordProtectionServiceTest,
   PrepareRequest(LoginReputationClientRequest::PASSWORD_REUSE_EVENT,
                  PasswordType::SAVED_PASSWORD,
                  /*is_warning_showing=*/false);
-  EXPECT_CALL(*client_, UploadSecurityEventReport).Times(1);
+  base::RunLoop run_loop;
+  EXPECT_CALL(*client_, UploadSecurityEventReport)
+      .Times(1)
+      .WillOnce(base::test::RunOnceClosure(run_loop.QuitClosure()));
   service_->MaybeReportPasswordReuseDetected(
       web_contents()->GetLastCommittedURL(), kUserName,
       PasswordType::ENTERPRISE_PASSWORD,
       /*is_phishing_url =*/true,
       /*warning_shown =*/true);
-  base::RunLoop().RunUntilIdle();
+  run_loop.Run();
 
 #if !BUILDFLAG(IS_ANDROID)
   ASSERT_EQ(1, test_event_router_->GetEventCount(
@@ -1433,7 +1456,6 @@ TEST_F(ChromePasswordProtectionServiceTest,
       request_->main_frame_url(), kUserName, PasswordType::OTHER_GAIA_PASSWORD,
       /*is_phishing_url =*/true,
       /*warning_shown =*/true);
-  base::RunLoop().RunUntilIdle();
 
 #if !BUILDFLAG(IS_ANDROID)
   ASSERT_EQ(1, test_event_router_->GetEventCount(
@@ -1461,7 +1483,6 @@ TEST_F(ChromePasswordProtectionServiceTest,
                                              PasswordType::OTHER_GAIA_PASSWORD,
                                              /*is_phishing_url =*/true,
                                              /*warning_shown =*/true);
-  base::RunLoop().RunUntilIdle();
 #if !BUILDFLAG(IS_ANDROID)
   ASSERT_EQ(1, test_event_router_->GetEventCount(
                    OnPolicySpecifiedPasswordReuseDetected::kEventName));
@@ -1469,12 +1490,15 @@ TEST_F(ChromePasswordProtectionServiceTest,
   // If the reused password is not Enterprise password but the account is
   // GSuite, event should be sent.
   service_->SetAccountInfo(kUserName, "example.com");
-  EXPECT_CALL(*client_, UploadSecurityEventReport).Times(1);
+  base::RunLoop run_loop2;
+  EXPECT_CALL(*client_, UploadSecurityEventReport)
+      .Times(1)
+      .WillOnce(base::test::RunOnceClosure(run_loop2.QuitClosure()));
   service_->MaybeReportPasswordReuseDetected(
       request_->main_frame_url(), kUserName, PasswordType::OTHER_GAIA_PASSWORD,
       /*is_phishing_url =*/true,
       /*warning_shown =*/true);
-  base::RunLoop().RunUntilIdle();
+  run_loop2.Run();
 
 #if !BUILDFLAG(IS_ANDROID)
   ASSERT_EQ(2, test_event_router_->GetEventCount(
@@ -1508,10 +1532,7 @@ TEST_F(ChromePasswordProtectionServiceTest,
 
 TEST_F(ChromePasswordProtectionServiceTest,
        VerifyTriggerOnPolicySpecifiedPasswordReuseDetectedForGmailUser) {
-#if BUILDFLAG(IS_ANDROID)
-  scoped_feature_list_.InitAndEnableFeature(
-      enterprise_connectors::kEnterpriseSecurityEventReportingOnAndroid);
-#else
+#if !BUILDFLAG(IS_ANDROID)
   TestExtensionEventObserver event_observer(test_event_router_);
 #endif
   // If user is a Gmail user and enterprise password is used, event should be
@@ -1525,12 +1546,15 @@ TEST_F(ChromePasswordProtectionServiceTest,
   PrepareRequest(LoginReputationClientRequest::PASSWORD_REUSE_EVENT,
                  PasswordType::SAVED_PASSWORD,
                  /*is_warning_showing=*/false);
-  EXPECT_CALL(*client_, UploadSecurityEventReport).Times(1);
+  base::RunLoop run_loop;
+  EXPECT_CALL(*client_, UploadSecurityEventReport)
+      .Times(1)
+      .WillOnce(base::test::RunOnceClosure(run_loop.QuitClosure()));
   service_->MaybeReportPasswordReuseDetected(
       request_->main_frame_url(), kUserName, PasswordType::ENTERPRISE_PASSWORD,
       /*is_phishing_url =*/true,
       /*warning_shown =*/true);
-  base::RunLoop().RunUntilIdle();
+  run_loop.Run();
 #if !BUILDFLAG(IS_ANDROID)
   EXPECT_EQ(1, test_event_router_->GetEventCount(
                    OnPolicySpecifiedPasswordReuseDetected::kEventName));
@@ -1674,7 +1698,7 @@ TEST_F(ChromePasswordProtectionServiceTest, VerifyCanShowInterstitial) {
 
   // Add |trigger_url| to enterprise allowlist.
   base::Value::List allowlisted_domains;
-  allowlisted_domains.Append(trigger_url.host());
+  allowlisted_domains.Append(trigger_url.GetHost());
   profile()->GetPrefs()->SetList(prefs::kSafeBrowsingAllowlistDomains,
                                  std::move(allowlisted_domains));
   reused_password_type.set_account_type(
@@ -1790,21 +1814,8 @@ TEST_F(ChromePasswordProtectionServiceTest, VerifyPageLoadToken) {
 
 namespace {
 
-class ChromePasswordProtectionServiceWithAccountPasswordStoreTest
-    : public ChromePasswordProtectionServiceTest {
- public:
-  ChromePasswordProtectionServiceWithAccountPasswordStoreTest() {
-#if BUILDFLAG(IS_ANDROID)
-    // Override the GMS version to be big enough for local UPM support, so these
-    // tests still pass in bots with an outdated version.
-    base::android::BuildInfo::GetInstance()->set_gms_version_code_for_test(
-        base::NumberToString(password_manager::GetLocalUpmMinGmsVersion()));
-#endif
-  }
-};
-
-TEST_F(ChromePasswordProtectionServiceWithAccountPasswordStoreTest,
-       VerifyPersistPhishedSavedPasswordCredential) {
+TEST_F(ChromePasswordProtectionServiceTest,
+       VerifyPersistPhishedAccountSavedPasswordCredential) {
   service_->ConfigService(/*is_incognito=*/false,
                           /*is_extended_reporting=*/true);
   std::vector<password_manager::MatchingReusedCredential> credentials;
@@ -1822,8 +1833,8 @@ TEST_F(ChromePasswordProtectionServiceWithAccountPasswordStoreTest,
   service_->PersistPhishedSavedPasswordCredential(credentials);
 }
 
-TEST_F(ChromePasswordProtectionServiceWithAccountPasswordStoreTest,
-       VerifyRemovePhishedSavedPasswordCredential) {
+TEST_F(ChromePasswordProtectionServiceTest,
+       VerifyRemovePhishedAccountSavedPasswordCredential) {
   service_->ConfigService(/*is_incognito=*/false,
                           /*is_extended_reporting=*/true);
   std::vector<password_manager::MatchingReusedCredential> credentials;
@@ -1875,24 +1886,7 @@ class PasswordCheckupWithPhishGuardTest
   raw_ptr<syncer::TestSyncService> sync_service_ = nullptr;
 };
 
-class PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest
-    : public base::test::WithFeatureOverride,
-      public PasswordCheckupWithPhishGuardTest {
- public:
-  PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest()
-      : base::test::WithFeatureOverride(
-            password_manager::features::kLoginDbDeprecationAndroid) {}
-
-  void SetUp() override {
-    // Override the GMS version to be big enough for local UPM support, so these
-    // tests still pass in bots with an outdated version.
-    base::android::BuildInfo::GetInstance()->set_gms_version_code_for_test(
-        base::NumberToString(password_manager::GetLocalUpmMinGmsVersion()));
-    PasswordCheckupWithPhishGuardTest::SetUp();
-  }
-};
-
-TEST_P(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
+TEST_F(PasswordCheckupWithPhishGuardTest,
        VerifyPhishGuardDialogOpensPasswordCheckupForAccountStoreSyncing) {
   service_->ConfigService(/*is_incognito=*/false,
                           /*is_extended_reporting=*/true);
@@ -1914,7 +1908,7 @@ TEST_P(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
   SimulateChangePasswordDialogAction(/*is_syncing=*/true);
 }
 
-TEST_P(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
+TEST_F(PasswordCheckupWithPhishGuardTest,
        VerifyPhishGuardDialogOpensPasswordCheckupForProfileStoreSyncing) {
   service_->ConfigService(/*is_incognito=*/false,
                           /*is_extended_reporting=*/true);
@@ -1937,7 +1931,7 @@ TEST_P(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
   SimulateChangePasswordDialogAction(/*is_syncing=*/true);
 }
 
-TEST_P(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
+TEST_F(PasswordCheckupWithPhishGuardTest,
        VerifyPhishGuardDialogOpensPasswordCheckupForProfileStoreNotSyncing) {
   service_->ConfigService(/*is_incognito=*/false,
                           /*is_extended_reporting=*/true);
@@ -1960,7 +1954,7 @@ TEST_P(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
   SimulateChangePasswordDialogAction(/*is_syncing=*/false);
 }
 
-TEST_P(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
+TEST_F(PasswordCheckupWithPhishGuardTest,
        VerifyPhishGuardDialogOpensSafetyCheckMenuForBothStoresSyncing) {
   feature_list_.InitWithFeatures(
       {}, {/*disabled_features=*/features::kSafetyHubLocalPasswordsModule});
@@ -1985,7 +1979,7 @@ TEST_P(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
   SimulateChangePasswordDialogAction(/*is_syncing=*/true);
 }
 
-TEST_P(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
+TEST_F(PasswordCheckupWithPhishGuardTest,
        VerifyPhishGuardDialogOpensSafetyHubMenuForBothStoresSyncing) {
   feature_list_.InitWithFeatures(
       /*enabled_features=*/{features::kSafetyHubLocalPasswordsModule}, {});
@@ -2006,70 +2000,6 @@ TEST_P(PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest,
 
   EXPECT_CALL(*mock_checkup_launcher_,
               LaunchSafetyHub(_, web_contents()->GetTopLevelNativeWindow()));
-
-  SimulateChangePasswordDialogAction(/*is_syncing=*/true);
-}
-
-INSTANTIATE_FEATURE_OVERRIDE_TEST_SUITE(
-    PasswordCheckupWithPhishGuardAfterPasswordStoreSplitAndroidTest);
-
-class PasswordCheckupWithPhishGuardUPMBeforeStoreSplitAndroidTest
-    : public PasswordCheckupWithPhishGuardTest {
- public:
-  void SetUp() override {
-    // Force split stores to be off by faking an outdated GmsCore version.
-    base::android::BuildInfo::GetInstance()->set_gms_version_code_for_test("0");
-    PasswordCheckupWithPhishGuardTest::SetUp();
-    feature_list_.InitAndDisableFeature(
-        password_manager::features::kLoginDbDeprecationAndroid);
-  }
-
- private:
-  base::test::ScopedFeatureList feature_list_;
-};
-
-TEST_F(
-    PasswordCheckupWithPhishGuardUPMBeforeStoreSplitAndroidTest,
-    VerifyPhishGuardDialogOpensPasswordCheckupEmptyAccountForNonSyncingUser) {
-  service_->ConfigService(/*is_incognito=*/false,
-                          /*is_extended_reporting=*/true);
-  std::vector<password_manager::MatchingReusedCredential> credentials;
-  credentials.emplace_back(
-      "http://example.test", GURL("http://example.test/"), u"user",
-      password_manager::PasswordForm::Store::kProfileStore);
-  service_->set_saved_passwords_matching_reused_credentials(credentials);
-
-  SetUpSyncService(/*is_syncing_passwords=*/false);
-
-  EXPECT_CALL(
-      *mock_checkup_launcher_,
-      LaunchCheckupOnDevice(
-          _, profile(), web_contents()->GetTopLevelNativeWindow(),
-          password_manager::PasswordCheckReferrerAndroid::kPhishedWarningDialog,
-          /*account=*/""));
-
-  SimulateChangePasswordDialogAction(/*is_syncing=*/false);
-}
-
-TEST_F(PasswordCheckupWithPhishGuardUPMBeforeStoreSplitAndroidTest,
-       VerifyPhishGuardDialogOpensPasswordCheckupWithAnAccountForSyncingUser) {
-  service_->ConfigService(/*is_incognito=*/false,
-                          /*is_extended_reporting=*/true);
-  std::vector<password_manager::MatchingReusedCredential> credentials;
-  credentials.emplace_back(
-      "http://example.test", GURL("http://example.test/"), u"user",
-      password_manager::PasswordForm::Store::kProfileStore);
-
-  service_->set_saved_passwords_matching_reused_credentials(credentials);
-
-  SetUpSyncService(/*is_syncing_passwords=*/true);
-
-  EXPECT_CALL(
-      *mock_checkup_launcher_,
-      LaunchCheckupOnDevice(
-          _, profile(), web_contents()->GetTopLevelNativeWindow(),
-          password_manager::PasswordCheckReferrerAndroid::kPhishedWarningDialog,
-          TestingProfile::kDefaultProfileUserName));
 
   SimulateChangePasswordDialogAction(/*is_syncing=*/true);
 }

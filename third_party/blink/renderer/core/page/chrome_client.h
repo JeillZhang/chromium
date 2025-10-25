@@ -42,7 +42,6 @@
 #include "third_party/blink/public/mojom/input/input_handler.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/scroll/scroll_into_view_params.mojom-blink.h"
 #include "third_party/blink/renderer/core/core_export.h"
-#include "third_party/blink/renderer/core/html/forms/external_date_time_chooser.h"
 #include "third_party/blink/renderer/core/html/forms/popup_menu.h"
 #include "third_party/blink/renderer/core/loader/frame_loader.h"
 #include "third_party/blink/renderer/core/loader/navigation_policy.h"
@@ -62,6 +61,7 @@
 #undef CreateWindow
 
 namespace cc {
+enum class PropertyChangeForcesCommitCriteria;
 class AnimationHost;
 class AnimationTimeline;
 struct ElementId;
@@ -80,7 +80,7 @@ class Cursor;
 }
 
 namespace viz {
-struct FrameTimingDetails;
+class FrameTimingDetails;
 }
 
 namespace blink {
@@ -90,6 +90,7 @@ class ColorChooserClient;
 class DateTimeChooser;
 class DateTimeChooserClient;
 class Element;
+class ExternalDateTimeChooser;
 class FileChooser;
 class Frame;
 class FullscreenOptions;
@@ -229,6 +230,10 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                                     cc::PaintHoldingCommitTrigger) = 0;
   virtual void SetShouldThrottleFrameRate(bool flag,
                                           LocalFrame& main_frame) = 0;
+  virtual void RequestMainFrameOnCompositorAnimation(
+      LocalFrame&,
+      cc::PropertyChangeForcesCommitCriteria
+          property_change_forces_commit_criteria) = 0;
 
   virtual std::unique_ptr<cc::ScopedPauseRendering> PauseRendering(
       LocalFrame& main_frame) = 0;
@@ -253,6 +258,10 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                              const gfx::Vector2d& cursor_offset,
                              const gfx::Rect& drag_obj_rect) = 0;
   virtual bool AcceptsLoadDrops() const = 0;
+
+  virtual std::optional<bool> GetWebRTCPostQuantumKeyAgreement() const {
+    return std::nullopt;
+  }
 
   // The LocalFrame pointer provides the ChromeClient with context about which
   // LocalFrame wants to create the new Page. Also, the newly created window
@@ -345,6 +354,9 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
 
   virtual const display::ScreenInfo& GetScreenInfo(LocalFrame& frame) const = 0;
   virtual const display::ScreenInfos& GetScreenInfos(
+      LocalFrame& frame) const = 0;
+
+  virtual const display::ScreenInfo& GetOriginalScreenInfo(
       LocalFrame& frame) const = 0;
 
   virtual void SetCursor(const ui::Cursor&, LocalFrame* local_root) = 0;
@@ -547,6 +559,7 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
   virtual void OnMouseDown(Node&) {}
 
   virtual void DidUpdateBrowserControls() const {}
+  virtual void DidUpdateLoadProgress(float) {}
 
   virtual void DidUpdateMaxSafeAreaInsets(
       const gfx::InsetsF& max_safe_area_insets) const {}
@@ -569,9 +582,6 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
                              bool speculative) {
     std::move(callback).Run(false);
   }
-  virtual bool SpeculativeDecodeRequestInFlight(LocalFrame* frame) const {
-    return false;
-  }
 
   // The `callback` will be fired when the corresponding renderer frame for the
   // `frame` is presented in the display compositor. If there is no update in
@@ -581,12 +591,6 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
       base::OnceCallback<void(const viz::FrameTimingDetails&)>;
   virtual void NotifyPresentationTime(LocalFrame& frame,
                                       ReportTimeCallback callback) {}
-
-  // Enable or disable BeginMainFrameNotExpected signals from the compositor of
-  // the local root of |frame|. These signals would be consumed by the blink
-  // scheduler.
-  virtual void RequestBeginMainFrameNotExpected(LocalFrame& frame,
-                                                bool request) = 0;
 
   // A stable numeric Id for |frame|'s local root's compositor. For
   // tracing/debugging purposes.
@@ -615,7 +619,7 @@ class CORE_EXPORT ChromeClient : public GarbageCollected<ChromeClient> {
 
   virtual float ZoomFactorForViewportLayout() { return 1; }
 
-  virtual void OnFirstContentfulPaint() {}
+  virtual void OnFirstContentfulPaint(const base::TimeDelta& duration) {}
 
  protected:
   ChromeClient() = default;

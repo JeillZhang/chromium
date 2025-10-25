@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/functional/bind.h"
+#include "base/time/time.h"
 #include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/quads/compositor_render_pass.h"
 #include "components/viz/common/quads/compositor_render_pass_draw_quad.h"
@@ -529,6 +530,14 @@ CompositorFrameBuilder& CompositorFrameBuilder::AddOffsetTagDefinition(
   return *this;
 }
 
+CompositorFrameBuilder& CompositorFrameBuilder::SetValidTreesInVizTimestamps(
+    base::TimeTicks now) {
+  frame_->metadata.trees_in_viz_timing_details = {
+      now, now + base::Milliseconds(1), now + base::Milliseconds(2),
+      now + base::Milliseconds(3)};
+  return *this;
+}
+
 CompositorFrame CompositorFrameBuilder::MakeInitCompositorFrame() const {
   static FrameTokenGenerator next_token;
   CompositorFrame frame;
@@ -601,16 +610,15 @@ void PopulateTransferableResources(CompositorFrame& frame) {
       if (quad->resource_id != kInvalidResourceId) {
         // Adds a TransferableResource the first time seeing a ResourceId.
         if (resources_added.insert(quad->resource_id).second) {
-          auto shared_image = gpu::ClientSharedImage::CreateForTesting(
-              SinglePlaneFormat::kBGRA_8888, GL_TEXTURE_2D);
+          auto shared_image =
+              gpu::ClientSharedImage::CreateSoftwareForTesting();
           gpu::SyncToken sync_token;
           sync_token.Set(gpu::GPU_IO, gpu::CommandBufferId::FromUnsafeValue(1),
                          1);
-          frame.resource_list.push_back(
-              TransferableResource::MakeSoftwareSharedImage(
-                  shared_image, sync_token, quad->rect.size(),
-                  SinglePlaneFormat::kBGRA_8888,
-                  TransferableResource::ResourceSource::kTileRasterTask));
+          frame.resource_list.push_back(TransferableResource::Make(
+              shared_image,
+              TransferableResource::ResourceSource::kTileRasterTask,
+              sync_token));
           frame.resource_list.back().id = quad->resource_id;
         }
       }

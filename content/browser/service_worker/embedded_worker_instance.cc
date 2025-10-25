@@ -22,10 +22,12 @@
 #include "content/browser/devtools/network_service_devtools_observer.h"
 #include "content/browser/devtools/service_worker_devtools_agent_host.h"
 #include "content/browser/devtools/service_worker_devtools_manager.h"
+#include "content/browser/fingerprinting_protection/canvas_noise_token_data.h"
 #include "content/browser/loader/url_loader_factory_utils.h"
 #include "content/browser/network/cross_origin_embedder_policy_reporter.h"
 #include "content/browser/process_lock.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
+#include "content/browser/security/dip/document_isolation_policy_reporter.h"
 #include "content/browser/service_worker/service_worker_consts.h"
 #include "content/browser/service_worker/service_worker_content_settings_proxy_impl.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
@@ -44,9 +46,10 @@
 #include "content/public/browser/usb_delegate.h"
 #include "content/public/browser/web_ui_url_loader_factory.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
-#include "ipc/ipc_message.h"
+#include "ipc/constants.mojom.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "net/base/isolation_info.h"
 #include "net/base/network_isolation_key.h"
@@ -250,7 +253,7 @@ void EmbeddedWorkerInstance::Start(
     observer.OnStarting();
 
   // service_worker_route_id will be set later in SetupOnUIThread
-  params->service_worker_route_id = MSG_ROUTING_NONE;
+  params->service_worker_route_id = IPC::mojom::kRoutingIdNone;
   params->wait_for_debugger = false;
   params->subresource_loader_updater =
       subresource_loader_updater_.BindNewPipeAndPassReceiver();
@@ -394,7 +397,7 @@ void EmbeddedWorkerInstance::Start(
   //
   // WebUI schemes are process isolated already. To isolate other sites, the
   // embedder can override ContentBrowserClient::ShouldLockProcessToSite().
-  if (rph->GetProcessLock().is_locked_to_site()) {
+  if (rph->GetProcessLock().IsLockedToSite()) {
     GetContentClient()
         ->browser()
         ->UpdateEnabledBlinkRuntimeFeaturesInIsolatedWorker(
@@ -402,7 +405,7 @@ void EmbeddedWorkerInstance::Start(
             params->forced_enabled_runtime_features);
   }
   CHECK(params->forced_enabled_runtime_features.empty() ||
-        rph->GetProcessLock().is_locked_to_site());
+        rph->GetProcessLock().IsLockedToSite());
 
   // TODO(crbug.com/40584626): Support changes to blink::RendererPreferences
   // while the worker is running.
@@ -471,6 +474,12 @@ void EmbeddedWorkerInstance::Start(
   params->coep_reporting_observer =
       std::move(coep_reporting_observer_receiver_);
   params->dip_reporting_observer = std::move(dip_reporting_observer_receiver_);
+
+  // Set initial canvas noise token, which ensures tokens are available as soon
+  // as worker execution context is ready.
+  params->canvas_noise_token = GetOrCreateCanvasNoiseToken();
+  params->canvas_noise_token_observer =
+      canvas_noise_token_updater_.BindNewPipeAndPassReceiver();
 
   SendStartWorker(std::move(params));
   std::move(callback).Run(blink::ServiceWorkerStatusCode::kOk);
@@ -877,7 +886,7 @@ EmbeddedWorkerInstance::CreateFactoryBundle(
           rph, origin, isolation_info, std::move(coep_reporter),
           std::move(dip_reporter),
           static_cast<StoragePartitionImpl*>(rph->GetStoragePartition())
-              ->CreateURLLoaderNetworkObserverForServiceWorker(
+              ->CreateURLLoaderNetworkObserverForServiceOrSharedWorker(
                   rph->GetDeprecatedID(), origin),
           NetworkServiceDevToolsObserver::MakeSelfOwned(devtools_worker_token),
           std::move(client_security_state),
@@ -927,7 +936,7 @@ EmbeddedWorkerInstance::CreateFactoryBundle(
   GetContentClient()
       ->browser()
       ->RegisterNonNetworkSubresourceURLLoaderFactories(
-          rph->GetDeprecatedID(), MSG_ROUTING_NONE, origin,
+          rph->GetDeprecatedID(), IPC::mojom::kRoutingIdNone, origin,
           &non_network_factories);
 
   for (auto& pair : non_network_factories) {
@@ -1003,7 +1012,7 @@ int EmbeddedWorkerInstance::process_id() const {
 int EmbeddedWorkerInstance::worker_devtools_agent_route_id() const {
   if (devtools_proxy_)
     return devtools_proxy_->agent_route_id();
-  return MSG_ROUTING_NONE;
+  return IPC::mojom::kRoutingIdNone;
 }
 
 base::UnguessableToken EmbeddedWorkerInstance::WorkerDevtoolsId() const {
@@ -1057,6 +1066,7 @@ void EmbeddedWorkerInstance::ReleaseProcess() {
   process_handle_.reset();
   subresource_loader_updater_.reset();
   coep_reporter_.reset();
+  canvas_noise_token_updater_.reset();
   status_ = blink::EmbeddedWorkerStatus::kStopped;
   starting_phase_ = NOT_STARTING;
   thread_id_ = ServiceWorkerConsts::kInvalidEmbeddedWorkerThreadId;
@@ -1317,6 +1327,28 @@ EmbeddedWorkerInstance::GetDipReporterInternal(
 
   dip_reporter_->Clone(new_dip_reporter.InitWithNewPipeAndPassReceiver());
   return new_dip_reporter;
+}
+
+void EmbeddedWorkerInstance::UpdateCanvasNoiseToken() {
+  if (canvas_noise_token_updater_.is_bound()) {
+    canvas_noise_token_updater_->OnTokenReceived(GetOrCreateCanvasNoiseToken());
+  }
+}
+
+std::optional<blink::NoiseToken>
+EmbeddedWorkerInstance::GetOrCreateCanvasNoiseToken() {
+  DCHECK(context_);
+  BrowserContext* browser_context = context_->wrapper()->browser_context();
+  GURL top_url = owner_version_->key().top_level_site().GetURL();
+
+  if (!GetContentClient()->browser()->ShouldEnableCanvasNoise(browser_context,
+                                                              top_url)) {
+    return std::nullopt;
+  }
+  // TODO(https://crbug.com/442616874): Use StorageKeys to call GetToken(), once
+  // CanvasNoiseTokens are keyed by StorageKey instead of Origin.
+  return CanvasNoiseTokenData::GetToken(browser_context,
+                                        url::Origin::Create(top_url));
 }
 
 EmbeddedWorkerInstance::CacheStorageRequest::CacheStorageRequest(

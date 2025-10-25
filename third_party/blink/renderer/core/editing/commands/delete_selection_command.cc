@@ -224,8 +224,8 @@ static Position TrailingWhitespacePosition(const Position& position,
       CharacterAfter(visible_position);
   const bool is_space =
       option == kConsiderNonCollapsibleWhitespace
-          ? (IsSpaceOrNewline(character_after_visible_position) ||
-             character_after_visible_position == kNoBreakSpaceCharacter)
+          ? (unicode::IsSpaceOrNewline(character_after_visible_position) ||
+             character_after_visible_position == uchar::kNoBreakSpace)
           : IsCollapsibleWhitespace(character_after_visible_position);
   // The space must not be in another paragraph and it must be editable.
   if (is_space && !IsEndOfParagraph(visible_position) &&
@@ -625,7 +625,6 @@ void DeleteSelectionCommand::RemoveCompletelySelectedNodes(
   }
 
   const ShouldAssumeContentIsAlwaysEditable always_editable(
-      RuntimeEnabledFeatures::EditingFastDeleteEnabled() &&
       EnclosingTextControl(node));
   // Actually remove the nodes in |nodes_to_be_removed|.
   for (Node* node_to_be_removed : nodes_to_be_removed) {
@@ -724,9 +723,7 @@ void DeleteSelectionCommand::
   }
   Node* node = range->FirstNode();
   Node* past_last = range->PastLastNode();
-  while (node && node != (RuntimeEnabledFeatures::EditingFastDeleteEnabled()
-                              ? past_last
-                              : range->PastLastNode())) {
+  while (node && node != past_last) {
     Node* next_node = NodeTraversal::Next(*node);
     if (IsA<HTMLStyleElement>(*node) || IsA<HTMLLinkElement>(*node)) {
       next_node = NodeTraversal::NextSkippingChildren(*node);
@@ -864,28 +861,23 @@ void DeleteSelectionCommand::HandleGeneralDelete(EditingState* editing_state) {
         } else if (end_node_is_selected_from_first_position) {
           // If the selection includes the first position of the
           // node, the node may be considered fully selected.
-          if (RuntimeEnabledFeatures::
-                  RemoveNodeDetermineNodeFullySelectedEnabled()) {
-            if (downstream_end_.AnchorNode()->IsDescendantOf(
-                    upstream_start_.AnchorNode())) {
-              // The node is a child of the `upstream_start_.AnchorNode()`,
-              // the node be fully selected.
-              // See https://issues.chromium.org/issues/331074432.
-              is_node_fully_selected = true;
-            } else if (ComparePositions(downstream_end_,
-                                        GetDocument()
-                                            .GetFrame()
-                                            ->Selection()
-                                            .GetSelectionInDOMTree()
-                                            .Focus()) <= 0) {
-              // `downstream_end_` in FrameSelection(Use FrameSelection because
-              // we need non-visual selection), the node be fully selected.
-              // FrameSelection can be used to delete the node that is
-              // invisible, such as `<span></span>`.
-              // See https://issues.chromium.org/issues/415911524.
-              is_node_fully_selected = true;
-            }
-          } else {
+          if (downstream_end_.AnchorNode()->IsDescendantOf(
+                  upstream_start_.AnchorNode())) {
+            // The node is a child of the `upstream_start_.AnchorNode()`,
+            // the node be fully selected.
+            // See https://issues.chromium.org/issues/331074432.
+            is_node_fully_selected = true;
+          } else if (ComparePositions(downstream_end_,
+                                      GetDocument()
+                                          .GetFrame()
+                                          ->Selection()
+                                          .GetSelectionInDOMTree()
+                                          .Focus()) <= 0) {
+            // `downstream_end_` in FrameSelection(Use FrameSelection because
+            // we need non-visual selection), the node be fully selected.
+            // FrameSelection can be used to delete the node that is
+            // invisible, such as `<span></span>`.
+            // See https://issues.chromium.org/issues/415911524.
             is_node_fully_selected = true;
           }
         }
@@ -1030,6 +1022,11 @@ void DeleteSelectionCommand::MergeParagraphs(EditingState* editing_state) {
   VisiblePosition start_of_paragraph_to_move = StartOfParagraph(merge_origin);
   VisiblePosition end_of_paragraph_to_move =
       EndOfParagraph(merge_origin, kCanSkipOverEditingBoundary);
+  if (RuntimeEnabledFeatures::TraverseFlatTreeToHandleSlotsEnabled()) {
+    start_of_paragraph_to_move = StartOfParagraphInFlatTree(merge_origin);
+    end_of_paragraph_to_move =
+        EndOfParagraphInFlatTree(merge_origin, kCanSkipOverEditingBoundary);
+  }
 
   if (merge_destination.DeepEquivalent() ==
       end_of_paragraph_to_move.DeepEquivalent())

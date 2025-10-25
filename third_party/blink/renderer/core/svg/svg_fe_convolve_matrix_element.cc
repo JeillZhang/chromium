@@ -55,12 +55,10 @@ class SVGAnimatedOrder : public SVGAnimatedIntegerOptionalInteger {
                                           svg_names::kOrderAttr,
                                           3) {}
 
-  SVGParsingError AttributeChanged(const String&) override;
+  SVGParsingError AttributeChanged(const String& value) override;
 
  protected:
-  static SVGParsingError CheckValue(SVGParsingError parse_status, int value) {
-    if (parse_status != SVGParseStatus::kNoError)
-      return parse_status;
+  static SVGParsingError CheckValue(int value) {
     if (value < 0)
       return SVGParseStatus::kNegativeValue;
     if (value == 0)
@@ -70,13 +68,15 @@ class SVGAnimatedOrder : public SVGAnimatedIntegerOptionalInteger {
 };
 
 SVGParsingError SVGAnimatedOrder::AttributeChanged(const String& value) {
-  SVGParsingError parse_status =
-      SVGAnimatedIntegerOptionalInteger::AttributeChanged(value);
-  // Check for semantic errors.
-  parse_status = CheckValue(parse_status, FirstInteger()->BaseValue()->Value());
-  parse_status =
-      CheckValue(parse_status, SecondInteger()->BaseValue()->Value());
-  return parse_status;
+  return UpdateBaseValueFromAttribute(
+      *BaseValue(), value, [](const SVGIntegerOptionalInteger& base_value) {
+        SVGParsingError parse_status =
+            CheckValue(base_value.FirstInteger()->Value());
+        if (parse_status != SVGParseStatus::kNoError) {
+          return parse_status;
+        }
+        return CheckValue(base_value.SecondInteger()->Value());
+      });
 }
 
 SVGFEConvolveMatrixElement::SVGFEConvolveMatrixElement(Document& document)
@@ -167,12 +167,9 @@ gfx::Point SVGFEConvolveMatrixElement::TargetPoint() const {
 float SVGFEConvolveMatrixElement::ComputeDivisor() const {
   if (divisor_->IsSpecified())
     return divisor_->CurrentValue()->Value();
-  float divisor_value = 0;
-  SVGNumberList* kernel_matrix = kernel_matrix_->CurrentValue();
-  uint32_t kernel_matrix_size = kernel_matrix->length();
-  for (uint32_t i = 0; i < kernel_matrix_size; ++i)
-    divisor_value += kernel_matrix->at(i)->Value();
-  return divisor_value ? divisor_value : 1;
+  // If the divisor is not set, then return zero to get the sum-of-matrix
+  // behavior (see FEColorMatrix::ComputeDivisor).
+  return 0;
 }
 
 bool SVGFEConvolveMatrixElement::SetFilterEffectAttribute(

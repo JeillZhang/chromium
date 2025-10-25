@@ -14,9 +14,9 @@
 #include "base/system/sys_info.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
+#include "components/optimization_guide/core/delivery/model_util.h"
 #include "components/optimization_guide/core/feature_registry/feature_registration.h"
 #include "components/optimization_guide/core/feature_registry/mqls_feature_registry.h"
-#include "components/optimization_guide/core/model_util.h"
 #include "components/optimization_guide/core/optimization_guide_constants.h"
 #include "components/optimization_guide/proto/models.pb.h"
 #include "components/prefs/testing_pref_service.h"
@@ -37,33 +37,6 @@ class OptimizationGuideFeaturesTest : public testing::Test {
  private:
   TestingPrefServiceSimple prefs_;
 };
-
-TEST_F(OptimizationGuideFeaturesTest,
-       TestGetOptimizationGuideServiceGetHintsURLHTTPSOnly) {
-  base::test::ScopedFeatureList scoped_feature_list;
-
-  scoped_feature_list.InitAndEnableFeatureWithParameters(
-      features::kRemoteOptimizationGuideFetching,
-      {{"optimization_guide_service_url", "http://NotAnHTTPSServer.com"}});
-
-  EXPECT_EQ(features::GetOptimizationGuideServiceGetHintsURL().spec(),
-            kOptimizationGuideServiceGetHintsDefaultURL);
-  EXPECT_TRUE(features::GetOptimizationGuideServiceGetHintsURL().SchemeIs(
-      url::kHttpsScheme));
-}
-
-TEST_F(OptimizationGuideFeaturesTest,
-       TestGetOptimizationGuideServiceGetHintsURLViaFinch) {
-  base::test::ScopedFeatureList scoped_feature_list;
-
-  std::string optimization_guide_service_url = "https://finchserver.com/";
-  scoped_feature_list.InitAndEnableFeatureWithParameters(
-      features::kRemoteOptimizationGuideFetching,
-      {{"optimization_guide_service_url", optimization_guide_service_url}});
-
-  EXPECT_EQ(features::GetOptimizationGuideServiceGetHintsURL().spec(),
-            optimization_guide_service_url);
-}
 
 TEST_F(OptimizationGuideFeaturesTest, ModelQualityLoggingDefault) {
   base::test::ScopedFeatureList scoped_feature_list;
@@ -144,50 +117,6 @@ TEST_F(OptimizationGuideFeaturesTest,
   EXPECT_FALSE(
       allowedContexts.Has(optimization_guide::proto::CONTEXT_UNSPECIFIED));
   EXPECT_TRUE(allowedContexts.Has(
-      optimization_guide::proto::CONTEXT_PAGE_INSIGHTS_HUB));
-}
-
-TEST_F(OptimizationGuideFeaturesTest,
-       OptimizationGuidePersonalizedFetchingPopulatedParam) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeatureWithParameters(
-      features::kOptimizationGuidePersonalizedFetching,
-      {
-          {"allowed_contexts", "CONTEXT_PAGE_NAVIGATION,CONTEXT_BOOKMARKS"},
-      });
-
-  features::RequestContextSet allowedContexts =
-      features::GetAllowedContextsForPersonalizedMetadata();
-
-  // Check contexts.
-  EXPECT_FALSE(
-      allowedContexts.Has(optimization_guide::proto::CONTEXT_UNSPECIFIED));
-  EXPECT_FALSE(allowedContexts.Has(
-      optimization_guide::proto::CONTEXT_PAGE_INSIGHTS_HUB));
-  EXPECT_TRUE(
-      allowedContexts.Has(optimization_guide::proto::CONTEXT_PAGE_NAVIGATION));
-  EXPECT_TRUE(
-      allowedContexts.Has(optimization_guide::proto::CONTEXT_BOOKMARKS));
-}
-
-TEST_F(OptimizationGuideFeaturesTest,
-       OptimizationGuidePersonalizedFetchingEmptyParam) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeatureWithParameters(
-      features::kOptimizationGuidePersonalizedFetching,
-      {
-          {"allowed_contexts", ""},
-      });
-
-  features::RequestContextSet allowedContexts =
-      features::GetAllowedContextsForPersonalizedMetadata();
-
-  // Check contexts.
-  EXPECT_FALSE(
-      allowedContexts.Has(optimization_guide::proto::CONTEXT_UNSPECIFIED));
-  EXPECT_FALSE(
-      allowedContexts.Has(optimization_guide::proto::CONTEXT_PAGE_NAVIGATION));
-  EXPECT_FALSE(allowedContexts.Has(
       optimization_guide::proto::CONTEXT_PAGE_INSIGHTS_HUB));
 }
 

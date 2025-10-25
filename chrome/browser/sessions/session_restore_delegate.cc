@@ -50,13 +50,15 @@ SessionRestoreDelegate::RestoredTab::RestoredTab(
     bool is_active,
     bool is_app,
     bool is_pinned,
-    const std::optional<tab_groups::TabGroupId>& group)
+    const std::optional<tab_groups::TabGroupId>& group,
+    const std::optional<split_tabs::SplitTabId>& split)
     : contents_(contents->GetWeakPtr()),
       is_active_(is_active),
       is_app_(is_app),
       is_internal_page_(IsInternalPage(contents->GetLastCommittedURL())),
       is_pinned_(is_pinned),
-      group_(group) {}
+      group_(group),
+      split_(split) {}
 
 SessionRestoreDelegate::RestoredTab::RestoredTab(const RestoredTab&) = default;
 
@@ -114,7 +116,7 @@ void SessionRestoreDelegate::RestoreTabs(
   if (!base::FeatureList::IsEnabled(
           performance_manager::features::
               kBackgroundTabLoadingFromPerformanceManager)) {
-    TabLoader::RestoreTabs(tabs, restore_started);
+    TabLoader::DeprecatedRestoreTabs(tabs, restore_started);
   } else {
     std::vector<content::WebContents*> web_contents_vector;
     web_contents_vector.reserve(tabs.size());

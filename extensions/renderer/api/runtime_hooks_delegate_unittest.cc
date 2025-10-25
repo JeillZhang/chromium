@@ -34,7 +34,7 @@ void CallAPIAndExpectError(v8::Local<v8::Context> context,
   SCOPED_TRACE(base::StringPrintf("Args: `%s`", args.data()));
   constexpr char kTemplate[] = "(function() { chrome.runtime.%s(%s); })";
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
 
   // Just verify some error was thrown. Expecting the exact error message
   // tends to rely too much on our argument spec code, which is tested
@@ -159,6 +159,20 @@ TEST_F(RuntimeHooksDelegateTest, GetManifest) {
             V8ToString(manifest, context));
 }
 
+TEST_F(RuntimeHooksDelegateTest, GetVersion) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  v8::Local<v8::Function> get_version = FunctionFromString(
+      context, "(function() { return chrome.runtime.getVersion(); })");
+  v8::Local<v8::Value> version =
+      RunFunction(get_version, context, 0, nullptr);
+  ASSERT_FALSE(version.IsEmpty());
+  ASSERT_TRUE(version->IsString());
+  EXPECT_EQ(extension()->VersionString(),
+            V8ToBaseValue(version, context)->GetString());
+}
+
 TEST_F(RuntimeHooksDelegateTest, GetURL) {
   v8::HandleScope handle_scope(isolate());
   v8::Local<v8::Context> context = MainContext();
@@ -176,8 +190,8 @@ TEST_F(RuntimeHooksDelegateTest, GetURL) {
   };
 
   get_url("''", extension()->url());
-  get_url("'foo'", extension()->ResolveExtensionURL("foo"));
-  get_url("'/foo'", extension()->ResolveExtensionURL("foo"));
+  get_url("'foo'", extension()->GetResourceURL("foo"));
+  get_url("'/foo'", extension()->GetResourceURL("foo"));
   get_url("'https://www.google.com'",
           GURL(extension()->url().spec() + "https://www.google.com"));
 }

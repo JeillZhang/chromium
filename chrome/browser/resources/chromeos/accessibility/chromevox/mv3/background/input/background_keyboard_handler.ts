@@ -9,10 +9,9 @@ import {KeyCode} from '/common/key_code.js';
 import {TestImportManager} from '/common/testing/test_import_manager.js';
 
 import {EventSourceType} from '../../common/event_source_type.js';
-import type {InternalKeyEvent} from '../../common/internal_key_event.js'
+import {InternalKeyEvent} from '../../common/internal_key_event.js'
 import {ChromeVoxKbHandler} from '../../common/keyboard_handler.js';
 import {Msgs} from '../../common/msgs.js';
-import {OffscreenCommandType} from '../../common/offscreen_command_type.js'
 import {QueueMode} from '../../common/tts_types.js';
 import {ChromeVox} from '../chromevox.js';
 import {ChromeVoxRange} from '../chromevox_range.js';
@@ -21,9 +20,6 @@ import {ForcedActionPath} from '../forced_action_path.js';
 import {MathHandler} from '../math_handler.js';
 import {Output} from '../output/output.js';
 import {ChromeVoxPrefs} from '../prefs.js';
-
-type MessageSender = chrome.runtime.MessageSender;
-type StopPropagationCallback = (value: any) => void;
 
 /**
  * Internal pass through mode state (see usage below).
@@ -53,24 +49,10 @@ export class BackgroundKeyboardHandler {
     this.passThroughState_ = KeyboardPassThroughState.NO_PASS_THROUGH;
     this.passedThroughKeyDowns_ = new Set();
 
-    // Handle messages from the offscreen document.
-    chrome.runtime.onMessage.addListener(
-        (message: any|undefined, _sender: MessageSender,
-         sendResponse: (value: any) => void) => {
-          let internalEvent: InternalKeyEvent;
-          switch (message['command']) {
-            case OffscreenCommandType.ON_KEY_DOWN:
-              internalEvent = message.internalEvent as InternalKeyEvent;
-              this.onKeyDown_(internalEvent, sendResponse);
-              break;
-            case OffscreenCommandType.ON_KEY_UP:
-              internalEvent = message.internalEvent as InternalKeyEvent;
-              this.onKeyUp_(internalEvent, sendResponse);
-              break;
-          }
-          return false;
-        });
-
+    chrome.accessibilityPrivate.onKeyDown.addListener(
+        event => this.onKeyDown_(event));
+    chrome.accessibilityPrivate.onKeyUp.addListener(
+        event => this.onKeyUp_(event));
     chrome.accessibilityPrivate.setKeyboardListener(
         true, ChromeVoxPrefs.isStickyPrefOn);
   }
@@ -87,9 +69,12 @@ export class BackgroundKeyboardHandler {
     BackgroundKeyboardHandler.passThroughModeEnabled_ = true;
   }
 
-  private onKeyDown_(
-      evt: InternalKeyEvent,
-      stopPropogationCallback: StopPropagationCallback): void {
+  /**
+   * Handles custom key down events and sends the result (whether the event
+   * should propagate or not) to the browser.
+   */
+  private onKeyDown_(event: chrome.accessibilityPrivate.KeyboardEvent): void {
+    const evt = new InternalKeyEvent(event);
     EventSource.set(EventSourceType.STANDARD_KEYBOARD);
     evt.stickyMode = ChromeVoxPrefs.isStickyModeOn();
 
@@ -111,6 +96,7 @@ export class BackgroundKeyboardHandler {
     // Try to restore to the last valid range.
     ChromeVoxRange.restoreLastValidRangeIfNeeded();
 
+    let stopPropagation = false;
     if (!this.callOnKeyDownHandlers_(evt) ||
         this.shouldConsumeSearchKey_(evt)) {
       if (BackgroundKeyboardHandler.passThroughModeEnabled_) {
@@ -118,9 +104,13 @@ export class BackgroundKeyboardHandler {
             KeyboardPassThroughState.PENDING_PASS_THROUGH_SHORTCUT_KEYUPS;
       }
 
-      stopPropogationCallback(true);
+      stopPropagation = true;
       this.eatenKeyDowns_.add(evt.keyCode);
     }
+
+    // Send result to the browser.
+    chrome.accessibilityPrivate.processPendingSpokenFeedbackEvent(
+        /*id=*/ evt.id, /*propagate=*/ !stopPropagation);
   }
 
   /** Returns true if the key should continue propagation. */
@@ -153,11 +143,15 @@ export class BackgroundKeyboardHandler {
     return Boolean(evt.metaKey) || evt.keyCode === KeyCode['SEARCH'];
   }
 
-  private onKeyUp_(
-      evt: InternalKeyEvent,
-      stopPropogationCallback: StopPropagationCallback): void {
+  /**
+   * Handles custom key up events and sends the result (whether the event
+   * should propagate or not) to the browser.
+   */
+  private onKeyUp_(event: chrome.accessibilityPrivate.KeyboardEvent): void {
+    const evt = new InternalKeyEvent(event);
+    let stopPropagation = false;
     if (this.eatenKeyDowns_.has(evt.keyCode)) {
-      stopPropogationCallback(true);
+      stopPropagation = true;
       this.eatenKeyDowns_.delete(evt.keyCode);
     }
 
@@ -184,6 +178,10 @@ export class BackgroundKeyboardHandler {
         this.passThroughState_ = KeyboardPassThroughState.NO_PASS_THROUGH;
       }
     }
+
+    // Send result to the browser.
+    chrome.accessibilityPrivate.processPendingSpokenFeedbackEvent(
+        /*id=*/ evt.id, /*propagate=*/ !stopPropagation);
   }
 }
 

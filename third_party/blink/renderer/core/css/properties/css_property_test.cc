@@ -2,15 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "third_party/blink/renderer/core/css/properties/css_property.h"
 
 #include <cstring>
 
+#include "base/compiler_specific.h"
 #include "base/memory/values_equivalent.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/mojom/origin_trials/origin_trial_feature.mojom-shared.h"
@@ -21,7 +17,6 @@
 #include "third_party/blink/renderer/core/css/properties/css_property_instances.h"
 #include "third_party/blink/renderer/core/css/properties/css_property_ref.h"
 #include "third_party/blink/renderer/core/css/properties/longhands.h"
-#include "third_party/blink/renderer/core/css/properties/shorthands.h"
 #include "third_party/blink/renderer/core/css/resolver/style_builder.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver.h"
 #include "third_party/blink/renderer/core/css/resolver/style_resolver_state.h"
@@ -103,7 +98,7 @@ class CSSPropertyTest : public PageTestBase {
 
     StyleResolverState state(GetDocument(), *GetDocument().body(),
                              &style_recalc_context);
-    state.SetStyle(GetDocument().GetStyleResolver().InitialStyle());
+    state.CreateNewClonedStyle(GetDocument().GetStyleResolver().InitialStyle());
 
     StyleBuilder::ApplyProperty(property, state, *value);
     const ComputedStyle* style = state.TakeStyle();
@@ -302,31 +297,6 @@ TEST_F(CSSPropertyTest, OriginTrialTestPropertyWithContext) {
   EXPECT_EQ(CSSExposure::kNone, property.Exposure());
 }
 
-TEST_F(CSSPropertyTest, OriginTrialTestShorthand) {
-  const CSSProperty& property = GetCSSPropertyOriginTrialTestShorthand();
-
-  // Origin trial not enabled:
-  EXPECT_FALSE(property.IsWebExposed(GetExecutionContext()));
-  EXPECT_FALSE(property.IsUAExposed(GetExecutionContext()));
-  EXPECT_EQ(CSSExposure::kNone, property.Exposure(GetExecutionContext()));
-
-  // Enable it:
-  LocalDOMWindow* window = GetFrame().DomWindow();
-  OriginTrialContext* context = window->GetOriginTrialContext();
-  context->AddFeature(mojom::blink::OriginTrialFeature::kOriginTrialsSampleAPI);
-
-  // Context-aware exposure functions should not report the property as exposed
-  // because shorthands cannot be consistently handled for origin trials.
-  EXPECT_FALSE(property.IsWebExposed(GetExecutionContext()));
-  EXPECT_FALSE(property.IsUAExposed(GetExecutionContext()));
-  EXPECT_EQ(CSSExposure::kNone, property.Exposure(GetExecutionContext()));
-
-  // Context-agnostic exposure functions should also report kNone:
-  EXPECT_FALSE(property.IsWebExposed());
-  EXPECT_FALSE(property.IsUAExposed());
-  EXPECT_EQ(CSSExposure::kNone, property.Exposure());
-}
-
 TEST_F(CSSPropertyTest, AlternativePropertyData) {
   for (CSSPropertyID property_id : CSSPropertyIDList()) {
     const CSSProperty& property = CSSProperty::Get(property_id);
@@ -345,12 +315,12 @@ TEST_F(CSSPropertyTest, AlternativePropertyData) {
                 alternative.GetPropertyNameAtomicString());
       EXPECT_EQ(property.GetPropertyNameString(),
                 alternative.GetPropertyNameString());
-      EXPECT_EQ(std::strcmp(property.GetPropertyName(),
-                            alternative.GetPropertyName()),
-                0);
-      EXPECT_EQ(std::strcmp(property.GetJSPropertyName(),
-                            alternative.GetJSPropertyName()),
-                0);
+      UNSAFE_TODO(EXPECT_EQ(std::strcmp(property.GetPropertyName(),
+                                        alternative.GetPropertyName()),
+                            0));
+      UNSAFE_TODO(EXPECT_EQ(std::strcmp(property.GetJSPropertyName(),
+                                        alternative.GetJSPropertyName()),
+                            0));
 
       // Alternative properties should should also use the same CSSSampleId.
       EXPECT_EQ(GetCSSSampleId(property_id), GetCSSSampleId(alternative_id));

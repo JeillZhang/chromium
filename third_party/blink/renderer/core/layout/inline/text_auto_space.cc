@@ -186,18 +186,17 @@ void TextAutoSpace::Apply(const InlineNode& node, InlineItemsData& data) {
   std::optional<SpacingApplier> applier_opt;
   std::optional<bool> is_chinese;
 
-  const WTF::CodePointIterator::Utf16 char_begin{text.Span16()};
+  const CodePointIterator::Utf16 char_begin{text.Span16()};
   const auto char_end = char_begin.EndForThis();
   for (auto char_iter = char_begin; char_iter != char_end;) {
     const UChar32 ch = *char_iter;
+    if (Character::IsGcMark(ch)) [[unlikely]] {
+      ++char_iter;
+      continue;
+    }
     EastAsianSpacingType type = Character::GetEastAsianSpacingType(ch);
     const bool is_wide = type == EastAsianSpacingType::kWide;
     if (is_wide || is_last_wide) [[unlikely]] {
-      if (Character::IsGcMark(ch)) [[unlikely]] {
-        ++char_iter;
-        continue;
-      }
-
       // Resolve `kConditional` to `kNarrow` or `kOther`.
       if (!is_chinese) [[unlikely]] {
         is_chinese = IsMacrolanguageChinese(node);

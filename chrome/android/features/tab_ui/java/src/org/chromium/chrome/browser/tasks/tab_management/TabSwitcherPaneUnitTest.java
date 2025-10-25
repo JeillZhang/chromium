@@ -52,7 +52,6 @@ import org.chromium.base.Token;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
@@ -70,6 +69,7 @@ import org.chromium.chrome.browser.hub.LoadHint;
 import org.chromium.chrome.browser.hub.PaneHubController;
 import org.chromium.chrome.browser.hub.PaneId;
 import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
+import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.price_tracking.PriceTrackingFeatures;
 import org.chromium.chrome.browser.price_tracking.PriceTrackingUtilities;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -96,14 +96,18 @@ import org.chromium.components.browser_ui.widget.MenuOrKeyboardActionController.
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler.BackPressResult;
 import org.chromium.components.feature_engagement.FeatureConstants;
 import org.chromium.components.feature_engagement.Tracker;
+import org.chromium.components.prefs.PrefService;
 import org.chromium.components.tab_group_sync.LocalTabGroupId;
 import org.chromium.components.tab_group_sync.SavedTabGroup;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
+import org.chromium.components.user_prefs.UserPrefs;
+import org.chromium.components.user_prefs.UserPrefsJni;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.DoubleConsumer;
+import java.util.function.Supplier;
 
 /** Unit tests for {@link TabSwitcherPane} and {@link TabSwitcherPaneBase}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -142,6 +146,8 @@ public class TabSwitcherPaneUnitTest {
     @Rule public MockitoRule mMockitoRule = MockitoJUnit.rule();
 
     @Mock private SharedPreferences mSharedPreferences;
+    @Mock private PrefService mPrefService;
+    @Mock private UserPrefs.Natives mUserPrefsJniMock;
     @Mock private Profile mProfile;
     @Mock private ProfileProvider mProfileProvider;
     @Mock private TabSwitcherPaneCoordinatorFactory mTabSwitcherPaneCoordinatorFactory;
@@ -158,7 +164,6 @@ public class TabSwitcherPaneUnitTest {
     @Mock private UserEducationHelper mUserEducationHelper;
     @Mock private View mAnchorView;
     @Mock private TabGroupSyncService mTabGroupSyncService;
-    @Mock private Runnable mRunnable;
     @Mock private Tab mTab;
     @Mock private SavedTabGroup mSavedTabGroup;
     @Mock private TabGroupCreationUiDelegate mUiFlow;
@@ -251,6 +256,7 @@ public class TabSwitcherPaneUnitTest {
                         anyBoolean(),
                         any(),
                         any(),
+                        any(),
                         any());
         when(mTabSwitcherPaneCoordinatorFactory.getTabListMode()).thenReturn(TabListMode.GRID);
         when(mTabSwitcherPaneCoordinator.getHandleBackPressChangedSupplier())
@@ -292,11 +298,17 @@ public class TabSwitcherPaneUnitTest {
                         mEdgeToEdgeSupplier,
                         mCompositorViewHolderSupplier,
                         mUiFlow,
-                        mMockArchivedTabsAutoDeletePromoManager);
+                        mMockArchivedTabsAutoDeletePromoManager,
+                        /* xrSpaceModeObservableSupplier= */ null);
         ShadowLooper.runUiThreadTasks();
         verify(mSharedPreferences)
                 .registerOnSharedPreferenceChangeListener(
                         mPriceAnnotationsPrefListenerCaptor.capture());
+
+        when(mUserPrefsJniMock.get(mProfile)).thenReturn(mPrefService);
+        when(mPrefService.getBoolean(Pref.AUTO_OPEN_SYNCED_TAB_GROUPS)).thenReturn(true);
+        when(mTabGroupSyncService.getVersioningMessageController()).thenReturn(mock());
+        UserPrefsJni.setInstanceForTesting(mUserPrefsJniMock);
     }
 
     @After

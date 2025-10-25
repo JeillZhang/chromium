@@ -59,6 +59,7 @@ import org.chromium.chrome.browser.tab.MockTab;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.IncognitoTabModel;
 import org.chromium.chrome.browser.tabmodel.IncognitoTabModelObserver;
+import org.chromium.chrome.browser.tabmodel.TabClosingSource;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
@@ -130,6 +131,7 @@ public class IncognitoTabSwitcherPaneUnitTest {
                         anyBoolean(),
                         any(),
                         any(),
+                        any(),
                         any());
 
         mTabList = List.of(mock(Tab.class));
@@ -154,7 +156,8 @@ public class IncognitoTabSwitcherPaneUnitTest {
                         mUserEducationHelper,
                         mEdgeToEdgeSupplier,
                         mCompositorViewHolderSupplier,
-                        mUiFlow);
+                        mUiFlow,
+                        /* xrSpaceModeObservableSupplier= */ null);
     }
 
     @After
@@ -396,7 +399,25 @@ public class IncognitoTabSwitcherPaneUnitTest {
         IncognitoTabModelObserver observer = mIncognitoTabModelObserverCaptor.getValue();
 
         observer.didBecomeEmpty();
+
+        verify(mPaneHubController).focusPane(PaneId.TAB_SWITCHER);
+        assertNull(mIncognitoTabSwitcherPane.getTabSwitcherPaneCoordinator());
+    }
+
+    @Test
+    public void testForceCleanup_ReauthVisible() {
+        when(mIncognitoReauthController.isReauthPageShowing()).thenReturn(true);
+        mIncognitoReauthControllerSupplier.set(mIncognitoReauthController);
         ShadowLooper.runUiThreadTasks();
+        mIncognitoTabSwitcherPane.createTabSwitcherPaneCoordinator();
+        assertNotNull(mIncognitoTabSwitcherPane.getTabSwitcherPaneCoordinator());
+        mIncognitoTabSwitcherPane.setPaneHubController(mPaneHubController);
+
+        mIncognitoTabSwitcherPane.initWithNative();
+        verify(mIncognitoTabModel).addIncognitoObserver(mIncognitoTabModelObserverCaptor.capture());
+        IncognitoTabModelObserver observer = mIncognitoTabModelObserverCaptor.getValue();
+
+        observer.didBecomeEmpty();
 
         verify(mPaneHubController).focusPane(PaneId.TAB_SWITCHER);
         assertNull(mIncognitoTabSwitcherPane.getTabSwitcherPaneCoordinator());
@@ -417,7 +438,7 @@ public class IncognitoTabSwitcherPaneUnitTest {
         MockTab mockTab = new MockTab(0, mProfile);
         mRecentlySwipedTabIdSupplier.set(0);
 
-        observer.onFinishingTabClosure(mockTab);
+        observer.onFinishingTabClosure(mockTab, TabClosingSource.UNKNOWN);
         incognitoObserver.didBecomeEmpty();
         ShadowLooper.runUiThreadTasks();
 

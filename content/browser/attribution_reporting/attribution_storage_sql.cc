@@ -274,8 +274,6 @@ struct AttributionStorageSql::ReportCorruptionStatusSetAndIds {
 base::expected<AttributionStorageSql::StoredSourceData,
                AttributionStorageSql::ReportCorruptionStatusSetAndIds>
 AttributionStorageSql::ReadSourceFromStatement(sql::Statement& statement) {
-  CHECK_GE(statement.ColumnCount(), kSourceColumnCount);
-
   int col = 0;
 
   if (statement.GetColumnType(col) == sql::ColumnType::kNull) {
@@ -1273,8 +1271,6 @@ bool AttributionStorageSql::IncrementNumAttributions(StoredSource::Id id) {
 base::expected<AttributionReport,
                AttributionStorageSql::ReportCorruptionStatusSetAndIds>
 AttributionStorageSql::ReadReportFromStatement(sql::Statement& statement) {
-  CHECK_EQ(statement.ColumnCount(), kSourceColumnCount + 12);
-
   int col = kSourceColumnCount;
   AttributionReport::Id report_id(statement.ColumnInt64(col++));
   base::Time trigger_time = statement.ColumnTime(col++);
@@ -1477,8 +1473,6 @@ bool AttributionStorageSql::DeleteExpiredSources() {
   auto delete_sources_from_paged_select =
       [this](sql::Statement& statement)
           VALID_CONTEXT_REQUIRED(sequence_checker_) -> bool {
-    CHECK_EQ(statement.ColumnCount(), 1);
-
     while (true) {
       std::vector<StoredSource::Id> source_ids;
       while (statement.Step()) {
@@ -1613,6 +1607,44 @@ bool AttributionStorageSql::AdjustOfflineReportTimes(
   statement.BindTimeDelta(1, max_delay - min_delay + base::Microseconds(1));
   statement.BindTime(2, now);
   return statement.Run();
+}
+
+base::flat_map<AttributionReport::Type, int>
+AttributionStorageSql::AdjustNavigationRetryReportTimes(
+    base::TimeDelta min_delay,
+    base::TimeDelta max_delay) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  CHECK_GE(min_delay, base::TimeDelta());
+  CHECK_GE(max_delay, base::TimeDelta());
+  CHECK_LE(min_delay, max_delay);
+
+  if (!base::FeatureList::IsEnabled(kAttributionReportNavigationBasedRetry) ||
+      !LazyInit(DbCreationPolicy::kIgnoreIfAbsent)) {
+    return {};
+  }
+
+  base::Time now = base::Time::Now();
+
+  sql::Statement statement(db_.GetCachedStatement(
+      SQL_FROM_HERE, attribution_queries::kSetReportTimeOnNavigationSql));
+  statement.BindTime(0, now + min_delay);
+  statement.BindTimeDelta(1, max_delay - min_delay + base::Microseconds(1));
+  statement.BindInt(
+      2, static_cast<int>(kAttributionReportNavigationRetryAttempt.Get()));
+
+  base::flat_map<AttributionReport::Type, int> report_types;
+  while (statement.Step()) {
+    std::optional<AttributionReport::Type> report_type =
+        DeserializeReportType(statement.ColumnInt(0));
+    if (!report_type) {
+      continue;
+    }
+    auto [it, _] = report_types.try_emplace(*report_type, 0);
+    it->second++;
+  }
+
+  return report_types;
 }
 
 void AttributionStorageSql::ClearDataWithFilter(
@@ -2391,6 +2423,14 @@ bool AttributionStorageSql::CreateSchema() {
       "CREATE INDEX reports_by_context_site "
       "ON reports(context_site)WHERE report_type=1";
   if (!db_.Execute(kReportsContextSiteIndexSql)) {
+    return false;
+  }
+
+  static constexpr char kReportsAttemptsReportTimeIndexSql[] =
+      "CREATE INDEX reports_by_failed_send_attempts "
+      "ON reports(failed_send_attempts,report_time)WHERE "
+      "failed_send_attempts>0";
+  if (!db_.Execute(kReportsAttemptsReportTimeIndexSql)) {
     return false;
   }
 

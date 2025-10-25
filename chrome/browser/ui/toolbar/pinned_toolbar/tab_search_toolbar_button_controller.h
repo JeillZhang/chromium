@@ -8,18 +8,18 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
-#include "chrome/browser/ui/views/tab_search_bubble_host.h"
+#include "chrome/browser/ui/views/tab_search_bubble_host_observer.h"
 
 namespace actions {
 class ActionItem;
 }  // namespace actions
 
 class BrowserView;
+class TabSearchBubbleHost;
 
-class TabSearchToolbarButtonController : public TabSearchBubbleHost::Observer {
+class TabSearchToolbarButtonController : public TabSearchBubbleHostObserver {
  public:
-  TabSearchToolbarButtonController(BrowserView* browser_view,
-                                   TabSearchBubbleHost* tab_search_bubble_host);
+  explicit TabSearchToolbarButtonController(BrowserView* browser_view);
   ~TabSearchToolbarButtonController() override;
 
   TabSearchToolbarButtonController(const TabSearchToolbarButtonController&) =
@@ -27,11 +27,11 @@ class TabSearchToolbarButtonController : public TabSearchBubbleHost::Observer {
   TabSearchToolbarButtonController& operator=(
       const TabSearchToolbarButtonController&) = delete;
 
-  // TabSearchBubbleHost::Observer:
+  // TabSearchBubbleHostObserver:
   void OnBubbleInitializing() override;
   void OnBubbleDestroying() override;
 
-  void UpdateForWebUITabStrip();
+  void UpdateBubbleHost(TabSearchBubbleHost* new_tab_search_bubble_host);
 
  private:
   void MaybeHideActionEphemerallyInToolbar();
@@ -44,7 +44,7 @@ class TabSearchToolbarButtonController : public TabSearchBubbleHost::Observer {
   // into the controller.
   const raw_ptr<BrowserView> browser_view_;
 
-  base::ScopedObservation<TabSearchBubbleHost, TabSearchBubbleHost::Observer>
+  base::ScopedObservation<TabSearchBubbleHost, TabSearchBubbleHostObserver>
       tab_search_bubble_host_observation_{this};
 
   base::WeakPtrFactory<TabSearchToolbarButtonController> weak_ptr_factory_{

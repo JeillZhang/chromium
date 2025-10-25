@@ -16,6 +16,7 @@
 #include "base/hash/hash.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notimplemented.h"
 #include "base/numerics/checked_math.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -247,7 +248,7 @@ bool IsOutOfStorage(const base::FilePath& file_path,
                     int64_t storage_required,
                     std::optional<int64_t> free_disk_space_for_testing) {
   int64_t free_space = free_disk_space_for_testing.value_or(
-      base::SysInfo::AmountOfFreeDiskSpace(file_path));
+      base::SysInfo::AmountOfFreeDiskSpace(file_path).value_or(-1));
   return free_space < storage_required;
 }
 
@@ -1065,7 +1066,7 @@ void NearbySharingServiceImpl::Open(const ShareTarget& share_target,
 
 void NearbySharingServiceImpl::OpenURL(GURL url) {
   DCHECK(profile_);
-  ash::NewWindowDelegate::GetPrimary()->OpenUrl(
+  ash::NewWindowDelegate::GetInstance()->OpenUrl(
       url, ash::NewWindowDelegate::OpenUrlFrom::kUserInteraction,
       ash::NewWindowDelegate::Disposition::kNewForegroundTab);
 }

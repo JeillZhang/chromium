@@ -68,12 +68,10 @@ const CGFloat kTopCornerRadius = 10;
       kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
   self.view.clipsToBounds = YES;
 
-  if (@available(iOS 17, *)) {
-    NSArray<UITrait>* traits =
-        TraitCollectionSetForTraits(@[ UITraitVerticalSizeClass.class ]);
-    [self registerForTraitChanges:traits
-                       withAction:@selector(updateUIOnTraitChange)];
-  }
+  NSArray<UITrait>* traits =
+      TraitCollectionSetForTraits(@[ UITraitVerticalSizeClass.class ]);
+  [self registerForTraitChanges:traits
+                     withAction:@selector(updateUIOnTraitChange)];
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -119,22 +117,6 @@ const CGFloat kTopCornerRadius = 10;
   _heightConstraint =
       [self.view.heightAnchor constraintEqualToConstant:initialHeight];
   _heightConstraint.active = YES;
-}
-
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (@available(iOS 17, *)) {
-    return;
-  }
-
-  [self updateUIOnTraitChange];
-}
-#endif
-
-- (BOOL)accessibilityPerformEscape {
-  [self closeSheet];
-  return YES;
 }
 
 // Returns the calculated detent of the medium height sheet. If the content
@@ -260,6 +242,13 @@ const CGFloat kTopCornerRadius = 10;
   base::UmaHistogramEnumeration("IOS.ContextualPanel.DismissedReason",
                                 ContextualPanelDismissedReason::UserDismissed);
   [self.contextualSheetHandler closeContextualSheet];
+}
+
+#pragma mark - UIAccessibilityAction
+
+- (BOOL)accessibilityPerformEscape {
+  [self closeSheet];
+  return YES;
 }
 
 #pragma mark - ContextualSheetDisplayController

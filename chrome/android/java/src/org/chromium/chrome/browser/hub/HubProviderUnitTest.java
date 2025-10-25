@@ -122,7 +122,9 @@ public class HubProviderUnitTest {
                         () -> mTabModelSelector,
                         () -> mMenuButtonCoordinator,
                         mEdgeToEdgeSupplier,
-                        mSearchActivityClient);
+                        mSearchActivityClient,
+                        /* xrSpaceModeObservableSupplier= */ null,
+                        /* defaultPaneId= */ PaneId.TAB_SWITCHER);
     }
 
     @Test

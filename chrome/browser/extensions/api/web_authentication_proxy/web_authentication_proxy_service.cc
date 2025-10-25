@@ -6,7 +6,6 @@
 
 #include <limits>
 #include <optional>
-#include <string>
 #include <variant>
 
 #include "base/json/json_writer.h"
@@ -25,12 +24,15 @@
 #include "extensions/browser/extension_function_histogram_value.h"
 #include "extensions/browser/extension_registry_factory.h"
 #include "extensions/browser/extension_util.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
 #include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "third_party/blink/public/mojom/webauthn/authenticator.mojom-shared.h"
 #include "third_party/blink/public/mojom/webauthn/authenticator.mojom.h"
 #include "url/gurl.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 

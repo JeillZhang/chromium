@@ -18,7 +18,7 @@
 #include "base/containers/flat_set.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -62,6 +62,7 @@ class LegacyTokenHandleFetcher;
 class EolNotification;
 class InputEventsBlocker;
 class U2FNotification;
+class TokenHandleService;
 
 namespace test {
 class UserSessionManagerTestApi;
@@ -478,7 +479,7 @@ class UserSessionManager
   // Returns `true` if token handles should be used on this device.
   bool TokenHandlesEnabled();
 
-  void CreateTokenUtilIfMissing();
+  void CreateTokenHandleStoreIfMissing();
 
   // Update token handle if the existing token handle is missing/invalid.
   void UpdateTokenHandleIfRequired(Profile* const profile,
@@ -516,6 +517,16 @@ class UserSessionManager
   // doesn't exist.
   HelpAppNotificationController* GetHelpAppNotificationController(
       Profile* profile);
+
+  void MaybeFetchTokenHandleForExistingUser(
+      TokenHandleService* token_handle_service);
+
+  void MaybeFetchTokenHandleForExistingUserIfInvalidOrEmpty(
+      const user_manager::User* user,
+      TokenHandleService* token_handle_service);
+
+  void FetchTokenHandleLegacy(Profile* profile, const user_manager::User* user);
+  void FetchTokenHandle(Profile* profile, const user_manager::User* user);
 
   base::WeakPtr<UserSessionManagerDelegate> delegate_;
 

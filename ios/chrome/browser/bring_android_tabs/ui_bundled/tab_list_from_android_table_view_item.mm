@@ -23,7 +23,7 @@
   return self;
 }
 
-- (void)configureCell:(TableViewCell*)tableCell
+- (void)configureCell:(LegacyTableViewCell*)tableCell
            withStyler:(ChromeTableViewStyler*)styler {
   [super configureCell:tableCell withStyler:styler];
 
@@ -36,7 +36,7 @@
 }
 
 - (NSString*)uniqueIdentifier {
-  return self.URL ? base::SysUTF8ToNSString(self.URL.gurl.host()) : @"";
+  return self.URL ? base::SysUTF8ToNSString(self.URL.gurl.GetHost()) : @"";
 }
 
 #pragma mark - Private
@@ -95,7 +95,7 @@
   [self createSubviews];
 }
 
-#pragma mark - Accessors
+#pragma mark - UIAccessibility
 
 - (NSString*)accessibilityLabel {
   NSString* accessibilityLabel = self.titleLabel.text;
@@ -111,6 +111,8 @@
   }
   return userInputLabels;
 }
+
+#pragma mark - UIAccessibilityIdentification
 
 - (NSString*)accessibilityIdentifier {
   return self.titleLabel.text;

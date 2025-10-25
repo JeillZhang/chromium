@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/web/webui/url_data_manager_ios_backend.h"
 
 #import <set>
@@ -57,7 +62,7 @@ bool CheckURLIsValid(const GURL& url) {
   std::vector<std::string> additional_schemes;
   DCHECK(GetWebClient()->IsAppSpecificURL(url) ||
          (GetWebClient()->GetAdditionalWebUISchemes(&additional_schemes),
-          base::Contains(additional_schemes, url.scheme())));
+          base::Contains(additional_schemes, url.GetScheme())));
 
   if (!url.is_valid()) {
     NOTREACHED();
@@ -85,11 +90,11 @@ void URLToRequestPath(const GURL& url, std::string* path) {
 // x/ui/webui/resources so to not go out of scope of the module.
 GURL RedirectWebUIResources(const GURL url) {
   static std::string kWebUIResources = "/ui/webui/resources";
-  if (base::StartsWith(url.path(), kWebUIResources,
+  if (base::StartsWith(url.GetPath(), kWebUIResources,
                        base::CompareCase::SENSITIVE)) {
     GURL::Replacements replacements;
     replacements.SetHostStr(kWebUIResourcesHost);
-    replacements.SetPathStr(url.path().c_str() + kWebUIResources.size());
+    replacements.SetPathStr(url.GetPath().c_str() + kWebUIResources.size());
     return url.ReplaceComponents(replacements);
   }
   return url;
@@ -440,7 +445,7 @@ class ChromeProtocolHandler
   }
 
  private:
-  raw_ptr<BrowserState> browser_state_;
+  raw_ptr<BrowserState, DanglingUntriaged> browser_state_;
 
   // True when generated from an incognito profile.
   const bool is_incognito_;
@@ -548,14 +553,14 @@ URLDataSourceIOSImpl* URLDataManagerIOSBackend::GetDataSourceFromURL(
     const GURL& url) {
   // The input usually looks like: chrome://source_name/extra_bits?foo
   // so do a lookup using the host of the URL.
-  DataSourceMap::iterator i = data_sources_.find(url.host());
+  DataSourceMap::iterator i = data_sources_.find(url.GetHost());
   if (i != data_sources_.end()) {
     return i->second.get();
   }
 
   // No match using the host of the URL, so do a lookup using the scheme for
   // URLs on the form source_name://extra_bits/foo .
-  i = data_sources_.find(url.scheme() + "://");
+  i = data_sources_.find(url.GetScheme() + "://");
   if (i != data_sources_.end()) {
     return i->second.get();
   }

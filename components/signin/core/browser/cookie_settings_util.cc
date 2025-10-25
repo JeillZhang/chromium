@@ -27,7 +27,7 @@ bool SettingsAllowSigninCookies(
   return true;
 #else
   GURL gaia_url = GaiaUrls::GetInstance()->gaia_url();
-  GURL google_url = GaiaUrls::GetInstance()->google_url();
+  GURL google_url = GaiaUrls::GetInstance()->secure_google_url();
   return cookie_settings &&
          cookie_settings->IsFullCookieAccessAllowed(
              gaia_url, net::SiteForCookies::FromUrl(gaia_url),
@@ -48,15 +48,15 @@ bool SettingsDeleteSigninCookiesOnExit(
   return false;
 #else
   GURL gaia_url = GaiaUrls::GetInstance()->gaia_url();
-  GURL google_url = GaiaUrls::GetInstance()->google_url();
+  GURL google_url = GaiaUrls::GetInstance()->secure_google_url();
   ContentSettingsForOneType settings = cookie_settings->GetCookieSettings();
 
   return !cookie_settings ||
          cookie_settings->ShouldDeleteCookieOnExit(
-             settings, "." + gaia_url.host(),
+             settings, "." + gaia_url.GetHost(),
              net::CookieSourceScheme::kSecure) ||
          cookie_settings->ShouldDeleteCookieOnExit(
-             settings, "." + google_url.host(),
+             settings, "." + google_url.GetHost(),
              net::CookieSourceScheme::kSecure);
 #endif
 }

@@ -7,7 +7,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/android/build_info.h"
 #include "base/feature_list.h"
 #include "base/types/expected.h"
 #include "content/public/browser/android/android_overlay_provider.h"
@@ -73,7 +72,7 @@ const media::VideoCodec kMP4VideoCodecsToQuery[] = {
 
 // Is an audio sink connected which supports the given codec?
 static bool CanPassthrough(media::AudioCodec codec) {
-  return (media::AudioManagerAndroid::GetSinkAudioEncodingFormats() &
+  return (media::AudioManagerAndroid::GetHdmiOutputEncodingFormats() &
           media::ConvertAudioCodecToBitstreamFormat(codec)) != 0;
 }
 

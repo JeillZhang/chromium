@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <set>
+#include <string>
 
 #include "base/memory/raw_ref.h"
 #include "cc/mojo_embedder/mojo_embedder_export.h"
@@ -40,14 +41,16 @@ class CC_MOJO_EMBEDDER_EXPORT VizLayerContext
 
   // LayerContext:
   void SetVisible(bool visible) override;
-  void UpdateDisplayTreeFrom(LayerTreeImpl& tree,
-                             viz::ClientResourceProvider& resource_provider,
-                             viz::RasterContextProvider& context_provider,
-                             const gfx::Rect& viewport_damage_rect) override;
+  base::TimeTicks UpdateDisplayTreeFrom(
+      LayerTreeImpl& tree,
+      viz::ClientResourceProvider& resource_provider,
+      gpu::SharedImageInterface* shared_image_interface,
+      const gfx::Rect& viewport_damage_rect,
+      const viz::LocalSurfaceId& target_local_surface_id) override;
   void UpdateDisplayTile(PictureLayerImpl& layer,
                          const Tile& tile,
                          viz::ClientResourceProvider& resource_provider,
-                         viz::RasterContextProvider& context_provider,
+                         gpu::SharedImageInterface* shared_image_interface,
                          bool update_damage) override;
 
   // viz::mojom::LayerContextClient:
@@ -63,6 +66,9 @@ class CC_MOJO_EMBEDDER_EXPORT VizLayerContext
   // have been no changes, this returns null.
   viz::mojom::AnimationTimelinePtr MaybeSerializeAnimationTimeline(
       AnimationTimeline& timeline);
+
+  void OnMojoConnectionError(uint32_t custom_reason,
+                             const std::string& description);
 
   const raw_ref<LayerTreeHostImpl> host_impl_;
 
@@ -80,6 +86,8 @@ class CC_MOJO_EMBEDDER_EXPORT VizLayerContext
   bool needs_full_sync_ = true;
 
   PropertyTrees last_committed_property_trees_{*host_impl_};
+
+  base::WeakPtrFactory<VizLayerContext> weak_factory_{this};
 };
 
 }  // namespace mojo_embedder

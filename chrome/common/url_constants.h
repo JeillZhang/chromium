@@ -21,9 +21,9 @@
 #include "build/build_config.h"
 #include "chrome/common/buildflags.h"
 #include "chrome/common/webui_url_constants.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/url_constants.h"
 #include "net/net_buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 
 namespace chrome {
 
@@ -144,11 +144,6 @@ inline constexpr char kChromeOsHelpViaWebUIURL[] =
     "https://support.google.com/chromebook?p=help&ctx=settings";
 #endif  // BUILDFLAG(GOOGLE_CHROME_BRANDING)
 #endif  // BUILDFLAG(IS_CHROMEOS)
-
-// The isolated-app: scheme is used for Isolated Web Apps. A public explainer
-// can be found here: https://github.com/reillyeon/isolated-web-apps
-inline constexpr char kIsolatedAppScheme[] = "isolated-app";
-inline constexpr char16_t kIsolatedAppSchemeUtf16[] = u"isolated-app";
 
 // The chrome-native: scheme is used show pages rendered with platform specific
 // widgets instead of using HTML.
@@ -323,9 +318,20 @@ inline constexpr char kGoogleAccountWorkAddressURL[] =
     "https://myaccount.google.com/address/"
     "work?utm_source=chrome&utm_campaign=manage_addresses";
 
+// URL of the change Google Account name page.
+inline constexpr char kGoogleAccountNameEmailAddressEditURL[] =
+    "https://myaccount.google.com/"
+    "personal-info?utm_source=chrome-settings&utm_medium=autofill";
+
 // URL of the two factor authentication setup required intersitial.
 inline constexpr char kGoogleTwoFactorIntersitialURL[] =
     "https://myaccount.google.com/interstitials/twosvrequired";
+
+// The scheme used for google-chrome:// URLs.
+// TODO(b/446672134): Use a distinct value for each brand (e.g.,
+//  Google Chrome vs. Chromium) and install mode (e.g., stable vs.
+//  side-by-side beta).
+inline constexpr char kGoogleChromeURLScheme[] = "google-chrome";
 
 // URL of the Google Password Manager.
 inline constexpr char kGooglePasswordManagerURL[] =
@@ -381,9 +387,25 @@ inline constexpr char16_t kManagedUiLearnMoreUrl[] =
 inline constexpr char kInsecureDownloadBlockingLearnMoreUrl[] =
     "https://support.google.com/chrome?p=mixed_content_downloads";
 
-// "myactivity.google.com" URL for the history checkbox in ClearBrowsingData.
+// "myactivity.google.com" URLs with their respective UTM sources.
+// - In the Clear Browsing Data footer.
+// - In the Clear Browsing Data "notice about other forms of history".
+// - On the history page.
 inline constexpr char16_t kMyActivityUrlInClearBrowsingData[] =
     u"https://myactivity.google.com/myactivity?utm_source=chrome_cbd";
+inline constexpr char16_t kMyActivityUrlInClearBrowsingDataNotice[] =
+    u"https://myactivity.google.com/myactivity/?utm_source=chrome_n";
+inline constexpr char16_t kMyActivityUrlInHistory[] =
+    u"https://myactivity.google.com/myactivity/?utm_source=chrome_h";
+
+// The URL for the Gemini Personal Context page.
+inline constexpr char16_t kGeminiPersonalContextUrl[] =
+    u"https://gemini.google.com/saved-info";
+
+// The URL for "Your Gemini Apps Activity" page.inline constexpr char16_t
+// kMyActivityGeminiAppsUrl[] =
+inline constexpr char16_t kMyActivityGeminiAppsUrl[] =
+    u"https://myactivity.google.com/product/gemini";
 
 // Help URL for the Omnibox setting.
 inline constexpr char16_t kOmniboxLearnMoreURL[] =
@@ -400,6 +422,10 @@ inline constexpr char kPageInfoHelpCenterURL[] =
 #else
     "https://support.google.com/chrome?p=ui_security_indicator";
 #endif
+
+// Help center article URL for automated password change.
+inline constexpr char16_t kPasswordChangeLearnMoreURL[] =
+    u"https://support.google.com/chrome?p=automatedpasswordchange";
 
 // Help URL for the bulk password check.
 inline constexpr char kPasswordCheckLearnMoreURL[] =
@@ -447,6 +473,9 @@ inline constexpr char kAddressesAndPaymentMethodsLearnMoreURL[] =
 // finalized.
 inline constexpr char16_t kPayOverTimeLearnMoreUrl[] =
     u"https://support.google.com/googlepay?p=bnpl_autofill_chrome";
+
+// The URL for the Wallet website.
+inline constexpr char16_t kWalletUrl[] = u"https://wallet.google.com";
 
 // Help URL for Autofill AI.
 inline constexpr char16_t kAutofillAiLearnMoreURL[] =
@@ -548,8 +577,13 @@ inline constexpr char16_t kSyncEncryptionHelpURL[] =
 inline constexpr char kSyncErrorsHelpURL[] =
     "https://support.google.com/chrome?p=settings_sync_error";
 
-inline constexpr char kSyncGoogleDashboardURL[] =
+// Legacy URL to the sync google dashboard.
+inline constexpr char kLegacySyncGoogleDashboardURL[] =
     "https://www.google.com/settings/chrome/sync";
+
+// New URL to the sync google dashboard.
+inline constexpr char kNewSyncGoogleDashboardURL[] =
+    "https://chrome.google.com/data";
 
 // The URL for the "Learn more" page for sync setup on the personal stuff page.
 inline constexpr char16_t kSyncLearnMoreURL[] =
@@ -593,6 +627,10 @@ inline constexpr char16_t kHistorySearchSettingURL[] =
 // The URL for the "Learn more" page for Wallpaper Search.
 inline constexpr char kWallpaperSearchLearnMorePageURL[] =
     "https://support.google.com/chrome?p=create_themes_with_ai";
+
+// The URL for the passed in Google Wallet.
+inline constexpr char kWalletPassesPageURL[] =
+    "https://wallet.google.com/wallet/passes";
 
 // The URL for the "Learn more" page for Tab Organization.
 inline constexpr char kTabOrganizationLearnMorePageURL[] =
@@ -760,14 +798,6 @@ inline constexpr char kEchoLearnMoreURL[] =
 // The URL for EOL notification
 inline constexpr char16_t kEolNotificationURL[] =
     u"https://www.google.com/chromebook/older/";
-
-// The URL for the EOL incentive with offer.
-inline constexpr char kEolIncentiveNotificationOfferURL[] =
-    "https://www.google.com/chromebook/renew-chromebook-offer";
-
-// The URL for the EOL incentive with no offer.
-inline constexpr char kEolIncentiveNotificationNoOfferURL[] =
-    "https://www.google.com/chromebook/renew-chromebook";
 
 // The URL for Auto Update Policy.
 inline constexpr char16_t kAutoUpdatePolicyURL[] =
@@ -1006,6 +1036,12 @@ inline constexpr char kChromeAppsDeprecationLearnMoreURL[] =
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
 inline constexpr char kChromeRootStoreSettingsHelpCenterURL[] =
     "https://support.google.com/chrome?p=root_store";
+#endif
+
+#if BUILDFLAG(ENABLE_PDF_SAVE_TO_DRIVE)
+// "Learn more" URL for how to save PDF to Google Drive from the PDF viewer.
+inline constexpr char kPdfViewerSaveToDriveHelpCenterURL[] =
+    "https://support.google.com/drive?p=save_from_chrome";
 #endif
 
 // Please do not append entries here. See the comments at the top of the file.

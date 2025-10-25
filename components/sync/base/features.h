@@ -21,23 +21,53 @@ inline constexpr base::FeatureParam<int>
         &kDeferredSyncStartupCustomDelay,
         "DeferredSyncStartupCustomDelayInSeconds", 1};
 
+// Enables syncing of settings from the user's account.
+BASE_DECLARE_FEATURE(kSyncAccountSettings);
+
 // Enables syncing of Loyalty Cards coming from Google Wallet.
 BASE_DECLARE_FEATURE(kSyncAutofillLoyaltyCard);
+
+// Makes the AUTOFILL_VALUABLE sync type non-encryptable.
+BASE_DECLARE_FEATURE(kSyncMakeAutofillValuableNonEncryptable);
+
+// Enables syncing of usage metadata from Google Wallet passes.
+BASE_DECLARE_FEATURE(kSyncAutofillValuableMetadata);
+
+// Enables storing valuables in the profile db instead of the account db.
+BASE_DECLARE_FEATURE(kSyncMoveValuablesToProfileDb);
 
 // Enables syncing account-local metadata for shared tab groups.
 BASE_DECLARE_FEATURE(kSyncSharedTabGroupAccountData);
 
-#if BUILDFLAG(IS_ANDROID)
+// Enables syncing comments for shared contexts.
+BASE_DECLARE_FEATURE(kSyncSharedComment);
+
+// Enables syncing of AI threads across devices.
+BASE_DECLARE_FEATURE(kSyncAIThread);
+
+// Enables syncing of contextual tasks.
+BASE_DECLARE_FEATURE(kSyncContextualTask);
+
+#if !BUILDFLAG(IS_CHROMEOS)
 // Flag that controls Uno fast-follow features which are:
+// On Android:
 // - Batch upload of left-behind bookmarks from the bookmark manager
 // - Turn on bookmarks and reading list when signing in from bookmark manager
 // - Confirmation dialog when turning off “Allow Chrome sign-in”
 // - Promo for signed-in users with bookmarks toggle off
+// On desktop:
+// Adding history sync opt-in entry points, and other follow-ups to
+// `kReplaceSyncPromosWithSignInPromos`.
 BASE_DECLARE_FEATURE(kUnoPhase2FollowUp);
-#endif  // BUILDFLAG(IS_ANDROID)
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 // Controls whether to enable syncing of Autofill Wallet Credential Data.
 BASE_DECLARE_FEATURE(kSyncAutofillWalletCredentialData);
+
+// If enabled, the bookmarks count limit is controlled by a finch parameter.
+BASE_DECLARE_FEATURE(kSyncBookmarksLimit);
+inline constexpr base::FeatureParam<size_t> kSyncBookmarksLimitValue{
+    &kSyncBookmarksLimit, "sync-bookmarks-limit-value", 100000};
 
 BASE_DECLARE_FEATURE(kSyncEnableContactInfoDataTypeForCustomPassphraseUsers);
 BASE_DECLARE_FEATURE(kSyncEnableContactInfoDataTypeForDasherUsers);
@@ -63,6 +93,18 @@ BASE_DECLARE_FEATURE(kReplaceSyncPromosWithSignInPromos);
 // kEnablePreferencesAccountStorage is enabled.
 BASE_DECLARE_FEATURE(kSyncSupportAlwaysSyncingPriorityPreferences);
 
+// Enables syncing of flight reservations coming from Google Wallet.
+BASE_DECLARE_FEATURE(kSyncWalletFlightReservations);
+
+// Enables syncing of vehicle registrations coming from Google Wallet.
+BASE_DECLARE_FEATURE(kSyncWalletVehicleRegistrations);
+
+// If enabled, the spellcheck custom dictionary will keep the account dictionary
+// separate from the local dictionary.
+// TODO(crbug.com/443954137): This feature doesn't yet do anything. Implement
+// the local and account data separation behind this feature flag.
+BASE_DECLARE_FEATURE(kSpellcheckSeparateLocalAndAccountDictionaries);
+
 // Normally, if kReplaceSyncPromosWithSignInPromos is disabled,
 // UserSelectableType::kBookmarks is disabled by default upon sign-in. This
 // flag makes the type enabled by default, for manual testing.
@@ -84,11 +126,6 @@ constexpr bool IsReadingListAccountStorageEnabled() {
   return true;
 }
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-
-// Flags to allow AUTOFILL_WALLET_METADATA and AUTOFILL_WALLET_OFFER,
-// respectively, to run in transport mode.
-BASE_DECLARE_FEATURE(kSyncEnableWalletMetadataInTransportMode);
-BASE_DECLARE_FEATURE(kSyncEnableWalletOfferInTransportMode);
 
 // Flag to enable clean up of password deletions that may be unintentional.
 BASE_DECLARE_FEATURE(kSyncPasswordCleanUpAccidentalBatchDeletions);
@@ -158,18 +195,23 @@ inline constexpr base::FeatureParam<int>
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_IOS)
-// Enables a set of improvements to the existing trusted vault error infobar on
-// iOS (displaying it on pages with password forms, adjusting display time,
-// adding dismiss conditions, adding a notification pause after dismissal).
-BASE_DECLARE_FEATURE(kSyncTrustedVaultInfobarImprovements);
-#endif  // BUILDFLAG(IS_IOS)
-
-#if BUILDFLAG(IS_IOS)
 // Enables a message improvements to the existing trusted vault error infobar
 // (informing users that fixing the error will help them to start syncing their
 // passwords).
 BASE_DECLARE_FEATURE(kSyncTrustedVaultInfobarMessageImprovements);
 #endif  // BUILDFLAG(IS_IOS)
+
+// When enabled, Sync will use OSCryptAsync for encryption/decryption instead
+// of OSCrypt within the sync code.
+BASE_DECLARE_FEATURE(kSyncUseOsCryptAsync);
+
+BASE_DECLARE_FEATURE(kSyncDetermineAccountManagedStatus);
+BASE_DECLARE_FEATURE_PARAM(base::TimeDelta,
+                           kSyncDetermineAccountManagedStatusTimeout);
+
+// If enabled, the new sync dashboard URL will be opened when the user clicks
+// on the "Review your synced data" (or equivalent) entrypoint in settings.
+BASE_DECLARE_FEATURE(kSyncEnableNewSyncDashboardUrl);
 
 }  // namespace syncer
 

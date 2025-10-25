@@ -68,7 +68,7 @@ void InspectorEventBreakpointsAgent::DidFireWebGLWarning() {
 
 void InspectorEventBreakpointsAgent::DidFireWebGLErrorOrWarning(
     const String& message) {
-  if (message.FindIgnoringASCIICase("error") != WTF::kNotFound) {
+  if (message.FindIgnoringASCIICase("error") != kNotFound) {
     DidFireWebGLError(String());
   } else {
     DidFireWebGLWarning();
@@ -108,8 +108,7 @@ void InspectorEventBreakpointsAgent::Will(const probe::UserCallback& probe) {
   if (probe.event_target) {
     return;
   }
-  if (auto data =
-          MaybeBuildBreakpointData(WTF::StrCat({probe.name, ".callback"}))) {
+  if (auto data = MaybeBuildBreakpointData(StrCat({probe.name, ".callback"}))) {
     ScheduleAsyncBreakpoint(*data);
   }
 }
@@ -203,7 +202,7 @@ InspectorEventBreakpointsAgent::MaybeBuildBreakpointData(
 
   auto event_data = protocol::DictionaryValue::create();
   const String full_event_name =
-      WTF::StrCat({kInstrumentationEventCategoryType, event_name});
+      StrCat({kInstrumentationEventCategoryType, event_name});
   event_data->setString("eventName", full_event_name);
 
   return event_data;

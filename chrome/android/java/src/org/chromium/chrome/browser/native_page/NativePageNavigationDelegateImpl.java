@@ -4,11 +4,14 @@
 
 package org.chromium.chrome.browser.native_page;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
 
-import androidx.annotation.Nullable;
-
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.incognito.IncognitoUtils;
+import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
 import org.chromium.chrome.browser.multiwindow.MultiWindowUtils;
 import org.chromium.chrome.browser.offlinepages.DownloadUiActionFlags;
 import org.chromium.chrome.browser.offlinepages.OfflinePageBridge;
@@ -24,6 +27,7 @@ import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.mojom.WindowOpenDisposition;
 
 /** {@link NativePageNavigationDelegate} implementation. */
+@NullMarked
 public class NativePageNavigationDelegateImpl implements NativePageNavigationDelegate {
     private final Profile mProfile;
 
@@ -31,18 +35,21 @@ public class NativePageNavigationDelegateImpl implements NativePageNavigationDel
     protected final Tab mTab;
     protected final Activity mActivity;
     protected final NativePageHost mHost;
+    private final MultiInstanceManager mMultiInstanceManager;
 
     public NativePageNavigationDelegateImpl(
             Activity activity,
             Profile profile,
             NativePageHost host,
             TabModelSelector tabModelSelector,
-            Tab tab) {
+            Tab tab,
+            MultiInstanceManager multiInstanceManager) {
         mActivity = activity;
         mProfile = profile;
         mHost = host;
         mTabModelSelector = tabModelSelector;
         mTab = tab;
+        mMultiInstanceManager = multiInstanceManager;
     }
 
     @Override
@@ -51,9 +58,9 @@ public class NativePageNavigationDelegateImpl implements NativePageNavigationDel
     }
 
     @Override
-    public boolean isOpenInNewWindowEnabled() {
+    public boolean isOpenInAnotherWindowEnabled() {
         return MultiWindowUtils.getInstance().isOpenInOtherWindowSupported(mActivity)
-                || MultiWindowUtils.getInstance().canEnterMultiWindowMode(mActivity);
+                || MultiWindowUtils.getInstance().canEnterMultiWindowMode();
     }
 
     @Override
@@ -75,7 +82,14 @@ public class NativePageNavigationDelegateImpl implements NativePageNavigationDel
                 mHost.loadUrl(loadUrlParams, true);
                 break;
             case WindowOpenDisposition.NEW_WINDOW:
-                openUrlInNewWindow(loadUrlParams);
+                // If there is only one window, launch in a new window.
+                if (IncognitoUtils.shouldOpenIncognitoAsWindow()
+                        && MultiWindowUtils.getActiveInstanceCount() > 1) {
+                    mMultiInstanceManager.openUrlInSelectedWindow(
+                            loadUrlParams, mHost.getParentId());
+                } else {
+                    openUrlInNewWindow(loadUrlParams);
+                }
                 break;
             case WindowOpenDisposition.SAVE_TO_DISK:
                 saveUrlForOffline(loadUrlParams.getUrl());
@@ -104,7 +118,8 @@ public class NativePageNavigationDelegateImpl implements NativePageNavigationDel
                 loadUrlParams,
                 mActivity,
                 mHost.getParentId(),
-                MultiWindowUtils.getAdjacentWindowActivity(mActivity));
+                MultiWindowUtils.getForegroundWindowActivity(mActivity),
+                MultiWindowUtils.NewWindowEntryPoint.OTHER);
     }
 
     private Tab openUrlInNewTab(LoadUrlParams loadUrlParams, int windowOpenDisposition) {
@@ -118,18 +133,16 @@ public class NativePageNavigationDelegateImpl implements NativePageNavigationDel
 
     private void saveUrlForOffline(String url) {
         if (mTab != null) {
-            OfflinePageBridge.getForProfile(mProfile)
-                    .scheduleDownload(
-                            mTab.getWebContents(),
-                            OfflinePageBridge.NTP_SUGGESTIONS_NAMESPACE,
-                            url,
-                            DownloadUiActionFlags.ALL);
+            var bridge = assumeNonNull(OfflinePageBridge.getForProfile(mProfile));
+            bridge.scheduleDownload(
+                    mTab.getWebContents(),
+                    OfflinePageBridge.NTP_SUGGESTIONS_NAMESPACE,
+                    url,
+                    DownloadUiActionFlags.ALL);
         } else {
-            RequestCoordinatorBridge.getForProfile(mProfile)
-                    .savePageLater(
-                            url,
-                            OfflinePageBridge.NTP_SUGGESTIONS_NAMESPACE,
-                            /* userRequested= */ true);
+            var bridge = assumeNonNull(RequestCoordinatorBridge.getForProfile(mProfile));
+            bridge.savePageLater(
+                    url, OfflinePageBridge.NTP_SUGGESTIONS_NAMESPACE, /* userRequested= */ true);
         }
     }
 

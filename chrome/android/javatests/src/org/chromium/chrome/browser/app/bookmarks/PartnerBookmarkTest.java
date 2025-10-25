@@ -29,6 +29,7 @@ import org.mockito.junit.MockitoRule;
 
 import org.chromium.base.CallbackUtils;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.chrome.browser.bookmarks.BookmarkDelegate;
 import org.chromium.chrome.browser.bookmarks.BookmarkManagerCoordinator;
 import org.chromium.chrome.browser.bookmarks.BookmarkManagerTestingDelegate;
@@ -107,6 +108,7 @@ public class PartnerBookmarkTest {
 
     @Test
     @MediumTest
+    @DisabledTest(message = "Flaky - crbug.com/425906562")
     public void testMoveButtonsGoneForPartnerBookmarks() {
         // Open partner bookmarks folder.
         BookmarkId partnerFolder = runOnUiThreadBlocking(() -> mBookmarkModel.getPartnerFolderId());
@@ -169,6 +171,7 @@ public class PartnerBookmarkTest {
 
     @Test
     @MediumTest
+    @DisabledTest(message = "https://crbug.com/443216305")
     public void testCannotSelectPartner() throws Exception {
         mBookmarkTestRule.openFolder(mBookmarkTestRule.getMobileFolder());
         View partner = mBookmarkManagerTestingDelegate.getBookmarkViewHolderByPosition(0).itemView;
@@ -183,6 +186,7 @@ public class PartnerBookmarkTest {
 
     @Test
     @MediumTest
+    @DisabledTest(message = "crbug.com/442842860")
     public void testPartnerFolderDraggability() throws Exception {
         mBookmarkTestRule.openFolder(mBookmarkTestRule.getMobileFolder());
         ViewHolder partner = mBookmarkManagerTestingDelegate.getBookmarkViewHolderByPosition(0);

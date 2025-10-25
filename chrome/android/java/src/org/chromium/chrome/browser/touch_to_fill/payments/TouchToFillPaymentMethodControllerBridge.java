@@ -15,7 +15,8 @@ import org.jni_zero.NativeMethods;
 
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.autofill.AutofillFallbackSurfaceLauncher;
-import org.chromium.chrome.browser.autofill.settings.SettingsNavigationHelper;
+import org.chromium.chrome.browser.autofill.GoogleWalletLauncher;
+import org.chromium.components.autofill.LoyaltyCard;
 import org.chromium.ui.base.WindowAndroid;
 
 import java.lang.ref.WeakReference;
@@ -77,7 +78,8 @@ class TouchToFillPaymentMethodControllerBridge
     @Override
     public void showGoogleWalletSettings() {
         if (mContext.get() != null) {
-            SettingsNavigationHelper.showGoogleWalletSettings(mContext.get());
+            GoogleWalletLauncher.openGoogleWalletPassesSettings(
+                    mContext.get(), mContext.get().getPackageManager());
         }
     }
 
@@ -109,7 +111,7 @@ class TouchToFillPaymentMethodControllerBridge
     }
 
     @Override
-    public void loyaltyCardSuggestionSelected(String loyaltyCard) {
+    public void loyaltyCardSuggestionSelected(LoyaltyCard loyaltyCard) {
         if (mNativeTouchToFillPaymentMethodViewController != 0) {
             TouchToFillPaymentMethodControllerBridgeJni.get()
                     .loyaltyCardSuggestionSelected(
@@ -118,9 +120,35 @@ class TouchToFillPaymentMethodControllerBridge
     }
 
     @Override
+    public void bnplSuggestionSelected(@Nullable Long extractedAmount) {
+        if (mNativeTouchToFillPaymentMethodViewController != 0) {
+            TouchToFillPaymentMethodControllerBridgeJni.get()
+                    .bnplSuggestionSelected(
+                            mNativeTouchToFillPaymentMethodViewController, extractedAmount);
+        }
+    }
+
+    @Override
     public void openPassesManagementUi() {
         if (mContext.get() != null) {
             AutofillFallbackSurfaceLauncher.openGoogleWalletPassesPage(mContext.get());
+        }
+    }
+
+    @Override
+    public void onErrorOkPressed() {
+        if (mNativeTouchToFillPaymentMethodViewController != 0) {
+            TouchToFillPaymentMethodControllerBridgeJni.get()
+                    .onErrorOkPressed(mNativeTouchToFillPaymentMethodViewController);
+        }
+    }
+
+    @Override
+    public void onBnplIssuerSuggestionSelected(String issuerId) {
+        if (mNativeTouchToFillPaymentMethodViewController != 0) {
+            TouchToFillPaymentMethodControllerBridgeJni.get()
+                    .onBnplIssuerSuggestionSelected(
+                            mNativeTouchToFillPaymentMethodViewController, issuerId);
         }
     }
 
@@ -135,17 +163,28 @@ class TouchToFillPaymentMethodControllerBridge
 
         void creditCardSuggestionSelected(
                 long nativeTouchToFillPaymentMethodViewController,
-                String uniqueId,
+                @JniType("std::string") String uniqueId,
                 boolean isVirtual);
 
+        void bnplSuggestionSelected(
+                long nativeTouchToFillPaymentMethodViewController,
+                @JniType("std::optional<int64_t>") @Nullable Long extractedAmount);
+
         void localIbanSuggestionSelected(
-                long nativeTouchToFillPaymentMethodViewController, String guid);
+                long nativeTouchToFillPaymentMethodViewController,
+                @JniType("std::string") String guid);
 
         void serverIbanSuggestionSelected(
                 long nativeTouchToFillPaymentMethodViewController, long instrumentId);
 
         void loyaltyCardSuggestionSelected(
                 long nativeTouchToFillPaymentMethodViewController,
-                @JniType("std::string") String loyaltyCardNumber);
+                @JniType("LoyaltyCard") LoyaltyCard loyaltyCardNumber);
+
+        void onErrorOkPressed(long nativeTouchToFillPaymentMethodViewController);
+
+        void onBnplIssuerSuggestionSelected(
+                long nativeTouchToFillPaymentMethodViewController,
+                @JniType("std::string") String issuerId);
     }
 }

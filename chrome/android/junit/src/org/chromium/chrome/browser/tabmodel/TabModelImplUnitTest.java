@@ -21,7 +21,6 @@ import android.content.Context;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.test.filters.SmallTest;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -34,7 +33,9 @@ import org.mockito.junit.MockitoRule;
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ActivityType;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.homepage.HomepageManager;
 import org.chromium.chrome.browser.price_tracking.PriceTrackingFeatures;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -52,6 +53,8 @@ import java.util.Arrays;
 import java.util.List;
 
 /** Unit tests for {@link TabModelImpl}. */
+// TODO(crbug.com/454298057): Decide what tests, if anything, should be kept for
+// TabCollectionTabModelImpl.
 @RunWith(BaseRobolectricTestRunner.class)
 public class TabModelImplUnitTest {
     private static final long FAKE_NATIVE_ADDRESS = 123L;
@@ -90,13 +93,15 @@ public class TabModelImplUnitTest {
     @Before
     public void setUp() {
         // Disable HomepageManager#shouldCloseAppWithZeroTabs() for TabModelImpl#closeTabs().
-        HomepageManager.getInstance().setPrefHomepageEnabled(false);
+        HomepageManager.getInstance().setJavaPrefHomepageEnabled(false);
 
         when(mIncognitoProfile.isOffTheRecord()).thenReturn(true);
+        when(mIncognitoProfile.isIncognitoBranded()).thenReturn(true);
         PriceTrackingFeatures.setPriceAnnotationsEnabledForTesting(false);
 
         TabModelJniBridgeJni.setInstanceForTesting(mTabModelJniBridge);
-        when(mTabModelJniBridge.init(any(), any(), anyInt(), anyBoolean()))
+        when(mTabModelJniBridge.init(
+                        any(TabModelJniBridge.class), any(Profile.class), anyInt(), anyBoolean()))
                 .thenReturn(FAKE_NATIVE_ADDRESS);
 
         when(mTabModelDelegate.isReparentingInProgress()).thenReturn(false);
@@ -123,19 +128,23 @@ public class TabModelImplUnitTest {
     }
 
     private Tab createTab(final TabModel model) {
-        return createTab(model, 0, Tab.INVALID_TAB_ID);
+        return createTab(
+                model, 0, Tab.INVALID_TAB_ID, TabList.INVALID_TAB_INDEX, /* isPinned= */ false);
     }
 
-    private Tab createTab(final TabModel model, long activeTimestampMillis, int parentId) {
+    private Tab createTab(
+            final TabModel model,
+            long activeTimestampMillis,
+            int parentId,
+            int tabIndex,
+            boolean isPinned) {
         MockTab tab = MockTab.createAndInitialize(mNextTabId++, model.getProfile());
         tab.setTimestampMillis(activeTimestampMillis);
         tab.setParentId(parentId);
         tab.setIsInitialized(true);
+        tab.setIsPinned(isPinned);
         model.addTab(
-                tab,
-                TabList.INVALID_TAB_INDEX,
-                TabLaunchType.FROM_CHROME_UI,
-                TabCreationState.LIVE_IN_FOREGROUND);
+                tab, tabIndex, TabLaunchType.FROM_CHROME_UI, TabCreationState.LIVE_IN_FOREGROUND);
         return tab;
     }
 
@@ -144,6 +153,7 @@ public class TabModelImplUnitTest {
     }
 
     /** Create a {@link TabModel} to use for the test. */
+    @SuppressWarnings("DirectInvocationOnMock")
     private TabModelImpl createTabModel(boolean isActive, boolean isIncognito) {
         AsyncTabParamsManager realAsyncTabParamsManager =
                 AsyncTabParamsManagerFactory.createAsyncTabParamsManager();
@@ -196,7 +206,7 @@ public class TabModelImplUnitTest {
                         mTabModelDelegate,
                         tabRemover,
                         /* supportUndo= */ true,
-                        /* isArchivedTabModel= */ true);
+                        /* isArchivedTabModel= */ false);
         when(mTabModelSelector.getModel(isIncognito)).thenReturn(tabModel);
         tabModel.setActive(isActive);
         if (isActive) {
@@ -208,7 +218,6 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testGetNextTabIfClosed_InactiveModel() {
         TabModel activeIncognito = createTabModel(true, true);
         TabModel inactiveNormal = createTabModel(false, false);
@@ -225,7 +234,6 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testGetNextTabIfClosed_NotCurrentTab() {
         TabModel activeNormal = createTabModel(true, false);
         // Unused but required for correct mocking of mTabModelDelegate to avoid NPE.
@@ -249,7 +257,6 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testGetNextTabIfClosed_ParentTab() {
         TabModel activeNormal = createTabModel(true, false);
         // Unused but required for correct mocking of mTabModelDelegate to avoid NPE.
@@ -257,14 +264,19 @@ public class TabModelImplUnitTest {
 
         Tab tab0 = createTab(activeNormal);
         createTab(activeNormal);
-        Tab tab2 = createTab(activeNormal, 0, tab0.getId());
+        Tab tab2 =
+                createTab(
+                        activeNormal,
+                        /* activeTimestampMillis= */ 0,
+                        /* parentId= */ tab0.getId(),
+                        /* tabIndex= */ TabList.INVALID_TAB_INDEX,
+                        /* isPinned= */ false);
 
         selectTab(activeNormal, tab2);
         assertEquals(tab0, activeNormal.getNextTabIfClosed(tab2.getId(), false));
     }
 
     @Test
-    @SmallTest
     public void testGetNextTabIfClosed_Adjacent() {
         TabModel activeNormal = createTabModel(true, false);
         // Unused but required for correct mocking of mTabModelDelegate to avoid NPE.
@@ -285,7 +297,6 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testGetNextTabIfClosed_LastIncognitoTab() {
         TabModel activeIncognito = createTabModel(true, true);
         TabModel inactiveNormal = createTabModel(false, false);
@@ -302,16 +313,33 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testGetNextTabIfClosed_MostRecentTab() {
         TabModel activeNormal = createTabModel(true, false);
         // Unused but required for correct mocking of mTabModelDelegate to avoid NPE.
         createTabModel(false, true);
 
         // uponExit overrides parent selection..
-        Tab tab0 = createTab(activeNormal, 10, Tab.INVALID_TAB_ID);
-        Tab tab1 = createTab(activeNormal, 200, tab0.getId());
-        Tab tab2 = createTab(activeNormal, 30, tab0.getId());
+        Tab tab0 =
+                createTab(
+                        activeNormal,
+                        /* activeTimestampMillis= */ 10,
+                        /* parentId= */ Tab.INVALID_TAB_ID,
+                        /* tabIndex= */ TabList.INVALID_TAB_INDEX,
+                        /* isPinned= */ false);
+        Tab tab1 =
+                createTab(
+                        activeNormal,
+                        /* activeTimestampMillis= */ 200,
+                        /* parentId= */ tab0.getId(),
+                        /* tabIndex= */ TabList.INVALID_TAB_INDEX,
+                        /* isPinned= */ false);
+        Tab tab2 =
+                createTab(
+                        activeNormal,
+                        /* activeTimestampMillis= */ 30,
+                        /* parentId= */ tab0.getId(),
+                        /* tabIndex= */ TabList.INVALID_TAB_INDEX,
+                        /* isPinned= */ false);
 
         selectTab(activeNormal, tab0);
         assertEquals(tab1, activeNormal.getNextTabIfClosed(tab0.getId(), true));
@@ -324,7 +352,6 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testGetNextTabIfClosed_InvalidSelection() {
         TabModel activeNormal = createTabModel(true, false);
         // Unused but required for correct mocking of mTabModelDelegate to avoid NPE.
@@ -336,7 +363,6 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testDontSwitchModelsIfIncognitoGroupClosed() {
         TabModel activeIncognito = createTabModel(true, true);
         TabModel inactiveNormal = createTabModel(false, false);
@@ -360,7 +386,6 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testObserveCurrentTabSupplierActiveNormal() {
         TabModel activeNormal = createTabModel(true, false);
         // Unused but required for correct mocking of mTabModelDelegate to avoid NPE.
@@ -392,7 +417,6 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testObserveCurrentTabSupplierInactiveNormal() {
         TabModel inactiveNormal = createTabModel(false, false);
         // Unused but required for correct mocking of mTabModelDelegate to avoid NPE.
@@ -424,7 +448,6 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testGetTabById() {
         TabModelImpl tabModel = createTabModel(/* isActive= */ true, /* isIncognito= */ false);
         createTabModel(/* isActive= */ false, /* isIncognito= */ true);
@@ -443,50 +466,181 @@ public class TabModelImplUnitTest {
     }
 
     @Test
-    @SmallTest
     public void testGetTabsNavigatedInTimeWindow() {
         TabModelImpl tabModel = createTabModel(/* isActive= */ true, /* isIncognito= */ false);
-        MockTab tab1 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        MockTab tab1 = (MockTab) createTab(tabModel);
         tab1.setLastNavigationCommittedTimestampMillis(200);
 
-        MockTab tab2 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        MockTab tab2 = (MockTab) createTab(tabModel);
         tab2.setLastNavigationCommittedTimestampMillis(50);
 
-        MockTab tab3 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        MockTab tab3 = (MockTab) createTab(tabModel);
         tab3.setLastNavigationCommittedTimestampMillis(100);
 
-        MockTab tab4 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        MockTab tab4 = (MockTab) createTab(tabModel);
         tab4.setLastNavigationCommittedTimestampMillis(30);
         tab4.setIsCustomTab(true);
 
-        MockTab tab5 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        MockTab tab5 = (MockTab) createTab(tabModel);
         tab5.setLastNavigationCommittedTimestampMillis(10);
 
         assertEquals(Arrays.asList(tab2, tab5), tabModel.getTabsNavigatedInTimeWindow(10, 100));
     }
 
     @Test
-    @SmallTest
     public void testCloseTabsNavigatedInTimeWindow() {
         when(mTabGroupModelFilterProvider.getTabGroupModelFilter(/* isIncognito= */ false))
                 .thenReturn(mTabGroupModelFilter);
 
         TabModelImpl tabModel = createTabModel(/* isActive= */ true, /* isIncognito= */ false);
 
-        MockTab tab1 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        MockTab tab1 = (MockTab) createTab(tabModel);
         tab1.setLastNavigationCommittedTimestampMillis(200);
         tab1.updateAttachment(mWindowAndroid, mTabDelegateFactory);
 
-        MockTab tab2 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        MockTab tab2 = (MockTab) createTab(tabModel);
         tab2.setLastNavigationCommittedTimestampMillis(30);
         tab2.updateAttachment(mWindowAndroid, mTabDelegateFactory);
 
-        MockTab tab3 = (MockTab) createTab(tabModel, 0, Tab.INVALID_TAB_ID);
+        MockTab tab3 = (MockTab) createTab(tabModel);
         tab3.setLastNavigationCommittedTimestampMillis(20);
         tab3.updateAttachment(mWindowAndroid, mTabDelegateFactory);
 
         tabModel.closeTabsNavigatedInTimeWindow(20, 50);
         assertEquals(1, tabModel.getCount());
         assertEquals(tab1, tabModel.getTabAt(0));
+    }
+
+    @Test
+    public void testObserveTabCountSupplierActiveNormal() {
+        TabModel activeNormal = createTabModel(true, false);
+        // Unused but required for correct mocking of mTabModelDelegate to avoid NPE.
+        createTabModel(false, true);
+
+        assertEquals(0, activeNormal.getTabCountSupplier().get().intValue());
+
+        Tab tab0 = createTab(activeNormal);
+        assertEquals(1, activeNormal.getTabCountSupplier().get().intValue());
+
+        Tab tab1 = createTab(activeNormal);
+        assertEquals(2, activeNormal.getTabCountSupplier().get().intValue());
+
+        Tab tab2 = createTab(activeNormal);
+        assertEquals(3, activeNormal.getTabCountSupplier().get().intValue());
+
+        Tab tab3 = createTab(activeNormal);
+        assertEquals(4, activeNormal.getTabCountSupplier().get().intValue());
+
+        activeNormal
+                .getTabRemover()
+                .closeTabs(
+                        TabClosureParams.closeTabs(List.of(tab0, tab1)).allowUndo(false).build(),
+                        /* allowDialog= */ false);
+        assertEquals(2, activeNormal.getTabCountSupplier().get().intValue());
+
+        activeNormal
+                .getTabRemover()
+                .closeTabs(
+                        TabClosureParams.closeAllTabs().allowUndo(false).build(),
+                        /* allowDialog= */ false);
+        assertEquals(0, activeNormal.getTabCountSupplier().get().intValue());
+    }
+
+    @Test
+    @EnableFeatures({
+        ChromeFeatureList.ANDROID_PINNED_TABS_TABLET_TAB_STRIP,
+        ChromeFeatureList.ANDROID_PINNED_TABS
+    })
+    public void testAddTab_PinnedTabIndex_OutOfRange() {
+        TabModel activeNormal = createTabModel(true, false);
+        // Unused but required for correct mocking of mTabModelDelegate to avoid NPE.
+        createTabModel(false, true);
+        assertEquals(0, activeNormal.getTabCountSupplier().get().intValue());
+
+        // Create first pinned tab.
+        Tab tab0 = createTab(activeNormal);
+        tab0.setIsPinned(true);
+        assertEquals(1, activeNormal.getTabCountSupplier().get().intValue());
+        assertEquals(0, activeNormal.indexOf(tab0));
+
+        // Create second pinned tab.
+        Tab tab1 = createTab(activeNormal);
+        tab1.setIsPinned(true);
+        assertEquals(2, activeNormal.getTabCountSupplier().get().intValue());
+        assertEquals(1, activeNormal.indexOf(tab1));
+
+        // Create first unpinned tab.
+        Tab tab2 = createTab(activeNormal);
+        assertEquals(3, activeNormal.getTabCountSupplier().get().intValue());
+        assertEquals(2, activeNormal.indexOf(tab2));
+
+        // Create second unpinned tab.
+        Tab tab3 = createTab(activeNormal);
+        assertEquals(4, activeNormal.getTabCountSupplier().get().intValue());
+        assertEquals(3, activeNormal.indexOf(tab3));
+
+        // Attempt to create a pinned tab at the last index (invalid); verify it lands at the first
+        // non-pinned index, and that other tabs shift accordingly.
+        Tab tab4 =
+                createTab(
+                        activeNormal,
+                        /* activeTimestampMillis= */ 0,
+                        /* parentId= */ Tab.INVALID_TAB_ID,
+                        /* tabIndex= */ 4,
+                        /* isPinned= */ true);
+        assertEquals(5, activeNormal.getTabCountSupplier().get().intValue());
+        assertEquals(2, activeNormal.indexOf(tab4));
+        assertEquals(3, activeNormal.indexOf(tab2));
+        assertEquals(4, activeNormal.indexOf(tab3));
+    }
+
+    @Test
+    @EnableFeatures({
+        ChromeFeatureList.ANDROID_PINNED_TABS_TABLET_TAB_STRIP,
+        ChromeFeatureList.ANDROID_PINNED_TABS
+    })
+    public void testAddTab_PinnedTabIndex_WithinValidRange() {
+        TabModel activeNormal = createTabModel(true, false);
+        // Unused but required for correct mocking of mTabModelDelegate to avoid NPE.
+        createTabModel(false, true);
+        assertEquals(0, activeNormal.getTabCountSupplier().get().intValue());
+
+        // Create first pinned tab.
+        Tab tab0 = createTab(activeNormal);
+        tab0.setIsPinned(true);
+        assertEquals(1, activeNormal.getTabCountSupplier().get().intValue());
+        assertEquals(0, activeNormal.indexOf(tab0));
+
+        // Create second pinned tab.
+        Tab tab1 = createTab(activeNormal);
+        tab1.setIsPinned(true);
+        assertEquals(2, activeNormal.getTabCountSupplier().get().intValue());
+        assertEquals(1, activeNormal.indexOf(tab1));
+
+        // Create first unpinned tab.
+        Tab tab2 = createTab(activeNormal);
+        tab2.setIsPinned(true);
+        assertEquals(3, activeNormal.getTabCountSupplier().get().intValue());
+        assertEquals(2, activeNormal.indexOf(tab2));
+
+        // Create second unpinned tab.
+        Tab tab3 = createTab(activeNormal);
+        assertEquals(4, activeNormal.getTabCountSupplier().get().intValue());
+        assertEquals(3, activeNormal.indexOf(tab3));
+
+        // Create a new pinned tab at index 1 (valid) and verify its final index remains 0
+        // (unchanged), with the other tabs shifting accordingly.
+        Tab tab4 =
+                createTab(
+                        activeNormal,
+                        /* activeTimestampMillis= */ 0,
+                        /* parentId= */ Tab.INVALID_TAB_ID,
+                        /* tabIndex= */ 1,
+                        /* isPinned= */ true);
+        assertEquals(5, activeNormal.getTabCountSupplier().get().intValue());
+        assertEquals(1, activeNormal.indexOf(tab4));
+        assertEquals(2, activeNormal.indexOf(tab1));
+        assertEquals(3, activeNormal.indexOf(tab2));
+        assertEquals(4, activeNormal.indexOf(tab3));
     }
 }

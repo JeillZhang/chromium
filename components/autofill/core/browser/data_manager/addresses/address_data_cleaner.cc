@@ -88,7 +88,7 @@ void DeduplicateProfiles(const AutofillProfileComparator& comparator,
                                      comparator.app_locale());
       adm.UpdateProfile(*merge_candidate);
       adm.RemoveProfile(local_profile_it->guid(),
-                        /*is_deduplication_initiated=*/true);
+                        /*non_permanent_account_profile_removal=*/true);
       num_profiles_deleted++;
       continue;
     }
@@ -103,7 +103,7 @@ void DeduplicateProfiles(const AutofillProfileComparator& comparator,
             });
         superset_account_profile != profiles.end()) {
       adm.RemoveProfile(local_profile_it->guid(),
-                        /*is_deduplication_initiated=*/true);
+                        /*non_permanent_account_profile_removal=*/true);
       num_profiles_deleted++;
       // Account profiles track from which service they originate. This allows
       // Autofill to distinguish between Chrome and non-Chrome account
@@ -133,18 +133,12 @@ void DeduplicateProfiles(const AutofillProfileComparator& comparator,
 // 2) Merges pairs of mergeable profiles into each other.
 //   To prevent silently introducing new information into the account,
 //   local profiles are never merged into account profiles.
-// H/W profiles are not supported for deduplication.
 // TODO(crbug.com/357074792): Once the feature is launched, remove the
 // `DeduplicateProfiles()` function and rename this function to
 // `DeduplicateProfiles()`.
 void DeduplicateWithAccountProfiles(const AutofillProfileComparator& comparator,
                                     std::vector<AutofillProfile> profiles,
                                     AddressDataManager& adm) {
-  // H/W profiles are not supported for deduplication.
-  std::erase_if(profiles, [](const AutofillProfile& p) {
-    return p.IsHomeAndWorkProfile();
-  });
-
   std::set<std::string> guids_to_delete;
   for (const AutofillProfile& profile : profiles) {
     const bool is_subset = std::ranges::any_of(
@@ -200,7 +194,7 @@ void DeduplicateWithAccountProfiles(const AutofillProfileComparator& comparator,
     }
   }
   for (const std::string& guid : guids_to_delete) {
-    adm.RemoveProfile(guid, /*is_deduplication_initiated=*/true);
+    adm.RemoveProfile(guid, /*non_permanent_account_profile_removal=*/true);
   }
   autofill_metrics::LogNumberOfProfilesRemovedDuringDedupe(
       guids_to_delete.size());
@@ -266,12 +260,15 @@ void AddressDataCleaner::MaybeCleanupAddressData() {
   are_cleanups_pending_ = false;
 
   int chrome_version_major = version_info::GetMajorVersionNumberAsInt();
-  // Ensure that deduplication is only run one per milestone.
+  // Ensure that deduplication is only run once per milestone, unless it is
+  // explicitly always enabled.
   if (pref_service_->GetInteger(prefs::kAutofillLastVersionDeduped) <
-      chrome_version_major) {
+          chrome_version_major ||
+      base::FeatureList::IsEnabled(
+          features::test::kAutofillSkipDeduplicationRequirements)) {
     pref_service_->SetInteger(prefs::kAutofillLastVersionDeduped,
                               chrome_version_major);
-    // Since the milesone changed the extra deduplication can be run again.
+    // Since the milestone changed the extra deduplication can be run again.
     pref_service_->ClearPref(
         prefs::kAutofillRanExtraDeduplication);
     ApplyDeduplicationRoutine();
@@ -285,6 +282,7 @@ void AddressDataCleaner::MaybeCleanupAddressData() {
   }
 
   // Other cleanups are performed on every browser start.
+  MigratePhoneticNames();
   DeleteDisusedAddresses();
 }
 
@@ -341,6 +339,23 @@ void AddressDataCleaner::ApplyDeduplicationRoutine() {
   }
 }
 
+void AddressDataCleaner::MigratePhoneticNames() {
+  if (!base::FeatureList::IsEnabled(
+          features::kAutofillSupportPhoneticNameForJP)) {
+    return;
+  }
+  int migrated_names = 0;
+  for (const AutofillProfile* profile : address_data_manager_->GetProfiles()) {
+    if (profile->GetNameInfo().HasNameEligibleForPhoneticNameMigration()) {
+      AutofillProfile profile_to_migrate = *profile;
+      profile_to_migrate.MigrateRegularNameToPhoneticName();
+      address_data_manager_->UpdateProfile(profile_to_migrate);
+      migrated_names++;
+    }
+  }
+  autofill_metrics::LogNumberOfNamesMigratedDuringCleanup(migrated_names);
+}
+
 void AddressDataCleaner::DeleteDisusedAddresses() {
   std::vector<const AutofillProfile*> profiles =
       base::FeatureList::IsEnabled(
@@ -348,10 +363,6 @@ void AddressDataCleaner::DeleteDisusedAddresses() {
           ? address_data_manager_->GetProfiles()
           : address_data_manager_->GetProfilesByRecordType(
                 AutofillProfile::RecordType::kLocalOrSyncable);
-  // H/W profiles cannot be removed by disused address deletion.
-  std::erase_if(profiles, [](const AutofillProfile* p) {
-    return p->IsHomeAndWorkProfile();
-  });
   // Early return to prevent polluting metrics with uninteresting events.
   if (profiles.empty()) {
     return;
@@ -366,8 +377,9 @@ void AddressDataCleaner::DeleteDisusedAddresses() {
     }
   }
   for (const std::string& guid : guids_to_delete) {
-    address_data_manager_->RemoveProfile(guid,
-                                         /*is_deduplication_initiated=*/true);
+    address_data_manager_->RemoveProfile(
+        guid,
+        /*non_permanent_account_profile_removal=*/true);
   }
   autofill_metrics::LogNumberOfAddressesDeletedForDisuse(
       guids_to_delete.size());
@@ -384,6 +396,12 @@ void AddressDataCleaner::OnStateChanged(syncer::SyncService* sync_service) {
   if (!address_data_manager_->IsAwaitingPendingAddressChanges()) {
     MaybeCleanupAddressData();
   }
+}
+
+void AddressDataCleaner::OnSyncShutdown(syncer::SyncService*) {
+  // Unreachable, since the service owning this instance is Shutdown() before
+  // the SyncService.
+  NOTREACHED();
 }
 
 }  // namespace autofill

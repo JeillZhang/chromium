@@ -42,7 +42,7 @@ public class CrossDevicePaneImpl implements CrossDevicePane {
     private final DoubleConsumer mOnToolbarAlphaChange;
     private final FrameLayout mRootView;
     private final ObservableSupplier<EdgeToEdgeController> mEdgeToEdgeController;
-    private final ObservableSupplierImpl<DisplayButtonData> mReferenceButtonSupplier =
+    private final ObservableSupplierImpl<@Nullable DisplayButtonData> mReferenceButtonSupplier =
             new ObservableSupplierImpl<>();
     private final ObservableSupplier<FullButtonData> mEmptyActionButtonSupplier =
             new ObservableSupplierImpl<>();
@@ -51,6 +51,8 @@ public class CrossDevicePaneImpl implements CrossDevicePane {
     private final ObservableSupplierImpl<@Nullable View> mHubOverlayViewSupplier =
             new ObservableSupplierImpl<>();
     private final ObservableSupplierImpl<Boolean> mHubSearchEnabledStateSupplier =
+            new ObservableSupplierImpl<>();
+    private final ObservableSupplierImpl<Boolean> mHubSearchBoxVisibilitySupplier =
             new ObservableSupplierImpl<>();
 
     private @Nullable CrossDeviceListCoordinator mCrossDeviceListCoordinator;
@@ -136,7 +138,7 @@ public class CrossDevicePaneImpl implements CrossDevicePane {
     }
 
     @Override
-    public ObservableSupplier<DisplayButtonData> getReferenceButtonDataSupplier() {
+    public ObservableSupplier<@Nullable DisplayButtonData> getReferenceButtonDataSupplier() {
         return mReferenceButtonSupplier;
     }
 
@@ -172,5 +174,10 @@ public class CrossDevicePaneImpl implements CrossDevicePane {
     @Override
     public ObservableSupplier<Boolean> getHubSearchEnabledStateSupplier() {
         return mHubSearchEnabledStateSupplier;
+    }
+
+    @Override
+    public ObservableSupplier<Boolean> getHubSearchBoxVisibilitySupplier() {
+        return mHubSearchBoxVisibilitySupplier;
     }
 }

@@ -31,6 +31,7 @@ import org.chromium.components.autofill.AddressNormalizer;
 import org.chromium.components.autofill.AutofillProfile;
 import org.chromium.components.autofill.AutofillSuggestion;
 import org.chromium.components.autofill.IbanRecordType;
+import org.chromium.components.autofill.PaymentsPayload;
 import org.chromium.components.autofill.SubKeyRequester;
 import org.chromium.components.autofill.SuggestionType;
 import org.chromium.components.autofill.VirtualCardEnrollmentState;
@@ -93,11 +94,9 @@ public class AutofillTestHelper {
                 () -> getPersonalDataManagerForLastUsedProfile().getProfile(guid));
     }
 
-    List<AutofillProfile> getProfilesToSuggest(final boolean includeNameInLabel) {
+    List<AutofillProfile> getProfilesToSuggest() {
         return runOnUiThreadBlocking(
-                () ->
-                        getPersonalDataManagerForLastUsedProfile()
-                                .getProfilesToSuggest(includeNameInLabel));
+                () -> getPersonalDataManagerForLastUsedProfile().getProfilesToSuggest());
     }
 
     List<AutofillProfile> getProfilesForSettings() {
@@ -105,8 +104,15 @@ public class AutofillTestHelper {
                 () -> getPersonalDataManagerForLastUsedProfile().getProfilesForSettings());
     }
 
+    String getProfileDescriptionForEditor(String guid) {
+        return runOnUiThreadBlocking(
+                () ->
+                        getPersonalDataManagerForLastUsedProfile()
+                                .getProfileDescriptionForEditor(guid));
+    }
+
     int getNumberOfProfilesToSuggest() {
-        return getProfilesToSuggest(false).size();
+        return getProfilesToSuggest().size();
     }
 
     int getNumberOfProfilesForSettings() {
@@ -438,6 +444,7 @@ public class AutofillTestHelper {
                 /* obfuscatedLastFourDigits= */ obfuscatedLastFourDigits,
                 /* cvc= */ "",
                 /* issuerId= */ "",
+                /* benefitSource= */ "",
                 /* productTermsUrl= */ null);
     }
 
@@ -475,6 +482,7 @@ public class AutofillTestHelper {
                 /* obfuscatedLastFourDigits= */ obfuscatedLastFourDigits,
                 /* cvc= */ "",
                 /* issuerId= */ "",
+                /* benefitSource= */ "",
                 /* productTermsUrl= */ null);
     }
 
@@ -510,19 +518,22 @@ public class AutofillTestHelper {
             boolean shouldDisplayTermsAvailable,
             String guid,
             boolean isLocalPaymentsMethod) {
+        PaymentsPayload payload =
+                new PaymentsPayload(
+                        labelContentDescription,
+                        shouldDisplayTermsAvailable,
+                        guid,
+                        isLocalPaymentsMethod);
         return new AutofillSuggestion.Builder()
                 .setLabel(label)
                 .setSecondaryLabel(secondaryLabel)
                 .setSubLabel(subLabel)
                 .setSecondarySubLabel(secondarySubLabel)
-                .setLabelContentDescription(labelContentDescription)
                 .setSuggestionType(suggestionType)
                 .setCustomIconUrl(customIconUrl)
                 .setIconId(iconId)
                 .setApplyDeactivatedStyle(applyDeactivatedStyle)
-                .setShouldDisplayTermsAvailable(shouldDisplayTermsAvailable)
-                .setGuid(guid)
-                .setIsLocalPaymentsMethod(isLocalPaymentsMethod)
+                .setPayload(payload)
                 .build();
     }
 
@@ -551,9 +562,8 @@ public class AutofillTestHelper {
         }
     }
 
-    // Creates an action which dispatches 2 motion events to the target view:
-    // MotionEvent.ACTION_DOWN and MotionEvent.ACTION_UP.
-    public static ViewAction createClickActionWithFlags(int flags) {
+    // Sends click event at the center of the `view` with the provided `flags`.
+    public static ViewAction createClickActionWithFlags(int flags, boolean expectClickToSucceed) {
         return new ViewAction() {
             @Override
             public Matcher<View> getConstraints() {
@@ -567,7 +577,7 @@ public class AutofillTestHelper {
 
             @Override
             public void perform(UiController uiController, View view) {
-                if (!singleTouchView(view, flags)) {
+                if (!singleTouchView(view, flags) && expectClickToSucceed) {
                     throw new PerformException.Builder()
                             .withActionDescription(this.getDescription())
                             .withViewDescription(HumanReadables.describe(view))
@@ -577,6 +587,10 @@ public class AutofillTestHelper {
                 uiController.loopMainThreadUntilIdle();
             }
         };
+    }
+
+    public static ViewAction createClickActionWithFlags(int flags) {
+        return createClickActionWithFlags(flags, true);
     }
 
     // Sends click event at the center of the `view` with the provided `flags`.
@@ -618,25 +632,19 @@ public class AutofillTestHelper {
         windowXY[0] += view.getWidth() / 2;
         windowXY[1] += view.getHeight() / 2;
 
-        final long initiationTime = SystemClock.uptimeMillis();
-        return dispatchMotionEvent(
-                        view,
-                        getMotionEvent(
-                                initiationTime,
-                                MotionEvent.ACTION_POINTER_DOWN,
-                                windowXY,
-                                InputDevice.SOURCE_MOUSE))
-                && dispatchMotionEvent(
-                        view,
-                        getMotionEvent(
-                                initiationTime,
-                                MotionEvent.ACTION_POINTER_UP,
-                                windowXY,
-                                InputDevice.SOURCE_MOUSE));
-    }
+        long downTime = SystemClock.uptimeMillis();
+        View rootView = view.getRootView();
+        if (!TouchCommon.dispatchTouchEvent(
+                rootView,
+                getMotionEvent(
+                        downTime, MotionEvent.ACTION_DOWN, windowXY, InputDevice.SOURCE_MOUSE))) {
+            return false;
+        }
 
-    private static boolean dispatchMotionEvent(View view, MotionEvent event) {
-        return runOnUiThreadBlocking(() -> view.getRootView().dispatchGenericMotionEvent(event));
+        return TouchCommon.dispatchTouchEvent(
+                rootView,
+                getMotionEvent(
+                        downTime, MotionEvent.ACTION_UP, windowXY, InputDevice.SOURCE_MOUSE));
     }
 
     private static MotionEvent getMotionEvent(

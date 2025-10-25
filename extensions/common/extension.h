@@ -136,7 +136,7 @@ class Extension final : public base::RefCountedThreadSafe<Extension> {
                                          mojom::ManifestLocation location,
                                          const base::Value::Dict& value,
                                          int flags,
-                                         std::string* error);
+                                         std::u16string* error);
 
   // In a few special circumstances, we want to create an Extension and give it
   // an explicit id. Most consumers should just use the other Create() method.
@@ -145,7 +145,7 @@ class Extension final : public base::RefCountedThreadSafe<Extension> {
                                          const base::Value::Dict& value,
                                          int flags,
                                          const ExtensionId& explicit_id,
-                                         std::string* error);
+                                         std::u16string* error);
 
   // Valid schemes for web extent URLPatterns.
   static const int kValidWebExtentSchemes;
@@ -159,10 +159,10 @@ class Extension final : public base::RefCountedThreadSafe<Extension> {
   // See Type definition in Manifest.
   Manifest::Type GetType() const;
 
-  // Returns an absolute URL to a resource inside of an extension. The
-  // `extension_url` argument should be the url() from an Extension object. The
-  // `relative_url` can be untrusted user input. The returned URL will either be
-  // invalid() or a child of `extension_url`.
+  // Returns an absolute URL inside of an extension. The `extension_url`
+  // argument should be the url() from an Extension object. The `relative_url`
+  // can be untrusted user input. The returned URL will either be invalid() or a
+  // child of `extension_url`.
   //
   // Note that `relative_url` is treated as a URL-encoded string, e.g. "%21.txt"
   // will refer to the "!.txt" file. Any query or fragment components in
@@ -176,6 +176,18 @@ class Extension final : public base::RefCountedThreadSafe<Extension> {
                                   std::string_view relative_url);
   GURL ResolveExtensionURL(std::string_view relative_url) const {
     return ResolveExtensionURL(url(), relative_url);
+  }
+
+  // Returns an absolute URL to a resource inside of an extension. Similar to
+  // `ResolveExtensionURL` above, but `relative_url` must be a valid relative
+  // URL to a resource. For example, the following relative URLs aren't valid:
+  // - Empty paths.
+  // - Directory paths (ending with /).
+  // - Paths with non-portable characters (e.g. : ? < >).
+  static GURL GetResourceURL(const GURL& extension_url,
+                             std::string_view relative_url);
+  GURL GetResourceURL(std::string_view relative_url) const {
+    return GetResourceURL(url(), relative_url);
   }
 
   // Returns true if the resource matches a pattern in the pattern_set.

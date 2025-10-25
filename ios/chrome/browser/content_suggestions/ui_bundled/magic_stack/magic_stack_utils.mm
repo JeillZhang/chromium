@@ -7,6 +7,7 @@
 #import "base/metrics/field_trial_params.h"
 #import "base/strings/string_util.h"
 #import "base/strings/sys_string_conversions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/commerce/core/commerce_feature_list.h"
 #import "components/commerce/core/shopping_service.h"
 #import "components/prefs/pref_service.h"
@@ -42,12 +43,11 @@ bool IsPriceTrackingPromoCardEnabled(commerce::ShoppingService* service,
                                      PrefService* pref_service) {
   id<SystemIdentity> identity =
       auth_service->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
-  return base::FeatureList::IsEnabled(commerce::kPriceTrackingPromo) &&
-         GetApplicationContext()->GetApplicationLocale() == "en-US" &&
+  return GetApplicationContext()->GetApplicationLocaleStorage()->Get() ==
+             "en-US" &&
          !push_notification_settings::
              GetMobileNotificationPermissionStatusForClient(
-                 PushNotificationClientId::kCommerce,
-                 GaiaId(identity.gaiaID)) &&
+                 PushNotificationClientId::kCommerce, identity.gaiaId) &&
          !pref_service->GetBoolean(kPriceTrackingPromoDisabled) &&
          (service->IsShoppingListEligible() ||
           (base::GetFieldTrialParamByFeatureAsString(

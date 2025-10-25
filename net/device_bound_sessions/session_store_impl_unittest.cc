@@ -10,6 +10,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/strings/string_util_internal.h"
 #include "base/test/bind.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
 #include "base/types/expected.h"
@@ -18,6 +19,7 @@
 #include "components/unexportable_keys/unexportable_key_task_manager.h"
 #include "crypto/scoped_fake_unexportable_key_provider.h"
 #include "crypto/unexportable_key.h"
+#include "net/base/features.h"
 #include "net/base/schemeful_site.h"
 #include "net/device_bound_sessions/proto/storage.pb.h"
 #include "net/dns/public/secure_dns_mode.h"
@@ -70,7 +72,7 @@ std::unique_ptr<Session> CreateSessionHelper(
     const std::string& origin = "https://foo.test") {
   SessionParams::Scope scope;
   scope.origin = origin;
-  std::string cookie_attr = "Secure; Domain=" + GURL(url_string).host();
+  std::string cookie_attr = "Secure; Domain=" + GURL(url_string).GetHost();
   std::vector<SessionParams::Credential> cookie_credentials(
       {SessionParams::Credential{"test_cookie", cookie_attr}});
   SessionParams params{session_id,
@@ -78,7 +80,8 @@ std::unique_ptr<Session> CreateSessionHelper(
                        url_string,
                        std::move(scope),
                        std::move(cookie_credentials),
-                       GenerateNewKey(key_service)};
+                       GenerateNewKey(key_service),
+                       /*allowed_refresh_initiators=*/{}};
   return *Session::CreateIfValid(params);
 }
 
@@ -114,7 +117,8 @@ SessionStore::SessionsMap CreateAndSaveSessions(
         CreateSessionHelper(key_service, cfg.url, cfg.session_id, cfg.origin);
     EXPECT_TRUE(session);
     store.SaveSession(site, *session);
-    session_map.emplace(std::move(site), std::move(session));
+    session_map.emplace(SessionKey{std::move(site), session->id()},
+                        std::move(session));
   }
 
   return session_map;
@@ -187,7 +191,7 @@ class SessionStoreImplTest : public testing::Test {
   void RestoreSessionBindingKey(const SchemefulSite& site, Session* session) {
     base::RunLoop run_loop;
     store_->RestoreSessionBindingKey(
-        site, session->id(),
+        SessionKey{site, session->id()},
         base::BindLambdaForTesting(
             [&run_loop,
              &session](unexportable_keys::ServiceErrorOr<
@@ -197,6 +201,9 @@ class SessionStoreImplTest : public testing::Test {
             }));
     run_loop.Run();
   }
+
+ protected:
+  base::test::ScopedFeatureList feature_list_;
 
  private:
   base::test::TaskEnvironment task_environment_;
@@ -232,7 +239,7 @@ TEST_F(SessionStoreImplTest, RequireDBInit) {
   EXPECT_EQ(store().GetAllSessions().size(), 0u);
 
   // Verify that delete session call is ignored.
-  store().DeleteSession(site, session->id());
+  store().DeleteSession(SessionKey{site, session->id()});
   EXPECT_EQ(store().GetAllSessions().size(), 0u);
 
   // Verify that restore session binding key call fails.
@@ -267,8 +274,8 @@ TEST_F(SessionStoreImplTest, SaveNewSessions) {
   SessionStore::SessionsMap store_sessions = store().GetAllSessions();
 
   // Restore the binding keys in the store session objects.
-  for (auto& [site, session] : store_sessions) {
-    RestoreSessionBindingKey(site, session.get());
+  for (auto& [key, session] : store_sessions) {
+    RestoreSessionBindingKey(key.site, session.get());
   }
 
   // Verify the session store contents.
@@ -296,10 +303,11 @@ TEST_F(SessionStoreImplTest, UpdateExistingSession) {
   // match the updated data.
   SessionStore::SessionsMap store_sessions = store().GetAllSessions();
   EXPECT_EQ(store_sessions.size(), 1u);
-  for (auto& [store_site, store_session] : store_sessions) {
-    EXPECT_TRUE(store_site == site);
+  for (auto& [key, store_session] : store_sessions) {
+    EXPECT_TRUE(key.site == site);
+    EXPECT_TRUE(key.id == store_session->id());
     EXPECT_TRUE(store_session->expiry_date() == session->expiry_date());
-    RestoreSessionBindingKey(store_site, store_session.get());
+    RestoreSessionBindingKey(key.site, store_session.get());
     EXPECT_TRUE(store_session->IsEqualForTesting(*session));
   }
 }
@@ -309,7 +317,7 @@ TEST_F(SessionStoreImplTest, HandleNonexistingSite) {
 
   // Try to delete a session associated with a nonexisting site (in the store).
   auto site = net::SchemefulSite(GURL("https://foo.test"));
-  store().DeleteSession(site, Session::Id("session"));
+  store().DeleteSession(SessionKey{site, Session::Id("session")});
   EXPECT_EQ(store().GetAllSessions().size(), 0u);
 
   // Create a session but don't save it to the store.
@@ -338,7 +346,7 @@ TEST_F(SessionStoreImplTest, HandleNonexistingSession) {
       unexportable_key_service(), "https://foo.test", "session2");
 
   // Try to delete the unsaved session.
-  store().DeleteSession(site, session2->id());
+  store().DeleteSession(SessionKey{site, session2->id()});
   EXPECT_EQ(store().GetAllSessions().size(), 1u);
 
   // Try to restore the unsaved session's binding key.
@@ -371,18 +379,21 @@ TEST_F(SessionStoreImplTest, DeleteSessions) {
   EXPECT_EQ(store_sessions.size(), 3u);
 
   // Delete the valid sessions one by one and check store contents.
-  store().DeleteSession(site2, Session::Id(cfgs[2].session_id));
+  store().DeleteSession(SessionKey{site2, Session::Id(cfgs[2].session_id)});
   store_sessions = store().GetAllSessions();
-  EXPECT_TRUE(store_sessions.find(site2) == store_sessions.end());
+  EXPECT_TRUE(
+      store_sessions.find(SessionKey{site2, Session::Id(cfgs[2].session_id)}) ==
+      store_sessions.end());
 
-  store().DeleteSession(site1, Session::Id(cfgs[0].session_id));
+  store().DeleteSession(SessionKey{site1, Session::Id(cfgs[0].session_id)});
   store_sessions = store().GetAllSessions();
   EXPECT_EQ(store_sessions.size(), 1u);
-  EXPECT_EQ(store_sessions.begin()->first, site1);
+  SessionKey expected_key{site1, Session::Id(cfgs[1].session_id)};
+  EXPECT_EQ(store_sessions.begin()->first, expected_key);
   EXPECT_EQ(store_sessions.begin()->second->id(),
             Session::Id(cfgs[1].session_id));
 
-  store().DeleteSession(site1, Session::Id(cfgs[1].session_id));
+  store().DeleteSession(SessionKey{site1, Session::Id(cfgs[1].session_id)});
   store_sessions = store().GetAllSessions();
   EXPECT_EQ(store_sessions.size(), 0u);
 }
@@ -401,12 +412,61 @@ TEST_F(SessionStoreImplTest, LoadSavedSessions) {
   MimicRestart();
 
   SessionStore::SessionsMap loaded_sessions = LoadSessions();
+  EXPECT_FALSE(loaded_sessions.empty());
   // Restore the binding keys in the store session objects.
-  for (auto& [site, session] : loaded_sessions) {
-    RestoreSessionBindingKey(site, session.get());
+  for (auto& [key, session] : loaded_sessions) {
+    RestoreSessionBindingKey(key.site, session.get());
   }
 
   EXPECT_TRUE(SessionMapsAreEqual(saved_sessions, loaded_sessions));
+}
+
+TEST_F(SessionStoreImplTest, DropLowerSchemaVersionSessions) {
+  feature_list_.InitAndEnableFeatureWithParameters(
+      features::kDeviceBoundSessions,
+      {{features::kDeviceBoundSessionsSchemaVersion.name, "1"}});
+  CreateStoreAndLoadSessions();
+  SessionCfgList cfgs = {
+      {"https://a.foo.test/index.html", "session0", "https://foo.test"},
+      {"https://b.foo.test/index.html", "session1", "https://foo.test"},
+      {"https://c.bar.test/index.html", "session2", "https://bar.test"},
+  };
+
+  SessionStore::SessionsMap saved_sessions =
+      CreateAndSaveSessions(cfgs, unexportable_key_service(), store());
+
+  feature_list_.Reset();
+  feature_list_.InitAndEnableFeatureWithParameters(
+      features::kDeviceBoundSessions,
+      {{features::kDeviceBoundSessionsSchemaVersion.name, "2"}});
+  MimicRestart();
+
+  SessionStore::SessionsMap loaded_sessions = LoadSessions();
+  EXPECT_TRUE(loaded_sessions.empty());
+}
+
+TEST_F(SessionStoreImplTest, DropHigherSchemaVersionSessions) {
+  feature_list_.InitAndEnableFeatureWithParameters(
+      features::kDeviceBoundSessions,
+      {{features::kDeviceBoundSessionsSchemaVersion.name, "2"}});
+  CreateStoreAndLoadSessions();
+  SessionCfgList cfgs = {
+      {"https://a.foo.test/index.html", "session0", "https://foo.test"},
+      {"https://b.foo.test/index.html", "session1", "https://foo.test"},
+      {"https://c.bar.test/index.html", "session2", "https://bar.test"},
+  };
+
+  SessionStore::SessionsMap saved_sessions =
+      CreateAndSaveSessions(cfgs, unexportable_key_service(), store());
+
+  feature_list_.Reset();
+  feature_list_.InitAndEnableFeatureWithParameters(
+      features::kDeviceBoundSessions,
+      {{features::kDeviceBoundSessionsSchemaVersion.name, "1"}});
+  MimicRestart();
+
+  SessionStore::SessionsMap loaded_sessions = LoadSessions();
+  EXPECT_TRUE(loaded_sessions.empty());
 }
 
 TEST_F(SessionStoreImplTest, PruneLoadedEntryWithInvalidSite) {
@@ -441,7 +501,8 @@ TEST_F(SessionStoreImplTest, PruneLoadedEntryWithInvalidSite) {
   // - entry with invalid site is not present and is included in the
   //   keys_to_delete list.
   EXPECT_EQ(sessions_map.size(), 1u);
-  EXPECT_EQ(sessions_map.count(site2), 1u);
+  SessionKey key{site2, Session::Id("session_id")};
+  EXPECT_EQ(sessions_map.count(key), 1u);
   EXPECT_EQ(keys_to_delete.size(), 1u);
   EXPECT_EQ(keys_to_delete[0], "about:blank");
 }
@@ -493,6 +554,31 @@ TEST_F(SessionStoreImplTest, PruneLoadedEntryWithSessionMissingWrappedKey) {
   sproto.clear_wrapped_key();
 
   // Create a single entry table with the above session data.
+  proto::SiteSessions site_proto;
+  (*site_proto.mutable_sessions())["session_id"] = std::move(sproto);
+  std::map<std::string, proto::SiteSessions> loaded_tbl;
+  auto site = net::SchemefulSite(GURL("https://foo.example.test"));
+  loaded_tbl[site.Serialize()] = std::move(site_proto);
+
+  // Run the table through the store's cleaning method.
+  std::vector<std::string> keys_to_delete;
+  SessionStore::SessionsMap sessions_map =
+      SessionStoreImpl::CreateSessionsFromLoadedData(loaded_tbl,
+                                                     keys_to_delete);
+
+  // Verify that the DB entry has been pruned in the output sessions map.
+  EXPECT_EQ(sessions_map.size(), 0u);
+  EXPECT_EQ(keys_to_delete.size(), 1u);
+  EXPECT_EQ(keys_to_delete[0], site.Serialize());
+}
+
+TEST_F(SessionStoreImplTest, PruneLoadedEntryWithInvalidRefreshInitiator) {
+  // Create an entry with an invalid refresh initiator.
+  proto::Session sproto =
+      CreateSessionProto(unexportable_key_service(), "https://foo.example.test",
+                         "session_1", "https://foo.example.test");
+  sproto.add_allowed_refresh_initiators("a.*.example.test");
+
   proto::SiteSessions site_proto;
   (*site_proto.mutable_sessions())["session_id"] = std::move(sproto);
   std::map<std::string, proto::SiteSessions> loaded_tbl;

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 
 #include <algorithm>
@@ -24,6 +19,7 @@
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -74,7 +70,7 @@
 #include "base/win/windows_version.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/grit/chrome_unscaled_resources.h"  // nogncheck crbug.com/1125897
-#include "ui/gfx/icon_util.h"  // For Iconutil::kLargeIconSize.
+#include "ui/gfx/win/icon_util.h"  // For Iconutil::kLargeIconSize.
 #endif
 
 #if BUILDFLAG(IS_MAC)
@@ -379,6 +375,58 @@ class CircleImageSource : public gfx::CanvasImageSource {
   const SkColor color_;
 };
 
+// CanvasImageSource that combines a background image with user's avatar,
+// the avatar is positioned and resized in terms of the background image DIPs,
+// it also is cropped in a circle.
+class AvatarEmbeddedImageSource : public gfx::CanvasImageSource {
+ public:
+  AvatarEmbeddedImageSource(const gfx::Image& image,
+                            const gfx::Image& avatar,
+                            const gfx::Point& avatar_position,
+                            size_t avatar_size)
+      : gfx::CanvasImageSource(image.Size()),
+        image_(image),
+        avatar_(avatar),
+        avatar_position_(avatar_position),
+        avatar_size_(avatar_size) {
+    CHECK(!image_.IsEmpty());
+  }
+
+  AvatarEmbeddedImageSource(const AvatarEmbeddedImageSource&) = delete;
+  AvatarEmbeddedImageSource& operator=(const AvatarEmbeddedImageSource&) =
+      delete;
+
+  ~AvatarEmbeddedImageSource() override = default;
+
+  // gfx::CanvasImageSource:
+  void Draw(gfx::Canvas* canvas) override {
+    // Draw the background image first.
+    canvas->DrawImageInt(image_.AsImageSkia(), 0, 0);
+
+    // Setting a clippath makes subsequent avatar drawing cropped in a circle.
+    SkPath avatar_bound = SkPath().addOval(
+        SkRect::MakeXYWH(avatar_position_.x(), avatar_position_.y(),
+                         /*w=*/avatar_size_, /*h=*/avatar_size_));
+    canvas->ClipPath(avatar_bound, /*do_anti_alias=*/true);
+
+    // Finally draw the avatar, above the background and cropped.
+    // Note that some testing profiles do not have an avatar.
+    if (!avatar_.IsEmpty()) {
+      gfx::ImageSkia avatar = gfx::ImageSkiaOperations::CreateResizedImage(
+          avatar_.AsImageSkia(),
+          skia::ImageOperations::ResizeMethod::RESIZE_BEST,
+          gfx::Size(avatar_size_, avatar_size_));
+      canvas->DrawImageInt(avatar, avatar_position_.x(), avatar_position_.y());
+    }
+  }
+
+ private:
+  const gfx::Image image_;
+  const gfx::Image avatar_;
+  const gfx::Point avatar_position_;
+  const size_t avatar_size_;
+};
+
 }  // namespace
 
 namespace profiles {
@@ -414,13 +462,6 @@ constexpr size_t kDefaultAvatarIconsCount = 1;
 constexpr size_t kDefaultAvatarIconsCount = 27;
 #else
 constexpr size_t kDefaultAvatarIconsCount = 56;
-#endif
-
-#if !BUILDFLAG(IS_ANDROID)
-// The first 8 icons are generic.
-constexpr size_t kGenericAvatarIconsCount = 8;
-#else
-constexpr size_t kGenericAvatarIconsCount = 0;
 #endif
 
 #if !BUILDFLAG(IS_ANDROID)
@@ -484,11 +525,12 @@ ui::ImageModel GetSizedAvatarImageModel(const ui::ImageModel& image, int size) {
 }
 
 #if !BUILDFLAG(IS_ANDROID)
-gfx::ImageSkia GetAvatarWithDottedRing(const ui::ImageModel& image,
-                                       int size,
-                                       bool has_padding,
-                                       bool has_background,
-                                       ui::ColorProvider* color_provider) {
+gfx::ImageSkia GetAvatarWithDottedRing(
+    const ui::ImageModel& image,
+    int size,
+    bool has_padding,
+    bool has_background,
+    const ui::ColorProvider& color_provider) {
   DCHECK(!image.IsEmpty());
 
   const AvatarWithDottedRingParams& params =
@@ -503,7 +545,7 @@ gfx::ImageSkia GetAvatarWithDottedRing(const ui::ImageModel& image,
 
   // Shrink the avatar to fit inside the dotted ring.
   gfx::ImageSkia sized_avatar_image =
-      GetSizedAvatarImageModel(image, avatar_size).Rasterize(color_provider);
+      GetSizedAvatarImageModel(image, avatar_size).Rasterize(&color_provider);
   // Crop to a circle.
   sized_avatar_image = CircleImageSource::CropCircle(sized_avatar_image);
   // Add padding.
@@ -512,13 +554,13 @@ gfx::ImageSkia GetAvatarWithDottedRing(const ui::ImageModel& image,
   // Add background color.
   if (has_background) {
     padded_image = AddBackgroundToImage(
-        padded_image, color_provider->GetColor(ui::kColorBubbleBackground));
+        padded_image, color_provider.GetColor(ui::kColorBubbleBackground));
   }
   // Add dotted ring.
   return gfx::ImageSkia(
       std::make_unique<ImageWithDottedCircleSource>(
           padded_image, avatar_ring_radius, avatar_ring_stroke,
-          color_provider->GetColor(ui::kColorSysStateInactiveRing)),
+          color_provider.GetColor(ui::kColorSysStateInactiveRing)),
       gfx::Size(size, size));
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
@@ -557,11 +599,13 @@ gfx::Image GetAvatarIconForNSMenu(const base::FilePath& profile_path) {
     return gfx::Image();
   }
 
+  // TODO(pkasting): This should use a `ColorProvider` instead.
+  const bool dark_mode =
+      ui::NativeTheme::GetInstanceForNativeUi()->preferred_color_scheme() ==
+      ui::NativeTheme::PreferredColorScheme::kDark;
+  const SkColor bg_color = dark_mode ? SK_ColorBLACK : SK_ColorWHITE;
   PlaceholderAvatarIconParams icon_params =
-      GetPlaceholderAvatarIconParamsVisibleAgainstColor(
-          ui::NativeTheme::GetInstanceForNativeUi()->ShouldUseDarkColors()
-              ? SK_ColorBLACK
-              : SK_ColorWHITE);
+      GetPlaceholderAvatarIconParamsVisibleAgainstColor(bg_color);
   // Get a higher res than 16px so it looks good after cropping to a circle.
   gfx::Image icon = entry->GetAvatarIcon(
       kAvatarIconSize, /*download_high_res=*/false, icon_params);
@@ -575,10 +619,6 @@ gfx::Image GetAvatarIconForNSMenu(const base::FilePath& profile_path) {
 // Helper methods for accessing, transforming and drawing avatar icons.
 size_t GetDefaultAvatarIconCount() {
   return kDefaultAvatarIconsCount;
-}
-
-size_t GetGenericAvatarIconCount() {
-  return kGenericAvatarIconsCount;
 }
 
 size_t GetPlaceholderAvatarIndex() {
@@ -1051,6 +1091,16 @@ gfx::ImageSkia AddBackgroundToImage(const gfx::ImageSkia& image,
   return gfx::ImageSkia(
       std::make_unique<ImageWithBackgroundSource>(image, background_color),
       image.size());
+}
+
+ui::ImageModel EmbedAvatarOntoImage(int resource_id,
+                                    const gfx::Image& avatar,
+                                    const gfx::Point& avatar_position,
+                                    size_t avatar_size) {
+  return ui::ImageModel::FromImageSkia(
+      gfx::CanvasImageSource::MakeImageSkia<AvatarEmbeddedImageSource>(
+          ui::ResourceBundle::GetSharedInstance().GetImageNamed(resource_id),
+          avatar, avatar_position, avatar_size));
 }
 
 }  // namespace profiles

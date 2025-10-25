@@ -48,6 +48,19 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
   *auto_behavior = AutoSizeBehavior::kFitContent;
   *is_overflow_safe = alignment.Overflow() == OverflowAlignment::kSafe;
 
+  const bool applies_alignment = ([&]() {
+    if (!parent_grid_style.IsDisplayMasonryBox()) {
+      return true;
+    }
+
+    // We currently only apply alignment in the grid axis of a masonry
+    // container.
+    //
+    // TODO(almaher): Update alignment logic if needed once we resolve on
+    // https://github.com/w3c/csswg-drafts/issues/10275.
+    return parent_grid_style.MasonryTrackSizingDirection() == track_direction;
+  })();
+
   // Auto-margins take precedence over any alignment properties.
   if (item_style.MayHaveMargin() && !is_out_of_flow) {
     const bool is_start_auto =
@@ -105,7 +118,9 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
     case ItemPosition::kEnd:
       return AxisEdge::kEnd;
     case ItemPosition::kStretch:
-      *auto_behavior = AutoSizeBehavior::kStretchExplicit;
+      if (applies_alignment) {
+        *auto_behavior = AutoSizeBehavior::kStretchExplicit;
+      }
       return AxisEdge::kStart;
     case ItemPosition::kBaseline:
       return AxisEdge::kFirstBaseline;
@@ -120,8 +135,10 @@ AxisEdge AxisEdgeFromItemPosition(GridTrackSizingDirection track_direction,
       return root_grid_writing_direction.IsRtl() ? AxisEdge::kStart
                                                  : AxisEdge::kEnd;
     case ItemPosition::kNormal:
-      *auto_behavior = is_replaced ? AutoSizeBehavior::kFitContent
-                                   : AutoSizeBehavior::kStretchImplicit;
+      if (applies_alignment) {
+        *auto_behavior = is_replaced ? AutoSizeBehavior::kFitContent
+                                     : AutoSizeBehavior::kStretchImplicit;
+      }
       return AxisEdge::kStart;
     case ItemPosition::kLegacy:
     case ItemPosition::kAuto:
@@ -289,6 +306,17 @@ void GridItemData::SetAlignmentFallback(
             ? AxisEdge::kStart
             : AxisEdge::kEnd;
   }
+}
+
+void GridItemData::UpdateSpan(
+    const GridSpan& span,
+    GridTrackSizingDirection track_direction,
+    wtf_size_t start_offset,
+    const GridLayoutTrackCollection& track_collection) {
+  resolved_position.SetSpan(span, track_direction);
+  MaybeTranslateSpan(start_offset, track_direction);
+  ResetPlacementIndices();
+  ComputeSetIndices(track_collection);
 }
 
 void GridItemData::ComputeSetIndices(

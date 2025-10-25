@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/containers/contains.h"
+#include "base/debug/crash_logging.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/observer_list.h"
@@ -101,7 +102,8 @@ bool HostFrameSinkManager::IsFrameSinkIdRegistered(
 
 void HostFrameSinkManager::InvalidateFrameSinkId(
     const FrameSinkId& frame_sink_id,
-    HostFrameSinkClient* client) {
+    HostFrameSinkClient* client,
+    base::OnceClosure callback) {
   DCHECK(frame_sink_id.is_valid());
 
   FrameSinkData& data = frame_sink_data_map_[frame_sink_id];
@@ -133,7 +135,23 @@ void HostFrameSinkManager::InvalidateFrameSinkId(
     // reference at this point.
   }
 
-  frame_sink_manager_->InvalidateFrameSinkId(frame_sink_id);
+  base::OnceClosure invalidate_callback;
+  if (callback) {
+    DCHECK(!frame_sink_invalidate_callbacks_.contains(frame_sink_id));
+    frame_sink_invalidate_callbacks_.emplace(frame_sink_id,
+                                             std::move(callback));
+    invalidate_callback =
+        base::BindOnce(&HostFrameSinkManager::InvalidateFrameSinkCallback,
+                       base::Unretained(this), frame_sink_id);
+  }
+
+  frame_sink_manager_->InvalidateFrameSinkId(frame_sink_id,
+                                             std::move(invalidate_callback));
+}
+
+void HostFrameSinkManager::InvalidateFrameSinkCallback(
+    const FrameSinkId& frame_sink_id) {
+  frame_sink_invalidate_callbacks_.erase(frame_sink_id);
 }
 
 void HostFrameSinkManager::SetFrameSinkDebugLabel(
@@ -241,8 +259,11 @@ void HostFrameSinkManager::OnFrameTokenChanged(
     return;
 
   const FrameSinkData& data = iter->second;
-  if (data.client)
+  if (data.client) {
+    // TODO(crbug.com/431761865): Remove after the bug is fixed.
+    SCOPED_CRASH_KEY_STRING32("content", "debug_label", data.debug_label);
     data.client->OnFrameTokenChanged(frame_token, activation_time);
+  }
 }
 
 bool HostFrameSinkManager::RegisterFrameSinkHierarchy(
@@ -287,18 +308,21 @@ void HostFrameSinkManager::AddVideoDetectorObserver(
 }
 
 void HostFrameSinkManager::CreateVideoCapturer(
-    mojo::PendingReceiver<mojom::FrameSinkVideoCapturer> receiver) {
-  frame_sink_manager_->CreateVideoCapturer(std::move(receiver));
+    mojo::PendingReceiver<mojom::FrameSinkVideoCapturer> receiver,
+    uint32_t capture_version_source) {
+  frame_sink_manager_->CreateVideoCapturer(std::move(receiver),
+                                           capture_version_source);
 }
 
 std::unique_ptr<ClientFrameSinkVideoCapturer>
-HostFrameSinkManager::CreateVideoCapturer() {
+HostFrameSinkManager::CreateVideoCapturer(uint32_t capture_version_source) {
   return std::make_unique<ClientFrameSinkVideoCapturer>(base::BindRepeating(
       [](base::WeakPtr<HostFrameSinkManager> self,
+         uint32_t capture_version_source,
          mojo::PendingReceiver<mojom::FrameSinkVideoCapturer> receiver) {
-        self->CreateVideoCapturer(std::move(receiver));
+        self->CreateVideoCapturer(std::move(receiver), capture_version_source);
       },
-      weak_ptr_factory_.GetWeakPtr()));
+      weak_ptr_factory_.GetWeakPtr(), capture_version_source));
 }
 
 void HostFrameSinkManager::EvictSurfaces(
@@ -411,6 +435,8 @@ void HostFrameSinkManager::OnConnectionLost() {
     map_entry.second.has_created_compositor_frame_sink = false;
     map_entry.second.wait_on_destruction = false;
   }
+
+  frame_sink_invalidate_callbacks_.clear();
 
   if (!connection_lost_callback_.is_null())
     connection_lost_callback_.Run();

@@ -95,7 +95,7 @@ public class ViewTransitionPixelTest {
 
     @Before
     public void setUp() {
-        mViewportTestUtils = new ViewportTestUtils(mActivityTestRule.getActivityTestRule());
+        mViewportTestUtils = new ViewportTestUtils(mActivityTestRule);
         mViewportTestUtils.setUpForBrowserControls();
     }
 
@@ -125,7 +125,6 @@ public class ViewTransitionPixelTest {
                             mActivityTestRule
                                     .getKeyboardDelegate()
                                     .isKeyboardShowing(
-                                            mActivityTestRule.getActivity(),
                                             mActivityTestRule.getActivity().getTabsView());
                     Criteria.checkThat(isKeyboardShowing, Matchers.is(show));
                 },
@@ -134,7 +133,7 @@ public class ViewTransitionPixelTest {
     }
 
     private WebContents getWebContents() {
-        return mActivityTestRule.getActivity().getActivityTab().getWebContents();
+        return mActivityTestRule.getActivityTab().getWebContents();
     }
 
     private void showAndWaitForKeyboard() throws Throwable {
@@ -148,7 +147,7 @@ public class ViewTransitionPixelTest {
 
         assertWaitForKeyboardStatus(true);
 
-        double keyboardHeight = getKeyboardHeightDp();
+        int keyboardHeight = getKeyboardHeightPx();
 
         if (mVirtualKeyboardMode == VirtualKeyboardMode.RESIZES_VISUAL) {
             mViewportTestUtils.waitForExpectedVisualViewportHeight(
@@ -178,22 +177,16 @@ public class ViewTransitionPixelTest {
         }
     }
 
-    private double getKeyboardHeightDp() {
-        double keyboardHeightPx =
-                mActivityTestRule
-                        .getKeyboardDelegate()
-                        .calculateTotalKeyboardHeight(
-                                mActivityTestRule
-                                        .getActivity()
-                                        .getWindow()
-                                        .getDecorView()
-                                        .getRootView());
-        return keyboardHeightPx / mViewportTestUtils.getDeviceScaleFactor();
+    private int getKeyboardHeightPx() {
+        return mActivityTestRule
+                .getKeyboardDelegate()
+                .calculateTotalKeyboardHeight(
+                        mActivityTestRule.getActivity().getWindow().getDecorView().getRootView());
     }
 
     private void setLocationAndWaitForLoad(String url) {
         ChromeTabUtils.waitForTabPageLoaded(
-                mActivityTestRule.getActivity().getActivityTab(),
+                mActivityTestRule.getActivityTab(),
                 url,
                 () -> {
                     try {
@@ -273,8 +266,7 @@ public class ViewTransitionPixelTest {
     }
 
     private String getCurrentUrl() {
-        return ChromeTabUtils.getUrlStringOnUiThread(
-                mActivityTestRule.getActivity().getActivityTab());
+        return ChromeTabUtils.getUrlStringOnUiThread(mActivityTestRule.getActivityTab());
     }
 
     /**
@@ -287,6 +279,7 @@ public class ViewTransitionPixelTest {
     @Test
     @MediumTest
     @Feature({"RenderTest"})
+    @DisabledTest(message = "crbug.com/435692206")
     public void testVirtualKeyboardResizesVisual() throws Throwable {
         startKeyboardTest(VirtualKeyboardMode.RESIZES_VISUAL);
 
@@ -329,6 +322,7 @@ public class ViewTransitionPixelTest {
     @Test
     @MediumTest
     @Feature({"RenderTest"})
+    @DisabledTest(message = "crbug.com/435692206")
     public void testVirtualKeyboardResizesContent() throws Throwable {
         doTestVirtualKeyboardResizesContent();
     }
@@ -344,6 +338,7 @@ public class ViewTransitionPixelTest {
     @MinAndroidSdkLevel(VERSION_CODES.R)
     @EnableFeatures(ChromeFeatureList.TAB_STRIP_LAYOUT_OPTIMIZATION)
     @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
+    @DisabledTest(message = "crbug.com/435692206")
     public void testVirtualKeyboardResizesContent_TSLOEnabled() throws Throwable {
         // Simulate fullscreen window behavior in an environment that supports Android V custom app
         // header APIs.

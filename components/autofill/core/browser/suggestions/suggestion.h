@@ -15,16 +15,14 @@
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
-#include "base/notreached.h"
 #include "base/types/cxx23_to_underlying.h"
 #include "base/types/strong_alias.h"
-#include "base/uuid.h"
 #include "build/build_config.h"
+#include "components/autofill/core/browser/data_model/autofill_ai/entity_instance.h"
 #include "components/autofill/core/browser/field_types.h"
-#include "components/autofill/core/browser/filling/field_filling_skip_reason.h"
 #include "components/autofill/core/browser/suggestions/suggestion_type.h"
+#include "components/autofill/core/browser/webdata/autocomplete/autocomplete_entry.h"
 #include "components/autofill/core/common/unique_ids.h"
-#include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/image/image.h"
 #include "url/gurl.h"
 
@@ -38,17 +36,21 @@ struct Suggestion {
   struct PasswordSuggestionDetails {
     std::u16string username;
     std::u16string password;
+    // Password used in the recovery flow initiated after failed password
+    // change.
+    std::optional<std::u16string> backup_password;
     // The signon realm of the password. Unlike the `display_signon_realm`, it
     // is not necessarily user friendly/readable, but rather has the raw
     // `PasswordForm::signon_realm` value.
-    std::string signon_realm;
+    std::optional<std::string> signon_realm;
     // Stores either the password signon realm or the Android app name for which
     // the password was saved.
-    std::u16string display_signon_realm;
+    std::optional<std::u16string> display_signon_realm;
     // This flag is set to `false` for the manual fallback suggestions which
     // represent exact, strongly affiliated, PSL and weakly affiliated matches
-    // for the domain the suggestions are shown for. All other suggestions have
-    // this flag set to `true`.
+    // for the domain the suggestions are shown for. All other manual fallback
+    // suggestions have this flag set to `true`.
+    // Note that non-manual-fallback suggestions are never cross domain.
     bool is_cross_domain = false;
 
     PasswordSuggestionDetails();
@@ -57,6 +59,10 @@ struct Suggestion {
                               std::string_view signon_realm,
                               std::u16string_view display_signon_realm,
                               bool is_cross_domain);
+    // Used to construct the payload of a backup password suggestion.
+    PasswordSuggestionDetails(std::u16string_view username,
+                              std::u16string_view password,
+                              std::u16string_view backup_password);
     PasswordSuggestionDetails(const PasswordSuggestionDetails&);
     PasswordSuggestionDetails(PasswordSuggestionDetails&&);
     PasswordSuggestionDetails& operator=(const PasswordSuggestionDetails&);
@@ -88,7 +94,7 @@ struct Suggestion {
 
   struct AutofillAiPayload final {
     AutofillAiPayload();
-    explicit AutofillAiPayload(base::Uuid guid);
+    explicit AutofillAiPayload(EntityInstance::EntityId guid);
     AutofillAiPayload(const AutofillAiPayload&);
     AutofillAiPayload(AutofillAiPayload&&);
     AutofillAiPayload& operator=(const AutofillAiPayload&);
@@ -98,7 +104,7 @@ struct Suggestion {
     friend bool operator==(const AutofillAiPayload&,
                            const AutofillAiPayload&) = default;
 
-    base::Uuid guid;
+    EntityInstance::EntityId guid;
   };
 
   using Guid = base::StrongAlias<class GuidTag, std::string>;
@@ -114,6 +120,10 @@ struct Suggestion {
     PaymentsPayload& operator=(const PaymentsPayload&);
     PaymentsPayload& operator=(PaymentsPayload&&);
     ~PaymentsPayload();
+
+#if BUILDFLAG(IS_ANDROID)
+    base::android::ScopedJavaLocalRef<jobject> CreateJavaObject() const;
+#endif  // BUILDFLAG(IS_ANDROID)
 
     friend bool operator==(const PaymentsPayload&,
                            const PaymentsPayload&) = default;
@@ -163,7 +173,10 @@ struct Suggestion {
 
   struct IdentityCredentialPayload final {
     IdentityCredentialPayload();
-    IdentityCredentialPayload(GURL configURL, std::string account_id);
+    IdentityCredentialPayload(
+        GURL configURL,
+        std::string account_id,
+        const std::map<FieldType, std::u16string>& fields);
     IdentityCredentialPayload(const IdentityCredentialPayload&);
     IdentityCredentialPayload(IdentityCredentialPayload&&);
     IdentityCredentialPayload& operator=(const IdentityCredentialPayload&);
@@ -193,7 +206,8 @@ struct Suggestion {
                                PlusAddressPayload,
                                AutofillAiPayload,
                                PaymentsPayload,
-                               IdentityCredentialPayload>;
+                               IdentityCredentialPayload,
+                               AutocompleteEntry>;
 
   // This struct is used to provide password suggestions with custom icons,
   // using the favicon of the website associated with the credentials. While
@@ -295,6 +309,7 @@ struct Suggestion {
     kEdit,
     kEmail,
     kError,
+    kFlight,
     kGlobe,
     kGoogle,
     kGoogleMonochrome,
@@ -312,6 +327,7 @@ struct Suggestion {
     kMagic,
     kOfferTag,
     kPenSpark,
+    kPersonCheck,
     kPlusAddress,
     kQuestionMark,
     kRecoveryPassword,
@@ -337,6 +353,7 @@ struct Suggestion {
     kIban,
     kBnpl,
     kSaveAndFill,
+    kAndroidMessages,
   };
 
   // This enum is used to control filtration of suggestions (see it's used in
@@ -375,8 +392,6 @@ struct Suggestion {
   // constructors. Some expect UTF16 strings and others UTF8, while internally
   // we only use UTF16. The ones expecting UTF8 are only used by tests and could
   // be easily refactored.
-  Suggestion();
-  explicit Suggestion(std::u16string main_text);
   explicit Suggestion(SuggestionType type);
   Suggestion(std::u16string main_text, SuggestionType type);
   // Constructor for unit tests. It will convert the strings from UTF-8 to
@@ -425,6 +440,8 @@ struct Suggestion {
                std::holds_alternative<PasswordSuggestionDetails>(payload);
       case SuggestionType::kFillPassword:
       case SuggestionType::kViewPasswordDetails:
+      case SuggestionType::kBackupPasswordEntry:
+      case SuggestionType::kTroubleSigningInEntry:
         return std::holds_alternative<PasswordSuggestionDetails>(payload);
       case SuggestionType::kSeePromoCodeDetails:
         return std::holds_alternative<GURL>(payload);
@@ -461,7 +478,7 @@ struct Suggestion {
   Payload payload;
 
   // Determines popup identifier for the suggestion.
-  SuggestionType type = SuggestionType::kAutocompleteEntry;
+  SuggestionType type;
 
   // The texts that will be displayed on the first line in a suggestion. The
   // order of showing the two texts on the first line depends on whether it is
@@ -477,10 +494,17 @@ struct Suggestion {
   // the second line, third column in the grid view of label).
   std::vector<std::vector<Text>> labels;
 
-  // Used only for passwords to show the credential signon realm if applicable.
-  // Also used to display an extra line of information if two line
-  // display is enabled.
+  // Used only for passwords to:
+  // 1. show the credential signon realm if applicable
+  // 2. show the obfuscated backup password in a password recovery flow.
+  // 3. show a "recovery" string next to the backup credential when displaying
+  // backups alongside the primary credentials.
+  // Also used to display an extra line of information if two line display is
+  // enabled.
   std::u16string additional_label;
+
+  // Whether the additional label is aligned to the right (or left in RTL).
+  bool additional_label_alignment_right = false;
 
   // This field outlines various methods for specifying the custom icon.
   // Depending on the use case and platform, it can be a `gfx::Image` instance
@@ -540,13 +564,6 @@ struct Suggestion {
 
   // The acceptability of the suggestion, see the enum values doc for details.
   Acceptability acceptability = Acceptability::kAcceptable;
-
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
-  // If true, selecting a suggestion or, when it exists, expanding its
-  // sub-popup, highlights the background of the suggestion row and its
-  // contained cells.
-  bool highlight_on_select = true;
-#endif
 
   // Returns whether the user is able to preview the suggestion by hovering on
   // it or accept it by clicking on it.

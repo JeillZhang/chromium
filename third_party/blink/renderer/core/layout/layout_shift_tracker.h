@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_SHIFT_TRACKER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_LAYOUT_SHIFT_TRACKER_H_
 
+#include <array>
 #include <vector>
 
 #include "base/check_op.h"
@@ -257,8 +258,8 @@ class CORE_EXPORT LayoutShiftTracker final
 
   struct Attribution {
     DOMNodeId node_id = kInvalidDOMNodeId;
-    gfx::Rect old_visual_rect;
-    gfx::Rect new_visual_rect;
+    gfx::RectF old_visual_rect;
+    gfx::RectF new_visual_rect;
 
     explicit operator bool() const;
     bool Encloses(const Attribution&) const;

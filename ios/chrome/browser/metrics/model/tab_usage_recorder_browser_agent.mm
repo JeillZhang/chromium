@@ -6,11 +6,12 @@
 
 #import <UIKit/UIKit.h>
 
+#import <array>
+
 #import "base/metrics/histogram_macros.h"
 #import "components/previous_session_info/previous_session_info.h"
 #import "components/ukm/ios/ukm_url_recorder.h"
-#import "ios/chrome/browser/prerender/model/prerender_service.h"
-#import "ios/chrome/browser/prerender/model/prerender_service_factory.h"
+#import "ios/chrome/browser/prerender/model/prerender_tab_helper.h"
 #import "ios/chrome/browser/sessions/model/session_restoration_service.h"
 #import "ios/chrome/browser/sessions/model/session_restoration_service_factory.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
@@ -27,9 +28,7 @@
 TabUsageRecorderBrowserAgent::TabUsageRecorderBrowserAgent(Browser* browser)
     : BrowserUserData(browser),
       restore_start_time_(base::TimeTicks::Now()),
-      web_state_list_(browser->GetWebStateList()),
-      prerender_service_(
-          PrerenderServiceFactory::GetForProfile(browser->GetProfile())) {
+      web_state_list_(browser->GetWebStateList()) {
   browser->AddObserver(this);
 
   DCHECK(web_state_list_);
@@ -155,8 +154,7 @@ void TabUsageRecorderBrowserAgent::RecordTabSwitched(
 
   // Should never happen.  Keeping the check to ensure that the prerender logic
   // is never overlooked, should behavior at the tab_model level change.
-  DCHECK(!prerender_service_ ||
-         !prerender_service_->IsWebStatePrerendered(new_web_state));
+  DCHECK(!PrerenderTabHelper::FromWebState(new_web_state));
 
   tab_usage_recorder::TabStateWhenSelected web_state_state =
       ExtractWebStateState(new_web_state);
@@ -458,18 +456,18 @@ bool TabUsageRecorderBrowserAgent::ShouldRecordPageLoadStartForNavigation(
     return false;
   }
 
-  static const ui::PageTransition kRecordedPageTransitionTypes[] = {
-      ui::PAGE_TRANSITION_TYPED,
-      ui::PAGE_TRANSITION_LINK,
-      ui::PAGE_TRANSITION_GENERATED,
-      ui::PAGE_TRANSITION_AUTO_BOOKMARK,
-      ui::PAGE_TRANSITION_FORM_SUBMIT,
-      ui::PAGE_TRANSITION_KEYWORD,
-      ui::PAGE_TRANSITION_KEYWORD_GENERATED,
-  };
+  static constexpr auto kRecordedPageTransitionTypes =
+      std::to_array<ui::PageTransition>({
+          ui::PAGE_TRANSITION_TYPED,
+          ui::PAGE_TRANSITION_LINK,
+          ui::PAGE_TRANSITION_GENERATED,
+          ui::PAGE_TRANSITION_AUTO_BOOKMARK,
+          ui::PAGE_TRANSITION_FORM_SUBMIT,
+          ui::PAGE_TRANSITION_KEYWORD,
+          ui::PAGE_TRANSITION_KEYWORD_GENERATED,
+      });
 
-  for (size_t i = 0; i < std::size(kRecordedPageTransitionTypes); ++i) {
-    const ui::PageTransition recorded_type = kRecordedPageTransitionTypes[i];
+  for (const ui::PageTransition recorded_type : kRecordedPageTransitionTypes) {
     if (ui::PageTransitionCoreTypeIs(transition, recorded_type)) {
       return true;
     }

@@ -21,8 +21,6 @@ import androidx.annotation.IdRes;
 import androidx.annotation.IntDef;
 
 import org.chromium.base.Callback;
-import org.chromium.base.supplier.ObservableSupplier;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.profiles.Profile;
@@ -34,6 +32,7 @@ import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
+import java.util.function.Supplier;
 
 /** Root component for the Home button and NTP Customization button's container on the toolbar. */
 @NullMarked
@@ -74,7 +73,7 @@ public class HomePageButtonsCoordinator implements HomeButtonDisplay {
      */
     public HomePageButtonsCoordinator(
             Context context,
-            ObservableSupplier<Profile> profileSupplier,
+            Supplier<@Nullable Profile> profileSupplier,
             View view,
             Callback<Context> onHomeButtonMenuClickCallback,
             Supplier<Boolean> isHomepageMenuDisabledSupplier,

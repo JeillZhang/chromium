@@ -17,8 +17,9 @@
 #include <vector>
 
 #include "base/functional/callback_forward.h"
-#import "base/memory/raw_ptr.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
 #include "base/supports_user_data.h"
 #include "base/time/time.h"
 #include "build/blink_buildflags.h"
@@ -70,6 +71,13 @@ void IgnoreOverRealizationCheck();
 // Core interface for interaction with the web.
 class WebState : public base::SupportsUserData {
  public:
+  // Policy for realization.
+  enum class RealizationPolicy {
+    kRelaxed,
+    kEnforceNoAttachedData,
+    kDefault = kRelaxed,
+  };
+
   // Callback used to load the full information for the WebState when
   // it will become realized.
   using WebStateStorageLoader =
@@ -186,12 +194,21 @@ class WebState : public base::SupportsUserData {
     std::map<std::string, Callback> callbacks_;
   };
 
+  class ScopedWebContentCoverer {
+   public:
+    explicit ScopedWebContentCoverer(WebState* web_state);
+    ~ScopedWebContentCoverer();
+
+   private:
+    base::WeakPtr<WebState> web_state_;
+  };
+
   // Creates a new WebState.
   static std::unique_ptr<WebState> Create(const CreateParams& params);
 
   // Creates a new WebState from a serialized representation of the session.
   // `session_storage` must not be nil.
-  // TODO(crbug.com/40245950): remove when the optimised serialisation feature
+  // TODO(crbug.com/40945317): remove when the optimised serialisation feature
   // has been fully launched.
   static std::unique_ptr<WebState> CreateWithStorageSession(
       const CreateParams& params,
@@ -259,11 +276,15 @@ class WebState : public base::SupportsUserData {
   // to call it as the WebState will lazily switch to "realized" state when
   // needed.
   //
+  // The parameter `policy` can be used to enforce that there are no objects
+  // attached to the WebState when it is realized. If the WebState is realized
+  // the `policy` is ignored.
+  //
   // Returns `this` so that the method can be chained such as:
   //
   //    WebState* web_state = ...;
-  //    web_state->ForceRealized()->SetDelegate(this);
-  virtual WebState* ForceRealized() = 0;
+  //    web_state->ForceRealizedWithPolicy(policy)->SetDelegate(this);
+  virtual WebState* ForceRealizedWithPolicy(RealizationPolicy policy) = 0;
 
   // Whether or not a web view is allowed to exist in this WebState. Defaults
   // to false; this should be enabled before attempting to access the view.
@@ -354,16 +375,6 @@ class WebState : public base::SupportsUserData {
   // Asynchronously executes `javaScript` in the main frame's context,
   // registering user interaction.
   virtual void ExecuteUserJavaScript(NSString* javaScript) = 0;
-
-  // Returns a unique identifier for this WebState that is stable across
-  // restart of the application (and across "undo" after a tab is closed).
-  // It is local to the device and not synchronized. This can be used as a key
-  // to identify locally this WebState (e.g. can be used as part of the name
-  // of the file that is used to store a snapshot of the WebState, or it can
-  // be used as a key in an NSDictionary).
-  //
-  // DEPRECATED: use GetUniqueIdentifier() instead.
-  virtual NSString* GetStableIdentifier() const = 0;
 
   // Returns a unique identifier for this WebState that is stable across
   // restart of the application (and across "undo" after a tab is closed).
@@ -538,8 +549,20 @@ class WebState : public base::SupportsUserData {
   // Returns the under page background color.
   virtual UIColor* GetUnderPageBackgroundColor() = 0;
 
+  // Helper that calls ForceRealizedWithPolicy() with default policy.
+  WebState* ForceRealized();
+
  protected:
   friend class WebStatePolicyDecider;
+
+  // A list of WebStateObservers.
+  using WebStateObserverList = base::ObserverList<WebStateObserver, true>;
+
+  // Helper function that call WebStateRealized(this) for pre-registered
+  // observers but not for any observers that are added while iterating.
+  // Those observers will already have observed the current WebState in
+  // the realized state and could be confused by the notification.
+  void NotifyWebStateRealized(WebStateObserverList& observers);
 
   // Adds and removes policy deciders for navigation actions. The order in which
   // deciders are called is undefined, and will stop on the first decider that

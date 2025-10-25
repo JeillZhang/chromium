@@ -485,14 +485,14 @@ class NetworkResponder {
     base::AutoLock auto_lock(lock_);
     // Check if there is a registered repeat callback.
     const auto callback_it =
-        net_callback_map_.find(params->url_request.url.path());
+        net_callback_map_.find(params->url_request.url.GetPath());
     if (callback_it != net_callback_map_.end()) {
       callback_it->second.Run(params);
     }
 
     // Check deferred responses map.
     const auto deferred_it =
-        deferred_responses_map_.find(params->url_request.url.path());
+        deferred_responses_map_.find(params->url_request.url.GetPath());
     if (deferred_it != deferred_responses_map_.end()) {
       CHECK(!deferred_it->second.url_loader_client);
       deferred_it->second.url_loader_client = std::move(params->client);
@@ -504,13 +504,13 @@ class NetworkResponder {
 
     // Cross-origin iframe handling is covered by integration tests, for cases
     // that request .well-known URLs.
-    if (params->url_request.url.path_piece() ==
+    if (params->url_request.url.path() ==
         "/.well-known/interest-group/permissions/") {
       NOTREACHED();
     }
 
     // Check if this is a non-update error.
-    if (params->url_request.url.path() == non_update_error_path_) {
+    if (params->url_request.url.GetPath() == non_update_error_path_) {
       CHECK(non_update_error_ != net::OK);
       params->client->OnComplete(
           network::URLLoaderCompletionStatus(non_update_error_));
@@ -518,7 +518,7 @@ class NetworkResponder {
     }
 
     // Not a non-update error, check if this is a script request.
-    const auto script_it = script_map_.find(params->url_request.url.path());
+    const auto script_it = script_map_.find(params->url_request.url.GetPath());
     if (script_it != script_map_.end()) {
       URLLoaderInterceptor::WriteResponse(
           kFledgeScriptHeaders, script_it->second, params->client.get());
@@ -527,11 +527,11 @@ class NetworkResponder {
 
     // Not a non-update error or script request, check if it's a reporting
     // request.
-    const auto report_it = report_map_.find(params->url_request.url.path());
+    const auto report_it = report_map_.find(params->url_request.url.GetPath());
     if (report_it != report_map_.end()) {
       URLLoaderInterceptor::WriteResponse(
           kFledgeReportHeaders, report_it->second, params->client.get());
-      sent_reports_.push_back(params->url_request.url.path());
+      sent_reports_.push_back(params->url_request.url.GetPath());
       OnReportSent();
       return true;
     }
@@ -550,7 +550,8 @@ class NetworkResponder {
     }
 
     // Check if it's a trusted bidding/scoring signals response.
-    const auto signals_it = signals_map_.find(params->url_request.url.path());
+    const auto signals_it =
+        signals_map_.find(params->url_request.url.GetPath());
     if (signals_it != signals_map_.end()) {
       signals_it->second.Run(params);
       return true;
@@ -559,14 +560,15 @@ class NetworkResponder {
     // Check if it's a Bidding and Auction Server key request. These can be
     // triggered by the Prefetch feature when JoinAdInterestGroup is called
     // It's safe to just fail them.
-    if (params->url_request.url.path() ==
-        GURL(kBiddingAndAuctionGCPCoordinatorKeyURL).path()) {
+    if (params->url_request.url.GetPath() ==
+        GURL(kBiddingAndAuctionGCPCoordinatorKeyURL).GetPath()) {
       params->client->OnComplete(
           network::URLLoaderCompletionStatus(net::ERR_FAILED));
       return true;
     }
 
-    if ((params->url_request.url.path() == store_url_loader_client_url_path_)) {
+    if ((params->url_request.url.GetPath() ==
+         store_url_loader_client_url_path_)) {
       CHECK(!stored_url_loader_client_);
       stored_url_loader_client_ = std::move(params->client);
       OnReportSent();
@@ -577,14 +579,14 @@ class NetworkResponder {
     // this an update request.
     OnUpdateRequestReceived(params);
     const auto update_it =
-        json_update_map_.find(params->url_request.url.path());
+        json_update_map_.find(params->url_request.url.GetPath());
     if (update_it != json_update_map_.end()) {
       URLLoaderInterceptor::WriteResponse(
           kFledgeUpdateHeaders, update_it->second, params->client.get());
       return true;
     }
 
-    if (params->url_request.url.path() == update_error_path_) {
+    if (params->url_request.url.GetPath() == update_error_path_) {
       CHECK(update_error_ != net::OK);
       params->client->OnComplete(
           network::URLLoaderCompletionStatus(update_error_));
@@ -2501,7 +2503,8 @@ TEST_F(AdAuctionServiceImplTest,
 
 TEST_F(AdAuctionServiceImplTest, UpdateAlwaysTriggersKAnonFetch) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(features::kAlwaysUpdateKAnon);
+  feature_list.InitWithFeatures({features::kAlwaysUpdateKAnon},
+                                {features::kFledgeCacheKAnonHashedKeys});
 
   NavigateAndCommit(kUrlA);
   blink::InterestGroup interest_group = CreateInterestGroup();
@@ -2583,6 +2586,11 @@ TEST_F(AdAuctionServiceImplTestDisabledDealSupport,
                    .selectable_buyer_and_seller_reporting_ids.has_value());
 }
 
+// TODO(crbug.com/433777160): This test consistently times out on Mac, due to a
+// hang on the first call to `task_environment()->FastForwardBy(...)`. This
+// issue was identified in macOS 26. Disabling on Mac until timeout issue is
+// resolved.
+#if !BUILDFLAG(IS_MAC)
 TEST_F(AdAuctionServiceImplTest, UpdatePrioritySignalsOverrides) {
   // These are all set in sequence, on top of each other, so if one update
   // should fail to parse, the previous value should be unmodified.
@@ -2649,6 +2657,7 @@ TEST_F(AdAuctionServiceImplTest, UpdatePrioritySignalsOverrides) {
               test_case.expected_priority_signals_overrides);
   }
 }
+#endif  //! BUILDFLAG(IS_MAC)
 
 // Join 2 interest groups, each with the same owner, but with different update
 // URLs. Both interest groups should be updated correctly.
@@ -5949,7 +5958,7 @@ TEST_F(AdAuctionServiceImplTest, CancelsLongstandingUpdatesComplex) {
     // Set a long expiration delta so that we can advance to update cancellation
     // without the interest group expiring.
     interest_group.expiry = base::Time::Now() + base::Days(30);
-    interest_group.name = update_url.path();
+    interest_group.name = update_url.GetPath();
     interest_group.update_url = update_url;
     interest_group.ads.emplace();
     blink::InterestGroup::Ad ad(
@@ -5957,7 +5966,7 @@ TEST_F(AdAuctionServiceImplTest, CancelsLongstandingUpdatesComplex) {
         /*metadata=*/std::nullopt);
     interest_group.ads->emplace_back(std::move(ad));
     JoinInterestGroupAndFlush(interest_group);
-    EXPECT_EQ(1, GetJoinCount(kOriginA, /*name=*/update_url.path()));
+    EXPECT_EQ(1, GetJoinCount(kOriginA, /*name=*/update_url.GetPath()));
   }
 
   // Create interest group for kOriginB.
@@ -5993,12 +6002,12 @@ TEST_F(AdAuctionServiceImplTest, CancelsLongstandingUpdatesComplex) {
     const blink::InterestGroup& group = a_group->interest_group;
     ASSERT_TRUE(group.ads.has_value());
     ASSERT_EQ(group.ads->size(), 1u);
-    if (group.name == kUpdateUrlA.path()) {
+    if (group.name == kUpdateUrlA.GetPath()) {
       EXPECT_EQ(group.ads.value()[0].render_url(),
                 "https://example.com/render2");
       seen_succeeded = true;
       continue;
-    } else if (group.name == kUpdateUrlA2.path()) {
+    } else if (group.name == kUpdateUrlA2.GetPath()) {
       seen_failed = true;
     }
     // Failed and deferred interest groups shouldn't have updated.
@@ -6037,7 +6046,7 @@ TEST_F(AdAuctionServiceImplTest, CancelsLongstandingUpdatesComplex) {
     const blink::InterestGroup& group = a_group->interest_group;
     ASSERT_TRUE(group.ads.has_value());
     ASSERT_EQ(group.ads->size(), 1u);
-    if (group.name == kUpdateUrlA3.path()) {
+    if (group.name == kUpdateUrlA3.GetPath()) {
       EXPECT_EQ(group.ads.value()[0].render_url(),
                 "https://example.com/render2");
       break;
@@ -6064,7 +6073,7 @@ TEST_F(AdAuctionServiceImplTest, CancelsLongstandingUpdatesComplex) {
     const blink::InterestGroup& group = a_group->interest_group;
     ASSERT_TRUE(group.ads.has_value());
     ASSERT_EQ(group.ads->size(), 1u);
-    if (group.name == kUpdateUrlA4.path()) {
+    if (group.name == kUpdateUrlA4.GetPath()) {
       EXPECT_EQ(group.ads.value()[0].render_url(),
                 "https://example.com/render2");
       break;
@@ -7595,6 +7604,11 @@ TEST_F(AdAuctionServiceImplTest, SendReports) {
   EXPECT_EQ(network_responder_->ReportCount(), 2u);
 }
 
+// TODO(crbug.com/433777160): These tests consistently time out on Mac, due to a
+// hang on the first call to `task_environment()->FastForwardBy(...)` in the
+// given test. This issue was identified in macOS 26. Disabling on Mac until
+// timeout issue is resolved.
+#if !BUILDFLAG(IS_MAC)
 // Check that reports aren't sent until the URN to URL callback is invoked.
 TEST_F(AdAuctionServiceImplTest, SendReportsWaitsForCallback) {
   network_responder_->RegisterScriptResponse(kBiddingUrlPath,
@@ -7670,6 +7684,7 @@ TEST_F(AdAuctionServiceImplTest, SendReportsTwoAuctionsWithDelay) {
   InvokeCallbackForURN(*auction_result);
   network_responder_->WaitForNumReports(4u);
 }
+#endif  //! BUILDFLAG(IS_MAC)
 
 // Test that if one auction completes after another's reports have been sent,
 // but before the report interval has elapsed, its requests still respect the
@@ -9897,7 +9912,7 @@ function scoreAd(
 
   base::RunLoop run_loop;
   EXPECT_CALL(mock_private_aggregation_cb_, Run)
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](PrivateAggregationHost::ReportRequestGenerator generator,
               PrivateAggregationPendingContributions::Wrapper contributions,
               PrivateAggregationBudgetKey budget_key,
@@ -9922,7 +9937,7 @@ function scoreAd(
                 null_report_behavior,
                 PrivateAggregationHost::NullReportBehavior::kDontSendReport);
             run_loop.Quit();
-          }));
+          });
 
   std::optional<GURL> auction_result = RunAdAuctionAndFlush(auction_config);
   EXPECT_NE(auction_result, std::nullopt);
@@ -10960,6 +10975,8 @@ class AdAuctionServiceImplKAnonTest
       case auction_worklet::mojom::KAnonymityBidMode::kEnforce:
         enabled_features.push_back(blink::features::kFledgeConsiderKAnonymity);
         enabled_features.push_back(blink::features::kFledgeEnforceKAnonymity);
+        disabled_features.push_back(
+            features::kCookieDeprecationFacilitatedTesting);
         break;
       case auction_worklet::mojom::KAnonymityBidMode::kSimulate:
         enabled_features.push_back(blink::features::kFledgeConsiderKAnonymity);
@@ -13149,7 +13166,7 @@ TEST_F(AdAuctionServiceImplBAndATest, EncryptsPayloadWithKAnon) {
           blink::features::kFledgeConsiderKAnonymity,
           blink::features::kFledgeEnforceKAnonymity,
       },
-      {});
+      {features::kCookieDeprecationFacilitatedTesting});
   ProvideKeys();
   NavigateAndCommit(kUrlA);
   url::Origin test_origin = url::Origin::Create(GURL(kOriginStringA));
@@ -14322,7 +14339,7 @@ TEST_F(AdAuctionServiceImplBAndATest,
 
   base::RunLoop run_loop;
   EXPECT_CALL(mock_private_aggregation_cb_, Run)
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](PrivateAggregationHost::ReportRequestGenerator generator,
               PrivateAggregationPendingContributions::Wrapper contributions,
               PrivateAggregationBudgetKey budget_key,
@@ -14340,7 +14357,7 @@ TEST_F(AdAuctionServiceImplBAndATest,
                         /*filtering_id=*/std::nullopt)));
             EXPECT_EQ(request.shared_info().reporting_origin, kOriginA);
             run_loop.Quit();
-          }));
+          });
 
   std::optional<GURL> result = RunAdAuctionWithPromiseAndFlushForFrame(
       auction_config,
@@ -14485,7 +14502,7 @@ function reportResult(auctionConfig, browserSignals) {
 
   base::RunLoop run_loop;
   EXPECT_CALL(mock_private_aggregation_cb_, Run)
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](PrivateAggregationHost::ReportRequestGenerator generator,
               PrivateAggregationPendingContributions::Wrapper contributions,
               PrivateAggregationBudgetKey budget_key,
@@ -14506,7 +14523,7 @@ function reportResult(auctionConfig, browserSignals) {
                         /*filtering_id=*/std::nullopt)));
             EXPECT_EQ(request.shared_info().reporting_origin, kOriginA);
             run_loop.Quit();
-          }));
+          });
 
   std::optional<GURL> result = RunAdAuctionWithPromiseAndFlushForFrame(
       auction_config,
@@ -14618,7 +14635,7 @@ TEST_F(AdAuctionServiceImplBAndATest,
 
   base::RunLoop run_loop;
   EXPECT_CALL(mock_private_aggregation_cb_, Run)
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](PrivateAggregationHost::ReportRequestGenerator generator,
               PrivateAggregationPendingContributions::Wrapper contributions,
               PrivateAggregationBudgetKey budget_key,
@@ -14639,7 +14656,7 @@ TEST_F(AdAuctionServiceImplBAndATest,
                         /*filtering_id=*/std::nullopt)));
             EXPECT_EQ(request.shared_info().reporting_origin, kOriginA);
             run_loop.Quit();
-          }));
+          });
 
   std::optional<GURL> result = RunAdAuctionWithPromiseAndFlushForFrame(
       auction_config,
@@ -17891,7 +17908,8 @@ class AdAuctionServiceImplBAndAKAnonEnabledTest
             /*enabled_features=*/{blink::features::kFledgeConsiderKAnonymity,
                                   blink::features::kFledgeEnforceKAnonymity,
                                   features::kEnableBandAKAnonEnforcement},
-            /*disabled_features=*/{});
+            /*disabled_features=*/{
+                features::kCookieDeprecationFacilitatedTesting});
         break;
     }
   }
@@ -18714,7 +18732,7 @@ TEST_P(AdAuctionServiceImplBAndAKAnonEnabledTest,
   base::RunLoop run_loop;
   if (GetParam() == KAnonState::kEnforceOnDeviceEnforceOnServer) {
     EXPECT_CALL(mock_private_aggregation_cb_, Run)
-        .WillOnce(testing::Invoke(
+        .WillOnce(
             [&](PrivateAggregationHost::ReportRequestGenerator generator,
                 PrivateAggregationPendingContributions::Wrapper contributions,
                 PrivateAggregationBudgetKey budget_key,
@@ -18730,7 +18748,7 @@ TEST_P(AdAuctionServiceImplBAndAKAnonEnabledTest,
                           /*filtering_id=*/std::nullopt)));
               EXPECT_EQ(request.shared_info().reporting_origin, kOriginA);
               run_loop.Quit();
-            }));
+            });
   }
 
   blink::AuctionConfig auction_config;
@@ -20101,10 +20119,12 @@ class AdAuctionServiceImplFacilitatedTestingTest
  public:
   AdAuctionServiceImplFacilitatedTestingTest() {
     features_.InitWithFeaturesAndParameters(
+        /*enabled_features=*/
         {{features::kCookieDeprecationFacilitatedTesting,
           {{"label", "LabelForTesting"}}},
+         {features::kCookieDeprecationFacilitatedTestingLabels, {}},
          {features::kFledgeFacilitatedTestingSignalsHeaders, {}}},
-        {});
+        /*disabled_features=*/{});
   }
 
  private:

@@ -6,7 +6,9 @@
 
 #include "base/test/scoped_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sync/test/integration/sync_test.h"
+#include "chrome/browser/ui/interaction/browser_elements.h"
+#include "chrome/browser/ui/views/webauthn/authenticator_gpm_pin_sheet_view.h"
+#include "chrome/browser/ui/views/webauthn/combined_selector_sheet_view.h"
 #include "chrome/browser/webauthn/enclave_authenticator_browsertest_base.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
@@ -18,6 +20,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/base/interaction/element_tracker.h"
+#include "ui/views/window/dialog_client_view.h"
 
 // These tests are disabled under MSAN. The enclave subprocess is written in
 // Rust and FFI from Rust to C++ doesn't work in Chromium at this time
@@ -34,13 +37,17 @@ const char kHostname[] = "www.example.com";
 const char kPagePath[] = "/webauthn/get-immediate.html";
 
 const DeepQuery kGetImmediateButton{"#get-immediate-button"};
+const DeepQuery kGetImmediateUvRequiredButton{
+    "#get-immediate-uv-required-button"};
+const DeepQuery kGetImmediateUvDiscouragedButton{
+    "#get-immediate-uv-discouraged-button"};
 const DeepQuery kSuccess{"#success-message"};
 const DeepQuery kError{"#error-message"};
 const DeepQuery kMessage{"#message-container"};
 
 }  // namespace
 
-using Fixture = InteractiveBrowserTestT<EnclaveAuthenticatorTestBase>;
+using Fixture = InteractiveBrowserTestMixin<EnclaveAuthenticatorTestBase>;
 class WebAuthnImmediateMediationTest : public Fixture {
  public:
   WebAuthnImmediateMediationTest() {
@@ -71,12 +78,16 @@ class WebAuthnImmediateMediationTest : public Fixture {
     return WaitForStateChange(element_id, state_change);
   }
 
-  auto GetNotAllowedSteps() {
-    auto button_to_click = kGetImmediateButton;
+  auto GetStepsUntilButtonClick(
+      const DeepQuery& button_to_click = kGetImmediateButton) {
     return Steps(InstrumentTab(kTabId),
                  NavigateWebContents(kTabId, GetHttpsURL()),
                  WaitForWebContentsReady(kTabId, GetHttpsURL()),
-                 ClickElement(kTabId, button_to_click),
+                 ClickElement(kTabId, button_to_click));
+  }
+
+  auto GetNotAllowedSteps() {
+    return Steps(GetStepsUntilButtonClick(),
                  WaitForElementVisible(kTabId, kError),
                  WaitForElementWithText(kTabId, kMessage, "NotAllowedError"));
   }
@@ -94,8 +105,50 @@ IN_PROC_BROWSER_TEST_F(WebAuthnImmediateMediationTest,
                        ImmediateMediationNotAllowedIncognito) {
   Browser* incognito_browser = CreateIncognitoBrowser();
   ui_test_utils::BrowserActivationWaiter(incognito_browser).WaitForActivation();
-  RunTestSequence(InContext(incognito_browser->window()->GetElementContext(),
-                            GetNotAllowedSteps()));
+  RunTestSequenceInContext(
+      BrowserElements::From(incognito_browser)->GetContext(),
+      GetNotAllowedSteps());
 }
 
+class WebAuthnImmediateMediationWithBootstrappedEnclaveTest
+    : public WebAuthnImmediateMediationTest {
+ protected:
+  void SetUpOnMainThread() override {
+    WebAuthnImmediateMediationTest::SetUpOnMainThread();
+    SimulateSuccessfulGpmPinCreation("123456");
+  }
+};
+
+// TODO(crbug.com/422074323): Re-enable this test in ChromeOS.
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_SinglePasskeyDiscouragedUv DISABLED_SinglePasskeyDiscouragedUv
+#else
+#define MAYBE_SinglePasskeyDiscouragedUv SinglePasskeyDiscouragedUv
+#endif
+IN_PROC_BROWSER_TEST_F(WebAuthnImmediateMediationWithBootstrappedEnclaveTest,
+                       MAYBE_SinglePasskeyDiscouragedUv) {
+  AddTestPasskeyToModel();
+  RunTestSequence(
+      GetStepsUntilButtonClick(kGetImmediateButton),
+      WaitForShow(CombinedSelectorSheetView::kCombinedSelectorSheetViewId),
+      PressButton(views::DialogClientView::kOkButtonElementId),
+      WaitForElementVisible(kTabId, kSuccess));
+}
+
+// TODO(crbug.com/422074323): Re-enable this test in ChromeOS.
+#if BUILDFLAG(IS_CHROMEOS)
+#define MAYBE_SinglePasskeyUvRequired DISABLED_SinglePasskeyUvRequired
+#else
+#define MAYBE_SinglePasskeyUvRequired SinglePasskeyUvRequired
+#endif
+IN_PROC_BROWSER_TEST_F(WebAuthnImmediateMediationWithBootstrappedEnclaveTest,
+                       MAYBE_SinglePasskeyUvRequired) {
+  AddTestPasskeyToModel();
+  RunTestSequence(
+      GetStepsUntilButtonClick(kGetImmediateUvRequiredButton),
+      WaitForShow(CombinedSelectorSheetView::kCombinedSelectorSheetViewId),
+      PressButton(views::DialogClientView::kOkButtonElementId),
+      WaitForShow(AuthenticatorGpmPinSheetView::kGpmPinSheetViewId));
+  // TODO(crbug.com/422074323): Add more steps to complete the UV flow.
+}
 #endif  // !defined(MEMORY_SANITIZER)

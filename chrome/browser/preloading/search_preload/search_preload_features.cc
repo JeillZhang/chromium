@@ -6,18 +6,29 @@
 
 #include "base/feature_list.h"
 #include "base/metrics/field_trial_params.h"
+#include "base/system/sys_info.h"
 #include "components/omnibox/browser/omnibox.mojom-shared.h"
 
 namespace features {
 
-BASE_FEATURE(kDsePreload2, "DsePreload2", base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kDsePreload2, base::FEATURE_DISABLED_BY_DEFAULT);
 
+const base::FeatureParam<bool> kDsePreload2UsePreloadServingMetrics{
+    &kDsePreload2, "kDsePreload2UsePreloadServingMetrics", false};
+
+const base::FeatureParam<size_t> kDsePreload2DeviceMemoryThresholdMiB{
+    &kDsePreload2, "kDsePreload2DeviceMemoryThresholdMiB",
+    // 3 GiB = 3 * 2**10 * 2**20
+    3072};
+const base::FeatureParam<base::TimeDelta> kDsePreload2ErrorBackoffDuration{
+    &kDsePreload2, "kDsePreload2ErrorBackoffDuration",
+    base::Milliseconds(60000)};
 const base::FeatureParam<size_t> kDsePreload2MaxPrefetch{
     &kDsePreload2, "kDsePreload2MaxPrefetch", 7};
+const base::FeatureParam<base::TimeDelta> kDsePreload2PrefetchTtl{
+    &kDsePreload2, "kDsePreload2PrefetchTtl", base::Milliseconds(60000)};
 
-BASE_FEATURE(kDsePreload2OnPress,
-             "DsePreload2OnPress",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kDsePreload2OnPress, base::FEATURE_DISABLED_BY_DEFAULT);
 
 const base::FeatureParam<bool> kDsePreload2OnPressMouseDown{
     &kDsePreload2, "kDsePreload2OnPressMouseDown", true};
@@ -26,16 +37,16 @@ const base::FeatureParam<bool> kDsePreload2OnPressUpOrDownArrowButton{
 const base::FeatureParam<bool> kDsePreload2OnPressTouchDown{
     &kDsePreload2, "kDsePreload2OnPressTouchDown", true};
 
-BASE_FEATURE(kDsePreload2OnPressIncognito,
-             "DsePreload2OnPressIncognito",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kDsePreload2OnPressIncognito, base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kDsePreload2OnSuggestNonDefalutMatch,
              "kDsePreload2OnSuggestNonDefalutMatch",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 bool IsDsePreload2Enabled() {
-  return base::FeatureList::IsEnabled(kDsePreload2);
+  return base::FeatureList::IsEnabled(kDsePreload2) &&
+         static_cast<size_t>(base::SysInfo::AmountOfPhysicalMemory().InMiB()) >=
+             kDsePreload2DeviceMemoryThresholdMiB.Get();
 }
 
 bool IsDsePreload2OnPressEnabled() {

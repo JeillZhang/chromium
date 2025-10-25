@@ -89,6 +89,8 @@
 #include "chrome/browser/ash/login/signin/oauth2_login_manager_factory.h"
 #include "chrome/browser/ash/login/signin/offline_signin_limiter.h"
 #include "chrome/browser/ash/login/signin/offline_signin_limiter_factory.h"
+#include "chrome/browser/ash/login/signin/token_handle_service.h"
+#include "chrome/browser/ash/login/signin/token_handle_service_factory.h"
 #include "chrome/browser/ash/login/signin/token_handle_store_factory.h"
 #include "chrome/browser/ash/login/startup_utils.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
@@ -113,7 +115,6 @@
 #include "chrome/browser/lifetime/application_lifetime_chromeos.h"
 #include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/metrics/first_web_contents_profiler.h"
-#include "chrome/browser/password_manager/profile_password_store_factory.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -126,19 +127,18 @@
 #include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/ash/system/system_tray_client_impl.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
-#include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/logging_chrome.h"
 #include "chrome/common/pref_names.h"
 #include "chromeos/ash/components/account_manager/account_manager_factory.h"
-#include "chromeos/ash/components/assistant/buildflags.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_flusher.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_helper.h"
 #include "chromeos/ash/components/cryptohome/cryptohome_parameters.h"
 #include "chromeos/ash/components/dbus/dbus_thread_manager.h"
 #include "chromeos/ash/components/dbus/session_manager/session_manager_client.h"
+#include "chromeos/ash/components/demo_mode/utils/demo_session_utils.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "chromeos/ash/components/login/auth/auth_session_authenticator.h"
 #include "chromeos/ash/components/login/auth/authenticator_builder.h"
@@ -197,6 +197,7 @@
 #include "google_apis/gaia/gaia_id.h"
 #include "rlz/buildflags/buildflags.h"
 #include "third_party/cros_system_api/switches/chrome_switches.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "ui/aura/window.h"
 #include "ui/base/ime/ash/input_method_descriptor.h"
 #include "ui/base/ime/ash/input_method_manager.h"
@@ -786,8 +787,8 @@ void UserSessionManager::StartSession(
     bool has_auth_cookies,
     bool has_active_session,
     base::WeakPtr<UserSessionManagerDelegate> delegate) {
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(kEventCategoryChromeOS, kEventStartSession,
-                                    TRACE_ID_LOCAL(this));
+  TRACE_EVENT_BEGIN(kEventCategoryChromeOS, kEventStartSession,
+                    perfetto::Track::FromPointer(this));
 
   delegate_ = std::move(delegate);
   start_session_type_ = start_session_type;
@@ -807,8 +808,8 @@ void UserSessionManager::StartSession(
                          user_context_.GetAccountId()),
                      user_context_, known_user);
 
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(
-      kEventCategoryChromeOS, kEventPrePrepareProfile, TRACE_ID_LOCAL(this));
+  TRACE_EVENT_BEGIN(kEventCategoryChromeOS, kEventPrePrepareProfile,
+                    perfetto::Track::FromPointer(this));
   InitDemoSessionIfNeeded(base::BindOnce(
       &UserSessionManager::UpdateArcFileSystemCompatibilityAndPrepareProfile,
       GetUserSessionManagerAsWeakPtr()));
@@ -930,7 +931,7 @@ bool UserSessionManager::RespectLocalePreference(
 
   // In Demo Mode, each sessions uses a new empty User Profile, so we need to
   // rely on the local state set in the browser process.
-  if (DemoSession::IsDeviceInDemoMode() && pref_app_locale.empty()) {
+  if (ash::demo_mode::IsDeviceInDemoMode() && pref_app_locale.empty()) {
     const std::string local_state_locale =
         g_browser_process->local_state()->GetString(
             language::prefs::kApplicationLocale);
@@ -1368,11 +1369,10 @@ void UserSessionManager::InitializeAccountManager() {
 }
 
 void UserSessionManager::PrepareProfile(const base::FilePath& profile_path) {
-  TRACE_EVENT_NESTABLE_ASYNC_END0(
-      kEventCategoryChromeOS, kEventPrePrepareProfile, TRACE_ID_LOCAL(this));
-
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0(kEventCategoryChromeOS,
-                                    kEventPrepareProfile, TRACE_ID_LOCAL(this));
+  // End previous kEventPrePrepareProfile event.
+  TRACE_EVENT_END(kEventCategoryChromeOS, perfetto::Track::FromPointer(this));
+  TRACE_EVENT_BEGIN(kEventCategoryChromeOS, kEventPrepareProfile,
+                    perfetto::Track::FromPointer(this));
 
   g_browser_process->profile_manager()->CreateProfileAsync(
       profile_path,
@@ -1636,7 +1636,7 @@ void UserSessionManager::InitializeDeviceId(
     return;
   }
 
-  if (!base::FeatureList::IsEnabled(kStableDeviceId)) {
+  if (!base::FeatureList::IsEnabled(::switches::kStableDeviceId)) {
     // Do not generate and store new device identifiers if the feature is not
     // enabled yet.
     return;
@@ -1782,8 +1782,8 @@ void UserSessionManager::FinalizePrepareProfile(Profile* profile) {
 
   profile->OnLogin();
 
-  TRACE_EVENT_NESTABLE_ASYNC_END0(kEventCategoryChromeOS, kEventPrepareProfile,
-                                  TRACE_ID_LOCAL(this));
+  // End kEventPrepareProfile event.
+  TRACE_EVENT_END(kEventCategoryChromeOS, perfetto::Track::FromPointer(this));
 
   {
     TRACE_EVENT0(kEventCategoryChromeOS, kEventHandleProfileLoad);
@@ -2130,28 +2130,81 @@ void UserSessionManager::OnUserProfileLoaded(Profile* profile,
     observer->StartObserving();
   }
 
-  if (TokenHandlesEnabled() && user && user->HasGaiaAccount()) {
-    CreateTokenUtilIfMissing();
-    if (IsOnlineSignin(user_context_)) {
-      // If the user has gone through an online Gaia flow, then their LST is
-      // guaranteed to have changed/created. We need to update the token handle,
-      // regardless of the state of the previous token handle, if any.
-      if (!token_handle_store_->HasToken(user_context_.GetAccountId())) {
-        // New user.
-        token_handle_fetcher_ = std::make_unique<LegacyTokenHandleFetcher>(
-            profile, token_handle_store_.get(), user_context_.GetAccountId());
-        token_handle_fetcher_->FillForNewUser(
-            user_context_.GetAccessToken(),
-            Sha1Digest(user_context_.GetRefreshToken()),
-            base::BindOnce(&UserSessionManager::OnTokenHandleObtained,
-                           GetUserSessionManagerAsWeakPtr()));
-      } else {
-        // Existing user.
-        UpdateTokenHandle(profile, user->GetAccountId());
-      }
+  if (!TokenHandlesEnabled() || !user || !user->HasGaiaAccount()) {
+    VLOG(1) << "UserSessionManager::OnUserProfileLoaded:"
+            << " token handles disabled or user invalid, returning early";
+    return;
+  }
+
+  CreateTokenHandleStoreIfMissing();
+
+  if (!ash::features::IsUseTokenHandleStoreEnabled()) {
+    FetchTokenHandleLegacy(profile, user);
+  } else {
+    FetchTokenHandle(profile, user);
+  }
+}
+
+void UserSessionManager::FetchTokenHandleLegacy(
+    Profile* profile,
+    const user_manager::User* user) {
+  if (IsOnlineSignin(user_context_)) {
+    // If the user has gone through an online Gaia flow, then their LST is
+    // guaranteed to have changed/created. We need to update the token handle,
+    // regardless of the state of the previous token handle, if any.
+    if (!token_handle_store_->HasToken(user_context_.GetAccountId())) {
+      // New user.
+      token_handle_fetcher_ = std::make_unique<LegacyTokenHandleFetcher>(
+          profile, token_handle_store_.get(), user_context_.GetAccountId());
+      token_handle_fetcher_->FillForNewUser(
+          user_context_.GetAccessToken(),
+          Sha1Digest(user_context_.GetRefreshToken()),
+          base::BindOnce(&UserSessionManager::OnTokenHandleObtained,
+                         GetUserSessionManagerAsWeakPtr()));
     } else {
-      UpdateTokenHandleIfRequired(profile, user->GetAccountId());
+      // Existing user.
+      UpdateTokenHandle(profile, user->GetAccountId());
     }
+  } else {
+    UpdateTokenHandleIfRequired(profile, user->GetAccountId());
+  }
+}
+
+void UserSessionManager::FetchTokenHandle(Profile* profile,
+                                          const user_manager::User* user) {
+  TokenHandleService* token_handle_service =
+      TokenHandleServiceFactory::GetInstance()->GetForProfile(profile);
+
+  if (!IsOnlineSignin(user_context_)) {
+    MaybeFetchTokenHandleForExistingUserIfInvalidOrEmpty(user,
+                                                         token_handle_service);
+    return;
+  }
+
+  if (!token_handle_store_->HasToken(user_context_.GetAccountId())) {
+    VLOG(1) << "UserSessionManager::OnUserProfileLoaded: new user";
+    // New user.
+    token_handle_service->MaybeFetchForNewUser(
+        user_context_.GetAccountId(), user_context_.GetAccessToken(),
+        Sha1Digest(user_context_.GetRefreshToken()));
+  } else {
+    VLOG(1) << "UserSessionManager::OnUserProfileLoaded: existing user";
+    // Existing user.
+    MaybeFetchTokenHandleForExistingUser(token_handle_service);
+  }
+}
+
+void UserSessionManager::MaybeFetchTokenHandleForExistingUser(
+    TokenHandleService* token_handle_service) {
+  token_handle_service->MaybeFetchForExistingUser(user_context_.GetAccountId());
+  token_handle_backfill_tried_for_testing_ = true;
+}
+
+void UserSessionManager::MaybeFetchTokenHandleForExistingUserIfInvalidOrEmpty(
+    const user_manager::User* user,
+    TokenHandleService* token_handle_service) {
+  if (token_handle_store_->ShouldObtainHandle(user->GetAccountId())) {
+    MaybeFetchTokenHandleForExistingUser(token_handle_service);
   }
 }
 
@@ -2435,13 +2488,12 @@ void UserSessionManager::DoBrowserLaunchInternal(Profile* profile,
   }
 
   base::OnceClosure login_host_finalized_callback = base::BindOnce(
-      [](uint64_t trace_id) {
+      [](perfetto::Track track) {
         session_manager::SessionManager::Get()->SessionStarted();
-        TRACE_EVENT_NESTABLE_ASYNC_END0(kEventCategoryChromeOS,
-                                        kEventStartSession,
-                                        TRACE_ID_LOCAL(trace_id));
+        // End kEventStartSession event.
+        TRACE_EVENT_END(kEventCategoryChromeOS, track);
       },
-      static_cast<uint64_t>(reinterpret_cast<uintptr_t>(this)));
+      perfetto::Track::FromPointer(this));
 
   // Mark login host for deletion after browser starts.  This
   // guarantees that the message loop will be referenced by the
@@ -2633,7 +2685,7 @@ UserSessionManager::GetUserSessionManagerAsWeakPtr() {
   return weak_factory_.GetWeakPtr();
 }
 
-void UserSessionManager::CreateTokenUtilIfMissing() {
+void UserSessionManager::CreateTokenHandleStoreIfMissing() {
   if (!token_handle_store_) {
     token_handle_store_ = TokenHandleStoreFactory::Get()->GetTokenHandleStore();
   }

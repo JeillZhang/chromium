@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_PASSWORD_MANAGER_PASSWORD_MANAGER_TEST_BASE_H_
 
 #include <memory>
+#include <string>
 
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -95,9 +96,6 @@ class BubbleObserver {
   // PasswordManagerBrowserTestBase.
   bool WaitForFallbackForSaving() const;
 
-  // Returns once the prompt for saving unsynced credentials pops up.
-  void WaitForSaveUnsyncedCredentialsPrompt() const;
-
  private:
   void WaitForState(password_manager::ui::State target_state) const;
 
@@ -185,6 +183,7 @@ class PasswordManagerBrowserTestBase : public CertVerifierBrowserTest {
   void CheckThatCredentialsStored(
       const std::string& username,
       const std::string& password,
+      std::optional<std::string> backup_password = std::nullopt,
       std::optional<password_manager::PasswordForm::Type> type = std::nullopt);
 
   // Accessors

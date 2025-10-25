@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_MULTI_CONTENTS_RESIZE_AREA_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_MULTI_CONTENTS_RESIZE_AREA_H_
 
+#include "base/memory/raw_ptr.h"
 #include "ui/base/interaction/element_identifier.h"
 #include "ui/views/controls/resize_area.h"
 #include "ui/views/focus/focus_manager.h"
@@ -23,14 +24,14 @@ class MultiContentsResizeHandle : public views::View,
 
   MultiContentsResizeHandle();
 
-  void UpdateVisibility(bool visible);
+  void UpdateVisibility();
 
   // views::View:
   void AddedToWidget() override;
   void RemovedFromWidget() override;
 
   // FocusChangeListener:
-  void OnWillChangeFocus(views::View* before, views::View* now) override;
+  void OnDidChangeFocus(views::View* before, views::View* now) override;
 };
 
 // ResizeArea meant to draw in between WebContents within a MultiContentsView,

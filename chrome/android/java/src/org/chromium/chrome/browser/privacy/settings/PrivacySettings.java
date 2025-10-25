@@ -4,12 +4,12 @@
 
 package org.chromium.chrome.browser.privacy.settings;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.components.content_settings.PrefNames.COOKIE_CONTROLS_MODE;
 
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
 import android.os.Bundle;
 import android.text.SpannableString;
 import android.text.style.ClickableSpan;
@@ -27,6 +27,7 @@ import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.enterprise.util.ManagedBrowserUtils;
@@ -64,7 +65,6 @@ import org.chromium.components.browser_ui.site_settings.SingleCategorySettings;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.browser_ui.util.TraceEventVectorDrawableCompat;
 import org.chromium.components.content_settings.ContentSettingsType;
-import org.chromium.components.content_settings.CookieControlsMode;
 import org.chromium.components.permissions.OsAdditionalSecurityPermissionProvider;
 import org.chromium.components.permissions.OsAdditionalSecurityPermissionUtil;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
@@ -78,6 +78,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /** Fragment to keep track of the all the privacy related preferences. */
+@NullMarked
 public class PrivacySettings extends ChromeBaseSettingsFragment
         implements Preference.OnPreferenceChangeListener {
     private static final String PREF_CAN_MAKE_PAYMENT = "can_make_payment";
@@ -119,7 +120,7 @@ public class PrivacySettings extends ChromeBaseSettingsFragment
 
     /** Creates {@link SpanInfo} for link which has the passed-in tag. */
     private static SpanApplier.SpanInfo createLink(
-            Context context, String tag, @Nullable Consumer<Context> clickCallback) {
+            Context context, String tag, Consumer<Context> clickCallback) {
         String startTag = "<" + tag + ">";
         String endTag = "</" + tag + ">";
         Callback<View> onClickCallback =
@@ -284,7 +285,7 @@ public class PrivacySettings extends ChromeBaseSettingsFragment
                     .getExtras()
                     .putString(
                             SingleCategorySettings.EXTRA_TITLE,
-                            thirdPartyCookies.getTitle().toString());
+                            assumeNonNull(thirdPartyCookies.getTitle()).toString());
         }
 
         Preference javascriptOptimizerPref = findPreference(PREF_JAVASCRIPT_OPTIMIZER);
@@ -295,7 +296,7 @@ public class PrivacySettings extends ChromeBaseSettingsFragment
                 .getExtras()
                 .putString(
                         SingleCategorySettings.EXTRA_TITLE,
-                        javascriptOptimizerPref.getTitle().toString());
+                        assumeNonNull(javascriptOptimizerPref.getTitle()).toString());
 
         Bundle arguments = getArguments();
         if (arguments != null
@@ -336,8 +337,7 @@ public class PrivacySettings extends ChromeBaseSettingsFragment
                                         ManageSyncSettings.createArguments(false));
                     }
                 };
-        if (IdentityServicesProvider.get()
-                        .getIdentityManager(getProfile())
+        if (assumeNonNull(IdentityServicesProvider.get().getIdentityManager(getProfile()))
                         .getPrimaryAccountInfo(ConsentLevel.SIGNIN)
                 == null) {
             // User is signed out, show the string with one link to "Google Services".
@@ -429,8 +429,7 @@ public class PrivacySettings extends ChromeBaseSettingsFragment
 
         Preference usageStatsPref = findPreference(PREF_USAGE_STATS);
         if (usageStatsPref != null) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
-                    && UserPrefs.get(getProfile()).getBoolean(Pref.USAGE_STATS_ENABLED)) {
+            if (UserPrefs.get(getProfile()).getBoolean(Pref.USAGE_STATS_ENABLED)) {
                 usageStatsPref.setOnPreferenceClickListener(
                         preference -> {
                             UsageStatsConsentDialog.create(
@@ -462,14 +461,9 @@ public class PrivacySettings extends ChromeBaseSettingsFragment
 
         Preference thirdPartyCookies = findPreference(PREF_THIRD_PARTY_COOKIES);
         if (thirdPartyCookies != null) {
-            @CookieControlsMode
-            int cookieControlsMode = UserPrefs.get(getProfile()).getInteger(COOKIE_CONTROLS_MODE);
             thirdPartyCookies.setSummary(
-                    ChromeFeatureList.isEnabled(ChromeFeatureList.ALWAYS_BLOCK_3PCS_INCOGNITO)
-                                    && cookieControlsMode == CookieControlsMode.INCOGNITO_ONLY
-                            ? R.string.third_party_cookies_link_row_sub_label_enabled
-                            : ContentSettingsResources.getThirdPartyCookieListSummary(
-                                    UserPrefs.get(getProfile()).getInteger(COOKIE_CONTROLS_MODE)));
+                    ContentSettingsResources.getThirdPartyCookieListSummary(
+                            UserPrefs.get(getProfile()).getInteger(COOKIE_CONTROLS_MODE)));
         }
 
         Preference javascriptOptimizerPref = findPreference(PREF_JAVASCRIPT_OPTIMIZER);

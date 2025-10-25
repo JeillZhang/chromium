@@ -11,6 +11,11 @@ namespace content {
 void DevToolsManagerDelegate::Inspect(DevToolsAgentHost* agent_host) {
 }
 
+scoped_refptr<DevToolsAgentHost> DevToolsManagerDelegate::OpenDevTools(
+    DevToolsAgentHost* agent_host) {
+  return nullptr;
+}
+
 void DevToolsManagerDelegate::Activate(DevToolsAgentHost* agent_host) {}
 
 std::string DevToolsManagerDelegate::GetTargetType(WebContents* wc) {
@@ -28,6 +33,11 @@ std::string DevToolsManagerDelegate::GetTargetDescription(WebContents* wc) {
 bool DevToolsManagerDelegate::AllowInspectingRenderFrameHost(
     RenderFrameHost* rfh) {
   return true;
+}
+
+std::optional<bool> DevToolsManagerDelegate::ShouldReportAsTabTarget(
+    WebContents* web_contents) {
+  return std::nullopt;
 }
 
 DevToolsAgentHost::List DevToolsManagerDelegate::RemoteDebuggingTargets(

@@ -10,6 +10,7 @@
 #include "components/data_sharing/public/group_data.h"
 #include "components/saved_tab_groups/public/types.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/base/features.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -23,6 +24,8 @@ namespace collaboration {
 class CollaborationControllerDelegate {
  public:
   struct ErrorInfo {
+    // GENERATED_JAVA_ENUM_PACKAGE: (
+    //   org.chromium.components.collaboration.error_info)
     enum class Type {
       kUnknown = 0,
       // Show the generic error dialog.
@@ -37,9 +40,21 @@ class CollaborationControllerDelegate {
       kGroupFull = 5,
       // Show the group closed error dialog.
       kGroupClosedByOrganizationPolicy = 6,
+      // Show the update chrome error dialog.
+      kUpdateChromeUiForVersionOutOfDate = 7,
+      // Show the sharing turned off error dialog.
+      kSharingDisabledByPolicy = 8,
     };
 
-    explicit ErrorInfo(Type type) : type_(type) { GetStringForErrorType(); }
+    ErrorInfo() : type_(Type::kUnknown) { GetDefaultString(); }
+
+    explicit ErrorInfo(Type type) : type_(type) {
+      GetStringForErrorType(std::nullopt);
+    }
+
+    explicit ErrorInfo(Type type, FlowType flow_type) : type_(type) {
+      GetStringForErrorType(flow_type);
+    }
 
     bool operator==(const ErrorInfo& other) const {
       return type_ == other.type_;
@@ -65,12 +80,33 @@ class CollaborationControllerDelegate {
           return "Group Is Full";
         case Type::kGroupClosedByOrganizationPolicy:
           return "Group Is Closed By Organization Policy";
+        case Type::kUpdateChromeUiForVersionOutOfDate:
+          return "Update Chrome For Version Out Of Date";
+        case Type::kSharingDisabledByPolicy:
+          return "Enterprise Sharing Is Off";
       }
     }
 
    private:
-    void GetStringForErrorType() {
+    void GetStringForErrorType(std::optional<FlowType> flow_type) {
       switch (type_) {
+        case Type::kUpdateChromeUiForVersionOutOfDate:
+          CHECK(flow_type.has_value());
+          error_header = l10n_util::GetStringUTF8(
+              IDS_COLLABORATION_CHROME_OUT_OF_DATE_ERROR_DIALOG_HEADER);
+          switch (flow_type.value()) {
+            case FlowType::kJoin:
+              error_body = l10n_util::GetStringUTF8(
+                  IDS_COLLABORATION_JOIN_BUTTON_CHROME_OUT_OF_DATE_ERROR_DIALOG_BODY);
+              break;
+            case FlowType::kShareOrManage:
+              error_body = l10n_util::GetStringUTF8(
+                  IDS_COLLABORATION_SHARE_BUTTON_CHROME_OUT_OF_DATE_ERROR_DIALOG_BODY);
+              break;
+            default:
+              NOTREACHED();
+          }
+          break;
         case Type::kInvalidUrl:
           error_header =
               l10n_util::GetStringUTF8(IDS_COLLABORATION_LINK_FAILED_HEADER);
@@ -81,13 +117,24 @@ class CollaborationControllerDelegate {
           error_header = l10n_util::GetStringUTF8(
               IDS_COLLABORATION_ENTREPRISE_SYNC_DISABLED_HEADER);
           error_body = l10n_util::GetStringUTF8(
-              IDS_COLLABORATION_ENTREPRISE_SYNC_DISABLED_BODY);
+              base::FeatureList::IsEnabled(
+                  syncer::kReplaceSyncPromosWithSignInPromos)
+                  ? IDS_COLLABORATION_ENTREPRISE_TABS_SYNC_DISABLED_BODY
+                  : IDS_COLLABORATION_ENTREPRISE_SYNC_DISABLED_BODY);
           break;
         case Type::kSigninDisabledByPolicy:
           error_header = l10n_util::GetStringUTF8(
               IDS_COLLABORATION_ENTREPRISE_SIGNIN_DISABLED_HEADER);
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+          error_body = l10n_util::GetStringUTF8(
+              base::FeatureList::IsEnabled(
+                  syncer::kReplaceSyncPromosWithSignInPromos)
+                  ? IDS_COLLABORATION_ENTREPRISE_SIGNIN_DISABLED_SYNC_HISTORY_BODY
+                  : IDS_COLLABORATION_ENTREPRISE_SIGNIN_DISABLED_BODY);
+#else
           error_body = l10n_util::GetStringUTF8(
               IDS_COLLABORATION_ENTREPRISE_SIGNIN_DISABLED_BODY);
+#endif
           break;
         case Type::kGroupFull:
           error_header = l10n_util::GetStringUTF8(
@@ -101,13 +148,24 @@ class CollaborationControllerDelegate {
           error_body = l10n_util::GetStringUTF8(
               IDS_COLLABORATION_ENTREPRISE_GROUP_CLOSED_BODY);
           break;
+        case Type::kSharingDisabledByPolicy:
+          error_header = l10n_util::GetStringUTF8(
+              IDS_COLLABORATION_ENTREPRISE_SHARING_OFF_HEADER);
+          error_body = l10n_util::GetStringUTF8(
+              IDS_COLLABORATION_ENTREPRISE_SHARING_OFF_BODY);
+          break;
         case Type::kGenericError:
         case Type::kUnknown:
-          error_header = l10n_util::GetStringUTF8(
-              IDS_COLLABORATION_SOMETHING_WENT_WRONG_HEADER);
-          error_body = l10n_util::GetStringUTF8(
-              IDS_COLLABORATION_SOMETHING_WENT_WRONG_BODY);
+          GetDefaultString();
+          break;
       };
+    }
+
+    void GetDefaultString() {
+      error_header = l10n_util::GetStringUTF8(
+          IDS_COLLABORATION_SOMETHING_WENT_WRONG_HEADER);
+      error_body =
+          l10n_util::GetStringUTF8(IDS_COLLABORATION_SOMETHING_WENT_WRONG_BODY);
     }
 
     Type type_;

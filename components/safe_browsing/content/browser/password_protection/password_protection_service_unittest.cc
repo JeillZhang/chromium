@@ -34,7 +34,6 @@
 #include "components/safe_browsing/content/browser/password_protection/mock_password_protection_service.h"
 #include "components/safe_browsing/content/browser/password_protection/password_protection_commit_deferring_condition.h"
 #include "components/safe_browsing/content/browser/password_protection/password_protection_request_content.h"
-#include "components/safe_browsing/content/common/safe_browsing.mojom-forward.h"
 #include "components/safe_browsing/content/common/safe_browsing.mojom.h"
 #include "components/safe_browsing/core/browser/db/test_database_manager.h"
 #include "components/safe_browsing/core/browser/password_protection/metrics_util.h"
@@ -44,6 +43,7 @@
 #include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/core/common/safebrowsing_constants.h"
+#include "components/signin/public/identity_manager/account_capabilities_test_mutator.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
@@ -141,6 +141,7 @@ class TestPhishingDetector : public mojom::PhishingDetector {
 
   void StartPhishingDetection(
       const GURL& url,
+      safe_browsing::mojom::ClientSideDetectionType request_type,
       StartPhishingDetectionCallback callback) override {
     if (should_timeout_) {
       deferred_callbacks_.push_back(std::move(callback));
@@ -957,7 +958,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
                LoginReputationClientRequest::UNFAMILIAR_LOGIN_PAGE,
                reused_password_account_type,
                LoginReputationClientResponse::LOW_REPUTATION, base::Minutes(10),
-               GURL(kTargetUrl).host().append("/"), base::Time::Now());
+               GURL(kTargetUrl).GetHost().append("/"), base::Time::Now());
   InitializeAndStartPasswordOnFocusRequest(/*match_allowlist=*/false,
                                            /*timeout_in_ms=*/10000,
                                            web_contents.get());
@@ -1023,7 +1024,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
   // Set up valid response.
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL(kTargetUrl).host());
+                         base::Minutes(10), GURL(kTargetUrl).GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   std::unique_ptr<content::WebContents> web_contents = GetWebContents();
@@ -1112,7 +1113,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
   // Set up valid response.
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL(kTargetUrl).host());
+                         base::Minutes(10), GURL(kTargetUrl).GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   std::unique_ptr<content::WebContents> web_contents = GetWebContents();
@@ -1123,6 +1124,8 @@ TEST_P(PasswordProtectionServiceBaseTest,
   account_info.email = "email";
   account_info.gaia = GaiaId("gaia");
   account_info.hosted_domain = "example.com";
+  AccountCapabilitiesTestMutator(&account_info.capabilities)
+      .set_is_subject_to_enterprise_features(true);
   EXPECT_CALL(*password_protection_service_, GetAccountInfoForUsername(_))
       .WillRepeatedly(Return(account_info));
 
@@ -1160,7 +1163,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
   // Set up valid response.
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL(kTargetUrl).host());
+                         base::Minutes(10), GURL(kTargetUrl).GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   EXPECT_CALL(*password_protection_service_, IsPrimaryAccountSyncingHistory())
@@ -1218,7 +1221,7 @@ TEST_P(PasswordProtectionServiceBaseTest, VerifyPasswordOnFocusRequestProto) {
   // Set up valid response.
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL(kTargetUrl).host());
+                         base::Minutes(10), GURL(kTargetUrl).GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   std::unique_ptr<content::WebContents> web_contents = GetWebContents();
@@ -1249,7 +1252,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
   // Set up valid response.
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL(kTargetUrl).host());
+                         base::Minutes(10), GURL(kTargetUrl).GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   std::unique_ptr<content::WebContents> web_contents = GetWebContents();
@@ -1273,7 +1276,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
   // Set up valid response.
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL(kTargetUrl).host());
+                         base::Minutes(10), GURL(kTargetUrl).GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   std::unique_ptr<content::WebContents> web_contents = GetWebContents();
@@ -1305,7 +1308,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
   // Set up valid response.
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL(kTargetUrl).host());
+                         base::Minutes(10), GURL(kTargetUrl).GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   std::unique_ptr<content::WebContents> web_contents = GetWebContents();
@@ -1466,7 +1469,7 @@ TEST_P(PasswordProtectionServiceBaseTest, VerifyShouldShowModalWarning) {
 TEST_P(PasswordProtectionServiceBaseTest, VerifyContentTypeIsPopulated) {
   LoginReputationClientResponse response =
       CreateVerdictProto(LoginReputationClientResponse::SAFE, base::Minutes(10),
-                         GURL(kTargetUrl).host());
+                         GURL(kTargetUrl).GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        response.SerializeAsString());
 
@@ -1511,7 +1514,7 @@ TEST_P(PasswordProtectionServiceBaseTest, TestPingsForAboutBlank) {
   histograms_.ExpectTotalCount(kPasswordOnFocusRequestOutcomeHistogram, 0);
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL("about:blank").host());
+                         base::Minutes(10), GURL("about:blank").GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   std::unique_ptr<content::WebContents> web_contents = GetWebContents();
@@ -1532,7 +1535,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
        TestVisualFeaturesPopulatedInOnFocusPing) {
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL("about:blank").host());
+                         base::Minutes(10), GURL("about:blank").GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   EXPECT_CALL(*password_protection_service_, GetCurrentContentAreaSize())
@@ -1558,7 +1561,7 @@ TEST_P(PasswordProtectionServiceBaseTest,
 TEST_P(PasswordProtectionServiceBaseTest, TestDomFeaturesPopulated) {
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL("about:blank").host());
+                         base::Minutes(10), GURL("about:blank").GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   EXPECT_CALL(*password_protection_service_, GetCurrentContentAreaSize())
@@ -1584,7 +1587,7 @@ TEST_P(PasswordProtectionServiceBaseTest, TestDomFeaturesTimeout) {
   password_protection_service_->SetDomFeatureCollectionTimeout(true);
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL("about:blank").host());
+                         base::Minutes(10), GURL("about:blank").GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
   EXPECT_CALL(*password_protection_service_, GetCurrentContentAreaSize())
@@ -1617,7 +1620,7 @@ TEST_P(PasswordProtectionServiceBaseTest, TestWebContentsDestroyed) {
 TEST_P(PasswordProtectionServiceBaseTest, TestCSDVerdictInCache) {
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL(kTargetUrl).host());
+                         base::Minutes(10), GURL(kTargetUrl).GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
 
@@ -1655,13 +1658,9 @@ TEST_P(PasswordProtectionServiceBaseTest, TestCSDDebuggingMetadataInCache) {
     return;
   }
 
-  std::vector<base::test::FeatureRef> enabled_features = {};
-  enabled_features.push_back(kClientSideDetectionDebuggingMetadataCache);
-  SetFeatures(enabled_features, {});
-
   LoginReputationClientResponse expected_response =
       CreateVerdictProto(LoginReputationClientResponse::PHISHING,
-                         base::Minutes(10), GURL(kTargetUrl).host());
+                         base::Minutes(10), GURL(kTargetUrl).GetHost());
   test_url_loader_factory_.AddResponse(url_.spec(),
                                        expected_response.SerializeAsString());
 

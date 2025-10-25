@@ -11,6 +11,7 @@
 #include "base/test/bind.h"
 #include "base/values.h"
 #include "chrome/browser/policy/safe_search_policy_test.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -113,6 +114,10 @@ class PolicyTestGoogle : public SafeSearchPolicyTest,
 
   bool is_incognito() const { return GetParam(); }
 
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList scoped_prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
   net::EmbeddedTestServer https_server_;
   base::Lock lock_;
   std::map<std::string, net::HttpRequestHeaders> urls_requested_;
@@ -147,7 +152,7 @@ IN_PROC_BROWSER_TEST_P(PolicyTestGoogle, ForceYouTubeRestrict) {
       ASSERT_TRUE(ui_test_utils::NavigateToURL(GetBrowser(), youtube_url));
 
       CheckYouTubeRestricted(youtube_restrict_mode,
-                             urls_requested()[youtube_url.path()]);
+                             urls_requested()[youtube_url.GetPath()]);
     }
 
     {
@@ -156,7 +161,7 @@ IN_PROC_BROWSER_TEST_P(PolicyTestGoogle, ForceYouTubeRestrict) {
                        youtube_script);
 
       CheckYouTubeRestricted(youtube_restrict_mode,
-                             urls_requested()[youtube_script.path()]);
+                             urls_requested()[youtube_script.GetPath()]);
     }
 
     if (youtube_restrict_mode != safe_search_api::YOUTUBE_RESTRICT_OFF) {
@@ -170,7 +175,7 @@ IN_PROC_BROWSER_TEST_P(PolicyTestGoogle, ForceYouTubeRestrict) {
                        youtube_script);
 
       CheckYouTubeRestricted(safe_search_api::YOUTUBE_RESTRICT_OFF,
-                             urls_requested()[youtube_script.path()]);
+                             urls_requested()[youtube_script.GetPath()]);
     }
   }
 }
@@ -192,7 +197,7 @@ IN_PROC_BROWSER_TEST_P(PolicyTestGoogle, AllowedDomainsForApps) {
       ASSERT_TRUE(ui_test_utils::NavigateToURL(GetBrowser(), google_url));
 
       CheckAllowedDomainsHeader(allowed_domain,
-                                urls_requested()[google_url.path()]);
+                                urls_requested()[google_url.GetPath()]);
     }
 
     {
@@ -204,7 +209,7 @@ IN_PROC_BROWSER_TEST_P(PolicyTestGoogle, AllowedDomainsForApps) {
                        google_script);
 
       CheckAllowedDomainsHeader(allowed_domain,
-                                urls_requested()[google_script.path()]);
+                                urls_requested()[google_script.GetPath()]);
     }
 
     {
@@ -213,7 +218,7 @@ IN_PROC_BROWSER_TEST_P(PolicyTestGoogle, AllowedDomainsForApps) {
       ASSERT_TRUE(ui_test_utils::NavigateToURL(GetBrowser(), non_google_url));
 
       CheckAllowedDomainsHeader(std::string(),
-                                urls_requested()[non_google_url.path()]);
+                                urls_requested()[non_google_url.GetPath()]);
     }
   }
 }

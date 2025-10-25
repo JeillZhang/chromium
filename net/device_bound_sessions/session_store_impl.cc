@@ -15,6 +15,7 @@
 #include "components/unexportable_keys/service_error.h"
 #include "components/unexportable_keys/unexportable_key_id.h"
 #include "components/unexportable_keys/unexportable_key_service.h"
+#include "net/base/features.h"
 #include "net/base/schemeful_site.h"
 #include "net/device_bound_sessions/proto/storage.pb.h"
 
@@ -35,7 +36,6 @@ constexpr base::TaskTraits kDBTaskTraits = {
     base::MayBlock(), base::TaskPriority::USER_VISIBLE,
     base::TaskShutdownBehavior::BLOCK_SHUTDOWN};
 
-const int kCurrentSchemaVersion = 1;
 const char kSessionTableName[] = "dbsc_session_tbl";
 const base::TimeDelta kFlushDelay = base::Seconds(2);
 
@@ -48,8 +48,11 @@ SessionStoreImpl::DBStatus InitializeOnDbSequence(
     return SessionStoreImpl::DBStatus::kFailure;
   }
 
+  // Control the schema version with a feature param so that the database can be
+  // wiped between Origin Trials and going into the final release.
   table_manager->InitializeOnDbSequence(
-      db, std::vector<std::string>{kSessionTableName}, kCurrentSchemaVersion);
+      db, std::vector<std::string>{kSessionTableName},
+      features::kDeviceBoundSessionsSchemaVersion.Get());
   session_data->InitializeOnDBSequence();
 
   return SessionStoreImpl::DBStatus::kSuccess;
@@ -174,7 +177,8 @@ SessionStore::SessionsMap SessionStoreImpl::CreateSessionsFromLoadedData(
       }
 
       // Restored session entry has passed basic validation checks. Save it.
-      site_sessions.emplace(site, std::move(session));
+      site_sessions.emplace(SessionKey{site, session->id()},
+                            std::move(session));
     }
 
     // Remove the entire site entry from the DB if a single invalid session is
@@ -226,19 +230,18 @@ void SessionStoreImpl::SaveSession(const SchemefulSite& site,
   session_data_->UpdateData(site_str, site_proto);
 }
 
-void SessionStoreImpl::DeleteSession(const SchemefulSite& site,
-                                     const Session::Id& session_id) {
+void SessionStoreImpl::DeleteSession(const SessionKey& key) {
   if (db_status_ != DBStatus::kSuccess) {
     return;
   }
 
   proto::SiteSessions site_proto;
-  std::string site_str = site.Serialize();
+  std::string site_str = key.site.Serialize();
   if (!session_data_->TryGetData(site_str, &site_proto)) {
     return;
   }
 
-  if (site_proto.sessions().count(*session_id) == 0) {
+  if (site_proto.sessions().count(*key.id) == 0) {
     return;
   }
 
@@ -249,10 +252,10 @@ void SessionStoreImpl::DeleteSession(const SchemefulSite& site,
     return;
   }
 
-  site_proto.mutable_sessions()->erase(*session_id);
+  site_proto.mutable_sessions()->erase(*key.id);
 
   // Schedule a DB update for the site entry.
-  session_data_->UpdateData(site.Serialize(), site_proto);
+  session_data_->UpdateData(key.site.Serialize(), site_proto);
 }
 
 SessionStore::SessionsMap SessionStoreImpl::GetAllSessions() const {
@@ -271,8 +274,7 @@ SessionStore::SessionsMap SessionStoreImpl::GetAllSessions() const {
 }
 
 void SessionStoreImpl::RestoreSessionBindingKey(
-    const SchemefulSite& site,
-    const Session::Id& session_id,
+    const SessionKey& session_key,
     RestoreSessionBindingKeyCallback callback) {
   auto key_id_or_error = base::unexpected(ServiceError::kKeyNotFound);
   if (db_status_ != DBStatus::kSuccess) {
@@ -282,8 +284,8 @@ void SessionStoreImpl::RestoreSessionBindingKey(
 
   // Retrieve the session's persisted binding key and unwrap it.
   proto::SiteSessions site_proto;
-  if (session_data_->TryGetData(site.Serialize(), &site_proto)) {
-    auto it = site_proto.sessions().find(*session_id);
+  if (session_data_->TryGetData(session_key.site.Serialize(), &site_proto)) {
+    auto it = site_proto.sessions().find(*session_key.id);
     if (it != site_proto.sessions().end()) {
       // Unwrap the binding key asynchronously.
       std::vector<uint8_t> wrapped_key(it->second.wrapped_key().begin(),

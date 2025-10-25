@@ -7,6 +7,7 @@
 #import <string>
 
 #import "base/hash/hash.h"
+#include "base/notimplemented.h"
 #import "components/autofill/core/common/password_form_fill_data.h"
 #import "components/autofill/ios/common/field_data_manager_factory_ios.h"
 #import "components/password_manager/core/browser/password_generation_frame_helper.h"
@@ -176,6 +177,10 @@ bool IOSPasswordManagerDriver::IsInPrimaryMainFrame() const {
   return is_in_main_frame_;
 }
 
+bool IOSPasswordManagerDriver::IsNestedWithinFencedFrame() const {
+  NOTREACHED();
+}
+
 bool IOSPasswordManagerDriver::CanShowAutofillUi() const {
   return true;
 }
@@ -188,10 +193,20 @@ const GURL& IOSPasswordManagerDriver::GetLastCommittedURL() const {
   return bridge_.lastCommittedURL;
 }
 
+const url::Origin& IOSPasswordManagerDriver::GetLastCommittedOrigin() const {
+  NOTREACHED();
+}
+
 gfx::RectF IOSPasswordManagerDriver::TransformToRootCoordinates(
     const gfx::RectF& bounds_in_frame_coordinates) {
   NOTIMPLEMENTED();
   return bounds_in_frame_coordinates;
+}
+
+void IOSPasswordManagerDriver::CheckViewAreaVisible(
+    autofill::FieldRendererId field_id,
+    base::OnceCallback<void(bool)>) {
+  NOTREACHED();
 }
 
 base::WeakPtr<password_manager::PasswordManagerDriver>

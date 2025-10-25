@@ -66,7 +66,7 @@ class CONTENT_EXPORT InputTransferHandlerAndroid {
   static constexpr const char* kEventTypesInDroppedSequenceHistogram =
       "Android.InputOnViz.Browser.EventTypesInDroppedSequence";
   static constexpr const char* kTouchSequenceDroppedReasonHistogram =
-      "Android.InputOnViz.Browser.SequenceDroppedReason";
+      "Android.InputOnViz.Browser.SequenceDroppedReason2";
 
   bool touch_transferred() {
     return handler_state_ == HandlerState::kConsumeEventsUntilCancel;
@@ -103,7 +103,6 @@ class CONTENT_EXPORT InputTransferHandlerAndroid {
     const raw_ref<InputTransferHandlerAndroid> transfer_handler_;
   };
 
-  void Reset();
   void OnTouchTransferredSuccessfully(const ui::MotionEventAndroid& event,
                                       bool browser_would_have_handled);
 
@@ -117,7 +116,8 @@ class CONTENT_EXPORT InputTransferHandlerAndroid {
   enum class InputOnVizSequenceDroppedReason {
     kActiveSeqOnVizAbnormalDownTime = 0,
     kFailedToTransferPotentialPointer = 1,
-    kMaxValue = kFailedToTransferPotentialPointer,
+    kAndroidOSTransferredANewSequence = 2,
+    kMaxValue = kAndroidOSTransferredANewSequence,
   };
   // LINT.ThenChange(//tools/metrics/histograms/metadata/android/enums.xml:InputOnVizSequenceDroppedReason)
 
@@ -132,10 +132,14 @@ class CONTENT_EXPORT InputTransferHandlerAndroid {
   InputTransferHandlerAndroid();
 
   raw_ptr<InputTransferHandlerAndroidClient> client_ = nullptr;
-  // Stores the event time of first down event of the most recent touch sequence
+  // Stores the down time of first down event of the most recent touch sequence
   // transferred to VizCompositor. See
   // (https://developer.android.com/reference/android/view/MotionEvent#getDownTime())
   base::TimeTicks cached_transferred_sequence_down_time_ms_;
+  // When set stores the event time corresponding to action of transferred touch
+  // sequence. The variable is reset when it's deemed there's no ongoing touch
+  // sequence on Viz.
+  std::optional<base::TimeTicks> cached_transferred_sequence_event_time_us_;
 
   int num_events_in_dropped_sequence_ = 0;
 
@@ -158,7 +162,11 @@ class CONTENT_EXPORT InputTransferHandlerAndroid {
   int touch_moves_seen_after_transfer_ = 0;
   std::unique_ptr<JniDelegate> jni_delegate_ = nullptr;
 
-  base::TimeTicks last_seen_touch_end_ts_;
+  // In cases where system transfers a different sequence than the one requested
+  // by Chrome, a new state is transferred corresponding to the potential
+  // transferred touch sequence. To create new state in such scenarios this
+  // variable is being used.
+  bool last_sent_browser_would_have_handled_ = false;
 
   InputObserver input_observer_;
 };

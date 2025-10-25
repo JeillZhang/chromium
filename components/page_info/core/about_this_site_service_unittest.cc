@@ -10,6 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/test/task_environment.h"
 #include "components/optimization_guide/core/hints/optimization_guide_decision.h"
 #include "components/optimization_guide/proto/common_types.pb.h"
 #include "components/page_info/core/about_this_site_validation.h"
@@ -26,7 +27,6 @@
 
 namespace page_info {
 using testing::_;
-using testing::Invoke;
 using testing::Return;
 
 using about_this_site_validation::AboutThisSiteStatus;
@@ -127,6 +127,7 @@ class AboutThisSiteServiceTest : public ::testing::Test {
   MockAboutThisSiteService* service() { return service_.get(); }
 
  private:
+  base::test::TaskEnvironment task_environment_;
   search_engines::SearchEnginesTestEnvironment search_engines_test_environment_;
   std::unique_ptr<MockAboutThisSiteService> service_;
   std::unique_ptr<MockTabHelper> tab_helper_mock_;
@@ -233,9 +234,9 @@ TEST_F(AboutThisSiteServiceTest, NotShownWhenNoGoogleDSE) {
           std::string_view(), std::string_view(), std::string_view(),
           std::string_view(), std::string_view(), std::string_view(),
           std::string_view(), std::string_view(), std::string_view(),
-          std::string_view(), std::vector<std::string>(), std::string_view(),
-          std::string_view(), std::u16string_view(), base::Value::List(), false,
-          false, 0, base::span<TemplateURLData::RegulatoryExtension>())));
+          std::vector<std::string>(), std::string_view(), std::string_view(),
+          std::u16string_view(), base::Value::List(), false, false, 0,
+          base::span<TemplateURLData::RegulatoryExtension>())));
   templateService()->SetUserSelectedDefaultSearchProvider(template_url);
 
   auto info = service()->GetAboutThisSiteInfo(

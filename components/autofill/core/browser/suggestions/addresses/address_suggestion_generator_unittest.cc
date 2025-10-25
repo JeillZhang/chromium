@@ -4,6 +4,7 @@
 
 #include "components/autofill/core/browser/suggestions/addresses/address_suggestion_generator.h"
 
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,6 +13,7 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/mock_callback.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
@@ -22,15 +24,18 @@
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile.h"
 #include "components/autofill/core/browser/data_model/addresses/autofill_profile_test_api.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/form_structure_test_api.h"
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
 #include "components/autofill/core/browser/geo/phone_number_i18n.h"
 #include "components/autofill/core/browser/suggestions/suggestion.h"
 #include "components/autofill/core/browser/suggestions/suggestion_test_helpers.h"
 #include "components/autofill/core/browser/suggestions/suggestion_type.h"
+#include "components/autofill/core/browser/test_utils/autofill_form_test_utils.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_features.h"
+#include "components/autofill/core/common/form_data_test_api.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/strings/grit/components_strings.h"
@@ -44,6 +49,7 @@ namespace {
 using testing::Field;
 using testing::IsEmpty;
 using testing::Matcher;
+using testing::Optional;
 using testing::Property;
 
 constexpr char kAddressesSuppressedHistogramName[] =
@@ -116,6 +122,46 @@ class AddressSuggestionGeneratorTest : public testing::Test {
   const std::string& app_locale() { return address_data().app_locale(); }
 
   TestAutofillClient* autofill_client() { return &autofill_client_; }
+  AutofillField& field() { return *form_structure_->fields().front(); }
+
+  std::vector<Suggestion> GetSuggestionsForProfiles(
+      const FormFieldData& field_data,
+      FieldType field_type) {
+    // Preparing the test form and field.
+    FormData form_data;
+    test_api(form_data).Append(field_data);
+    form_structure_ = std::make_unique<FormStructure>(form_data);
+    test_api(*form_structure_).SetFieldTypes({field_type});
+
+    std::vector<Suggestion> suggestions;
+    AddressSuggestionGenerator address_suggestion_generator(
+        autofill_client_, /*plus_address_email_override=*/std::nullopt,
+        /*form_filler=*/nullptr, /*log_manager=*/nullptr);
+
+    auto on_suggestions_generated =
+        [&suggestions](
+            SuggestionGenerator::ReturnedSuggestions returned_suggestions) {
+          suggestions = std::move(returned_suggestions.second);
+        };
+
+    auto on_suggestion_data_returned =
+        [this, &on_suggestions_generated, &form_data, &field_data,
+         &address_suggestion_generator](
+            std::pair<SuggestionGenerator::SuggestionDataSource,
+                      std::vector<SuggestionGenerator::SuggestionData>>
+                suggestion_data) {
+          address_suggestion_generator.GenerateSuggestions(
+              form_data, field_data, form_structure_.get(), &field(),
+              {std::move(suggestion_data)}, on_suggestions_generated);
+        };
+
+    // Since the `on_suggestions_generated` callback is called synchronously,
+    // we can assume that `suggestions` will hold correct value.
+    address_suggestion_generator.FetchSuggestionData(
+        form_data, field_data, form_structure_.get(), &field(),
+        autofill_client_, on_suggestion_data_returned);
+    return suggestions;
+  }
 
  private:
   base::test::TaskEnvironment task_environment_{
@@ -123,6 +169,7 @@ class AddressSuggestionGeneratorTest : public testing::Test {
   test::AutofillUnitTestEnvironment autofill_test_environment_;
   TestAutofillClient autofill_client_;
   syncer::TestSyncService sync_service_;
+  std::unique_ptr<FormStructure> form_structure_;
 };
 
 // Tests that `SuggestionType::AddressEntryOnTyping` suggestions are returned
@@ -135,7 +182,7 @@ TEST_F(AddressSuggestionGeneratorTest,
 
   profile_1.SetRawInfo(NAME_FULL, u"Jef dean");
   profile_2.SetRawInfo(NAME_FULL, u"Larry page");
-  profile_2.SetRawInfo(ADDRESS_HOME_ZIP, u"4398125");
+  profile_2.SetRawInfo(ADDRESS_HOME_ZIP, u"4398125123");
   profile_3.SetRawInfo(NAME_FULL, u"Sundar pichai");
 
   address_data().AddProfile(profile_1);
@@ -177,18 +224,78 @@ TEST_F(AddressSuggestionGeneratorTest,
   // has more than 3 characters.
   EXPECT_EQ(GetSuggestionsOnTypingForProfile(address_data(), u"Jef").size(),
             0u);
-  // Expects that for data that require less prefix matching characters (like
-  // `ADDRESS_HOME_ZIP`) only two matching characters are enough to create
-  // suggestions.
+  // Test that suggestions are created for different field types as well.
   EXPECT_THAT(
-      GetSuggestionsOnTypingForProfile(address_data(), u"43"),
-      ElementsAre(
-          EqualsSuggestion(SuggestionType::kAddressEntryOnTyping, u"4398125"),
-          EqualsSuggestion(SuggestionType::kSeparator),
-          EqualsSuggestion(SuggestionType::kManageAddress)));
-  // However 1 matching digit is not enough to return a suggestion.
-  EXPECT_THAT(GetSuggestionsOnTypingForProfile(address_data(), u"4").size(),
-              0u);
+      GetSuggestionsOnTypingForProfile(address_data(), u"439"),
+      ElementsAre(EqualsSuggestion(SuggestionType::kAddressEntryOnTyping,
+                                   u"4398125123"),
+                  EqualsSuggestion(SuggestionType::kSeparator),
+                  EqualsSuggestion(SuggestionType::kManageAddress)));
+}
+
+// Tests Autofill on typing feature flag feature params (not all but the more
+// sensitive ones).
+TEST_F(
+    AddressSuggestionGeneratorTest,
+    GetSuggestionsOnTypingForProfile_OverrideParams_ReturnMatchingSuggestions) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeaturesAndParameters(
+      /*enabled_features=*/{{features::kAutofillAddressSuggestionsOnTyping,
+                             {{"min_number_characters_to_match", "4"},
+                              {"field_types", "7-10"}}}},
+      /*disabled_features=*/{});
+  AutofillProfile profile_1(i18n_model_definition::kLegacyHierarchyCountryCode);
+
+  profile_1.SetRawInfo(NAME_FULL, u"Sundar pichai");
+  profile_1.SetRawInfo(ADDRESS_HOME_ZIP, u"4398125123");
+
+  address_data().AddProfile(profile_1);
+
+  ASSERT_EQ(address_data().GetProfilesToSuggest().size(), 1u);
+
+  // Expects that no suggestion is returned if the field content matches
+  // `NAME_FULL` prefix but the field content has less than 4 characters.
+  EXPECT_EQ(GetSuggestionsOnTypingForProfile(address_data(), u"S").size(), 0u);
+  EXPECT_EQ(GetSuggestionsOnTypingForProfile(address_data(), u"Su").size(), 0u);
+  EXPECT_EQ(GetSuggestionsOnTypingForProfile(address_data(), u"Sun").size(),
+            0u);
+
+  // Expects that a suggestion is returned if the field content has 4 characters
+  // and matches the `NAME_FULL` prefix.
+  EXPECT_THAT(
+      GetSuggestionsOnTypingForProfile(address_data(), u"Sund"),
+      ElementsAre(EqualsSuggestion(SuggestionType::kAddressEntryOnTyping,
+                                   u"Sundar pichai"),
+                  EqualsSuggestion(SuggestionType::kSeparator),
+                  EqualsSuggestion(SuggestionType::kManageAddress)));
+  // The available field types to build Autofill on type suggestions (from the
+  // feature param) was overridden and does not contain ZIP_CODE.
+  EXPECT_TRUE(
+      GetSuggestionsOnTypingForProfile(address_data(), u"4398").empty());
+}
+
+// Tests that overring the possible Autofill on typing types via feature params
+// with a string that cannot be parsed, leads to no suggestion being shown (and
+// no crash).
+TEST_F(
+    AddressSuggestionGeneratorTest,
+    GetSuggestionsOnTypingForProfile_OverrideParams_UnparseableFieldTypesParam_DoNotReturnSuggestions) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeaturesAndParameters(
+      /*enabled_features=*/{{features::kAutofillAddressSuggestionsOnTyping,
+                             {{"field_types", "7/"}}}},
+      /*disabled_features=*/{});
+  AutofillProfile profile_1(i18n_model_definition::kLegacyHierarchyCountryCode);
+
+  profile_1.SetRawInfo(NAME_FULL, u"Sundar pichai");
+
+  address_data().AddProfile(profile_1);
+
+  ASSERT_EQ(address_data().GetProfilesToSuggest().size(), 1u);
+
+  // Expects that a suggestion is returned if the field content has 4 characters
+  // and matches the `NAME_FULL` prefix.
+  EXPECT_TRUE(GetSuggestionsOnTypingForProfile(address_data(), u"Sun").empty());
 }
 
 // Tests that special characters will be used while prefix matching the user's
@@ -204,7 +311,8 @@ TEST_F(AddressSuggestionGeneratorTest,
   ASSERT_EQ(address_data().GetProfilesToSuggest().size(), 2u);
 
   std::vector<AutofillProfile> profiles = GetProfilesToSuggestForTest(
-      address_data(), EMAIL_ADDRESS, u"Test@", false, {});
+      address_data(), test::GetFormFieldData({.value = u"Test@"}),
+      EMAIL_ADDRESS, {});
 
   ASSERT_EQ(profiles.size(), 1u);
   EXPECT_EQ(profiles[0], profile_1);
@@ -242,7 +350,8 @@ TEST_F(AddressSuggestionGeneratorTest, GetProfilesToSuggest_HideSubsets) {
   // Simulate a form with street address, city and state.
   FieldTypeSet types = {ADDRESS_HOME_CITY, ADDRESS_HOME_STATE};
   std::vector<AutofillProfile> profiles = GetProfilesToSuggestForTest(
-      address_data(), ADDRESS_HOME_STREET_ADDRESS, u"123", false, types);
+      address_data(), test::GetFormFieldData({.value = u"123"}),
+      ADDRESS_HOME_STREET_ADDRESS, types);
   ASSERT_EQ(2U, profiles.size());
   EXPECT_EQ(profiles[0].GetRawInfo(ADDRESS_HOME_STATE), u"CA");
   EXPECT_EQ(profiles[1].GetRawInfo(ADDRESS_HOME_STATE), u"TX");
@@ -262,8 +371,8 @@ TEST_F(AddressSuggestionGeneratorTest, GetProfilesToSuggest_SuggestionsLimit) {
     profiles.push_back(profile);
   }
 
-  std::vector<AutofillProfile> suggested_profiles =
-      GetProfilesToSuggestForTest(address_data(), NAME_FIRST, u"Ma", false, {});
+  std::vector<AutofillProfile> suggested_profiles = GetProfilesToSuggestForTest(
+      address_data(), test::GetFormFieldData({.value = u"Ma"}), NAME_FIRST, {});
 
   ASSERT_EQ(2 * kMaxDeduplicatedProfilesForSuggestion,
             address_data().GetProfiles().size());
@@ -302,8 +411,8 @@ TEST_F(AddressSuggestionGeneratorTest, GetProfilesToSuggest_ProfilesLimit) {
   profile.usage_history().set_use_date(AutofillClock::Now() - base::Days(7));
   address_data().AddProfile(profile);
 
-  std::vector<AutofillProfile> suggested_profiles =
-      GetProfilesToSuggestForTest(address_data(), NAME_FIRST, u"Ma", false, {});
+  std::vector<AutofillProfile> suggested_profiles = GetProfilesToSuggestForTest(
+      address_data(), test::GetFormFieldData({.value = u"Ma"}), NAME_FIRST, {});
 
   ASSERT_EQ(kMaxPrefixMatchedProfilesForSuggestion + 1,
             address_data().GetProfiles().size());
@@ -344,8 +453,8 @@ TEST_F(AddressSuggestionGeneratorTest, GetProfilesToSuggest_Ranking) {
   profile2.usage_history().set_use_count(300);
   address_data().AddProfile(profile2);
 
-  std::vector<AutofillProfile> suggested_profiles =
-      GetProfilesToSuggestForTest(address_data(), NAME_FIRST, u"Ma", false, {});
+  std::vector<AutofillProfile> suggested_profiles = GetProfilesToSuggestForTest(
+      address_data(), test::GetFormFieldData({.value = u"Ma"}), NAME_FIRST, {});
   ASSERT_EQ(3U, suggested_profiles.size());
   EXPECT_EQ(suggested_profiles[0].GetRawInfo(NAME_FIRST), u"Marion1");
   EXPECT_EQ(suggested_profiles[1].GetRawInfo(NAME_FIRST), u"Marion2");
@@ -379,7 +488,7 @@ TEST_F(AddressSuggestionGeneratorTest,
 
   // Verify that all the profiles are suggested.
   std::vector<AutofillProfile> suggested_profiles = GetProfilesToSuggestForTest(
-      address_data(), NAME_FIRST, std::u16string(), false, {});
+      address_data(), FormFieldData(), NAME_FIRST, {});
   EXPECT_EQ(3U, suggested_profiles.size());
 }
 
@@ -399,22 +508,20 @@ TEST_F(AddressSuggestionGeneratorTest,
 
   {
     std::vector<AutofillProfile> suggested_profiles =
-        GetProfilesToSuggestForTest(address_data(), NAME_FULL, std::u16string(),
-                                    false,
+        GetProfilesToSuggestForTest(address_data(), FormFieldData(), NAME_FULL,
                                     {NAME_FULL, PHONE_HOME_WHOLE_NUMBER});
     EXPECT_EQ(2U, suggested_profiles.size());
   }
   {
     std::vector<AutofillProfile> suggested_profiles =
         GetProfilesToSuggestForTest(
-            address_data(), NAME_FULL, std::u16string(), false,
+            address_data(), FormFieldData(), NAME_FULL,
             {NAME_FULL, PHONE_HOME_COUNTRY_CODE, PHONE_HOME_CITY_AND_NUMBER});
     EXPECT_EQ(2U, suggested_profiles.size());
   }
   {
     std::vector<AutofillProfile> suggested_profiles =
-        GetProfilesToSuggestForTest(address_data(), NAME_FULL, std::u16string(),
-                                    false,
+        GetProfilesToSuggestForTest(address_data(), FormFieldData(), NAME_FULL,
                                     {NAME_FULL, PHONE_HOME_COUNTRY_CODE,
                                      PHONE_HOME_CITY_CODE, PHONE_HOME_NUMBER});
     EXPECT_EQ(2U, suggested_profiles.size());
@@ -422,7 +529,7 @@ TEST_F(AddressSuggestionGeneratorTest,
   {
     std::vector<AutofillProfile> suggested_profiles =
         GetProfilesToSuggestForTest(
-            address_data(), NAME_FULL, std::u16string(), false,
+            address_data(), FormFieldData(), NAME_FULL,
             {NAME_FULL, PHONE_HOME_COUNTRY_CODE, PHONE_HOME_CITY_CODE});
     EXPECT_EQ(1U, suggested_profiles.size());
   }
@@ -456,24 +563,26 @@ TEST_F(AddressSuggestionGeneratorTest,
   // Query with empty string only returns profile2.
   {
     std::vector<AutofillProfile> suggested_profiles =
-        GetProfilesToSuggestForTest(address_data(), ADDRESS_HOME_STREET_ADDRESS,
-                                    std::u16string(), false, {});
+        GetProfilesToSuggestForTest(address_data(), FormFieldData(),
+                                    ADDRESS_HOME_STREET_ADDRESS, {});
     EXPECT_EQ(1U, suggested_profiles.size());
   }
 
   // Query with non-alpha-numeric string only returns profile2.
   {
     std::vector<AutofillProfile> suggested_profiles =
-        GetProfilesToSuggestForTest(address_data(), ADDRESS_HOME_STREET_ADDRESS,
-                                    u"--", false, {});
+        GetProfilesToSuggestForTest(address_data(),
+                                    test::GetFormFieldData({.value = u"--"}),
+                                    ADDRESS_HOME_STREET_ADDRESS, {});
     EXPECT_EQ(1U, suggested_profiles.size());
   }
 
   // Query with prefix for profile1 returns profile1.
   {
     std::vector<AutofillProfile> suggested_profiles =
-        GetProfilesToSuggestForTest(address_data(), ADDRESS_HOME_STREET_ADDRESS,
-                                    u"123", false, {});
+        GetProfilesToSuggestForTest(address_data(),
+                                    test::GetFormFieldData({.value = u"123"}),
+                                    ADDRESS_HOME_STREET_ADDRESS, {});
     ASSERT_EQ(1U, suggested_profiles.size());
     EXPECT_EQ(u"Marion1", suggested_profiles[0].GetRawInfo(NAME_FIRST));
   }
@@ -481,8 +590,9 @@ TEST_F(AddressSuggestionGeneratorTest,
   // Query with prefix for profile2 returns profile2.
   {
     std::vector<AutofillProfile> suggested_profiles =
-        GetProfilesToSuggestForTest(address_data(), ADDRESS_HOME_STREET_ADDRESS,
-                                    u"456", false, {});
+        GetProfilesToSuggestForTest(address_data(),
+                                    test::GetFormFieldData({.value = u"456"}),
+                                    ADDRESS_HOME_STREET_ADDRESS, {});
     EXPECT_EQ(1U, suggested_profiles.size());
     EXPECT_EQ(u"Marion2", suggested_profiles[0].GetRawInfo(NAME_FIRST));
   }
@@ -498,8 +608,8 @@ TEST_F(AddressSuggestionGeneratorTest, GetProfilesToSuggest_SingleDedupe) {
   address_data().AddProfile(profile_2);
 
   std::vector<AutofillProfile> profiles_to_suggest =
-      GetProfilesToSuggestForTest(address_data(), NAME_FIRST, u"",
-                                  /*field_is_autofilled=*/false, {});
+      GetProfilesToSuggestForTest(address_data(), FormFieldData(), NAME_FIRST,
+                                  {});
 
   ASSERT_EQ(1U, profiles_to_suggest.size());
 }
@@ -524,8 +634,7 @@ TEST_F(AddressSuggestionGeneratorTest, GetProfilesToSuggest_MultipleDedupe) {
   address_data().AddProfile(profiles[2]);
 
   std::vector<AutofillProfile> profiles_to_suggest =
-      GetProfilesToSuggestForTest(address_data(), NAME_FIRST, u"",
-                                  /*field_is_autofilled=*/false,
+      GetProfilesToSuggestForTest(address_data(), FormFieldData(), NAME_FIRST,
                                   {NAME_FIRST, NAME_LAST});
 
   EXPECT_EQ(3U, profiles_to_suggest.size());
@@ -545,8 +654,8 @@ TEST_F(AddressSuggestionGeneratorTest, GetProfilesToSuggest_DedupeLimit) {
   }
 
   std::vector<AutofillProfile> profiles_to_suggest =
-      GetProfilesToSuggestForTest(address_data(), NAME_FULL, u"",
-                                  /*field_is_autofilled=*/false, {NAME_FULL});
+      GetProfilesToSuggestForTest(address_data(), FormFieldData(), NAME_FULL,
+                                  {NAME_FULL});
 
   ASSERT_EQ(kMaxDeduplicatedProfilesForSuggestion, profiles_to_suggest.size());
 
@@ -558,8 +667,8 @@ TEST_F(AddressSuggestionGeneratorTest, GetProfilesToSuggest_DedupeLimit) {
 
 TEST_F(AddressSuggestionGeneratorTest,
        GetProfilesToSuggest_EmptyMatchingProfiles) {
-  ASSERT_EQ(0U, GetProfilesToSuggestForTest(address_data(), NAME_FIRST, u"",
-                                            /*field_is_autofilled=*/false, {})
+  ASSERT_EQ(0U, GetProfilesToSuggestForTest(address_data(), FormFieldData(),
+                                            NAME_FIRST, {})
                     .size());
 }
 
@@ -583,8 +692,8 @@ TEST_F(AddressSuggestionGeneratorTest,
   address_data().AddProfile(profile_2);
 
   std::vector<AutofillProfile> profiles_to_suggest =
-      GetProfilesToSuggestForTest(address_data(), NAME_FULL, u"",
-                                  /*field_is_autofilled=*/false, {NAME_FULL});
+      GetProfilesToSuggestForTest(address_data(), FormFieldData(), NAME_FULL,
+                                  {NAME_FULL});
 
   ASSERT_EQ(1u, profiles_to_suggest.size());
   EXPECT_EQ(profile_1.guid(), profiles_to_suggest[0].guid());
@@ -605,8 +714,9 @@ TEST_F(AddressSuggestionGeneratorTest,
   address_data().AddProfile(bob_profile);
 
   std::vector<AutofillProfile> profiles_to_suggest =
-      GetProfilesToSuggestForTest(address_data(), NAME_FIRST, u"Mar",
-                                  /*field_is_autofilled=*/false, {});
+      GetProfilesToSuggestForTest(address_data(),
+                                  test::GetFormFieldData({.value = u"Mar"}),
+                                  NAME_FIRST, {});
 
   ASSERT_EQ(1U, profiles_to_suggest.size());
   EXPECT_EQ(marion_profile.guid(), profiles_to_suggest[0].guid());
@@ -619,8 +729,9 @@ TEST_F(AddressSuggestionGeneratorTest, GetProfilesToSuggest_NoMatchingProfile) {
   address_data().AddProfile(bob_profile);
 
   std::vector<AutofillProfile> profiles_to_suggest =
-      GetProfilesToSuggestForTest(address_data(), NAME_FIRST, u"Mar",
-                                  /*field_is_autofilled=*/false, {});
+      GetProfilesToSuggestForTest(address_data(),
+                                  test::GetFormFieldData({.value = u"Mar"}),
+                                  NAME_FIRST, {});
 
   ASSERT_TRUE(profiles_to_suggest.empty());
 }
@@ -628,8 +739,8 @@ TEST_F(AddressSuggestionGeneratorTest, GetProfilesToSuggest_NoMatchingProfile) {
 TEST_F(AddressSuggestionGeneratorTest,
        GetProfilesToSuggest_EmptyProfilesInput) {
   std::vector<AutofillProfile> profiles_to_suggest =
-      GetProfilesToSuggestForTest(address_data(), NAME_FIRST, u"Mar",
-                                  /*field_is_autofilled=*/false, {});
+      GetProfilesToSuggestForTest(address_data(), FormFieldData(), NAME_FIRST,
+                                  {});
 
   ASSERT_TRUE(profiles_to_suggest.empty());
 }
@@ -654,8 +765,8 @@ TEST_F(AddressSuggestionGeneratorTest,
 
   base::HistogramTester histogram_tester;
   std::vector<AutofillProfile> profiles_to_suggest =
-      GetProfilesToSuggestForTest(address_data(), NAME_FULL, u"",
-                                  /*field_is_autofilled=*/false, {NAME_FULL});
+      GetProfilesToSuggestForTest(address_data(), FormFieldData(), NAME_FULL,
+                                  {NAME_FULL});
 
   ASSERT_EQ(profiles_to_suggest.size(), 1u);
   EXPECT_EQ(profiles_to_suggest.front().guid(), profile_1.guid());
@@ -678,11 +789,10 @@ TEST_F(AddressSuggestionGeneratorTest,
   address_data().AddProfile(profile_2);
 
   // Expect to get one hidden profile because `profile_2` is disused.
-  ASSERT_EQ(
-      GetProfilesToSuggestForTest(address_data(), NAME_FULL, u"",
-                                  /*field_is_autofilled=*/false, {NAME_FULL})
-          .size(),
-      1u);
+  ASSERT_EQ(GetProfilesToSuggestForTest(address_data(), FormFieldData(),
+                                        NAME_FULL, {NAME_FULL})
+                .size(),
+            1u);
 
   // Simulate that `profile_2` was somehow updated (could be either through the
   // settings page or through accepting an update prompt).
@@ -695,11 +805,10 @@ TEST_F(AddressSuggestionGeneratorTest,
 
   // Expect now to see both profiles since the modification of `profile_2` means
   // that it is a relevant profile.
-  EXPECT_EQ(
-      GetProfilesToSuggestForTest(address_data(), NAME_FULL, u"",
-                                  /*field_is_autofilled=*/false, {NAME_FULL})
-          .size(),
-      2u);
+  EXPECT_EQ(GetProfilesToSuggestForTest(address_data(), FormFieldData(),
+                                        NAME_FULL, {NAME_FULL})
+                .size(),
+            2u);
 }
 
 TEST_F(AddressSuggestionGeneratorTest, CreateSuggestionsFromProfiles) {
@@ -708,10 +817,12 @@ TEST_F(AddressSuggestionGeneratorTest, CreateSuggestionsFromProfiles) {
                        "johnwayne@me.xyz", "Fox",
                        "123 Zoo St.\nSecond Line\nThird line", "unit 5",
                        "Hollywood", "CA", "91601", "US", "12345678910");
+  FormFieldData triggering_field;
+  triggering_field.set_label(u"Street address");
 
   std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
       {profile}, {ADDRESS_HOME_STREET_ADDRESS}, SuggestionType::kAddressEntry,
-      ADDRESS_HOME_STREET_ADDRESS);
+      ADDRESS_HOME_STREET_ADDRESS, triggering_field);
   ASSERT_FALSE(suggestions.empty());
   EXPECT_EQ(u"123 Zoo St., Second Line, Third line, unit 5",
             suggestions[0].main_text.value);
@@ -720,10 +831,12 @@ TEST_F(AddressSuggestionGeneratorTest, CreateSuggestionsFromProfiles) {
 TEST_F(AddressSuggestionGeneratorTest, CreateSuggestionsUsingEmailOverride) {
   AutofillProfile profile1 = test::GetFullProfile();
   AutofillProfile profile2 = test::GetFullProfile2();
+  FormFieldData triggering_field;
+  triggering_field.set_label(u"Email");
 
   std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
       {profile1, profile2}, {EMAIL_ADDRESS}, SuggestionType::kAddressEntry,
-      EMAIL_ADDRESS, "en-US", "plus-address-override@me.com",
+      EMAIL_ADDRESS, triggering_field, "en-US", "plus-address-override@me.com",
       base::UTF16ToUTF8(profile2.GetRawInfo(EMAIL_ADDRESS)));
   ASSERT_EQ(suggestions.size(), 2u);
   EXPECT_EQ(profile1.GetRawInfo(EMAIL_ADDRESS), suggestions[0].main_text.value);
@@ -737,10 +850,12 @@ TEST_F(AddressSuggestionGeneratorTest,
                        "johnwayne@me.xyz", "Fox",
                        "123 Zoo St.\nSecond Line\nThird line", "unit 5",
                        "Hollywood", "CA", "91601", "US", "12345678910");
+  FormFieldData triggering_field;
+  triggering_field.set_label(u"Phone");
 
   std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
       {profile}, {PHONE_HOME_WHOLE_NUMBER}, SuggestionType::kAddressEntry,
-      PHONE_HOME_WHOLE_NUMBER);
+      PHONE_HOME_WHOLE_NUMBER, triggering_field);
   ASSERT_FALSE(suggestions.empty());
   EXPECT_EQ(u"+1 234-567-8910", suggestions[0].main_text.value);
 }
@@ -761,14 +876,15 @@ TEST_F(AddressSuggestionGeneratorTest,
                    .starts_with(profile1.GetRawInfo(NAME_FIRST)));
 
   // Expect that suggestions are prefix matched.
-  std::vector<Suggestion> address_suggestions = GetSuggestionsForProfiles(
-      *autofill_client(), {NAME_FIRST}, triggering_field, NAME_FIRST,
-      SuggestionType::kAddressEntry, std::nullopt);
+  std::vector<Suggestion> address_suggestions =
+      GetSuggestionsForProfiles(triggering_field, NAME_FIRST);
   EXPECT_EQ(address_suggestions.size(), 3ul);
   EXPECT_THAT(address_suggestions, ContainsAddressFooterSuggestions());
 }
 
-// Tests that suggestions are filtered by the triggering field's value.
+// Tests that the field by field filling suggestions are filtered in a way that
+// suggestions matching the same value as the field's content should be
+// excluded, except when that suggestion is the only one, then it should not be.
 TEST_F(
     AddressSuggestionGeneratorTest,
     GetSuggestionsForProfiles_RemoveFieldByFieldFillingSuggestionsMatchingFieldContent) {
@@ -787,9 +903,7 @@ TEST_F(
   // Expect that only the second address yields a suggestion because the first
   // one would be removed for exactly matching the field's content.
   EXPECT_THAT(
-      GetSuggestionsForProfiles(
-          *autofill_client(), {NAME_FULL}, triggering_field, NAME_FULL,
-          SuggestionType::kAddressFieldByFieldFilling, std::nullopt),
+      GetSuggestionsForProfiles(triggering_field, NAME_FULL),
       ElementsAre(EqualsSuggestion(SuggestionType::kAddressFieldByFieldFilling,
                                    profile2.GetRawInfo(NAME_FULL)),
                   EqualsSuggestion(SuggestionType::kSeparator),
@@ -804,9 +918,7 @@ TEST_F(
   // otherwise there would be no address suggestions at all and we would not
   // show the popup, making the user unable to use the footer suggestions.
   EXPECT_THAT(
-      GetSuggestionsForProfiles(
-          *autofill_client(), {NAME_FULL}, triggering_field, NAME_FULL,
-          SuggestionType::kAddressFieldByFieldFilling, std::nullopt),
+      GetSuggestionsForProfiles(triggering_field, NAME_FULL),
       ElementsAre(EqualsSuggestion(SuggestionType::kAddressFieldByFieldFilling,
                                    profile1.GetRawInfo(NAME_FULL)),
                   EqualsSuggestion(SuggestionType::kSeparator),
@@ -814,8 +926,39 @@ TEST_F(
                   EqualsSuggestion(SuggestionType::kManageAddress)));
 }
 
-// Tests that Home/Work icons are correctly assigned.
-TEST_F(AddressSuggestionGeneratorTest, TestAddressSuggestion_HomeAndWorkIcons) {
+// Tests that filtering of same value is sensitive to changes in value that are
+// usually discarded by our value normalization logic.
+TEST_F(
+    AddressSuggestionGeneratorTest,
+    GetSuggestionsForProfiles_RemoveFieldByFieldFillingSuggestionsMatchingFieldContent_NoNormalization) {
+  base::test::ScopedFeatureList scoped_feature_list{
+      features::kAutofillImproveAddressFieldSwapping};
+  AutofillProfile profile1 = test::GetFullProfile();
+  AutofillProfile profile2 = test::GetFullProfile2();
+  profile1.SetRawInfo(NAME_FULL, u"Test Name");
+  profile2.SetRawInfo(NAME_FULL, u"Tést Name");
+  address_data().AddProfile(profile1);
+  address_data().AddProfile(profile2);
+
+  // Create a triggering field that was autofilled with `profile1`.
+  FormFieldData triggering_field;
+  triggering_field.set_value(profile1.GetRawInfo(NAME_FULL));
+  triggering_field.set_is_autofilled(true);
+
+  // Expect that only the second address yields a suggestion because the first
+  // one would be removed for exactly matching the field's content, even though
+  // the two values are equal up to normalization.
+  EXPECT_THAT(
+      GetSuggestionsForProfiles(triggering_field, NAME_FULL),
+      ElementsAre(EqualsSuggestion(SuggestionType::kAddressFieldByFieldFilling,
+                                   u"Tést Name"),
+                  EqualsSuggestion(SuggestionType::kSeparator),
+                  EqualsSuggestion(SuggestionType::kUndoOrClear),
+                  EqualsSuggestion(SuggestionType::kManageAddress)));
+}
+
+// Tests that Home/Work suggestions are correctly generated.
+TEST_F(AddressSuggestionGeneratorTest, TestAddressSuggestion_HomeAndWork) {
   base::test::ScopedFeatureList features(
       features::kAutofillEnableSupportForHomeAndWork);
 
@@ -828,26 +971,69 @@ TEST_F(AddressSuggestionGeneratorTest, TestAddressSuggestion_HomeAndWorkIcons) {
   test_api(profile_work)
       .set_record_type(AutofillProfile::RecordType::kAccountWork);
 
+  FormFieldData triggering_field_name;
+  triggering_field_name.set_label(u"Name");
+
   std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
       {profile_default, profile_home, profile_work}, {NAME_FIRST, NAME_LAST},
-      SuggestionType::kAddressEntry, NAME_FIRST);
+      SuggestionType::kAddressEntry, NAME_FIRST, triggering_field_name);
 
   raw_ptr<const base::Feature> kIphFeature =
       &feature_engagement::kIPHAutofillHomeWorkProfileSuggestionFeature;
   EXPECT_THAT(
       suggestions,
       ElementsAre(
-          AllOf(HasIcon(Suggestion::Icon::kAccount), HasNoIphFeature()),
-          AllOf(HasIcon(Suggestion::Icon::kHome), HasIphFeature(kIphFeature)),
-          AllOf(HasIcon(Suggestion::Icon::kWork), HasIphFeature(kIphFeature))));
+          AllOf(HasIcon(Suggestion::Icon::kAccount), HasNoIphFeature(),
+                Field(&Suggestion::voice_over, std::nullopt)),
+          AllOf(HasIcon(Suggestion::Icon::kHome), HasIphFeature(kIphFeature),
+                Field(&Suggestion::voice_over, Optional(Not(IsEmpty())))),
+          AllOf(HasIcon(Suggestion::Icon::kWork), HasIphFeature(kIphFeature),
+                Field(&Suggestion::voice_over, Optional(Not(IsEmpty()))))));
+
+  FormFieldData triggering_field_email;
+  triggering_field_email.set_label(u"Email");
 
   suggestions = CreateSuggestionsFromProfilesForTest(
       {profile_default, profile_home, profile_work}, {NAME_FIRST, NAME_LAST},
-      SuggestionType::kAddressEntry, EMAIL_ADDRESS);
+      SuggestionType::kAddressEntry, EMAIL_ADDRESS, triggering_field_email);
 
   // If trigger field is email address, don't show home and work icons.
   EXPECT_THAT(suggestions, Each(AllOf(HasIcon(Suggestion::Icon::kEmail),
                                       HasNoIphFeature())));
+}
+
+// Tests that AccountNameEmail has IPH feature.
+TEST_F(AddressSuggestionGeneratorTest,
+       TestAddressSuggestion_AccountNameEmailIph) {
+  base::test::ScopedFeatureList features(
+      features::kAutofillEnableSupportForNameAndEmail);
+
+  AutofillProfile profile_account_name_email = test::GetFullProfile();
+  profile_account_name_email.SetRawInfo(EMAIL_ADDRESS, u"hoa@gmail.com");
+
+  test_api(profile_account_name_email)
+      .set_record_type(AutofillProfile::RecordType::kAccountNameEmail);
+
+  FormFieldData triggering_field_name;
+  triggering_field_name.set_label(u"Name");
+
+  std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
+      {profile_account_name_email}, {NAME_FIRST, NAME_LAST},
+      SuggestionType::kAddressEntry, NAME_FIRST, triggering_field_name);
+
+  raw_ptr<const base::Feature> kIphFeature =
+      &feature_engagement::kIPHAutofillAccountNameEmailSuggestionFeature;
+  EXPECT_THAT(suggestions,
+              ElementsAre(AllOf(HasIcon(Suggestion::Icon::kAccount),
+                                HasIphFeature(kIphFeature))));
+
+  FormFieldData triggering_field_email;
+  triggering_field_email.set_label(u"Email");
+
+  suggestions = CreateSuggestionsFromProfilesForTest(
+      {profile_account_name_email}, {NAME_FIRST, NAME_LAST},
+      SuggestionType::kAddressEntry, EMAIL_ADDRESS, triggering_field_email);
+  EXPECT_THAT(suggestions, ElementsAre(HasIphFeature(kIphFeature)));
 }
 
 // Tests that Home/Work icons are not used if the H&W feature is disabled.
@@ -866,9 +1052,12 @@ TEST_F(AddressSuggestionGeneratorTest,
   test_api(profile_work)
       .set_record_type(AutofillProfile::RecordType::kAccountWork);
 
+  FormFieldData triggering_field_name;
+  triggering_field_name.set_label(u"Name");
+
   std::vector<Suggestion> suggestions = CreateSuggestionsFromProfilesForTest(
       {profile_default, profile_home, profile_work}, {NAME_FIRST, NAME_LAST},
-      SuggestionType::kAddressEntry, NAME_FIRST);
+      SuggestionType::kAddressEntry, NAME_FIRST, triggering_field_name);
 
   // Default icons are expected.
   EXPECT_THAT(suggestions, Each(AllOf(HasIcon(Suggestion::Icon::kAccount),
@@ -880,14 +1069,14 @@ TEST_F(AddressSuggestionGeneratorTest, UndoAutofillOnAddressForm) {
   address_data().AddProfile(test::GetFullProfile());
   FormFieldData field;
   field.set_is_autofilled(true);
-  std::vector<Suggestion> suggestions = GetSuggestionsForProfiles(
-      *autofill_client(), {NAME_FIRST}, field, NAME_FIRST,
-      SuggestionType::kAddressEntry, std::nullopt);
-  EXPECT_THAT(suggestions,
-              ElementsAre(EqualsSuggestion(SuggestionType::kAddressEntry),
-                          EqualsSuggestion(SuggestionType::kSeparator),
-                          EqualsUndoAutofillSuggestion(),
-                          EqualsManageAddressesSuggestion()));
+  std::vector<Suggestion> suggestions =
+      GetSuggestionsForProfiles(field, NAME_FIRST);
+  EXPECT_THAT(
+      suggestions,
+      ElementsAre(EqualsSuggestion(SuggestionType::kAddressFieldByFieldFilling),
+                  EqualsSuggestion(SuggestionType::kSeparator),
+                  EqualsUndoAutofillSuggestion(),
+                  EqualsManageAddressesSuggestion()));
 }
 #endif
 
@@ -895,9 +1084,8 @@ TEST_F(AddressSuggestionGeneratorTest,
        TestAddressSuggestion_AddressField_ReturnSuggestion) {
   AutofillProfile profile = test::GetFullProfile();
   autofill_client()->set_test_addresses({profile});
-  std::vector<Suggestion> suggestions = GetSuggestionsForProfiles(
-      *autofill_client(), /*field_types=*/{NAME_FIRST}, FormFieldData(),
-      NAME_FIRST, SuggestionType::kAddressEntry, std::nullopt);
+  std::vector<Suggestion> suggestions =
+      GetSuggestionsForProfiles(FormFieldData(), NAME_FIRST);
 
   // There should be one `SuggestionType::kDevtoolsTestAddresses`, one
   // `SuggestionType::kSeparator` and one `SuggestionType::kManageAddress`.
@@ -963,11 +1151,13 @@ TEST_F(AddressLabelSuggestionGeneratorTest,
        CreateSuggestionsFromProfiles_PartialNameFieldHasFullNameMainText) {
   base::test::ScopedFeatureList features(features::kAutofillImprovedLabels);
   AutofillProfile profile = test::GetFullProfile();
+  FormFieldData triggering_field;
+  triggering_field.set_label(u"Name");
 
   EXPECT_THAT(
       CreateSuggestionsFromProfilesForTest({profile}, {NAME_FIRST, NAME_LAST},
                                            SuggestionType::kAddressEntry,
-                                           NAME_FIRST),
+                                           NAME_FIRST, triggering_field),
       SuggestionVectorMainTextsAre(Suggestion::Text(
           profile.GetRawInfo(NAME_FULL), Suggestion::Text::IsPrimary(true))));
 }
@@ -987,15 +1177,79 @@ TEST_F(AddressLabelSuggestionGeneratorTest,
   profile.SetRawInfo(ALTERNATIVE_GIVEN_NAME, u"あおい");
   profile.SetRawInfo(ALTERNATIVE_FAMILY_NAME, u"やまもと");
   profile.FinalizeAfterImport();
+  FormFieldData triggering_field;
+  triggering_field.set_label(u"Name");
 
   // Suggestions for alternative name fields should have the alternative name
   // as the main text.
   EXPECT_THAT(CreateSuggestionsFromProfilesForTest(
                   {profile}, {ALTERNATIVE_GIVEN_NAME, ALTERNATIVE_FAMILY_NAME},
-                  SuggestionType::kAddressEntry, ALTERNATIVE_GIVEN_NAME),
+                  SuggestionType::kAddressEntry, ALTERNATIVE_GIVEN_NAME,
+                  triggering_field),
               SuggestionVectorMainTextsAre(
                   Suggestion::Text(profile.GetRawInfo(ALTERNATIVE_GIVEN_NAME),
                                    Suggestion::Text::IsPrimary(true))));
+}
+
+// Tests that suggestions for alternative name fields with Katakana labels
+// are transliterated to Katakana.
+TEST_F(
+    AddressLabelSuggestionGeneratorTest,
+    CreateSuggestionsFromProfiles_TransliteratesHiraganaToKatakana_WhenLabelInKatakana) {
+  base::test::ScopedFeatureList features;
+  features.InitWithFeatures({features::kAutofillImprovedLabels,
+                             features::kAutofillSupportPhoneticNameForJP},
+                            {});
+  AutofillProfile profile(AddressCountryCode("JP"));
+  test::SetProfileInfo(&profile, "firstName", "middleName", "lastName",
+                       "mail@mail.com", "company", "line1", "line2", "city",
+                       "state", "zip", "JP", "phone");
+  const std::u16string hiragana = u"はるか";
+  const std::u16string katakana = u"ハルカ";
+  profile.SetRawInfo(ALTERNATIVE_FAMILY_NAME, hiragana);
+  profile.SetRawInfo(ALTERNATIVE_GIVEN_NAME, hiragana);
+  profile.FinalizeAfterImport();
+  FormFieldData triggering_field_with_katakana_label;
+  triggering_field_with_katakana_label.set_label(katakana);
+
+  const std::vector<Suggestion> suggestions =
+      CreateSuggestionsFromProfilesForTest(
+          {profile}, {ALTERNATIVE_GIVEN_NAME, ALTERNATIVE_FAMILY_NAME},
+          SuggestionType::kAddressEntry, ALTERNATIVE_GIVEN_NAME,
+          triggering_field_with_katakana_label);
+
+  EXPECT_THAT(suggestions, SuggestionVectorMainTextsAre(Suggestion::Text(
+                               katakana, Suggestion::Text::IsPrimary(true))));
+}
+
+// Tests that suggestions for alternative name fields with Hiragana labels
+// are not transliterated to Katakana.
+TEST_F(
+    AddressLabelSuggestionGeneratorTest,
+    CreateSuggestionsFromProfiles_DoesNotTransliterateHiraganaToKatakana_WhenLabelInHiragana) {
+  base::test::ScopedFeatureList features;
+  features.InitWithFeatures({features::kAutofillImprovedLabels,
+                             features::kAutofillSupportPhoneticNameForJP},
+                            {});
+  AutofillProfile profile(AddressCountryCode("JP"));
+  test::SetProfileInfo(&profile, "firstName", "middleName", "lastName",
+                       "mail@mail.com", "company", "line1", "line2", "city",
+                       "state", "zip", "JP", "phone");
+  const std::u16string hiragana = u"はるか";
+  profile.SetRawInfo(ALTERNATIVE_FAMILY_NAME, hiragana);
+  profile.SetRawInfo(ALTERNATIVE_GIVEN_NAME, hiragana);
+  profile.FinalizeAfterImport();
+  FormFieldData triggering_field_with_hiragana_label;
+  triggering_field_with_hiragana_label.set_label(hiragana);
+
+  const std::vector<Suggestion> suggestions =
+      CreateSuggestionsFromProfilesForTest(
+          {profile}, {ALTERNATIVE_GIVEN_NAME, ALTERNATIVE_FAMILY_NAME},
+          SuggestionType::kAddressEntry, ALTERNATIVE_GIVEN_NAME,
+          triggering_field_with_hiragana_label);
+
+  EXPECT_THAT(suggestions, SuggestionVectorMainTextsAre(Suggestion::Text(
+                               hiragana, Suggestion::Text::IsPrimary(true))));
 }
 
 // Suggestions for `ADDRESS_HOME_LINE1` should have `NAME_FULL` as the label.
@@ -1007,11 +1261,12 @@ TEST_P(AddressLabelSuggestionGeneratorTest,
   FieldType triggering_field_type = GetTriggeringFieldType();
   const std::u16string full_form_filling_label =
       GetFullFormFillingLabel(profile);
+  FormFieldData ignored;
 
   EXPECT_THAT(
       CreateSuggestionsFromProfilesForTest(
           {profile}, {NAME_FULL, ADDRESS_HOME_STREET_ADDRESS, ADDRESS_HOME_ZIP},
-          SuggestionType::kAddressEntry, triggering_field_type),
+          SuggestionType::kAddressEntry, triggering_field_type, ignored),
       ElementsAre(AllOf(EqualLabels({{full_form_filling_label}}))));
 }
 
@@ -1029,11 +1284,12 @@ TEST_P(
   const std::u16string full_form_filling_label =
       GetFullFormFillingLabel(profile1) +
       l10n_util::GetStringUTF16(IDS_AUTOFILL_ADDRESS_SUMMARY_SEPARATOR);
+  FormFieldData ignored;
 
   EXPECT_THAT(
       CreateSuggestionsFromProfilesForTest(
           {profile1, profile2}, {NAME_FULL, ADDRESS_HOME_STREET_ADDRESS},
-          SuggestionType::kAddressEntry, triggering_field_type),
+          SuggestionType::kAddressEntry, triggering_field_type, ignored),
       ElementsAre(
           AllOf(EqualLabels({{full_form_filling_label + u"hoa@gmail.com"}})),
           AllOf(EqualLabels({{full_form_filling_label + u"pham@gmail.com"}}))));
@@ -1054,16 +1310,66 @@ TEST_P(AddressLabelSuggestionGeneratorTest,
   const std::u16string full_form_filling_label =
       GetFullFormFillingLabel(profile1) +
       l10n_util::GetStringUTF16(IDS_AUTOFILL_ADDRESS_SUMMARY_SEPARATOR);
+  FormFieldData ignored;
 
   EXPECT_THAT(
       CreateSuggestionsFromProfilesForTest(
           {profile1, profile2}, {NAME_FULL, ADDRESS_HOME_STREET_ADDRESS},
-          SuggestionType::kAddressEntry, triggering_field_type),
+          SuggestionType::kAddressEntry, triggering_field_type, ignored),
       ElementsAre(
           AllOf(EqualLabels({{full_form_filling_label + u"United States"}})),
           AllOf(EqualLabels({{full_form_filling_label + u"Switzerland"}}))));
 }
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+
+TEST_F(AddressSuggestionGeneratorTest, GeneratesSuggestions) {
+  base::MockCallback<base::OnceCallback<void(
+      std::pair<SuggestionGenerator::SuggestionDataSource,
+                std::vector<SuggestionGenerator::SuggestionData>>)>>
+      suggestion_data_callback;
+  base::MockCallback<
+      base::OnceCallback<void(SuggestionGenerator::ReturnedSuggestions)>>
+      suggestions_generated_callback;
+
+  AutofillProfile profile1 = test::GetFullProfile();
+  address_data().AddProfile(profile1);
+
+  // Create a form with one field, that expects a full name.
+  FormFieldData field;
+  FormData form_data;
+  test_api(form_data).Append(field);
+  std::unique_ptr<FormStructure> form_structure =
+      std::make_unique<FormStructure>(form_data);
+  test_api(*form_structure).SetFieldTypes({NAME_FULL});
+
+  AddressSuggestionGenerator generator(
+      *autofill_client(), /*plus_address_email_override=*/std::nullopt,
+      /*form_filler=*/nullptr, /*log_manager=*/nullptr);
+  std::pair<SuggestionGenerator::SuggestionDataSource,
+            std::vector<SuggestionGenerator::SuggestionData>>
+      savedCallbackArgument;
+
+  EXPECT_CALL(
+      suggestion_data_callback,
+      Run(testing::Pair(SuggestionGenerator::SuggestionDataSource::kAddress,
+                        testing::ElementsAre(profile1))))
+      .WillOnce(testing::SaveArg<0>(&savedCallbackArgument));
+  generator.FetchSuggestionData(form_data, field, form_structure.get(),
+                                form_structure->field(0), *autofill_client(),
+                                suggestion_data_callback.Get());
+
+  EXPECT_CALL(
+      suggestions_generated_callback,
+      Run(testing::Pair(
+          FillingProduct::kAddress,
+          testing::ElementsAre(
+              EqualsSuggestion(SuggestionType::kAddressEntry, u"John H. Doe"),
+              EqualsSuggestion(SuggestionType::kSeparator),
+              EqualsSuggestion(SuggestionType::kManageAddress)))));
+  generator.GenerateSuggestions(
+      form_data, field, form_structure.get(), form_structure->field(0),
+      {savedCallbackArgument}, suggestions_generated_callback.Get());
+}
 
 }  // namespace
 }  // namespace autofill

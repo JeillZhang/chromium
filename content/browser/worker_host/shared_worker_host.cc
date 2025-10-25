@@ -10,13 +10,14 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/unguessable_token.h"
 #include "content/browser/broadcast_channel/broadcast_channel_provider.h"
 #include "content/browser/broadcast_channel/broadcast_channel_service.h"
 #include "content/browser/code_cache/generated_code_cache_context.h"
 #include "content/browser/devtools/devtools_instrumentation.h"
 #include "content/browser/devtools/shared_worker_devtools_manager.h"
+#include "content/browser/fingerprinting_protection/canvas_noise_token_data.h"
 #include "content/browser/loader/url_loader_factory_utils.h"
 #include "content/browser/network/cross_origin_embedder_policy_reporter.h"
 #include "content/browser/renderer_host/code_cache_host_impl.h"
@@ -24,9 +25,11 @@
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/security/dip/document_isolation_policy_reporter.h"
 #include "content/browser/service_worker/service_worker_client.h"
+#include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_main_resource_handle.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/browser/url_loader_factory_params_helper.h"
+#include "content/browser/websockets/websocket_connector_impl.h"
 #include "content/browser/webtransport/web_transport_connector_impl.h"
 #include "content/browser/worker_host/shared_worker_content_settings_proxy_impl.h"
 #include "content/browser/worker_host/shared_worker_service_impl.h"
@@ -53,6 +56,7 @@
 #include "services/network/public/mojom/ip_address_space.mojom-shared.h"
 #include "storage/browser/blob/blob_url_store_impl.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/blink/public/common/fingerprinting_protection/noise_token.h"
 #include "third_party/blink/public/common/loader/url_loader_factory_bundle.h"
 #include "third_party/blink/public/common/messaging/message_port_channel.h"
 #include "third_party/blink/public/common/privacy_budget/identifiability_study_settings.h"
@@ -61,6 +65,7 @@
 #include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
 #include "third_party/blink/public/mojom/renderer_preference_watcher.mojom.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom.h"
+#include "third_party/blink/public/mojom/worker/shared_worker_exception_details.mojom.h"
 #include "third_party/blink/public/mojom/worker/shared_worker_info.mojom.h"
 #include "third_party/blink/public/mojom/worker/worker_content_settings_proxy.mojom.h"
 
@@ -70,6 +75,24 @@ namespace {
 // Also, we may want to use the same constant we use for service workers.
 // Current value come from `ServiceWorkerVersion::kRequestTimeout`.
 constexpr base::TimeDelta kSharedWorkerDestructionDelay = base::Minutes(5);
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+// LINT.IfChange(SharedWorkerHostDestructionSource)
+enum class SharedWorkerHostDestructionSource {
+  kUnknown = 0,
+  kOnContextClosed = 1,
+  kRenderProcessHostDestroyed = 2,
+  kNoClients = 3,
+  kWorkerConnectionLost = 4,
+  kMaxValue = kWorkerConnectionLost,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/content/enums.xml:SharedWorkerHostDestructionSource)
+
+void RecordDestructionSource(SharedWorkerHostDestructionSource source) {
+  base::UmaHistogramEnumeration("Content.SharedWorker.Host.DestructionSource",
+                                source);
+}
 
 }  // namespace
 
@@ -274,9 +297,26 @@ void SharedWorkerHost::Start(
     if (!creator_policy_container_host_->policies().is_web_secure_context) {
       policies.is_web_secure_context = false;
     }
+    // Allow LNA access on non secure contexts if the creator did as well.
+    policies.allow_non_secure_local_network_access =
+        creator_policy_container_host_->policies()
+            .allow_non_secure_local_network_access;
 
     worker_client_security_state_ = DeriveClientSecurityState(
         policies, PrivateNetworkRequestContext::kWorker);
+
+    // Check for policy overrides on LNA. For shared workers, we apply
+    // policy overrides based on the renderer_origin() when the shared worker
+    // was started.
+    // TODO(crbug.com/452389539): Centralize these policy overrides.
+    BrowserContext* context = GetProcessHost()->GetBrowserContext();
+    url::Origin origin = instance_.renderer_origin();
+    ContentBrowserClient::PrivateNetworkRequestPolicyOverride policy_override =
+        client->ShouldOverridePrivateNetworkRequestPolicy(context, origin);
+    worker_client_security_state_->private_network_request_policy =
+        OverrideLocalNetworkAccessPolicy(
+            worker_client_security_state_->private_network_request_policy,
+            policy_override);
 
     policy_container_host =
         base::MakeRefCounted<PolicyContainerHost>(std::move(policies));
@@ -400,6 +440,12 @@ void SharedWorkerHost::Start(
     dip_reporter_->BindObserver(std::move(dip_reporting_remote));
   }
 
+  std::optional<blink::NoiseToken> canvas_noise_token =
+      GetOrCreateCanvasNoiseToken();
+  mojo::PendingReceiver<blink::mojom::CanvasNoiseTokenUpdater>
+      canvas_noise_token_observer =
+          canvas_noise_token_updater_.BindNewPipeAndPassReceiver();
+
   // Send the CreateSharedWorker message.
   factory_.Bind(std::move(factory));
   factory_->CreateSharedWorker(
@@ -419,7 +465,8 @@ void SharedWorkerHost::Start(
       receiver_.BindNewPipeAndPassRemote(), std::move(worker_receiver_),
       std::move(browser_interface_broker), ukm_source_id_,
       instance_.DoesRequireCrossSiteRequestForCookies(),
-      std::move(coep_reporting_observer), std::move(dip_reporting_observer));
+      std::move(coep_reporting_observer), std::move(dip_reporting_observer),
+      std::move(canvas_noise_token), std::move(canvas_noise_token_observer));
   if (service_worker_handle_->service_worker_client()) {
     service_worker_handle_->service_worker_client()->SetContainerReady();
   }
@@ -476,7 +523,10 @@ SharedWorkerHost::CreateNetworkFactoryParamsForSubresources() {
       URLLoaderFactoryParamsHelper::CreateForWorker(
           GetProcessHost(), origin, GetStorageKey().ToPartialNetIsolationInfo(),
           std::move(coep_reporter), std::move(dip_reporter),
-          /*url_loader_network_observer=*/mojo::NullRemote(),
+          static_cast<StoragePartitionImpl*>(
+              GetProcessHost()->GetStoragePartition())
+              ->CreateURLLoaderNetworkObserverForServiceOrSharedWorker(
+                  GetProcessHost()->GetDeprecatedID(), origin),
           /*devtools_observer=*/mojo::NullRemote(),
           mojo::Clone(worker_client_security_state_),
           /*debug_tag=*/
@@ -542,6 +592,25 @@ storage::BucketClientInfo SharedWorkerHost::GetBucketClientInfo() const {
                                    token()};
 }
 
+void SharedWorkerHost::UpdateCanvasNoiseToken() {
+  canvas_noise_token_updater_->OnTokenReceived(GetOrCreateCanvasNoiseToken());
+}
+
+std::optional<blink::NoiseToken>
+SharedWorkerHost::GetOrCreateCanvasNoiseToken() {
+  BrowserContext* browser_context = GetProcessHost()->GetBrowserContext();
+  GURL top_url = GetStorageKey().top_level_site().GetURL();
+
+  if (!GetContentClient()->browser()->ShouldEnableCanvasNoise(browser_context,
+                                                              top_url)) {
+    return std::nullopt;
+  }
+  // TODO(https://crbug.com/442616874): Use StorageKeys to call GetToken(), once
+  // CanvasNoiseTokens are keyed by StorageKey instead of Origin.
+  return CanvasNoiseTokenData::GetToken(browser_context,
+                                        url::Origin::Create(top_url));
+}
+
 void SharedWorkerHost::AllowFileSystem(
     const GURL& url,
     base::OnceCallback<void(bool)> callback) {
@@ -580,7 +649,20 @@ void SharedWorkerHost::CreateWebTransportConnector(
   mojo::MakeSelfOwnedReceiver(
       std::make_unique<WebTransportConnectorImpl>(
           GetProcessHost()->GetDeprecatedID(), /*frame=*/nullptr, origin,
-          GetNetworkAnonymizationKey()),
+          GetNetworkAnonymizationKey(), worker_client_security_state_->Clone()),
+      std::move(receiver));
+}
+
+void SharedWorkerHost::CreateWebSocketConnector(
+    mojo::PendingReceiver<blink::mojom::WebSocketConnector> receiver) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  const blink::StorageKey& storage_key = instance_.storage_key();
+
+  mojo::MakeSelfOwnedReceiver(
+      std::make_unique<WebSocketConnectorImpl>(
+          GetProcessHost()->GetDeprecatedID(), IPC::mojom::kRoutingIdNone,
+          storage_key.origin(), storage_key.ToPartialNetIsolationInfo(),
+          worker_client_security_state_->Clone()),
       std::move(receiver));
 }
 
@@ -617,6 +699,15 @@ void SharedWorkerHost::CreateBlobUrlStoreProvider(
   storage_partition_impl->GetBlobUrlRegistry()->AddReceiver(
       GetStorageKey(), instance().renderer_origin(),
       GetProcessHost()->GetDeprecatedID(), std::move(receiver),
+      /*context_type_for_debugging=*/"Shared Worker",
+      base::BindRepeating(
+          [](base::WeakPtr<SharedWorkerHost> host) -> std::string {
+            if (!host) {
+              return "destroyed SharedWorkerHost";
+            }
+            return host->GetStorageKey().GetDebugString();
+          },
+          weak_factory_.GetWeakPtr()),
       // Storage access can only be granted to dedicated workers.
       base::BindRepeating([]() -> bool { return false; }),
       !(GetContentClient()->browser()->IsBlobUrlPartitioningEnabled(
@@ -720,6 +811,7 @@ void SharedWorkerHost::OnContextClosed() {
   // be called.
   DCHECK(started_);
 
+  RecordDestructionSource(SharedWorkerHostDestructionSource::kOnContextClosed);
   Destruct();
 }
 
@@ -734,6 +826,13 @@ void SharedWorkerHost::OnReadyForInspection(
 void SharedWorkerHost::OnScriptLoadFailed(const std::string& error_message) {
   for (const ClientInfo& info : clients_) {
     info.client->OnScriptLoadFailed(error_message);
+  }
+}
+
+void SharedWorkerHost::OnReportException(
+    blink::mojom::SharedWorkerExceptionDetailsPtr details) {
+  for (const ClientInfo& info : clients_) {
+    info.client->OnReportException(details.Clone());
   }
 }
 
@@ -778,6 +877,8 @@ void SharedWorkerHost::RenderProcessHostDestroyed(RenderProcessHost* host) {
   // also calls RemoveObserver, but the process may be cleared by the time that
   // call is reached, so call it here first.
   host->RemoveObserver(this);
+  RecordDestructionSource(
+      SharedWorkerHostDestructionSource::kRenderProcessHostDestroyed);
   Destruct();
 }
 
@@ -920,6 +1021,42 @@ bool SharedWorkerHost::HasClients() const {
   return !clients_.empty();
 }
 
+bool SharedWorkerHost::ContainsClient(
+    const RenderFrameHostImpl* render_frame_host) const {
+  const GlobalRenderFrameHostId& client_render_frame_host_id =
+      render_frame_host->GetGlobalId();
+  return std::any_of(
+      clients_.begin(), clients_.end(), [&](const ClientInfo& info) {
+        return info.render_frame_host_id == client_render_frame_host_id;
+      });
+}
+
+bool SharedWorkerHost::EvictBFCachedClientsIfLastActive(
+    RenderFrameHostImpl* render_frame_host) {
+  std::vector<RenderFrameHostImpl*> bf_cached_clients;
+
+  for (const ClientInfo& info : clients_) {
+    RenderFrameHostImpl* const other_rfh =
+        RenderFrameHostImpl::FromID(info.render_frame_host_id);
+    if (!other_rfh || other_rfh->GetOutermostMainFrame() == render_frame_host) {
+      // Skip frames on the same page (e.g., self, iframes) and destroyed ones,
+      continue;
+    }
+    if (other_rfh->IsActive()) {
+      // If any other client is still active, then this is not the last active
+      // client.
+      return false;
+    }
+    bf_cached_clients.push_back(other_rfh);
+  }
+  for (RenderFrameHostImpl* rfh_to_evict : bf_cached_clients) {
+    rfh_to_evict->EvictFromBackForwardCacheWithReason(
+        BackForwardCacheMetrics::NotRestoredReason::
+            kSharedWorkerWithNoActiveClient);
+  }
+  return true;
+}
+
 const base::UnguessableToken& SharedWorkerHost::GetDevToolsToken() const {
   return devtools_handle_->dev_tools_token();
 }
@@ -964,6 +1101,7 @@ void SharedWorkerHost::OnClientConnectionLost() {
 void SharedWorkerHost::DestructIfNoClients() {
   // If there are no clients left, then it's cleanup time.
   if (clients_.empty()) {
+    RecordDestructionSource(SharedWorkerHostDestructionSource::kNoClients);
     Destruct();
   }
 }
@@ -971,6 +1109,8 @@ void SharedWorkerHost::DestructIfNoClients() {
 void SharedWorkerHost::OnWorkerConnectionLost() {
   // This will destroy |this| resulting in client's observing their mojo
   // connection being dropped.
+  RecordDestructionSource(
+      SharedWorkerHostDestructionSource::kWorkerConnectionLost);
   Destruct();
 }
 

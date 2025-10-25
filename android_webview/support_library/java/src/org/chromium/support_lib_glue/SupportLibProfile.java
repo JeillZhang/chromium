@@ -22,8 +22,10 @@ import com.android.webview.chromium.PrefetchParams;
 import com.android.webview.chromium.Profile;
 import com.android.webview.chromium.SpeculativeLoadingConfig;
 
+import org.chromium.android_webview.AwOriginMatchedHeader;
 import org.chromium.android_webview.common.Lifetime;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.TraceEvent;
 import org.chromium.support_lib_boundary.PrefetchOperationCallbackBoundaryInterface;
 import org.chromium.support_lib_boundary.ProfileBoundaryInterface;
 import org.chromium.support_lib_boundary.SpeculativeLoadingConfigBoundaryInterface;
@@ -32,6 +34,9 @@ import org.chromium.support_lib_boundary.util.BoundaryInterfaceReflectionUtil;
 import org.chromium.support_lib_glue.SupportLibWebViewChromiumFactory.ApiCall;
 
 import java.lang.reflect.InvocationHandler;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
@@ -225,5 +230,105 @@ public class SupportLibProfile implements ProfileBoundaryInterface {
         assert ThreadUtils.runningOnUiThread();
         recordApiCall(ApiCall.PROFILE_WARM_UP_RENDERER_PROCESS);
         mProfileImpl.warmUpRendererProcess();
+    }
+
+    /**
+     * @deprecated Can be removed along with {@link
+     *     org.chromium.support_lib_boundary.util.Features#EXTRA_HEADER_FOR_ORIGINS}
+     */
+    @Deprecated
+    @Override
+    public void setOriginMatchedHeader(
+            @NonNull String headerName,
+            @NonNull String headerValue,
+            @NonNull Set<String> originRules) {
+        recordApiCall(ApiCall.SET_ORIGIN_MATCHED_HEADER);
+        try (TraceEvent event =
+                TraceEvent.scoped("WebView.APICall.AndroidX.SET_ORIGIN_MATCHED_HEADER")) {
+            mProfileImpl.setOriginMatchedHeader(headerName, headerValue, originRules);
+        }
+    }
+
+    @Override
+    public boolean hasOriginMatchedHeader(@NonNull String headerName) {
+        recordApiCall(ApiCall.HAS_ORIGIN_MATCHED_HEADER);
+        try (TraceEvent event =
+                TraceEvent.scoped("WebView.APICall.AndroidX.HAS_ORIGIN_MATCHED_HEADER")) {
+            return mProfileImpl.hasOriginMatchedHeader(headerName);
+        }
+    }
+
+    @Override
+    public void addOriginMatchedHeader(
+            @NonNull String name, @NonNull String value, @NonNull Set<String> rules) {
+        recordApiCall(ApiCall.ADD_ORIGIN_MATCHED_HEADER);
+        try (TraceEvent event =
+                TraceEvent.scoped("WebView.APICall.AndroidX.ADD_ORIGIN_MATCHED_HEADER")) {
+            mProfileImpl.addOriginMatchedHeader(name, value, rules);
+        }
+    }
+
+    @Override
+    public @NonNull /* List<OriginMatchedBoundaryInterface> */ List<InvocationHandler>
+            getOriginMatchedHeaders(@Nullable String headerName, @Nullable String headerValue) {
+        recordApiCall(ApiCall.GET_ORIGIN_MATCHED_HEADERS);
+        try (TraceEvent event =
+                TraceEvent.scoped("WebView.APICall.AndroidX.GET_ORIGIN_MATCHED_HEADERS")) {
+            /* List<OriginMatchedBoundaryInterface> */ List<AwOriginMatchedHeader>
+                    originMatchedHeaders =
+                            mProfileImpl.findOriginMatchedHeaders(headerName, headerValue);
+            List<InvocationHandler> invocationHandlers =
+                    new ArrayList<>(originMatchedHeaders.size());
+            for (AwOriginMatchedHeader header : originMatchedHeaders) {
+                invocationHandlers.add(
+                        BoundaryInterfaceReflectionUtil.createInvocationHandlerFor(
+                                new SupportLibOriginMatchedHeader(header)));
+            }
+            return invocationHandlers;
+        }
+    }
+
+    /**
+     * @deprecated Can be removed along with {@link
+     *     org.chromium.support_lib_boundary.util.Features#EXTRA_HEADER_FOR_ORIGINS}
+     */
+    @Deprecated
+    @Override
+    public void clearOriginMatchedHeader(@NonNull String headerName) {
+        clearOriginMatchedHeader(headerName, null);
+    }
+
+    @Override
+    public void clearOriginMatchedHeader(@NonNull String headerName, @Nullable String headerValue) {
+        recordApiCall(ApiCall.CLEAR_ORIGIN_MATCHED_HEADER);
+        try (TraceEvent event =
+                TraceEvent.scoped("WebView.APICall.AndroidX.CLEAR_ORIGIN_MATCHED_HEADER")) {
+            mProfileImpl.clearOriginMatchedHeader(headerName, headerValue);
+        }
+    }
+
+    @Override
+    public void clearAllOriginMatchedHeaders() {
+        recordApiCall(ApiCall.CLEAR_ALL_ORIGIN_MATCHED_HEADERS);
+        try (TraceEvent event =
+                TraceEvent.scoped("WebView.APICall.AndroidX.CLEAR_ALL_ORIGIN_MATCHED_HEADERS")) {
+            mProfileImpl.clearAllOriginMatchedHeaders();
+        }
+    }
+
+    @Override
+    public void preconnect(String url) {
+        recordApiCall(ApiCall.PRECONNECT);
+        try (TraceEvent event = TraceEvent.scoped("WebView.APICall.AndroidX.PRECONNECT")) {
+            mProfileImpl.preconnect(url);
+        }
+    }
+
+    @Override
+    public void addQuicHints(Set<String> origins) {
+        recordApiCall(ApiCall.ADD_QUIC_HINTS);
+        try (TraceEvent event = TraceEvent.scoped("WebView.APICall.AndroidX.ADD_QUIC_HINTS")) {
+            mProfileImpl.addQuicHints(origins);
+        }
     }
 }

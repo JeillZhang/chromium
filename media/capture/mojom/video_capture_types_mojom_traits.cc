@@ -215,17 +215,17 @@ bool EnumTraits<media::mojom::VideoCapturePixelFormat,
       *output = media::PIXEL_FORMAT_MJPEG;
       return true;
     case media::mojom::VideoCapturePixelFormat::YUV420P9_DEPRECATED:
-      NOTREACHED();
+      return false;
     case media::mojom::VideoCapturePixelFormat::YUV420P10:
       *output = media::PIXEL_FORMAT_YUV420P10;
       return true;
     case media::mojom::VideoCapturePixelFormat::YUV422P9_DEPRECATED:
-      NOTREACHED();
+      return false;
     case media::mojom::VideoCapturePixelFormat::YUV422P10:
       *output = media::PIXEL_FORMAT_YUV422P10;
       return true;
     case media::mojom::VideoCapturePixelFormat::YUV444P9_DEPRECATED:
-      NOTREACHED();
+      return false;
     case media::mojom::VideoCapturePixelFormat::YUV444P10:
       *output = media::PIXEL_FORMAT_YUV444P10;
       return true;
@@ -293,7 +293,7 @@ bool EnumTraits<media::mojom::VideoCapturePixelFormat,
       *output = media::PIXEL_FORMAT_P410LE;
       return true;
   }
-  NOTREACHED();
+  return false;
 }
 
 // static
@@ -1583,11 +1583,26 @@ EnumTraits<media::mojom::VideoCaptureFrameDropReason,
     case media::VideoCaptureFrameDropReason::kGpuMemoryBufferMapFailed:
       return media::mojom::VideoCaptureFrameDropReason::
           kGpuMemoryBufferMapFailed;
-    case media::VideoCaptureFrameDropReason::kSubCaptureTargetVersionNotCurrent:
+    case media::VideoCaptureFrameDropReason::
+        kSubCaptureTargetVersionNotCurrent_DEPRECATED:
       return media::mojom::VideoCaptureFrameDropReason::
-          kSubCaptureTargetVersionNotCurrent;
+          kSubCaptureTargetVersionNotCurrent_DEPRECATED;
     case media::VideoCaptureFrameDropReason::kPostProcessingFailed:
       return media::mojom::VideoCaptureFrameDropReason::kPostProcessingFailed;
+    case media::VideoCaptureFrameDropReason::
+        kResolutionAdapterFrameIsNotMappable:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterFrameIsNotMappable;
+    case media::VideoCaptureFrameDropReason::
+        kResolutionAdapterCannotCreateConvertFrame:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterCannotCreateConvertFrame;
+    case media::VideoCaptureFrameDropReason::
+        kResolutionAdapterConvertAndScaleFailed:
+      return media::mojom::VideoCaptureFrameDropReason::
+          kResolutionAdapterConvertAndScaleFailed;
+    case media::VideoCaptureFrameDropReason::kOldCaptureVersion:
+      return media::mojom::VideoCaptureFrameDropReason::kOldCaptureVersion;
   }
   NOTREACHED();
 }
@@ -1729,12 +1744,30 @@ bool EnumTraits<media::mojom::VideoCaptureFrameDropReason,
       *output = media::VideoCaptureFrameDropReason::kGpuMemoryBufferMapFailed;
       return true;
     case media::mojom::VideoCaptureFrameDropReason::
-        kSubCaptureTargetVersionNotCurrent:
+        kSubCaptureTargetVersionNotCurrent_DEPRECATED:
       *output = media::VideoCaptureFrameDropReason::
-          kSubCaptureTargetVersionNotCurrent;
+          kSubCaptureTargetVersionNotCurrent_DEPRECATED;
       return true;
     case media::mojom::VideoCaptureFrameDropReason::kPostProcessingFailed:
       *output = media::VideoCaptureFrameDropReason::kPostProcessingFailed;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterFrameIsNotMappable:
+      *output = media::VideoCaptureFrameDropReason::
+          kResolutionAdapterFrameIsNotMappable;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterCannotCreateConvertFrame:
+      *output = media::VideoCaptureFrameDropReason::
+          kResolutionAdapterCannotCreateConvertFrame;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::
+        kResolutionAdapterConvertAndScaleFailed:
+      *output = media::VideoCaptureFrameDropReason::
+          kResolutionAdapterConvertAndScaleFailed;
+      return true;
+    case media::mojom::VideoCaptureFrameDropReason::kOldCaptureVersion:
+      *output = media::VideoCaptureFrameDropReason::kOldCaptureVersion;
       return true;
   }
   NOTREACHED();
@@ -1964,6 +1997,7 @@ bool StructTraits<media::mojom::VideoCaptureParamsDataView,
     return false;
   out->enable_face_detection = data.enable_face_detection();
   out->is_high_dpi_enabled = data.is_high_dpi_enabled();
+  out->capture_version_source = data.capture_version_source();
   return true;
 }
 

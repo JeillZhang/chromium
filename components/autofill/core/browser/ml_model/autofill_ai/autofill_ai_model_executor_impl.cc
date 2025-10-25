@@ -35,7 +35,7 @@ using optimization_guide::proto::AutofillAiTypeResponse;
 
 AutofillAiModelExecutorImpl::AutofillAiModelExecutorImpl(
     AutofillAiModelCache* model_cache,
-    optimization_guide::OptimizationGuideModelExecutor* model_executor,
+    optimization_guide::RemoteModelExecutor* model_executor,
     optimization_guide::ModelQualityLogsUploaderService* mqls_uploader)
     : model_cache_(CHECK_DEREF(model_cache)),
       model_executor_(CHECK_DEREF(model_executor)),
@@ -56,13 +56,14 @@ void AutofillAiModelExecutorImpl::GetPredictions(
 
   // Construct request.
   AutofillAiTypeRequest request;
-  optimization_guide::proto::PageContext* page_context =
-      request.mutable_page_context();
   if (features::kAutofillAiServerModelSendPageUrl.Get()) {
-    page_context->set_url(form_data.url().spec());
+    request.set_url(form_data.url().spec());
   } else {
-    page_context->set_url(form_data.main_frame_origin().Serialize());
+    request.set_url(form_data.main_frame_origin().Serialize());
   }
+  // TODO(crbug.com/389625970): Remove `PageContext` once most clients set
+  // `AutofillAiTypeRequest::url`.
+  request.mutable_page_context()->set_url(request.url());
   *request.mutable_form_data() =
       ToFormDataProto(form_data, FormDataProtoConversionReason::kModelRequest);
 

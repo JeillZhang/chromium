@@ -32,10 +32,13 @@
 #include "extensions/browser/pending_extension_info.h"
 #include "extensions/browser/pending_extension_manager.h"
 #include "extensions/browser/uninstall_reason.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extensions::Extension;
 using extensions::ExtensionPrefs;
@@ -363,7 +366,7 @@ scoped_refptr<Extension> CreateExtension(const base::FilePath& base_dir,
     ADD_FAILURE();
     return nullptr;
   }
-  std::string error;
+  std::u16string error;
   scoped_refptr<Extension> extension = Extension::Create(
       extension_dir, extensions::mojom::ManifestLocation::kInternal, source,
       Extension::NO_FLAGS, &error);

@@ -14,6 +14,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/signin_metrics.h"
+#include "google_apis/gaia/gaia_auth_util.h"
 
 namespace glic {
 
@@ -28,6 +29,12 @@ bool IsAutomationEnabled() {
 }
 
 }  // namespace
+
+bool IsPrimaryAccountGoogleInternal(signin::IdentityManager& signin_manager) {
+  return gaia::IsGoogleInternalAccountEmail(gaia::CanonicalizeEmail(
+      signin_manager.GetPrimaryAccountInfo(signin::ConsentLevel::kSignin)
+          .email));
+}
 
 AuthController::AuthController(Profile* profile,
                                signin::IdentityManager* identity_manager,
@@ -198,9 +205,10 @@ void AuthController::CookieSyncBeforeLoadDone(
     std::move(callback).Run(mojom::PrepareForClientResult::kSuccess);
     return;
   }
-  std::move(callback).Run(GetTokenState() == TokenState::kRequiresSignIn
-                              ? mojom::PrepareForClientResult::kRequiresSignIn
-                              : mojom::PrepareForClientResult::kUnknownError);
+  std::move(callback).Run(
+      GetTokenState() == TokenState::kRequiresSignIn
+          ? mojom::PrepareForClientResult::kRequiresSignIn
+          : mojom::PrepareForClientResult::kErrorResyncingCookies);
 }
 
 void AuthController::SetCookieSynchronizerForTesting(

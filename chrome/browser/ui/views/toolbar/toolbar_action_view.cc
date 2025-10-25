@@ -163,12 +163,8 @@ void ToolbarActionView::MaybeUpdateHoverCardStatus(
                                     ToolbarActionHoverCardUpdateType::kHover);
 }
 
-content::WebContents* ToolbarActionView::GetCurrentWebContents() const {
-  return delegate_->GetCurrentWebContents();
-}
-
 void ToolbarActionView::UpdateState() {
-  content::WebContents* web_contents = GetCurrentWebContents();
+  content::WebContents* web_contents = delegate_->GetCurrentWebContents();
   GetViewAccessibility().SetName(
       view_controller_->GetAccessibleName(web_contents));
   if (!sessions::SessionTabHelper::IdForTab(web_contents).is_valid()) {
@@ -281,11 +277,15 @@ views::FocusManager* ToolbarActionView::GetFocusManagerForAccelerator() {
   return GetFocusManager();
 }
 
-views::Button* ToolbarActionView::GetReferenceButtonForPopup() {
+views::Button* ToolbarActionView::GetReferenceButtonForPopupInternal() {
   // Browser actions in the overflow menu can still show popups, so we may need
   // a reference view other than this button's parent. If so, use the overflow
   // view which is a BrowserAppMenuButton.
   return GetVisible() ? this : delegate_->GetOverflowReferenceView();
+}
+
+views::BubbleAnchor ToolbarActionView::GetReferenceButtonForPopup() {
+  return GetReferenceButtonForPopupInternal();
 }
 
 void ToolbarActionView::ShowContextMenuAsFallback() {
@@ -301,7 +301,7 @@ void ToolbarActionView::OnPopupShown(bool by_user) {
     // This cast is safe because both will have a MenuButtonController.
     views::MenuButtonController* reference_view_controller =
         static_cast<views::MenuButtonController*>(
-            GetReferenceButtonForPopup()->button_controller());
+            GetReferenceButtonForPopupInternal()->button_controller());
     pressed_lock_ = reference_view_controller->TakeLock();
   }
 }
@@ -311,7 +311,7 @@ void ToolbarActionView::OnPopupClosed() {
 }
 
 void ToolbarActionView::ButtonPressed() {
-  if (view_controller_->IsEnabled(GetCurrentWebContents())) {
+  if (view_controller_->IsEnabled(delegate_->GetCurrentWebContents())) {
     base::RecordAction(base::UserMetricsAction(
         "Extensions.Toolbar.ExtensionActivatedFromToolbar"));
     view_controller_->ExecuteUserAction(

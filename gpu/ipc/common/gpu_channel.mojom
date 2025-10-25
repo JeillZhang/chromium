@@ -34,7 +34,6 @@ enum ContextType {
   kOpenGLES2,
   kOpenGLES3,
   kOpenGLES31ForTesting,
-  kWebGPU,
 };
 
 // Maps to its namesake in gpu/command_buffer/common/context_creation_attribs.h.
@@ -51,23 +50,30 @@ enum SchedulingPriority {
   kLow,
 };
 
-// Maps to its namesake in gpu/command_buffer/common/context_creation_attribs.h.
-struct ContextCreationAttribs {
-  gl.mojom.GpuPreference gpu_preference = kLowPower;
+struct RasterCreationAttribs {
+  bool enable_gpu_rasterization = false;
+  bool lose_context_when_out_of_memory = false;
+};
 
-  bool bind_generates_resource = true;
+struct GLESCreationAttribs {
+  gl.mojom.GpuPreference gpu_preference = kLowPower;
   bool fail_if_major_perf_caveat = false;
   bool lose_context_when_out_of_memory = false;
-  bool enable_gles2_interface = true;
-  bool enable_grcontext = false;
-  bool enable_raster_interface = false;
-  bool enable_gpu_rasterization = false;
-
   ContextType context_type = kOpenGLES2;
 };
 
+struct WebGPUCreationAttribs {
+  // WebGPU doesn't have any configurable attributes on the command buffer
+  // level.
+};
+
+union ContextCreationAttribs {
+  GLESCreationAttribs gles;
+  RasterCreationAttribs raster;
+  WebGPUCreationAttribs webgpu;
+};
+
 struct CreateCommandBufferParams {
-  int32 share_group_id;
   int32 stream_id;
   SchedulingPriority stream_priority;
   ContextCreationAttribs attribs;
@@ -94,18 +100,6 @@ struct CommandBufferState {
   ContextLostReason context_lost_reason;
   uint32 generation;
   uint32 set_get_buffer_count;
-};
-
-struct ScheduleImageDecodeParams {
-  array<uint8> encoded_data;
-  gfx.mojom.Size output_size;
-  int32 raster_decoder_route_id;
-  uint32 transfer_cache_entry_id;
-  int32 discardable_handle_shm_id;
-  uint32 discardable_handle_shm_offset;
-  uint64 discardable_handle_release_count;
-  gfx.mojom.ColorSpace target_color_space;
-  bool needs_mips;
 };
 
 // Main control interface for a GPU process connection. For now an instance of
@@ -164,12 +158,6 @@ interface GpuChannel {
   // object that it's hosting.
   [Sync, NoInterrupt] DestroyCommandBuffer(int32 routing_id) => ();
 
-  // Schedules a hardware-accelerated image decode in the GPU process. Renderers
-  // should use gpu::ImageDecodeAcceleratorProxy to schedule decode requests
-  // which are processed by gpu::ImageDecodeAcceleratorStub on the service side.
-  ScheduleImageDecode(ScheduleImageDecodeParams params,
-                      uint64 decode_release_count);
-
   // Sends a batch of DeferredRequests to be executed by the service.
   // `flushed_deferred_message_id` is used to update the per-channel id of
   // messages confirmed to be flushed that's read on the client side through
@@ -183,16 +171,6 @@ interface GpuChannel {
   [Sync] CreateGpuMemoryBuffer(gfx.mojom.Size size,
   viz.mojom.SharedImageFormat format, gfx.mojom.BufferUsage buffer_usage)
   => (gfx.mojom.GpuMemoryBufferHandle buffer_handle);
-
-  // Gets the GpuMemoryBufferHandle for the corresponding `mailbox` from
-  // service side. Note that this needs to be a blocking call on calling
-  // client's thread in order to return the GpuMemoryBufferHandle and other
-  // metadata required by client to map the mailbox to CPU memory before it can
-  // read/write from/to it.
-  [Sync] GetGpuMemoryBufferHandleInfo(gpu.mojom.Mailbox mailbox)
-  => (gfx.mojom.GpuMemoryBufferHandle buffer_handle,
-      viz.mojom.SharedImageFormat format, gfx.mojom.Size size,
-      gfx.mojom.BufferUsage buffer_usage);
 
   // Creates a DCOMPTexture and attaches to the provided `route_id`.
   // Note: this `route_id` must not conflict with the routing ids for command
@@ -258,7 +236,7 @@ interface GpuChannel {
   // Note that this method has some similar functionality but is different than
   // above CopyToGpuMemoryBufferAsync in the sense that above method is only
   // used for shared memory GMBs whereas this method is used for native GMBs.
-  [EnableIf=is_win]
+  [EnableIf=is_win|is_android]
   CopyNativeGmbToSharedMemoryAsync(gfx.mojom.GpuMemoryBufferHandle
       buffer_handle, mojo_base.mojom.UnsafeSharedMemoryRegion shared_memory)
                      => (bool success);
@@ -308,7 +286,7 @@ interface CommandBufferClient {
   OnConsoleMessage(string message);
 
   // Notifies the client of a GPU switch.
-  OnGpuSwitched(gl.mojom.GpuPreference active_gpu_heuristic);
+  OnGpuSwitched();
 
   // Tells the proxy that there was an error and the command buffer had to be
   // destroyed for some reason.
@@ -417,10 +395,6 @@ union DeferredCommandBufferRequestParams {
 
   // Destroys a transfer buffer identified by this ID.
   int32 destroy_transfer_buffer;
-
-  // Allows to attach SharedImage to default framebuffer of this context.
-  // NOTE: Used only for PNaCL.
-  SetDefaultFramebufferSharedImageParams set_default_framebuffer_shared_image;
 };
 
 // Details of a batched request pertaining to shared image management.
@@ -490,26 +464,6 @@ struct AsyncFlushParams {
   int32 put_offset;
   uint32 flush_id;
   array<SyncToken> sync_token_fences;
-};
-
-// Sets SharedImage mailbox and other framebuffer params to the default
-// framebuffer. NOTE: This exists only to support PNaCl.
-struct SetDefaultFramebufferSharedImageParams {
-  // The mailbox of the shared image. Can be empty if client wants to detach
-  // SharedImage from the color buffer.
-  Mailbox mailbox;
-
-  // Number of samples for the multisampling.
-  uint32 samples_count;
-
-  // If default framebuffer needs to presevre contents across the frames.
-  bool preserve;
-
-  // If this framebuffer needs depth buffer.
-  bool needs_depth;
-
-  // If this framebuffer needs stencil buffer.
-  bool needs_stencil;
 };
 
 // Common params used when creating a new shared image.

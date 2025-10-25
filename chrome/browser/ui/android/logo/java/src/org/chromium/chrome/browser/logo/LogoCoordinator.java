@@ -5,11 +5,17 @@
 package org.chromium.chrome.browser.logo;
 
 import android.content.Context;
+import android.graphics.drawable.Drawable;
 import android.view.View.MeasureSpec;
+
+import androidx.core.content.ContextCompat;
 
 import org.chromium.base.Callback;
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.logo.LogoBridge.Logo;
+import org.chromium.chrome.browser.ntp_customization.NtpCustomizationUtils;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -45,12 +51,20 @@ public class LogoCoordinator {
             Callback<LoadUrlParams> logoClickedCallback,
             LogoView logoView,
             Callback<Logo> onLogoAvailableCallback,
-            VisibilityObserver visibilityObserver) {
+            @Nullable VisibilityObserver visibilityObserver) {
         // TODO(crbug.com/40881870): This is weird that we're passing in our view,
         //  and we have to expose our view via getView. We shouldn't only have to do one of these.
         mLogoModel = new PropertyModel(LogoProperties.ALL_KEYS);
         mLogoView = logoView;
         PropertyModelChangeProcessor.create(mLogoModel, mLogoView, new LogoViewBinder());
+
+        Drawable defaultGoogleLogoDrawable = null;
+        if (ChromeFeatureList.sAndroidLogoViewRefactor.isEnabled()) {
+            defaultGoogleLogoDrawable =
+                    ContextCompat.getDrawable(context, R.drawable.ic_google_logo);
+            NtpCustomizationUtils.setTintForDefaultGoogleLogo(context, defaultGoogleLogoDrawable);
+        }
+
         mMediator =
                 new LogoMediator(
                         context,
@@ -58,7 +72,8 @@ public class LogoCoordinator {
                         mLogoModel,
                         onLogoAvailableCallback,
                         visibilityObserver,
-                        sDefaultGoogleLogo);
+                        sDefaultGoogleLogo,
+                        defaultGoogleLogoDrawable);
     }
 
     /**

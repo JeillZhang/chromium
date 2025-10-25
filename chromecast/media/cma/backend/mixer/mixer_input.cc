@@ -26,6 +26,7 @@
 #include "chromecast/media/cma/backend/mixer/filter_group.h"
 #include "chromecast/media/cma/backend/mixer/post_processing_pipeline.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_sample_types.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/multi_channel_resampler.h"
 
@@ -314,7 +315,7 @@ int MixerInput::FillAudioData(int num_frames,
   CHECK_LE(num_channels_, kMaxChannels);
   float* channels[kMaxChannels];
   for (int c = 0; c < num_channels_; ++c) {
-    channels[c] = dest->channel(c);
+    channels[c] = dest->channel_span(c).data();
   }
   if (first_buffer_ && redirected) {
     // If the first buffer is redirected, don't provide any data to the mixer

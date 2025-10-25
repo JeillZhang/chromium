@@ -135,13 +135,15 @@ class AutofillWalletChecker : public StatusChangeChecker,
   ~AutofillWalletChecker() override;
 
   // StatusChangeChecker implementation.
-  bool Wait() override;
   bool IsExitConditionSatisfied(std::ostream* os) override;
 
   // autofill::PaymentsDataManager::Observer implementation.
   void OnPaymentsDataChanged() override;
 
  private:
+  // StatusChangeChecker overrides.
+  void WillStartWaiting() override;
+
   const int profile_a_;
   const int profile_b_;
 };
@@ -189,6 +191,7 @@ class FullUpdateTypeProgressMarkerChecker : public StatusChangeChecker,
 
   // syncer::SyncServiceObserver:
   void OnSyncCycleCompleted(syncer::SyncService* sync) override;
+  void OnSyncShutdown(syncer::SyncService* sync) override;
 
  private:
   const base::Time min_required_progress_marker_timestamp_;

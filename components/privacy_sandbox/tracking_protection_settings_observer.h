@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_PRIVACY_SANDBOX_TRACKING_PROTECTION_SETTINGS_OBSERVER_H_
 #define COMPONENTS_PRIVACY_SANDBOX_TRACKING_PROTECTION_SETTINGS_OBSERVER_H_
 
+#include "url/gurl.h"
+
 namespace privacy_sandbox {
 
 // Used by other components to observe `TrackingProtectionSettings`.
@@ -33,6 +35,10 @@ class TrackingProtectionSettingsObserver {
 
   // For observation of tracking protection experiment status.
   virtual void OnTrackingProtection3pcdChanged() {}
+
+  // For observation of tracking protection exceptions.
+  virtual void OnTrackingProtectionExceptionsChanged(
+      const GURL& first_party_url) {}
 };
 
 }  // namespace privacy_sandbox

@@ -135,7 +135,7 @@ std::optional<GURL> ChromePdfStreamDelegate::MapToOriginalUrl(
       return std::nullopt;
     }
 
-    CHECK_EQ(embedder_frame->GetLastCommittedURL().host(),
+    CHECK_EQ(embedder_frame->GetLastCommittedURL().GetHost(),
              extension_misc::kPdfExtensionId);
 
     original_url = stream->original_url();
@@ -158,7 +158,7 @@ std::optional<GURL> ChromePdfStreamDelegate::MapToOriginalUrl(
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   } else if (stream_url.GetWithEmptyPath() ==
              chrome::kChromeUIUntrustedPrintURL) {
-    CHECK_EQ(embedder_frame->GetLastCommittedURL().host(),
+    CHECK_EQ(embedder_frame->GetLastCommittedURL().GetHost(),
              chrome::kChromeUIPrintHost);
 
     // Print Preview doesn't have access to `chrome.mimeHandlerPrivate`, so just
@@ -203,27 +203,28 @@ ChromePdfStreamDelegate::GetStreamInfo(
   return helper->TakeStreamInfo();
 }
 
-void ChromePdfStreamDelegate::OnPdfEmbedderSandboxed(
+bool ChromePdfStreamDelegate::MaybeDeleteSandboxedStream(
     content::FrameTreeNodeId frame_tree_node_id) {
-  // Clean up the stream for a sandboxed embedder frame, as sandboxed frames
-  // should be unable to instantiate the PDF viewer.
   CHECK(chrome_pdf::features::IsOopifPdfEnabled());
 
   auto* web_contents =
       content::WebContents::FromFrameTreeNodeId(frame_tree_node_id);
   if (!web_contents) {
-    return;
+    return false;
   }
 
+  // Only delete if a stream exists. The stream should always be unclaimed,
+  // since the navigation hasn't committed.
   auto* pdf_viewer_stream_manager =
       pdf::PdfViewerStreamManager::FromWebContents(web_contents);
-  if (!pdf_viewer_stream_manager) {
-    return;
+  if (!pdf_viewer_stream_manager ||
+      !pdf_viewer_stream_manager->ContainsUnclaimedStreamInfo(
+          frame_tree_node_id)) {
+    return false;
   }
 
-  // The stream should always be unclaimed, since the navigation hasn't
-  // committed.
   pdf_viewer_stream_manager->DeleteUnclaimedStreamInfo(frame_tree_node_id);
+  return true;
 }
 
 bool ChromePdfStreamDelegate::ShouldAllowPdfExtensionFrameNavigation(

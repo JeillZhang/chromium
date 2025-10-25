@@ -9,15 +9,19 @@
 #include <memory>
 
 #include "base/check_deref.h"
+#include "base/check_is_test.h"
 #include "base/check_op.h"
 #include "base/containers/contains.h"
 #include "base/containers/to_vector.h"
+#include "base/feature_list.h"
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "base/notreached.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/country_type.h"
+#include "components/autofill/core/browser/data_manager/addresses/account_name_email_store.h"
 #include "components/autofill/core/browser/data_manager/addresses/address_data_cleaner.h"
+#include "components/autofill/core/browser/data_manager/addresses/home_and_work_metadata_store.h"
 #include "components/autofill/core/browser/data_quality/addresses/profile_requirement_utils.h"
 #include "components/autofill/core/browser/geo/alternative_state_name_map_updater.h"
 #include "components/autofill/core/browser/geo/autofill_country.h"
@@ -25,6 +29,7 @@
 #include "components/autofill/core/browser/metrics/autofill_settings_metrics.h"
 #include "components/autofill/core/browser/metrics/profile_token_quality_metrics.h"
 #include "components/autofill/core/browser/metrics/stored_profile_metrics.h"
+#include "components/autofill/core/browser/strike_databases/addresses/address_on_typing_suggestion_strike_database.h"
 #include "components/autofill/core/browser/webdata/addresses/contact_info_precondition_checker.h"
 #include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_features.h"
@@ -81,7 +86,7 @@ AddressDataManager::AddressDataManager(
     PrefService* local_state,
     syncer::SyncService* sync_service,
     signin::IdentityManager* identity_manager,
-    StrikeDatabaseBase* strike_database,
+    strike_database::StrikeDatabaseBase* strike_database,
     GeoIpCountryCode variation_country_code,
     std::string app_locale)
     : variation_country_code_(std::move(variation_country_code)),
@@ -117,6 +122,13 @@ AddressDataManager::AddressDataManager(
     address_data_cleaner_ = std::make_unique<AddressDataCleaner>(
         *this, sync_service, *pref_service_,
         alternative_state_name_map_updater_.get());
+
+    if (identity_manager && sync_service &&
+        base::FeatureList::IsEnabled(
+            features::kAutofillEnableSupportForNameAndEmail)) {
+      account_name_email_store_ = std::make_unique<AccountNameEmailStore>(
+          *this, *identity_manager, *sync_service, *pref_service_);
+    }
   }
 }
 
@@ -125,9 +137,11 @@ AddressDataManager::~AddressDataManager() {
 }
 
 void AddressDataManager::Shutdown() {
-  // These classes' sync observers needs to be unregistered.
+  // These classes' sync observers need to be unregistered.
   contact_info_precondition_checker_.reset();
   address_data_cleaner_.reset();
+  home_and_work_metadata_.reset();
+  account_name_email_store_.reset();
 }
 
 void AddressDataManager::AddObserver(AddressDataManager::Observer* obs) {
@@ -157,10 +171,34 @@ void AddressDataManager::OnWebDataServiceRequestDone(
   std::vector<AutofillProfile> profiles_from_db =
       static_cast<WDResult<std::vector<AutofillProfile>>*>(result.get())
           ->GetValue();
-  profiles_ = std::move(profiles_from_db);
+  if (!home_and_work_metadata_) {
+    profiles_ = std::move(profiles_from_db);
+  } else {
+    profiles_ = home_and_work_metadata_->ApplyMetadata(
+        std::move(profiles_from_db), !has_initial_load_finished_);
+  }
 
   if (!has_initial_load_finished_) {
     has_initial_load_finished_ = true;
+    // `AccountNameEmailStore::MaybeUpdateOrCreateAccountNameEmail()` is
+    // responsible for creating or updating the `kAccountNameEmail` profile.
+    // This requires profiles from the database to be loaded, so any old
+    // `kAccountNameEmail` profile can be accessed. Updates to the account info
+    // are generally caught by an identity observer. But if the account info
+    // becomes available before the initial load has finished, the additional
+    // call here is necessary to apply these updates.
+    if (account_name_email_store_) {
+      account_name_email_store_->MaybeUpdateOrCreateAccountNameEmail();
+    } else {
+      // In case the feature got disabled the profile should be cleaned up.
+      if (!GetProfilesByRecordType(
+               AutofillProfile::RecordType::kAccountNameEmail)
+               .empty()) {
+        RemoveProfile(GetProfilesByRecordType(
+                          AutofillProfile::RecordType::kAccountNameEmail)[0]
+                          ->guid());
+      }
+    }
     LogStoredDataMetrics();
   }
   NotifyObservers();
@@ -177,9 +215,15 @@ std::vector<const AutofillProfile*> AddressDataManager::GetProfiles(
 std::vector<const AutofillProfile*> AddressDataManager::GetProfilesByRecordType(
     AutofillProfile::RecordType record_type,
     ProfileOrder order) const {
+  return GetProfilesByRecordType(DenseSet({record_type}), order);
+}
+
+std::vector<const AutofillProfile*> AddressDataManager::GetProfilesByRecordType(
+    DenseSet<AutofillProfile::RecordType> record_types,
+    ProfileOrder order) const {
   std::vector<const AutofillProfile*> profiles = GetProfiles(order);
   std::erase_if(profiles, [&](const AutofillProfile* p) {
-    return p->record_type() != record_type;
+    return !record_types.contains(p->record_type());
   });
   return profiles;
 }
@@ -187,18 +231,46 @@ std::vector<const AutofillProfile*> AddressDataManager::GetProfilesByRecordType(
 std::vector<const AutofillProfile*> AddressDataManager::GetProfilesToSuggest()
     const {
   if (!IsAutofillProfileEnabled()) {
-    return std::vector<const AutofillProfile*>{};
+    return {};
   }
+
   std::vector<const AutofillProfile*> profiles =
       GetProfiles(ProfileOrder::kHighestFrecencyDesc);
-  // H/W addresses are prioritized for suggestion purposes.
-  std::ranges::stable_partition(profiles,
-                                &AutofillProfile::IsHomeAndWorkProfile);
-  if (profiles.size() >= 2 &&
-      profiles[0]->record_type() == AutofillProfile::RecordType::kAccountWork &&
-      profiles[1]->record_type() == AutofillProfile::RecordType::kAccountHome) {
-    std::swap(profiles[0], profiles[1]);
+
+  // If the `pref_service_` doesn't exits the special logic which depends on
+  // prefs shouldn't run.
+  if (!pref_service_) {
+    CHECK_IS_TEST();
+    return profiles;
   }
+
+  if (!base::FeatureList::IsEnabled(
+          features::kAutofillEnableSupportForNameAndEmail)) {
+    return profiles;
+  }
+
+  // `prefs::kAutofillNameAndEmailProfileNotSelectedCounter` counts how many
+  // times the suggestion for kAccountNameEmail profile was shown and wasn't
+  // accepted.
+  const bool should_promote_name_email_profile =
+      !pref_service_->GetBoolean(prefs::kAutofillWasNameAndEmailProfileUsed) &&
+      (pref_service_->GetInteger(
+          prefs::kAutofillNameAndEmailProfileNotSelectedCounter) == 0);
+  // Move the kAccountNameEmail profile to the front (or back) depending on
+  // the `should_promote_name_email_profile`.
+  std::ranges::stable_partition(
+      profiles, [should_promote_name_email_profile](
+                    const AutofillProfile* p) {
+        bool is_name_email_profile =
+            p->record_type() == AutofillProfile::RecordType::kAccountNameEmail;
+        // stable_partition() moves all elements where the predicate returns
+        // true to the front. The name/email profile should be in front when
+        // it hasn't been used before and in the back otherwise.
+        return should_promote_name_email_profile
+                   ? is_name_email_profile
+                   : !is_name_email_profile;
+      });
+
   return profiles;
 }
 
@@ -223,15 +295,15 @@ void AddressDataManager::AddProfile(const AutofillProfile& profile) {
   if (profile.IsEmpty(app_locale_)) {
     // TODO(crbug.com/40100455): This call is only used to notify tests to stop
     // waiting. Since no profile is added, this case shouldn't trigger
-    // `OnPersonalDataChanged()`.
+    // `OnAddressDataChanged()`.
     NotifyObservers();
     return;
   }
-  ongoing_profile_changes_[profile.guid()].emplace_back(
+  ongoing_profile_changes_.emplace_back(
       AutofillProfileChange(AutofillProfileChange::ADD, profile.guid(),
                             profile),
       /*is_ongoing=*/false);
-  HandleNextProfileChange(profile.guid());
+  HandleNextProfileChange();
 }
 
 void AddressDataManager::UpdateProfile(const AutofillProfile& profile) {
@@ -273,9 +345,10 @@ void AddressDataManager::UpdateProfile(const AutofillProfile& profile) {
   UpdateProfileInDB(profile);
 }
 
-void AddressDataManager::RemoveProfile(const std::string& guid,
-                                       bool is_deduplication_initiated) {
-  RemoveProfileImpl(guid, is_deduplication_initiated);
+void AddressDataManager::RemoveProfile(
+    const std::string& guid,
+    bool non_permanent_account_profile_removal) {
+  RemoveProfileImpl(guid, non_permanent_account_profile_removal);
 }
 
 void AddressDataManager::RemoveLocalProfilesModifiedBetween(base::Time begin,
@@ -333,6 +406,9 @@ void AddressDataManager::RecordUseOf(const AutofillProfile& profile) {
   }
   AutofillProfile updated_profile = *adm_profile;
   updated_profile.RecordAndLogUse();
+  if (home_and_work_metadata_) {
+    home_and_work_metadata_->RecordProfileFill(updated_profile);
+  }
   UpdateProfile(updated_profile);
 }
 
@@ -382,7 +458,7 @@ bool AddressDataManager::IsNewProfileImportBlockedForDomain(
     return false;
   }
 
-  return GetProfileSaveStrikeDatabase()->ShouldBlockFeature(url.host());
+  return GetProfileSaveStrikeDatabase()->ShouldBlockFeature(url.GetHost());
 }
 
 void AddressDataManager::AddStrikeToBlockNewProfileImportForDomain(
@@ -390,7 +466,7 @@ void AddressDataManager::AddStrikeToBlockNewProfileImportForDomain(
   if (!GetProfileSaveStrikeDatabase() || !url.is_valid() || !url.has_host()) {
     return;
   }
-  GetProfileSaveStrikeDatabase()->AddStrike(url.host());
+  GetProfileSaveStrikeDatabase()->AddStrike(url.GetHost());
 }
 
 void AddressDataManager::RemoveStrikesToBlockNewProfileImportForDomain(
@@ -398,7 +474,7 @@ void AddressDataManager::RemoveStrikesToBlockNewProfileImportForDomain(
   if (!GetProfileSaveStrikeDatabase() || !url.is_valid() || !url.has_host()) {
     return;
   }
-  GetProfileSaveStrikeDatabase()->ClearStrikes(url.host());
+  GetProfileSaveStrikeDatabase()->ClearStrikes(url.GetHost());
 }
 
 bool AddressDataManager::IsProfileUpdateBlocked(const std::string& guid) const {
@@ -480,11 +556,18 @@ void AddressDataManager::SetPrefService(PrefService* pref_service) {
         prefs::kAutofillProfileEnabled, pref_service_,
         base::BindRepeating(&AddressDataManager::OnAutofillProfilePrefChanged,
                             base::Unretained(this)));
+    if (base::FeatureList::IsEnabled(
+            features::kAutofillEnableSupportForHomeAndWork)) {
+      home_and_work_metadata_ = std::make_unique<HomeAndWorkMetadataStore>(
+          pref_service_, sync_service_,
+          base::BindRepeating(&AddressDataManager::LoadProfiles,
+                              base::Unretained(this)));
+    }
   }
 }
 
 void AddressDataManager::SetStrikeDatabase(
-    StrikeDatabaseBase* strike_database) {
+    strike_database::StrikeDatabaseBase* strike_database) {
   if (!strike_database) {
     return;
   }
@@ -496,6 +579,23 @@ void AddressDataManager::SetStrikeDatabase(
       std::make_unique<AutofillProfileUpdateStrikeDatabase>(strike_database);
   address_suggestion_strike_database_ =
       std::make_unique<AddressSuggestionStrikeDatabase>(strike_database);
+  if (base::FeatureList::IsEnabled(
+          features::kAutofillAddressSuggestionsOnTypingHasStrikeDatabase)) {
+    address_on_typing_suggestion_strike_database_ =
+        std::make_unique<AddressOnTypingSuggestionStrikeDatabase>(
+            strike_database);
+  }
+}
+
+AddressOnTypingSuggestionStrikeDatabase*
+AddressDataManager::GetAddressOnTypingSuggestionStrikeDatabase() {
+  return const_cast<AddressOnTypingSuggestionStrikeDatabase*>(
+      std::as_const(*this).GetAddressOnTypingSuggestionStrikeDatabase());
+}
+
+const AddressOnTypingSuggestionStrikeDatabase*
+AddressDataManager::GetAddressOnTypingSuggestionStrikeDatabase() const {
+  return address_on_typing_suggestion_strike_database_.get();
 }
 
 AutofillProfileMigrationStrikeDatabase*
@@ -570,6 +670,11 @@ bool AddressDataManager::IsAutofillUserSelectableTypeEnabled() const {
 }
 
 bool AddressDataManager::IsAutofillSyncToggleAvailable() const {
+  if (base::FeatureList::IsEnabled(
+          syncer::kReplaceSyncPromosWithSignInPromos)) {
+    return false;
+  }
+
   if (!pref_service_->GetBoolean(::prefs::kExplicitBrowserSignin)) {
     return false;
   }
@@ -618,6 +723,19 @@ std::optional<CoreAccountInfo> AddressDataManager::GetPrimaryAccountInfo()
   return std::nullopt;
 }
 
+#if BUILDFLAG(IS_IOS)
+void AddressDataManager::MaybeCreateAccountNameEmailProfile(
+    std::string account_name,
+    std::string email) {
+  if (account_name_email_store_ &&
+      base::FeatureList::IsEnabled(
+          features::kAutofillEnableSupportForNameAndEmail)) {
+    account_name_email_store_->MaybeUpdateOrCreateAccountNameEmail(account_name,
+                                                                   email);
+  }
+}
+#endif
+
 void AddressDataManager::CancelPendingQuery(
     WebDataServiceBase::Handle& handle) {
   if (!webdata_service_ || !handle) {
@@ -632,7 +750,7 @@ void AddressDataManager::OnAutofillProfileChanged(
   const std::string& guid = change.key();
   const AutofillProfile& profile = change.data_model();
   DCHECK(guid == profile.guid());
-  if (!ProfileChangesAreOngoing(guid)) {
+  if (ongoing_profile_changes_.empty()) {
     return;
   }
 
@@ -663,49 +781,39 @@ void AddressDataManager::OnAutofillProfileChanged(
       break;
   }
 
-  OnProfileChangeDone(guid);
+  OnProfileChangeDone();
 }
 
 void AddressDataManager::UpdateProfileInDB(const AutofillProfile& profile) {
-  if (!ProfileChangesAreOngoing(profile.guid())) {
-    const AutofillProfile* existing_profile = GetProfileByGUID(profile.guid());
-    if (!existing_profile ||
-        existing_profile->EqualsForUpdatePurposes(profile)) {
-      NotifyObservers();
-      return;
-    }
-  }
-
-  ongoing_profile_changes_[profile.guid()].emplace_back(
+  ongoing_profile_changes_.emplace_back(
       AutofillProfileChange(AutofillProfileChange::UPDATE, profile.guid(),
                             profile),
       /*is_ongoing=*/false);
-  HandleNextProfileChange(profile.guid());
+  HandleNextProfileChange();
 }
 
-void AddressDataManager::HandleNextProfileChange(const std::string& guid) {
-  if (!ProfileChangesAreOngoing(guid)) {
+void AddressDataManager::HandleNextProfileChange() {
+  if (ongoing_profile_changes_.empty()) {
     return;
   }
 
-  auto& [change, is_ongoing] = ongoing_profile_changes_[guid].front();
+  auto& [change, is_ongoing] = ongoing_profile_changes_.front();
   if (is_ongoing) {
     return;
   }
 
-  const AutofillProfile* existing_profile = GetProfileByGUID(guid);
   const AutofillProfile& profile = change.data_model();
-  DCHECK(guid == profile.guid());
+  const AutofillProfile* existing_profile = GetProfileByGUID(profile.guid());
 
   switch (change.type()) {
     case AutofillProfileChange::HIDE_IN_AUTOFILL:
     case AutofillProfileChange::REMOVE: {
       if (!existing_profile) {
-        OnProfileChangeDone(guid);
+        OnProfileChangeDone();
         return;
       }
       webdata_service_->RemoveAutofillProfile(
-          guid, change.type(),
+          profile.guid(), change.type(),
           base::BindOnce(&AddressDataManager::OnAutofillProfileChanged,
                          weak_ptr_factory_.GetWeakPtr()));
       break;
@@ -716,7 +824,7 @@ void AddressDataManager::HandleNextProfileChange(const std::string& guid) {
                               [&](const AutofillProfile* o) {
                                 return o->Compare(profile) == 0;
                               })) {
-        OnProfileChangeDone(guid);
+        OnProfileChangeDone();
         return;
       }
       webdata_service_->AddAutofillProfile(
@@ -727,7 +835,7 @@ void AddressDataManager::HandleNextProfileChange(const std::string& guid) {
     case AutofillProfileChange::UPDATE: {
       if (!existing_profile ||
           existing_profile->EqualsForUpdatePurposes(profile)) {
-        OnProfileChangeDone(guid);
+        OnProfileChangeDone();
         return;
       }
       // At this point, the `existing_profile` is consistent with
@@ -749,28 +857,19 @@ void AddressDataManager::HandleNextProfileChange(const std::string& guid) {
       break;
     }
   }
+  if (home_and_work_metadata_) {
+    home_and_work_metadata_->ApplyChange(change);
+  }
+  if (account_name_email_store_) {
+    account_name_email_store_->ApplyChange(change);
+  }
   is_ongoing = true;
 }
 
-bool AddressDataManager::ProfileChangesAreOngoing(
-    const std::string& guid) const {
-  auto it = ongoing_profile_changes_.find(guid);
-  return it != ongoing_profile_changes_.end() && !it->second.empty();
-}
-
-bool AddressDataManager::ProfileChangesAreOngoing() const {
-  for (const auto& [guid, change] : ongoing_profile_changes_) {
-    if (ProfileChangesAreOngoing(guid)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-void AddressDataManager::OnProfileChangeDone(const std::string& guid) {
-  ongoing_profile_changes_[guid].pop_front();
+void AddressDataManager::OnProfileChangeDone() {
+  ongoing_profile_changes_.pop_front();
   NotifyObservers();
-  HandleNextProfileChange(guid);
+  HandleNextProfileChange();
 }
 
 void AddressDataManager::LogStoredDataMetrics() const {
@@ -787,32 +886,39 @@ void AddressDataManager::LogStoredDataMetrics() const {
   }
 }
 
-void AddressDataManager::RemoveProfileImpl(const std::string& guid,
-                                           bool is_deduplication_initiated) {
+void AddressDataManager::RemoveProfileImpl(
+    const std::string& guid,
+    bool non_permanent_account_profile_removal) {
   if (!webdata_service_) {
     return;
   }
 
-  // Find the profile to remove.
-  // TODO(crbug.com/40258814): This shouldn't be necessary. Providing a `guid`
-  // to the `AutofillProfileChange()` should suffice for removals.
-  const AutofillProfile* profile =
-      ProfileChangesAreOngoing(guid)
-          ? &ongoing_profile_changes_[guid].back().first.data_model()
-          : GetProfileByGUID(guid);
+  // Find the profile to remove. Even though a `guid` uniquely identifies a
+  // profile, downstream code (most notably sync) needs to know the `RecordType`
+  // of the removed profile as well (since only account profiles are uploaded).
+  // `ongoing_profile_changes_` are executed in order, so the last ongoing
+  // change for `guid` describe the profile's state by the time this removal
+  // should happen.
+  auto it = std::find_if(ongoing_profile_changes_.rbegin(),
+                         ongoing_profile_changes_.rend(),
+                         [&](const auto& x) { return x.first.key() == guid; });
+  const AutofillProfile* profile = it == ongoing_profile_changes_.rend()
+                                       ? GetProfileByGUID(guid)
+                                       : &it->first.data_model();
   if (!profile) {
     NotifyObservers();
     return;
   }
 
-  ongoing_profile_changes_[guid].emplace_back(
-      AutofillProfileChange(
-          profile->IsAccountProfile() && is_deduplication_initiated
-              ? AutofillProfileChange::HIDE_IN_AUTOFILL
-              : AutofillProfileChange::REMOVE,
-          guid, *profile),
+  ongoing_profile_changes_.emplace_back(
+      AutofillProfileChange((profile->IsAccountProfile() &&
+                             non_permanent_account_profile_removal) ||
+                                    profile->IsHomeAndWorkProfile()
+                                ? AutofillProfileChange::HIDE_IN_AUTOFILL
+                                : AutofillProfileChange::REMOVE,
+                            guid, *profile),
       /*is_ongoing=*/false);
-  HandleNextProfileChange(guid);
+  HandleNextProfileChange();
 }
 
 }  // namespace autofill

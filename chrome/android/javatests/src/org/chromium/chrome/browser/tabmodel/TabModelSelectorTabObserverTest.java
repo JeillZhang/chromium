@@ -39,6 +39,9 @@ import java.util.HashSet;
 import java.util.Set;
 
 /** Tests for the TabModelSelectorTabObserver. */
+// TODO(crbug.com/454298057): TabModelImpl & TabGroupModelFilterImpl will be deleted (replaced by
+// TabCollectionTabModelImpl). The scenarios that rely on these classes will need to be migrated to
+// TabCollectionTabModelImpl.
 @RunWith(BaseJUnit4ClassRunner.class)
 @Batch(Batch.PER_CLASS)
 public class TabModelSelectorTabObserverTest {
@@ -140,8 +143,8 @@ public class TabModelSelectorTabObserverTest {
                                 public void requestToShowTab(Tab tab, int type) {}
 
                                 @Override
-                                public boolean isSessionRestoreInProgress() {
-                                    return false;
+                                public boolean isTabModelRestored() {
+                                    return true;
                                 }
 
                                 @Override
@@ -157,13 +160,11 @@ public class TabModelSelectorTabObserverTest {
         TestTabModelSelectorTabObserver observer = createTabModelSelectorTabObserver();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    TabUngrouperFactory factory =
-                            (isIncognitoBranded, tabGroupModelFilterSupplier) ->
-                                    new PassthroughTabUngrouper(tabGroupModelFilterSupplier);
                     selector.initialize(
-                            sTestRule.getNormalTabModel(),
-                            sTestRule.getIncognitoTabModel(),
-                            factory);
+                            TabModelHolderFactory.createTabModelHolderForTesting(
+                                    sTestRule.getNormalTabModel()),
+                            TabModelHolderFactory.createIncognitoTabModelHolderForTesting(
+                                    sTestRule.getIncognitoTabModel()));
                 });
 
         Tab normalTab1 = createTestTab(false);

@@ -7,24 +7,20 @@
 
 #include <stddef.h>
 
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include "base/gtest_prod_util.h"
-#include "base/time/time.h"
 #include "components/autofill/core/browser/data_model/payments/credit_card_benefit.h"
-#include "components/sync/base/data_type.h"
-#include "components/sync/protocol/autofill_specifics.pb.h"
 #include "components/webdata/common/web_database_table.h"
 
 class WebDatabase;
 
-namespace base {
-class Time;
-}
+namespace sync_pb {
+class PaymentInstrument;
+class PaymentInstrumentCreationOption;
+}  // namespace sync_pb
 
 namespace autofill {
 
@@ -35,19 +31,8 @@ struct CreditCardCloudTokenData;
 class Iban;
 struct PaymentsCustomerData;
 struct PaymentsMetadata;
+struct ServerCvc;
 class VirtualCardUsageData;
-// Helper struct to better group server cvc related variables for better
-// passing last_updated_timestamp, which is needed for sync bridge. Limited
-// scope in autofill table & sync bridge.
-struct ServerCvc {
-  bool operator==(const ServerCvc&) const = default;
-  // A server generated id to identify the corresponding credit card.
-  int64_t instrument_id;
-  // CVC value of the card.
-  std::u16string cvc;
-  // The timestamp of the most recent update to the data entry.
-  base::Time last_updated_timestamp;
-};
 
 // This class manages the various payments Autofill tables within the SQLite
 // database passed to the constructor. It expects the following schemas:
@@ -139,6 +124,14 @@ struct ServerCvc {
 //                      card issuer or a third party platform represented by
 //                      an integer. Converted from CardBenefitSource enum from
 //                      the Chrome Sync response.
+//   card_creation_source
+//                      An enum indicating the source of the card creation.
+//                      kCreationSourceUnspecified is the default value.
+//                      kCreationSourceChromePayments means the card was added
+//                      through Chrome. kCreationSourceNonChromePayments
+//                      indicates the card was added through a non-Chrome
+//                      Payments surface (e.g., YouTube, Play Store, Android
+//                      Autofill).
 // -----------------------------------------------------------------------------
 // server_card_cloud_token_data
 //                      Stores data related to Cloud Primary Account Number
@@ -465,6 +458,11 @@ class PaymentsAutofillTable : public WebDatabaseTable {
   // Method to clean up for crbug.com/411681430.
   bool CleanupForCrbug411681430();
 
+#if BUILDFLAG(IS_IOS)
+  // Method to clean up for crbug.com/445879524.
+  bool CleanupForCrbug445879524();
+#endif  // BUILDFLAG(IS_IOS)
+
   // Methods to add, update, remove and get the metadata for server cards and
   // IBANs.
   // For get method, return true if the operations succeeded.
@@ -605,6 +603,7 @@ class PaymentsAutofillTable : public WebDatabaseTable {
   bool MigrateToVersion135AddCardInfoRetrievalEnrollmentState();
   bool MigrateToVersion136AddPaymentInstrumentCreationOptionsTable();
   bool MigrateToVersion141AddCardBenefitSourceColumn();
+  bool MigrateToVersion144AddCardCreationSourceColumn();
 
  private:
   // Adds to |masked_credit_cards| and updates |server_card_metadata|.

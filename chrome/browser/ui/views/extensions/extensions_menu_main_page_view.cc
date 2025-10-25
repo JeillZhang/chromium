@@ -21,7 +21,6 @@
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/chrome_typography.h"
 #include "chrome/browser/ui/views/controls/hover_button.h"
-#include "chrome/browser/ui/views/extensions/extensions_dialogs_utils.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_handler.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_item_view.h"
 #include "chrome/grit/generated_resources.h"
@@ -326,7 +325,10 @@ void ExtensionsMenuMainPageView::AddOrUpdateExtensionRequestingAccess(
                   .SetText(l10n_util::GetStringUTF16(
                       IDS_EXTENSIONS_MENU_REQUESTS_ACCESS_SECTION_DISMISS_BUTTON_TEXT))
                   .SetTooltipText(l10n_util::GetStringUTF16(
-                      IDS_EXTENSIONS_MENU_REQUESTS_ACCESS_SECTION_DISMISS_BUTTON_TOOLTIP)),
+                      IDS_EXTENSIONS_MENU_REQUESTS_ACCESS_SECTION_DISMISS_BUTTON_TOOLTIP))
+                  .SetAccessibleName(l10n_util::GetStringFUTF16(
+                      IDS_EXTENSIONS_MENU_REQUESTS_ACCESS_SECTION_DISMISS_BUTTON_ACCESSIBLE_NAME,
+                      name)),
               views::Builder<views::MdTextButton>()
                   .SetCallback(base::BindRepeating(
                       &ExtensionsMenuHandler::OnAllowExtensionClicked,
@@ -337,6 +339,9 @@ void ExtensionsMenuMainPageView::AddOrUpdateExtensionRequestingAccess(
                       IDS_EXTENSIONS_MENU_REQUESTS_ACCESS_SECTION_ALLOW_BUTTON_TEXT))
                   .SetTooltipText(l10n_util::GetStringUTF16(
                       IDS_EXTENSIONS_MENU_REQUESTS_ACCESS_SECTION_ALLOW_BUTTON_TOOLTIP))
+                  .SetAccessibleName(l10n_util::GetStringFUTF16(
+                      IDS_EXTENSIONS_MENU_REQUESTS_ACCESS_SECTION_ALLOW_BUTTON_ACCESSIBLE_NAME,
+                      name))
                   .SetProperty(views::kMarginsKey,
                                gfx::Insets::TLBR(
                                    0, related_control_horizontal_margin, 0, 0)))

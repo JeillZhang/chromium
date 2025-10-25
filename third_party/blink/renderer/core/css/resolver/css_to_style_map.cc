@@ -43,6 +43,7 @@
 #include "third_party/blink/renderer/core/css/css_scroll_value.h"
 #include "third_party/blink/renderer/core/css/css_timing_function_value.h"
 #include "third_party/blink/renderer/core/css/css_to_length_conversion_data.h"
+#include "third_party/blink/renderer/core/css/css_value_id_mappings.h"
 #include "third_party/blink/renderer/core/css/css_value_pair.h"
 #include "third_party/blink/renderer/core/css/css_view_value.h"
 #include "third_party/blink/renderer/core/css/resolver/style_builder_converter.h"
@@ -50,6 +51,7 @@
 #include "third_party/blink/renderer/core/css_value_keywords.h"
 #include "third_party/blink/renderer/core/style/border_image_length_box.h"
 #include "third_party/blink/renderer/core/style/computed_style.h"
+#include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/core/style/fill_layer.h"
 #include "third_party/blink/renderer/platform/animation/timing_function.h"
 
@@ -795,31 +797,47 @@ void CSSToStyleMap::MapNinePieceImageRepeat(StyleResolverState&,
   image.SetVerticalRule(vertical_rule);
 }
 
-EAnimationTriggerType CSSToStyleMap::MapAnimationTriggerType(
+EAnimationTriggerBehavior CSSToStyleMap::MapAnimationTriggerBehavior(
     StyleResolverState&,
     const CSSValue& value) {
-  return To<CSSIdentifierValue>(value).ConvertTo<EAnimationTriggerType>();
+  return To<CSSIdentifierValue>(value).ConvertTo<EAnimationTriggerBehavior>();
 }
 
-StyleTimeline CSSToStyleMap::MapAnimationTriggerTimeline(
+Persistent<const ScopedCSSName> CSSToStyleMap::MapAnimationTimelineTriggerName(
     StyleResolverState& state,
     const CSSValue& value) {
-  return MapAnimationTimeline(state, value);
+  DCHECK(value.IsScopedValue());
+  if (auto* ident = DynamicTo<CSSIdentifierValue>(value)) {
+    DCHECK(ident->GetValueID() == CSSValueID::kNone);
+    return nullptr;
+  }
+  if (auto* custom_ident = DynamicTo<CSSCustomIdentValue>(value)) {
+    return MakeGarbageCollected<ScopedCSSName>(
+        custom_ident->ComputeIdent(state.CssToLengthConversionData()),
+        custom_ident->GetTreeScope());
+  }
+  return nullptr;
 }
 
-std::optional<TimelineOffset> CSSToStyleMap::MapAnimationTriggerRangeStart(
+EAnimationTriggerBehavior CSSToStyleMap::MapAnimationTimelineTriggerBehavior(
     StyleResolverState& state,
     const CSSValue& value) {
+  return MapAnimationTriggerBehavior(state, value);
+}
+
+std::optional<TimelineOffset>
+CSSToStyleMap::MapAnimationTimelineTriggerRangeStart(StyleResolverState& state,
+                                                     const CSSValue& value) {
   return MapAnimationRange(state, value, 0);
 }
 
-std::optional<TimelineOffset> CSSToStyleMap::MapAnimationTriggerRangeEnd(
-    StyleResolverState& state,
-    const CSSValue& value) {
+std::optional<TimelineOffset>
+CSSToStyleMap::MapAnimationTimelineTriggerRangeEnd(StyleResolverState& state,
+                                                   const CSSValue& value) {
   return MapAnimationRange(state, value, 100);
 }
 
-TimelineOffsetOrAuto CSSToStyleMap::MapAnimationTriggerExitRangeStart(
+TimelineOffsetOrAuto CSSToStyleMap::MapAnimationTimelineTriggerExitRangeStart(
     StyleResolverState& state,
     const CSSValue& value) {
   if (auto* ident = DynamicTo<CSSIdentifierValue>(value);
@@ -829,7 +847,7 @@ TimelineOffsetOrAuto CSSToStyleMap::MapAnimationTriggerExitRangeStart(
   return TimelineOffsetOrAuto(MapAnimationRange(state, value, 0));
 }
 
-TimelineOffsetOrAuto CSSToStyleMap::MapAnimationTriggerExitRangeEnd(
+TimelineOffsetOrAuto CSSToStyleMap::MapAnimationTimelineTriggerExitRangeEnd(
     StyleResolverState& state,
     const CSSValue& value) {
   if (auto* ident = DynamicTo<CSSIdentifierValue>(value);
@@ -837,6 +855,78 @@ TimelineOffsetOrAuto CSSToStyleMap::MapAnimationTriggerExitRangeEnd(
     return TimelineOffsetOrAuto();
   }
   return TimelineOffsetOrAuto(MapAnimationRange(state, value, 100));
+}
+
+StyleTimeline CSSToStyleMap::MapAnimationTimelineTriggerSource(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  return MapAnimationTimeline(state, value);
+}
+
+std::optional<Vector<AtomicString>> CSSToStyleMap::MapAnimationTriggerNames(
+    StyleResolverState&,
+    const CSSValue& animation_trigger_value) {
+  if (auto* ident = DynamicTo<CSSIdentifierValue>(animation_trigger_value);
+      ident && ident->GetValueID() == CSSValueID::kNone) {
+    return std::nullopt;
+  }
+
+  if (const CSSValueList* value_list =
+          DynamicTo<CSSValueList>(animation_trigger_value)) {
+    Vector<AtomicString> names_list;
+    for (const CSSValue* value : *value_list) {
+      const CSSCustomIdentValue* custom_ident = To<CSSCustomIdentValue>(value);
+      names_list.push_back(custom_ident->CustomCSSText());
+    }
+    return names_list;
+  }
+
+  return std::nullopt;
+}
+
+const StyleTriggerAttachment* MapSingleAnimationTriggerAttachment(
+    StyleResolverState& state,
+    const CSSValue& value) {
+  const auto& attachment_value = To<cssvalue::CSSTriggerAttachmentValue>(value);
+  const CSSCustomIdentValue* name_value =
+      To<CSSCustomIdentValue>(attachment_value.TriggerName());
+  const ScopedCSSName* name = MakeGarbageCollected<ScopedCSSName>(
+      name_value->Value(), name_value->GetTreeScope());
+
+  const CSSIdentifierValue* enter_value =
+      To<CSSIdentifierValue>(attachment_value.EnterBehavior());
+  EAnimationTriggerBehavior enter_behavior =
+      CssValueIDToPlatformEnum<EAnimationTriggerBehavior>(
+          enter_value->GetValueID());
+
+  const CSSIdentifierValue* exit_value =
+      DynamicTo<CSSIdentifierValue>(attachment_value.ExitBehavior());
+  std::optional<EAnimationTriggerBehavior> exit_behavior =
+      exit_value ? std::make_optional<>(
+                       CssValueIDToPlatformEnum<EAnimationTriggerBehavior>(
+                           exit_value->GetValueID()))
+                 : std::nullopt;
+
+  return MakeGarbageCollected<StyleTriggerAttachment>(name, enter_behavior,
+                                                      exit_behavior);
+}
+
+Member<StyleTriggerAttachmentVector>
+CSSToStyleMap::MapAnimationTriggerAttachments(StyleResolverState& state,
+                                              const CSSValue& value) {
+  if (auto* ident = DynamicTo<CSSIdentifierValue>(value);
+      ident && ident->GetValueID() == CSSValueID::kNone) {
+    return nullptr;
+  }
+
+  auto& attachment_valuelist = To<CSSValueList>(value);
+  Member<StyleTriggerAttachmentVector> attachments =
+      MakeGarbageCollected<StyleTriggerAttachmentVector>();
+  for (const CSSValue* single_attachment_value : attachment_valuelist) {
+    attachments->push_back(
+        MapSingleAnimationTriggerAttachment(state, *single_attachment_value));
+  }
+  return attachments;
 }
 
 }  // namespace blink

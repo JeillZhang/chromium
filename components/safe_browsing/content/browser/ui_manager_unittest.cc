@@ -123,7 +123,7 @@ class TestSafeBrowsingBlockingPage : public SafeBrowsingBlockingPage {
                 false,                 // is_extended_reporting_policy_managed
                 false,                 // is_enhanced_protection_enabled
                 false,                 // is_proceed_anyway_disabled
-                true,                  // should_open_links_in_new_tab
+                false,                 // should_open_links_in_new_tab
                 true,                  // always_show_back_to_safety
                 false,                 // is_enhanced_protection_message_enabled
                 false,                 // is_safe_browsing_managed
@@ -225,8 +225,6 @@ class TestSafeBrowsingUIManagerDelegate
     return nullptr;
   }
   bool IsMetricsAndCrashReportingEnabled() override { return false; }
-
-  bool IsSendingOfHitReportsEnabled() override { return false; }
 
   void set_is_hosting_extension(bool is_hosting_extension) {
     is_hosting_extension_ = is_hosting_extension;
@@ -717,6 +715,18 @@ TEST_F(SafeBrowsingUIManagerTest,
       unsafe_resource_util::GetWebContentsForResource(final_resource), false,
       &threat_type));
   EXPECT_EQ(threat_type, redirect_resource.threat_type);
+}
+
+TEST_F(SafeBrowsingUIManagerTest, AllowlistViewSource) {
+  const char* view_source_url = "view-source:https://www.malware.com";
+  StartNavigation(view_source_url);
+  AddToAllowlistForMalware(view_source_url, /*pending=*/false);
+  EXPECT_TRUE(IsAllowlistedForMalware(view_source_url));
+  EXPECT_FALSE(IsAllowlistedForMalware(kBadURL));
+
+  content::WebContentsTester::For(web_contents())->CommitPendingNavigation();
+  EXPECT_TRUE(IsAllowlistedForMalware(view_source_url));
+  EXPECT_FALSE(IsAllowlistedForMalware(kBadURL));
 }
 
 }  // namespace safe_browsing

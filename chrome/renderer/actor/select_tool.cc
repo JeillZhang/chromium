@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "base/check.h"
+#include "base/notimplemented.h"
 #include "chrome/common/actor/action_result.h"
 #include "chrome/common/actor/actor_logging.h"
 #include "chrome/common/url_constants.h"
@@ -29,69 +30,81 @@ using blink::WebSelectElement;
 using blink::WebString;
 
 SelectTool::SelectTool(content::RenderFrame& frame,
-                       Journal::TaskId task_id,
+                       TaskId task_id,
                        Journal& journal,
-                       mojom::SelectActionPtr action)
-    : ToolBase(frame, task_id, journal), action_(std::move(action)) {}
+                       mojom::SelectActionPtr action,
+                       mojom::ToolTargetPtr target,
+                       mojom::ObservedToolTargetPtr observed_target)
+    : ToolBase(frame,
+               task_id,
+               journal,
+               std::move(target),
+               std::move(observed_target)),
+      action_(std::move(action)) {}
 
 SelectTool::~SelectTool() = default;
 
-mojom::ActionResultPtr SelectTool::Execute() {
+void SelectTool::Execute(ToolFinishedCallback callback) {
   ValidatedResult validated_result = Validate();
   if (!validated_result.has_value()) {
-    return std::move(validated_result.error());
+    std::move(callback).Run(std::move(validated_result.error()));
+    return;
   }
 
   WebSelectElement select = validated_result.value().select;
   WebString value = validated_result.value().option_value;
   select.SetValue(value, /*send_events=*/true);
 
+  // If the select tool makes the selection in a popup widget (e.g., a dropdown
+  // menu), de-focus so the popup is hidden. An visible popup could occlude
+  // the contents underneath it.
+  select.Blur();
+
   // Check if the set value is now the current value in the <select>
   if (select.Value() != value) {
-    return MakeResult(
-        mojom::ActionResultCode::kSelectUnexpectedValue,
-        absl::StrFormat("ValueAfter [%s]", select.Value().Utf8()));
+    std::move(callback).Run(
+        MakeResult(mojom::ActionResultCode::kSelectUnexpectedValue,
+                   /*requires_page_stabilization=*/false,
+                   absl::StrFormat("ValueAfter [%s]", select.Value().Utf8())));
+    return;
   }
 
-  return MakeOkResult();
+  std::move(callback).Run(MakeOkResult());
 }
 
 std::string SelectTool::DebugString() const {
-  return absl::StrFormat("SelectTool[%s;value(%s)]",
-                         ToDebugString(action_->target), action_->value);
+  return absl::StrFormat("SelectTool[%s;value(%s)]", ToDebugString(target_),
+                         action_->value);
 }
 
 SelectTool::ValidatedResult SelectTool::Validate() const {
-  if (!frame_->GetWebFrame()->FrameWidget()) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kFrameWentAway));
-  }
+  CHECK(frame_->GetWebFrame());
+  CHECK(frame_->GetWebFrame()->FrameWidget());
 
-  mojom::ToolTargetPtr& target = action_->target;
-
-  if (target->is_coordinate()) {
+  if (target_->is_coordinate_dip()) {
     NOTIMPLEMENTED() << "Coordinate-based target is not yet supported.";
     return base::unexpected(MakeErrorResult());
   }
 
-  int32_t dom_node_id = target->get_dom_node_id();
-
-  WebNode node = GetNodeFromId(frame_.get(), dom_node_id);
-  if (node.IsNull()) {
-    return base::unexpected(
-        MakeResult(mojom::ActionResultCode::kInvalidDomNodeId));
+  auto resolved_target = ValidateAndResolveTarget();
+  if (!resolved_target.has_value()) {
+    return base::unexpected(std::move(resolved_target.error()));
   }
 
+  // Perform select validation on the resolved node.
+  const WebNode& node = resolved_target->node;
   WebSelectElement select = node.DynamicTo<WebSelectElement>();
   if (!select) {
     return base::unexpected(
         MakeResult(mojom::ActionResultCode::kSelectInvalidElement,
+                   /*requires_page_stabilization=*/false,
                    absl::StrFormat("Element [%s]", base::ToString(node))));
   }
 
   if (!select.IsEnabled()) {
     return base::unexpected(
         MakeResult(mojom::ActionResultCode::kElementDisabled,
+                   /*requires_page_stabilization=*/false,
                    absl::StrFormat("Element [%s]", base::ToString(select))));
   }
 
@@ -102,6 +115,7 @@ SelectTool::ValidatedResult SelectTool::Validate() const {
       if (!option.IsEnabled()) {
         return base::unexpected(MakeResult(
             mojom::ActionResultCode::kSelectOptionDisabled,
+            /*requires_page_stabilization=*/false,
             absl::StrFormat("SelectElement[%s] OptionElement [%s]",
                             base::ToString(select), base::ToString(option))));
       }
@@ -111,6 +125,7 @@ SelectTool::ValidatedResult SelectTool::Validate() const {
 
   return base::unexpected(
       MakeResult(mojom::ActionResultCode::kSelectNoSuchOption,
+                 /*requires_page_stabilization=*/false,
                  absl::StrFormat("SelectElement[%s]", base::ToString(select))));
 }
 

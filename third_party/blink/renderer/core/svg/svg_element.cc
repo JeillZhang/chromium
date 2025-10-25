@@ -721,27 +721,35 @@ void SVGElement::AttributeChanged(const AttributeModificationParams& params) {
 
   if (property) {
     SvgAttributeChanged({*property, params.name, params.reason});
-    InvalidateInstances();
+    SynchronizeAttributeInShadowInstances(params.name, params.new_value);
     return;
   }
 
-  if (params.name == html_names::kIdAttr) {
-    InvalidateInstances();
-    return;
-  }
+  if (!RuntimeEnabledFeatures::Svg2CascadeEnabled()) {
+    if (params.name == html_names::kIdAttr) {
+      // TODO(crbug.com/40550039): Id attributes also need to be synchronized
+      // instead of rebuilding the tree as animations/transitions would
+      // otherwise not work correctly.
+      InvalidateInstances();
+      return;
+    }
 
-  // Changes to the style attribute are processed lazily (see
-  // Element::getAttribute() and related methods), so we don't want changes to
-  // the style attribute to result in extra work here.
-  if (params.name == html_names::kStyleAttr)
-    return;
+    // Changes to the style attribute are processed lazily (see
+    // Element::getAttribute() and related methods), so we don't want changes to
+    // the style attribute to result in extra work here.
+    if (params.name == html_names::kStyleAttr) {
+      return;
+    }
+  }
 
   CSSPropertyID prop_id =
       CssPropertyIdForSVGAttributeName(GetExecutionContext(), params.name);
   if (prop_id > CSSPropertyID::kInvalid) {
     UpdatePresentationAttributeStyle(prop_id, params.name, params.new_value);
-    InvalidateInstances();
-    return;
+  }
+  if (prop_id > CSSPropertyID::kInvalid ||
+      RuntimeEnabledFeatures::Svg2CascadeEnabled()) {
+    SynchronizeAttributeInShadowInstances(params.name, params.new_value);
   }
 }
 
@@ -783,9 +791,6 @@ void SVGElement::SynchronizeAllSVGAttributes() const {
 
 MutableCSSPropertyValueSet*
 SVGElement::GetPresentationAttributeStyleForDirectUpdate() {
-  if (!RuntimeEnabledFeatures::SvgEagerPresAttrStyleUpdateEnabled()) {
-    return nullptr;
-  }
   // If the element is not attached to the layout tree, then just mark dirty.
   if (!GetLayoutObject()) {
     return nullptr;
@@ -894,7 +899,7 @@ const ComputedStyle* SVGElement::CustomStyleForLayoutObject(
       kSVGAttributeMode);
 
   SVGElement* corresponding_element = CorrespondingElement();
-  if (!corresponding_element) {
+  if (!corresponding_element || RuntimeEnabledFeatures::Svg2CascadeEnabled()) {
     return GetDocument().GetStyleResolver().ResolveStyle(this,
                                                          style_recalc_context);
   }
@@ -964,6 +969,16 @@ void SVGElement::NotifyResourceClients() const {
     return;
   }
   resource->NotifyContentChanged();
+}
+
+void SVGElement::InvalidateStyleAttribute(
+    bool only_changed_independent_properties) {
+  Element::InvalidateStyleAttribute(only_changed_independent_properties);
+  if (RuntimeEnabledFeatures::Svg2CascadeEnabled() &&
+      !InstancesForElement().empty()) {
+    SynchronizeAttributeInShadowInstances(html_names::kStyleAttr,
+                                          getAttribute(html_names::kStyleAttr));
+  }
 }
 
 void SVGElement::InvalidateInstances() {
@@ -1200,6 +1215,15 @@ SMILTimeContainer* SVGElement::GetTimeContainer() const {
   }
 
   return ownerSVGElement()->TimeContainer();
+}
+
+void SVGElement::SynchronizeAttributeInShadowInstances(
+    const QualifiedName& name,
+    const AtomicString& value) {
+  const HeapHashSet<WeakMember<SVGElement>>& set = InstancesForElement();
+  for (SVGElement* instance : set) {
+    instance->SetAttributeWithoutValidation(name, value);
+  }
 }
 
 }  // namespace blink

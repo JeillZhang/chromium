@@ -30,6 +30,8 @@
 #import "ios/chrome/browser/photos/model/photos_availability.h"
 #import "ios/chrome/browser/photos/model/photos_metrics.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
+#import "ios/chrome/browser/reader_mode/model/reader_mode_content_tab_helper.h"
+#import "ios/chrome/browser/reader_mode/model/reader_mode_tab_helper.h"
 #import "ios/chrome/browser/reading_list/model/reading_list_browser_agent.h"
 #import "ios/chrome/browser/search_engines/model/search_engines_util.h"
 #import "ios/chrome/browser/search_engines/model/template_url_service_factory.h"
@@ -179,8 +181,22 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
   if (base::FeatureList::IsEnabled(kEnableLensOverlay) && _baseWebState) {
     return _baseWebState.get();
   }
-  return self.browser ? self.browser->GetWebStateList()->GetActiveWebState()
-                      : nullptr;
+  web::WebState* activeWebState =
+      self.browser ? self.browser->GetWebStateList()->GetActiveWebState()
+                   : nullptr;
+  if (activeWebState) {
+    // Check if there is an alternate webState.
+    ReaderModeTabHelper* readerModeTabHelper =
+        ReaderModeTabHelper::FromWebState(activeWebState);
+    if (readerModeTabHelper) {
+      web::WebState* readerModeWebState =
+          readerModeTabHelper->GetReaderModeWebState();
+      if (readerModeWebState) {
+        return readerModeWebState;
+      }
+    }
+  }
+  return activeWebState;
 }
 
 #pragma mark - Private
@@ -234,9 +250,9 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
   NSMutableArray<UIMenuElement*>* menuElements = [[NSMutableArray alloc] init];
   // TODO(crbug.com/40823789) add scenario for not a link and not an image.
   MenuScenarioHistogram menuScenario =
-      isImage && isLink ? kMenuScenarioHistogramContextMenuImageLink
-      : isImage         ? kMenuScenarioHistogramContextMenuImage
-                        : kMenuScenarioHistogramContextMenuLink;
+      [self getMenuScenarioHistogramWithWebState:webState
+                                         isImage:isImage
+                                          isLink:isLink];
 
   NSString* menuTitle = nil;
   UIAction* showFullURL = nil;
@@ -788,14 +804,9 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
     [imageSavingElements addObject:saveImageToPhotosAction];
   }
 
-  if (IsSaveToPhotosActionImprovementEnabled() && saveToPhotosAvailable) {
-    UIImage* image;
-    if (@available(iOS 17, *)) {
-      image = DefaultSymbolWithPointSize(kPhotoBadgeArrowDownSymbol,
-                                         kSymbolActionPointSize);
-    } else {
-      image = DefaultSymbolWithPointSize(kPhotoSymbol, kSymbolActionPointSize);
-    }
+  if (saveToPhotosAvailable) {
+    UIImage* image = DefaultSymbolWithPointSize(kPhotoBadgeArrowDownSymbol,
+                                                kSymbolActionPointSize);
     UIMenu* saveImageInMenu = [UIMenu
         menuWithTitle:l10n_util::GetNSString(IDS_IOS_TOOLS_MENU_SAVE_IMAGE_IN)
                 image:image
@@ -911,6 +922,34 @@ NSString* const kAlertAccessibilityIdentifier = @"AlertAccessibilityIdentifier";
 - (void)didOpenTabInBackground:(GURL)URL {
   [self.delegate contextMenuConfigurationProvider:self
                  didOpenNewTabInBackgroundWithURL:URL];
+}
+
+- (MenuScenarioHistogram)getMenuScenarioHistogramWithWebState:
+                             (web::WebState*)webState
+                                                      isImage:(BOOL)isImage
+                                                       isLink:(BOOL)isLink {
+  // Check that the Reader Mode web state implicitly checking that the content
+  // tab helper is attached.
+  ReaderModeContentTabHelper* readerModeContentTabHelper =
+      ReaderModeContentTabHelper::FromWebState(webState);
+  BOOL isReaderModeActive = readerModeContentTabHelper;
+  if (isReaderModeActive) {
+    if (isImage && isLink) {
+      return kMenuScenarioHistogramReaderModeContextMenuImageLink;
+    } else if (isImage) {
+      return kMenuScenarioHistogramReaderModeContextMenuImage;
+    } else {
+      return kMenuScenarioHistogramReaderModeContextMenuLink;
+    }
+  } else {
+    if (isImage && isLink) {
+      return kMenuScenarioHistogramContextMenuImageLink;
+    } else if (isImage) {
+      return kMenuScenarioHistogramContextMenuImage;
+    } else {
+      return kMenuScenarioHistogramContextMenuLink;
+    }
+  }
 }
 
 @end

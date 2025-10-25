@@ -10,7 +10,7 @@ import android.os.Process;
 import android.os.SystemClock;
 import android.util.Log;
 
-import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.json.JSONObject;
@@ -30,7 +30,6 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
 
@@ -509,33 +508,40 @@ public abstract class CronetEngine {
         }
 
         /**
-         * Configures proxying behavior for connection establishment. This affects all connections
-         * established by a {@link CronetEngine} as a consequence of {@link UrlRequest} being
-         * started. For more details, see the documentation of {@link ProxyOptions}.
+         * Configures proxying behavior. This affects, in different ways: connections establishment,
+         * {@link UrlRequest} and {@link BidirectionalStream}. For more details, refer to the
+         * documentation of {@link Proxy}.
          *
-         * <p>This has not been implemented yet, calling this will always throw {@code
-         * UnsupportedOperationException}.
+         * <p>This is not to be confused with proxy configuration that have been set up by: the
+         * user; or some enterprise profile configuration, or (most likely) some network
+         * autoconfiguration (e.g., Web Proxy Auto-Discovery Protocol). This is usually referred to
+         * as "system" proxy configuration. If present, respecting the system proxy configuration is
+         * often a requirement to obtain local and/or internet connectivity. Cronet already handles
+         * the system proxy configuration internally.
          *
-         * <p>Warning: DO NOT USE without reaching out to Cronet maintainers first. This is
-         * experimental and subject to change.
+         * <p>A proxy configuration defined via this API are refererred to as "app" proxy
+         * configuration. App and system proxy configuration are separate and, most importantly,
+         * differ. Currently, app and system proxy configurations are mutually exclusive: specifying
+         * {@link ProxyOptions} overrides the system proxy configuration, if present. This might
+         * cause connectivity problems in some scenarios where a system proxy configuration is
+         * present. In such scenarios, users might end up with no internet access, unless {@link
+         * ProxyOptions} has been configured with a final, {@code null}, fallback. Refer to {@link
+         * ProxyOptions} documentation.
          *
-         * <p>Note: The Android OS can already define a "system" proxy configurations. This config
-         * might have been obtained by the user, from some enterprise profile configuration, or
-         * (most likely) from some network autoconfiguration (e.g., Web Proxy Auto-Discovery
-         * Protocol). Proxy configurations configured via this API and system ones are mutually
-         * exclusive. When specifying {@link ProxyOptions} you are overriding the system
-         * configuration, this can cause connectivity problems (e.g., the internet might no longer
-         * be reachable). To increase the chances of success, in case a fail-open configuration is
-         * provided, Cronet will use the system proxy configuration as a fallback, instead of trying
-         * to establish a non-proxied connection.
-         *
-         * @param proxyOptions ProxyOptions to be used for connections established by the {@link
-         *     CronetEngine} created by this builder.
+         * @param proxyOptions ProxyOptions to be used for {@link UrlRequest}, {@link
+         *     BiridirectionalStream} and connections established by the {@link CronetEngine}
+         *     created by this builder.
          * @return the builder to facilitate chaining.
          */
         @ProxyOptions.Experimental
-        public Builder setProxyOptions(@NonNull ProxyOptions proxyOptions) {
-            mBuilderDelegate.setProxyOptions(Objects.requireNonNull(proxyOptions));
+        public Builder setProxyOptions(@Nullable ProxyOptions proxyOptions) {
+            if (!mBuilderDelegate
+                    .getSupportedConfigOptions()
+                    .contains(ICronetEngineBuilder.PROXY_OPTIONS)) {
+                throw new UnsupportedOperationException(
+                        "This Cronet implementation does not support ProxyOptions");
+            }
+            mBuilderDelegate.setProxyOptions(proxyOptions);
             return this;
         }
 

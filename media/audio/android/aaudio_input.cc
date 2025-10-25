@@ -9,6 +9,7 @@
 #include "media/audio/android/audio_manager_android.h"
 #include "media/base/amplitude_peak_detector.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_sample_types.h"
 
 namespace media {
 
@@ -188,8 +189,11 @@ void AAudioInputStream::HandleDeviceChange() {
   }
 }
 
-android::AudioDevice AAudioInputStream::GetDevice() {
-  return device_;
+std::optional<android::AudioDeviceId> AAudioInputStream::GetActualDeviceId() {
+  if (!stream_wrapper_) {
+    return std::nullopt;
+  }
+  return stream_wrapper_->GetActualDeviceId();
 }
 
 double AAudioInputStream::GetMaxVolume() {

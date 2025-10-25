@@ -122,7 +122,7 @@ suite('PasswordDetailsCardTest', function() {
       const listItemElement = listItemElements[i];
 
       assertTrue(!!listItemElement);
-      assertEquals(expectedDomain.name, listItemElement.textContent!.trim());
+      assertEquals(expectedDomain.name, listItemElement.textContent.trim());
       assertEquals(expectedDomain.url, listItemElement.href);
     });
   });
@@ -304,7 +304,7 @@ suite('PasswordDetailsCardTest', function() {
     const card = await createCardElement(password);
 
     assertEquals(
-        card.$.domainLabel.textContent!.trim(),
+        card.$.domainLabel.textContent.trim(),
         loadTimeData.getString('sitesLabel'));
   });
 
@@ -322,7 +322,7 @@ suite('PasswordDetailsCardTest', function() {
     const card = await createCardElement(password);
 
     assertEquals(
-        card.$.domainLabel.textContent!.trim(),
+        card.$.domainLabel.textContent.trim(),
         loadTimeData.getString('appsLabel'));
   });
 
@@ -345,21 +345,20 @@ suite('PasswordDetailsCardTest', function() {
     const card = await createCardElement(password);
 
     assertEquals(
-        card.$.domainLabel.textContent!.trim(),
+        card.$.domainLabel.textContent.trim(),
         loadTimeData.getString('sitesAndAppsLabel'));
   });
 
   // <if expr="_google_chrome">
   test('share button available when sync enabled', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
     };
 
     const card = await createCardElement();
 
     assertTrue(isVisible(card.$.shareButton));
-    assertEquals(card.$.shareButton.textContent!.trim(), card.i18n('share'));
+    assertEquals(card.$.shareButton.textContent.trim(), card.i18n('share'));
 
     assertFalse(!!card.shadowRoot!.querySelector('share-password-flow'));
 
@@ -374,7 +373,6 @@ suite('PasswordDetailsCardTest', function() {
 
   test('share button available for account store users', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: true,
       isSyncingPasswords: false,
     };
 
@@ -385,12 +383,11 @@ suite('PasswordDetailsCardTest', function() {
     assertFalse(card.$.shareButton.hidden);
     assertTrue(isVisible(card.$.shareButton));
     assertFalse(card.$.shareButton.disabled);
-    assertEquals(card.$.shareButton.textContent!.trim(), card.i18n('share'));
+    assertEquals(card.$.shareButton.textContent.trim(), card.i18n('share'));
   });
 
   test('sharing disabled by policy', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
     };
 
@@ -409,7 +406,6 @@ suite('PasswordDetailsCardTest', function() {
 
   test('sharing unavailable for federated credentials', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: true,
     };
 
@@ -425,7 +421,6 @@ suite('PasswordDetailsCardTest', function() {
 
   test('share button unavailable when sync disabled', async function() {
     syncProxy.syncInfo = {
-      isEligibleForAccountStorage: false,
       isSyncingPasswords: false,
     };
 
@@ -444,7 +439,6 @@ suite('PasswordDetailsCardTest', function() {
       async function() {
         passwordManager.data.isAccountStorageEnabled = true;
         syncProxy.syncInfo = {
-          isEligibleForAccountStorage: true,
           isSyncingPasswords: false,
         };
 

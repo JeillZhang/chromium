@@ -207,6 +207,8 @@ class CORE_EXPORT SVGElement : public Element {
 
   void ParseAttribute(const AttributeModificationParams&) override;
   void AttributeChanged(const AttributeModificationParams&) override;
+  void InvalidateStyleAttribute(
+      bool only_changed_independent_properties) override;
   void InvalidateInstances();
 
   void UpdatePresentationAttributeStyle(const SVGAnimatedPropertyBase&);
@@ -279,6 +281,9 @@ class CORE_EXPORT SVGElement : public Element {
 
   SMILTimeContainer* GetTimeContainer() const;
 
+  void SynchronizeAttributeInShadowInstances(const QualifiedName& name,
+                                             const AtomicString& value);
+
   Member<SVGElementRareData> svg_rare_data_;
   Member<SVGAnimatedString> class_name_;
 };
@@ -316,7 +321,7 @@ struct SVGAttributeHashTranslator {
                                             key.NamespaceURI().Impl()};
       return HashComponents(components);
     }
-    return WTF::GetHash(key);
+    return blink::GetHash(key);
   }
   static bool Equal(const QualifiedName& a, const QualifiedName& b) {
     return a.Matches(b);

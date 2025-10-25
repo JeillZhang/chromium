@@ -42,6 +42,7 @@
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_trustedscripturl_usvstring.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_void_function.h"
 #include "third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.h"
+#include "third_party/blink/renderer/core/canvas_interventions/canvas_interventions_helper.h"
 #include "third_party/blink/renderer/core/css/font_face_set_worker.h"
 #include "third_party/blink/renderer/core/css/offscreen_font_selector.h"
 #include "third_party/blink/renderer/core/dom/events/event.h"
@@ -66,6 +67,7 @@
 #include "third_party/blink/renderer/core/script/classic_script.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_script_url.h"
 #include "third_party/blink/renderer/core/trustedtypes/trusted_type_policy_factory.h"
+#include "third_party/blink/renderer/core/url/dom_origin.h"
 #include "third_party/blink/renderer/core/workers/custom_event_message.h"
 #include "third_party/blink/renderer/core/workers/global_scope_creation_params.h"
 #include "third_party/blink/renderer/core/workers/installed_scripts_manager.h"
@@ -166,6 +168,12 @@ FontFaceSet* WorkerGlobalScope::fonts() {
   return FontFaceSetWorker::From(*this);
 }
 
+DOMOrigin* WorkerGlobalScope::GetDOMOrigin(LocalDOMWindow*) const {
+  // No access check is required, as `WorkerGlobalScope` objects are not
+  // accessible cross-origin.
+  return DOMOrigin::Create(GetSecurityOrigin());
+}
+
 WorkerGlobalScope::~WorkerGlobalScope() {
   DCHECK(!ScriptController());
   InstanceCounters::DecrementCounter(
@@ -188,6 +196,14 @@ KURL WorkerGlobalScope::CompleteURL(const String& url) const {
 
 const KURL& WorkerGlobalScope::BaseURL() const {
   return Url();
+}
+
+UserAgentMetadata WorkerGlobalScope::GetUserAgentMetadata() const {
+  std::optional<UserAgentMetadata> optional_metadata;
+  if (CoreProbeSink* sink = probe::ToCoreProbeSink(GetExecutionContext())) {
+    probe::ApplyUserAgentMetadataOverride(sink, &optional_metadata);
+  }
+  return optional_metadata.value_or(ua_metadata_);
 }
 
 scheduler::WorkerScheduler* WorkerGlobalScope::GetScheduler() {
@@ -577,8 +593,10 @@ void WorkerGlobalScope::RunWorkerScript() {
     debugger->ExternalAsyncTaskFinished(*stack_id_);
 
   script_eval_state_ = ScriptEvalState::kEvaluated;
-  TRACE_EVENT_NESTABLE_ASYNC_END0("blink.worker", "WorkerGlobalScope setup",
-                                  TRACE_ID_LOCAL(this));
+  if (auto* controller = GetThread()->GetWorkerInspectorController()) {
+    controller->WorkerScriptLoaded();
+  }
+  TRACE_EVENT_END("blink.worker", perfetto::Track::FromPointer(this));
 }
 
 void WorkerGlobalScope::ReceiveMessage(BlinkTransferableMessage message) {
@@ -680,7 +698,8 @@ WorkerGlobalScope::WorkerGlobalScope(
           thread->GetWorkerReportingProxy(),
           creation_params->script_url.ProtocolIsData(),
           /*is_default_world_of_isolate=*/
-          creation_params->is_default_world_of_isolate),
+          creation_params->is_default_world_of_isolate,
+          creation_params->canvas_noise_token),
       ActiveScriptWrappable<WorkerGlobalScope>({}),
       script_type_(creation_params->script_type),
       user_agent_(creation_params->user_agent),
@@ -698,8 +717,8 @@ WorkerGlobalScope::WorkerGlobalScope(
   // Workers should always maintain the default world of an isolate.
   CHECK(creation_params->is_default_world_of_isolate);
   TRACE_EVENT("blink.worker", "WorkerGlobalScope::WorkerGlobalScope");
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN0("blink.worker", "WorkerGlobalScope setup",
-                                    TRACE_ID_LOCAL(this));
+  TRACE_EVENT_BEGIN("blink.worker", "WorkerGlobalScope setup",
+                    perfetto::Track::FromPointer(this));
 
   InstanceCounters::IncrementCounter(
       InstanceCounters::kWorkerGlobalScopeCounter);
@@ -732,6 +751,11 @@ WorkerGlobalScope::WorkerGlobalScope(
   if (creation_params->dip_reporting_observer) {
     ReportingContext::From(this)->Bind(
         std::move(creation_params->dip_reporting_observer));
+  }
+
+  if (creation_params->canvas_noise_token_observer) {
+    CanvasInterventionsHelper::From(this)->Bind(
+        std::move(creation_params->canvas_noise_token_observer));
   }
 
   // A PermissionsPolicy is created by

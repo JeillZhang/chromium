@@ -15,6 +15,7 @@
 #include "chrome/browser/ash/app_mode/test/kiosk_test_utils.h"
 #include "chrome/browser/ash/app_mode/test/network_state_mixin.h"
 #include "chrome/browser/ash/login/test/js_checker.h"
+#include "chrome/browser/ui/ash/login/login_display_host.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/mixin_based_in_process_browser_test.h"
@@ -114,6 +115,38 @@ IN_PROC_BROWSER_TEST_P(SplashScreenTest, NetworkShortcutWorksOnline) {
   ClickNetworkScreenContinueButton();
   ASSERT_TRUE(WaitKioskLaunched());
   ASSERT_TRUE((IsAppInstalled(CurrentProfile(), TheKioskApp())));
+}
+
+IN_PROC_BROWSER_TEST_P(SplashScreenTest, CheckSuppressLoginAcceleratorActions) {
+  network_state_.SimulateOnline();
+  ASSERT_TRUE(LaunchAppManually(TheKioskApp()));
+
+  auto scoped_launch_blocker = BlockKioskLaunch();
+  WaitSplashScreen();
+
+  // All actions are blocked except `kAppLaunchBailout` and
+  // `kAppLaunchNetworkConfig`.
+  std::vector<LoginAcceleratorAction> blocked_actions = {
+      // kToggleSystemInfo is handled separately in
+      // LoginDisplayHostMojo::HandleAccelerator,
+      // before our kiosk logic has a chance to intercept this (which happens in
+      // LoginDisplayHostCommon::HandleAccelerator).
+      // Even so, letting that action slip through seems innocent enough.
+      /*kToggleSystemInfo */
+      kShowFeedback,          kShowResetScreen,         kCancelScreenAction,
+      kStartEnrollment,       kStartKioskEnrollment,    kEnableDebugging,
+      kEditDeviceRequisition, kDeviceRequisitionRemora, kStartDemoMode,
+      kLaunchDiagnostics,     kEnableQuickStart,
+  };
+
+  for (auto action : blocked_actions) {
+    // To suppress the action it is marked as handled.
+    const bool is_handled =
+        LoginDisplayHost::default_host()->HandleAccelerator(action);
+    EXPECT_TRUE(is_handled)
+        << "Action " << action << " is not marked as handled,"
+        << " and thus will be processed by the next event target";
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(All,

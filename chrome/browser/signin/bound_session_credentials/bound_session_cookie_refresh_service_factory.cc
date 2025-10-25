@@ -70,8 +70,6 @@ BoundSessionCookieRefreshServiceFactory::BuildServiceInstanceForBrowserContext(
 
   Profile* profile = Profile::FromBrowserContext(context);
   if (!switches::IsBoundSessionCredentialsEnabled(profile->GetPrefs()) &&
-      !base::FeatureList::IsEnabled(
-          kEnableBoundSessionCredentialsWsbetaBypass) &&
       !base::FeatureList::IsEnabled(kEnableBoundSessionCredentialsContinuity)) {
     return nullptr;
   }
@@ -89,9 +87,7 @@ BoundSessionCookieRefreshServiceFactory::BuildServiceInstanceForBrowserContext(
   bool should_create_service =
       account_consistency_method ==
           signin::AccountConsistencyMethod::kDisabled ||
-      (account_consistency_method == signin::AccountConsistencyMethod::kDice &&
-       switches::kEnableBoundSessionCredentialsDiceSupport.Get() ==
-           switches::EnableBoundSessionCredentialsDiceSupport::kEnabled);
+      account_consistency_method == signin::AccountConsistencyMethod::kDice;
 
   if (!should_create_service) {
     return nullptr;

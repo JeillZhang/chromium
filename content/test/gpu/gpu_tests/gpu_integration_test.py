@@ -21,6 +21,7 @@ import types
 from typing import Any, Type
 import unittest
 
+from telemetry.internal.actions import page_action
 from telemetry.internal.browser import browser_options as bo
 from telemetry.internal.platform import gpu_info as telemetry_gpu_info
 from telemetry.internal.platform import system_info as si_module
@@ -230,6 +231,15 @@ class GpuIntegrationTest(
     if cls._finder_options.extra_overlay_config_json:
       overlay_support.ParseOverlayJsonFile(
           cls._finder_options.extra_overlay_config_json)
+    # Tests for web-engine-shell and cast-streaming-shell are running on very
+    # less performant smart display devices and also use DCHECK-enabled
+    # binaries. The combination can cause a significant slowness of the
+    # javascript execution. So the default timeout used by javascript execution
+    # is explicitly doubled to avoid flakiness.
+    if cls._finder_options.browser_type in [
+        'web-engine-shell', 'cast-streaming-shell'
+    ]:
+      page_action.DEFAULT_TIMEOUT = 120
 
   @classmethod
   def AddCommandlineArgs(cls, parser: ct.CmdArgParser) -> None:
@@ -627,10 +637,24 @@ class GpuIntegrationTest(
       cls.SetBrowserOptions(cls.GetOriginalFinderOptions())
       cls.StartBrowser()
     else:
+      is_cros = cls.browser.platform.GetOSName() == 'chromeos'
+      if is_cros:
+        logging.info('crbug.com/449866954: Stopping browser')
       cls.StopBrowser()
+      if is_cros:
+        logging.info(
+            'crbug.com/449866954: Browser stopped, restarting TS Proxy')
       cls.platform.RestartTsProxyServerOnRemotePlatforms()
+      if is_cros:
+        logging.info(
+            'crbug.com/449866954: Proxy restarted, setting browser options')
       cls.SetBrowserOptions(cls._finder_options)
+      if is_cros:
+        logging.info(
+            'crbug.com/449866954: Browser options set, starting browser')
       cls.StartBrowser()
+      if is_cros:
+        logging.info('crbug.com/449866954: Browser started')
 
   @classmethod
   def _ClearFeatureValues(cls) -> None:
@@ -1265,7 +1289,9 @@ class GpuIntegrationTest(
                             system_info: si_module.SystemInfo) -> list[str]:
     gpu_info = system_info.gpu
     tags = []
-    if gpu_helper.EXPECTATIONS_DRIVER_TAGS and gpu_info:
+    relevant_tags = gpu_helper.GetExpectationFileDriverTagsForOs(
+        browser.platform.GetOSName())
+    if relevant_tags and gpu_info:
       driver_vendor = gpu_helper.GetGpuDriverVendor(gpu_info)
       driver_version = gpu_helper.GetGpuDriverVersion(gpu_info)
       if driver_vendor and driver_version:
@@ -1284,7 +1310,7 @@ class GpuIntegrationTest(
         if match:
           driver_vendor = match.group(1)
 
-        for tag in gpu_helper.EXPECTATIONS_DRIVER_TAGS:
+        for tag in relevant_tags:
           match = gpu_helper.MatchDriverTag(tag)
           assert match
           if (driver_vendor == match.group(1)
@@ -1351,13 +1377,13 @@ class GpuIntegrationTest(
         # device name is clearer.
         'arm-mali-g52-mc2',  # android-sm-a137f
         'arm-mali-t860',  # chromeos-board-kevin
-        'qualcomm-adreno-(tm)-418',  # android-nexus-5x
         'qualcomm-adreno-(tm)-540',  # android-pixel-2
         'qualcomm-adreno-(tm)-610',  # android-sm-a236b
         'qualcomm-adreno-(tm)-640',  # android-pixel-4
         'qualcomm-adreno-(tm)-740',  # android-sm-s911u1
         'arm-mali-g78',  # android-pixel-6
         'nvidia-nvidia-tegra',  # android-shield-android-tv
+        'imagination-technologies-0x71061212',  # android-pixel-10
         'vmware,',  # VMs
         'vmware,-0x1050',  # ChromeOS VMs
         'mesa/x.org',  # ChromeOS VMs

@@ -389,7 +389,7 @@ fuchsia_ui_gfx::Mat4 BrowserAccessibilityFuchsia::GetFuchsiaTransform() const {
 
   // Convert to fuchsia's transform type.
   std::array<float, 16> mat = {};
-  transform.GetColMajorF(mat.data());
+  transform.GetColMajorF(mat);
   return {{.matrix = mat}};
 }
 
@@ -397,8 +397,9 @@ uint32_t BrowserAccessibilityFuchsia::GetOffsetContainerOrRootNodeID() const {
   int offset_container_id = GetData().relative_bounds.offset_container_id;
 
   BrowserAccessibility* offset_container =
-      offset_container_id == -1 ? manager()->GetBrowserAccessibilityRoot()
-                                : manager()->GetFromID(offset_container_id);
+      offset_container_id == kInvalidAXNodeID
+          ? manager()->GetBrowserAccessibilityRoot()
+          : manager()->GetFromID(offset_container_id);
 
   BrowserAccessibilityFuchsia* fuchsia_container =
       ToBrowserAccessibilityFuchsia(offset_container);

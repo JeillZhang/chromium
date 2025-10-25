@@ -10,11 +10,13 @@
 #include "base/functional/bind.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/content_settings/core/common/content_settings.h"
-#include "components/permissions/permission_context_base.h"
+#include "components/permissions/content_setting_permission_context_base.h"
+#include "components/permissions/permission_decision.h"
 #include "components/permissions/permission_request_id.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/permission_controller.h"
 #include "content/public/browser/permission_descriptor_util.h"
+#include "content/public/browser/permission_result.h"
 #include "content/public/browser/render_frame_host.h"
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/guest_view/web_view/web_view_permission_helper.h"
@@ -43,9 +45,13 @@ bool ChromeClipboardPermissionContextDelegate::DecidePermission(
   // make clipboard actions if user has revoked the permission.
   if (IsPermissionGrantedToWebView(rfh, web_view_permission_helper)) {
     if (IsEmbedderPermissionGranted(web_view_permission_helper)) {
-      std::move(callback).Run(CONTENT_SETTING_ALLOW);
+      std::move(callback).Run(content::PermissionResult(
+          blink::mojom::PermissionStatus::GRANTED,
+          content::PermissionStatusSource::UNSPECIFIED));
     } else {
-      std::move(callback).Run(CONTENT_SETTING_BLOCK);
+      std::move(callback).Run(content::PermissionResult(
+          blink::mojom::PermissionStatus::DENIED,
+          content::PermissionStatusSource::UNSPECIFIED));
     }
 
   } else {
@@ -140,8 +146,10 @@ void ChromeClipboardPermissionContextDelegate::OnWebViewPermissionResult(
     granted_permissions_[embedder_origin].insert(requesting_origin);
   }
 
-  std::move(callback).Run(allowed ? CONTENT_SETTING_ALLOW
-                                  : CONTENT_SETTING_BLOCK);
+  std::move(callback).Run(content::PermissionResult(
+      allowed ? blink::mojom::PermissionStatus::GRANTED
+              : blink::mojom::PermissionStatus::DENIED,
+      content::PermissionStatusSource::UNSPECIFIED));
 }
 
 bool ChromeClipboardPermissionContextDelegate::IsPermissionGrantedToWebView(

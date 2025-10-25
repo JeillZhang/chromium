@@ -34,13 +34,10 @@ import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
 
 import org.chromium.base.ContextUtils;
-import org.chromium.base.ResettersForTesting;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.DisableFeatures;
-import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.build.BuildConfig;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.app.appmenu.AppMenuPropertiesDelegateImpl.MenuGroup;
@@ -68,17 +65,17 @@ import org.chromium.chrome.browser.toolbar.ToolbarManager;
 import org.chromium.chrome.browser.toolbar.menu_button.MenuUiState;
 import org.chromium.chrome.browser.translate.TranslateBridge;
 import org.chromium.chrome.browser.translate.TranslateBridgeJni;
-import org.chromium.chrome.browser.ui.appmenu.AppMenuHandler;
 import org.chromium.chrome.browser.ui.appmenu.AppMenuItemProperties;
 import org.chromium.chrome.browser.webapps.WebappRegistry;
 import org.chromium.components.bookmarks.BookmarkId;
-import org.chromium.components.browser_ui.accessibility.PageZoomCoordinator;
+import org.chromium.components.browser_ui.accessibility.PageZoomUtils;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni;
 import org.chromium.components.commerce.core.CommerceFeatureUtils;
 import org.chromium.components.commerce.core.CommerceFeatureUtilsJni;
 import org.chromium.components.commerce.core.ShoppingService;
 import org.chromium.components.dom_distiller.core.DomDistillerFeatures;
+import org.chromium.components.dom_distiller.core.DomDistillerUrlUtilsJni;
 import org.chromium.components.power_bookmarks.PowerBookmarkMeta;
 import org.chromium.components.power_bookmarks.PowerBookmarkType;
 import org.chromium.components.power_bookmarks.ShoppingSpecifics;
@@ -92,10 +89,10 @@ import org.chromium.content_public.browser.WebContents;
 import org.chromium.ui.modelutil.MVCListAdapter;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
+import org.chromium.url.JUnitTestGURLs;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 /** Unit tests for {@link AppMenuPropertiesDelegateImpl}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -134,6 +131,7 @@ public class AppMenuPropertiesDelegateUnitTest {
     @Mock private AppBannerManager.Natives mAppBannerManagerJniMock;
     @Mock private ReadAloudController mReadAloudController;
     @Mock private TranslateBridge.Natives mTranslateBridgeJniMock;
+    @Mock private DomDistillerUrlUtilsJni mDomDistillerUrlUtilsJni;
     private final OneshotSupplierImpl<LayoutStateProvider> mLayoutStateProviderSupplier =
             new OneshotSupplierImpl<>();
     private final ObservableSupplierImpl<BookmarkModel> mBookmarkModelSupplier =
@@ -169,7 +167,7 @@ public class AppMenuPropertiesDelegateUnitTest {
         when(mTabGroupModelFilter.getTabModel()).thenReturn(mTabModel);
         when(mTabModel.isIncognito()).thenReturn(false);
         when(mIncognitoTabModel.isIncognito()).thenReturn(true);
-        PageZoomCoordinator.setShouldShowMenuItemForTesting(false);
+        PageZoomUtils.setShouldShowMenuItemForTesting(false);
 
         UpdateMenuItemHelper.setInstanceForTesting(mUpdateMenuItemHelper);
         mMenuUiState = new MenuUiState();
@@ -211,8 +209,7 @@ public class AppMenuPropertiesDelegateUnitTest {
                                 mBookmarkModelSupplier,
                                 mReadAloudControllerSupplier) {
                             @Override
-                            public MVCListAdapter.ModelList buildMenuModelList(
-                                    AppMenuHandler handler) {
+                            public MVCListAdapter.ModelList buildMenuModelList() {
                                 return new MVCListAdapter.ModelList();
                             }
                         });
@@ -220,8 +217,8 @@ public class AppMenuPropertiesDelegateUnitTest {
         CommerceFeatureUtilsJni.setInstanceForTesting(mCommerceFeatureUtilsJniMock);
         ShoppingServiceFactoryJni.setInstanceForTesting(mShoppingServiceFactoryJniMock);
         doReturn(mShoppingService).when(mShoppingServiceFactoryJniMock).getForProfile(any());
-        BuildConfig.IS_DESKTOP_ANDROID = false;
-        ResettersForTesting.register(() -> BuildConfig.IS_DESKTOP_ANDROID = false);
+
+        DomDistillerUrlUtilsJni.setInstanceForTesting(mDomDistillerUrlUtilsJni);
     }
 
     private void setupFeatureDefaults() {
@@ -260,47 +257,27 @@ public class AppMenuPropertiesDelegateUnitTest {
     }
 
     @Test
-    @EnableFeatures({ChromeFeatureList.HIDE_TABLET_TOOLBAR_DOWNLOAD_BUTTON})
     @Config(qualifiers = "sw600dp")
     public void testShouldShowDownloadPageMenuItem_Tablet_WithFeatureOnAndEnabledDownloadPage() {
         when(mAppMenuPropertiesDelegate.shouldEnableDownloadPage(any(Tab.class))).thenReturn(true);
         when(mActivityTabProvider.get()).thenReturn(mTab);
-        assertTrue(
-                mAppMenuPropertiesDelegate.shouldShowDownloadPageMenuItem(
-                        mActivityTabProvider.get()));
+        assertTrue(mAppMenuPropertiesDelegate.shouldShowDownloadPageMenuItem(mTab));
     }
 
     @Test
-    @DisableFeatures({ChromeFeatureList.HIDE_TABLET_TOOLBAR_DOWNLOAD_BUTTON})
-    @Config(qualifiers = "sw600dp")
-    public void testShouldShowDownloadPageMenuItem_Tablet_WithFeatureOffAndEnabledDownloadPage() {
-        when(mAppMenuPropertiesDelegate.shouldEnableDownloadPage(any(Tab.class))).thenReturn(true);
-        when(mActivityTabProvider.get()).thenReturn(mTab);
-        assertFalse(
-                mAppMenuPropertiesDelegate.shouldShowDownloadPageMenuItem(
-                        mActivityTabProvider.get()));
-    }
-
-    @Test
-    @EnableFeatures({ChromeFeatureList.HIDE_TABLET_TOOLBAR_DOWNLOAD_BUTTON})
     @Config(qualifiers = "sw600dp")
     public void testShouldShowDownloadPageMenuItem_Tablet_WithFeatureOnAndDisabledDownloadPage() {
         when(mAppMenuPropertiesDelegate.shouldEnableDownloadPage(any(Tab.class))).thenReturn(false);
         when(mActivityTabProvider.get()).thenReturn(mTab);
-        assertFalse(
-                mAppMenuPropertiesDelegate.shouldShowDownloadPageMenuItem(
-                        mActivityTabProvider.get()));
+        assertFalse(mAppMenuPropertiesDelegate.shouldShowDownloadPageMenuItem(mTab));
     }
 
     @Test
-    @EnableFeatures({ChromeFeatureList.HIDE_TABLET_TOOLBAR_DOWNLOAD_BUTTON})
     @Config(qualifiers = "sw320dp")
     public void testShouldShowDownloadPageMenuItem_Phone_WithFeatureOnAndEnabledDownloadPage() {
         when(mAppMenuPropertiesDelegate.shouldEnableDownloadPage(any(Tab.class))).thenReturn(true);
         when(mActivityTabProvider.get()).thenReturn(mTab);
-        assertFalse(
-                mAppMenuPropertiesDelegate.shouldShowDownloadPageMenuItem(
-                        mActivityTabProvider.get()));
+        assertFalse(mAppMenuPropertiesDelegate.shouldShowDownloadPageMenuItem(mTab));
     }
 
     @Test
@@ -401,14 +378,7 @@ public class AppMenuPropertiesDelegateUnitTest {
         Long clusterId = 1L;
         doReturn(
                         new ShoppingService.ProductInfo(
-                                "",
-                                new GURL(""),
-                                Optional.of(clusterId),
-                                Optional.empty(),
-                                "",
-                                0,
-                                "",
-                                Optional.empty()))
+                                "", new GURL(""), clusterId, null, "", 0, "", null))
                 .when(mShoppingService)
                 .getAvailableProductInfoForUrl(any());
         doReturn(true).when(mShoppingService).isSubscribedFromCache(any());
@@ -466,21 +436,30 @@ public class AppMenuPropertiesDelegateUnitTest {
     public void readAloud_CanBeAddedOnMultipleCreatedMenus() {
         when(mReadAloudController.isReadable(any(Tab.class))).thenReturn(true);
 
-        MVCListAdapter.ModelList modelList =
-                mAppMenuPropertiesDelegate.getMenuItems(mock(AppMenuHandler.class));
+        MVCListAdapter.ModelList modelList = mAppMenuPropertiesDelegate.getMenuItems();
         mAppMenuPropertiesDelegate.observeAndMaybeAddReadAloud(modelList, mTab);
         Assert.assertEquals(1, modelList.size());
         Assert.assertEquals(
                 R.id.readaloud_menu_id,
                 modelList.get(0).model.get(AppMenuItemProperties.MENU_ITEM_ID));
 
-        MVCListAdapter.ModelList modelList2 =
-                mAppMenuPropertiesDelegate.getMenuItems(mock(AppMenuHandler.class));
+        MVCListAdapter.ModelList modelList2 = mAppMenuPropertiesDelegate.getMenuItems();
         mAppMenuPropertiesDelegate.observeAndMaybeAddReadAloud(modelList2, mTab);
         Assert.assertEquals(1, modelList2.size());
         Assert.assertEquals(
                 R.id.readaloud_menu_id,
                 modelList2.get(0).model.get(AppMenuItemProperties.MENU_ITEM_ID));
+    }
+
+    @Test
+    public void isReaderModeShowing() {
+        when(mTab.getUrl()).thenReturn(JUnitTestGURLs.CHROME_DISTILLER_EXAMPLE_URL);
+
+        when(mDomDistillerUrlUtilsJni.isDistilledPage(any())).thenReturn(true);
+        assertTrue(mAppMenuPropertiesDelegate.isReaderModeShowing(mTab));
+
+        when(mDomDistillerUrlUtilsJni.isDistilledPage(any())).thenReturn(false);
+        assertFalse(mAppMenuPropertiesDelegate.isReaderModeShowing(mTab));
     }
 
     private void setUpMocksForPageMenu() {

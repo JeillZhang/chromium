@@ -147,8 +147,11 @@ class CredentialProviderService
   // Syncs whether or not PRF is enabled.
   void UpdatePasskeyPRFSetting();
 
-  // Syncs whether or not the Passkeys M2 feature is enabled.
-  void UpdatePasskeysM2Availability();
+  // Syncs whether or not Large Blob is enabled.
+  void UpdatePasskeyLargeBlobSetting();
+
+  // Syncs whether or not signal API is enabled.
+  void UpdateSignalAPISetting();
 
   // PasswordStoreConsumer:
   void OnGetPasswordStoreResultsOrErrorFrom(
@@ -170,6 +173,7 @@ class CredentialProviderService
 
   // syncer::SyncServiceObserver:
   void OnStateChanged(syncer::SyncService* sync) override;
+  void OnSyncShutdown(syncer::SyncService* sync) override;
 
   // Observer for change in enabled or managed state of prefs that govern the
   // CPE.
@@ -188,9 +192,6 @@ class CredentialProviderService
 
   // The name of the profile used to create this CredentialProviderService.
   const std::string profile_name_;
-
-  // The pref service.
-  const raw_ptr<PrefService> prefs_;
 
   // The local state. Used to query the last used profile.
   const raw_ptr<PrefService> local_state_;

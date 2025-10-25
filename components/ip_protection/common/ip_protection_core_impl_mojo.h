@@ -5,7 +5,6 @@
 #ifndef COMPONENTS_IP_PROTECTION_COMMON_IP_PROTECTION_CORE_IMPL_MOJO_H_
 #define COMPONENTS_IP_PROTECTION_COMMON_IP_PROTECTION_CORE_IMPL_MOJO_H_
 
-#include <map>
 #include <memory>
 #include <optional>
 
@@ -16,20 +15,22 @@
 #include "components/ip_protection/common/ip_protection_probabilistic_reveal_token_manager.h"
 #include "components/ip_protection/common/ip_protection_proxy_config_manager_impl.h"
 #include "components/ip_protection/mojom/core.mojom.h"
+#include "components/ip_protection/mojom/core_test.mojom.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/receiver.h"
+#include "mojo/public/cpp/bindings/receiver_set.h"
 
 namespace ip_protection {
 
 class IpProtectionCoreHostRemote;
 class IpProtectionProxyConfigManager;
-class IpProtectionTokenManager;
 class ProbabilisticRevealTokenRegistry;
 
 // The Mojo implementation of IpProtectionCore, providing methods for CoreHost
 // to call on the core, and supporting initialization.
 class IpProtectionCoreImplMojo : public IpProtectionCoreImpl,
-                                 public ip_protection::mojom::CoreControl {
+                                 public ip_protection::mojom::CoreControl,
+                                 public ip_protection::mojom::CoreControlTest {
  public:
   // If `core_host_remote` is null, no tokens or proxy config will be provided.
   IpProtectionCoreImplMojo(
@@ -39,6 +40,7 @@ class IpProtectionCoreImplMojo : public IpProtectionCoreImpl,
       ProbabilisticRevealTokenRegistry* probabilistic_reveal_token_registry,
       bool is_ip_protection_enabled,
       bool ip_protection_incognito,
+      InitialTokensMap initial_tokens,
       std::optional<base::FilePath> data_directory);
   ~IpProtectionCoreImplMojo() override;
 
@@ -48,8 +50,7 @@ class IpProtectionCoreImplMojo : public IpProtectionCoreImpl,
       MaskedDomainListManager* masked_domain_list_manager,
       std::unique_ptr<IpProtectionProxyConfigManager>
           ip_protection_proxy_config_manager,
-      std::map<ProxyLayer, std::unique_ptr<IpProtectionTokenManager>>
-          ip_protection_token_managers,
+      IpProtectionCoreImpl::ProxyTokenManagerMap ip_protection_token_managers,
       ProbabilisticRevealTokenRegistry* probabilistic_reveal_token_registry,
       std::unique_ptr<IpProtectionProbabilisticRevealTokenManager>
           ipp_prt_manager,
@@ -57,22 +58,35 @@ class IpProtectionCoreImplMojo : public IpProtectionCoreImpl,
       bool ip_protection_incognito);
 
   // `CoreControl` implementation.
-  void VerifyIpProtectionCoreHostForTesting(
-      ip_protection::mojom::CoreControl::
-          VerifyIpProtectionCoreHostForTestingCallback callback) override;
   void AuthTokensMayBeAvailable() override;
   void SetIpProtectionEnabled(bool enabled) override;
+  void BindTestInterfaceForTesting(
+      mojo::PendingReceiver<ip_protection::mojom::CoreControlTest> receiver)
+      override;
+
+  // `CoreControlTest` implementation.
+  void VerifyIpProtectionCoreHostForTesting(
+      ip_protection::mojom::CoreControlTest::
+          VerifyIpProtectionCoreHostForTestingCallback callback) override;
   void IsIpProtectionEnabledForTesting(
-      ip_protection::mojom::CoreControl::IsIpProtectionEnabledForTestingCallback
+      ip_protection::mojom::CoreControlTest::
+          IsIpProtectionEnabledForTestingCallback callback) override;
+  void GetAuthTokenForTesting(
+      ProxyLayer proxy_layer,
+      const std::string& geo_id,
+      ip_protection::mojom::CoreControlTest::GetAuthTokenForTestingCallback
           callback) override;
+  void HasTrackingProtectionExceptionForTesting(
+      const GURL& first_party_url,
+      ip_protection::mojom::CoreControlTest::
+          HasTrackingProtectionExceptionForTestingCallback callback) override;
 
  private:
   IpProtectionCoreImplMojo(
       MaskedDomainListManager* masked_domain_list_manager,
       std::unique_ptr<IpProtectionProxyConfigManager>
           ip_protection_proxy_config_manager,
-      std::map<ProxyLayer, std::unique_ptr<IpProtectionTokenManager>>
-          ip_protection_token_managers,
+      IpProtectionCoreImpl::ProxyTokenManagerMap ip_protection_token_managers,
       ProbabilisticRevealTokenRegistry* probabilistic_reveal_token_registry,
       std::unique_ptr<IpProtectionProbabilisticRevealTokenManager>
           ipp_prt_manager,
@@ -83,6 +97,8 @@ class IpProtectionCoreImplMojo : public IpProtectionCoreImpl,
       VerifyIpProtectionCoreHostForTestingCallback callback);
 
   const mojo::Receiver<ip_protection::mojom::CoreControl> receiver_;
+  mojo::ReceiverSet<ip_protection::mojom::CoreControlTest>
+      test_receivers_for_testing_;
 
   base::WeakPtrFactory<IpProtectionCoreImplMojo> weak_ptr_factory_{this};
 };

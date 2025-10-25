@@ -89,9 +89,6 @@ const char* const kCustodianInfoPrefs[] = {
 const base::FilePath::CharType kSupervisedUserSettingsFilename[] =
     FILE_PATH_LITERAL("Managed Mode Settings");
 
-const char kSyncGoogleDashboardURL[] =
-    "https://www.google.com/settings/chrome/sync";
-
 const char kFamilyLinkUserLogSegmentHistogramName[] =
     "FamilyLinkUser.LogSegment";
 
@@ -131,12 +128,8 @@ const char kClassifiedEarlierThanContentResponseHistogramName[] =
     "SupervisedUsers.ClassifyUrlThrottle.EarlierThanContentResponse";
 const char kClassifiedLaterThanContentResponseHistogramName[] =
     "SupervisedUsers.ClassifyUrlThrottle.LaterThanContentResponse";
-extern const char kClassifyUrlThrottleStatusHistogramName[] =
-    "SupervisedUsers.ClassifyUrlThrottle.Status";
 extern const char kClassifyUrlThrottleFinalStatusHistogramName[] =
     "SupervisedUsers.ClassifyUrlThrottle.FinalStatus";
-extern const char kClassifyUrlThrottleUseCaseHistogramName[] =
-    "SupervisedUsers.ClassifyUrlThrottle.UseCase";
 
 const char kLocalWebApprovalDurationMillisecondsHistogramName[] =
     "FamilyLinkUser.LocalWebApprovalCompleteRequestTotalDuration";
@@ -147,4 +140,5 @@ const char kBrowserContentFiltersSettingName[] =
     "browser_content_filters_enabled";
 const char kSearchContentFiltersSettingName[] =
     "search_content_filters_enabled";
+
 }  // namespace supervised_user

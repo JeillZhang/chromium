@@ -6,7 +6,7 @@
 
 #include <string>
 
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "build/build_config.h"
 #include "ui/base/cursor/platform_cursor.h"
 #include "ui/display/screen.h"
@@ -176,7 +176,7 @@ void HeadlessWindow::SizeConstraintsChanged() {}
 
 void HeadlessWindow::ZoomWindowBounds() {
   gfx::Rect zoomed_bounds =
-      display::Screen::GetScreen()->GetDisplayMatching(bounds_).work_area();
+      display::Screen::Get()->GetDisplayMatching(bounds_).work_area();
   UpdateBounds(zoomed_bounds);
 }
 

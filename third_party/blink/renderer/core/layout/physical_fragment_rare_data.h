@@ -7,7 +7,7 @@
 
 #include <climits>
 
-#include "third_party/blink/renderer/core/layout/gap_fragment_data.h"
+#include "third_party/blink/renderer/core/layout/gap/gap_geometry.h"
 #include "third_party/blink/renderer/core/layout/geometry/logical_rect.h"
 #include "third_party/blink/renderer/core/layout/table/table_fragment_data.h"
 #include "third_party/blink/renderer/platform/geometry/physical_offset.h"
@@ -166,9 +166,9 @@ class PhysicalFragmentRareData
   // A garbage-collected field is not stored in the Vector in order to avoid
   // troublesome conditional tracing.
   Member<const TableBorders> table_collapsed_borders_;
-  Member<const TableColumnGeometries> table_column_geometries_;
+  Member<const GCedTableColumnGeometries> table_column_geometries_;
   Member<const MathMLPaintInfo> mathml_paint_info_;
-  Member<const HeapVector<Member<Node>>> reading_flow_nodes_;
+  Member<const GCedHeapVector<Member<Node>>> reading_flow_nodes_;
   Member<const GapGeometry> gap_geometry_;
 };
 

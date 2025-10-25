@@ -4,6 +4,7 @@
 
 #include "components/dom_distiller/content/browser/dom_distiller_viewer_source.h"
 
+#include <deque>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -85,7 +86,7 @@ class DomDistillerViewerSource::RequestViewerHandle
 
   // Temporary store of pending JavaScript if the page isn't ready to receive
   // data from distillation.
-  std::string buffer_;
+  std::deque<std::string> buffers_;
 };
 
 DomDistillerViewerSource::RequestViewerHandle::RequestViewerHandle(
@@ -106,9 +107,9 @@ DomDistillerViewerSource::RequestViewerHandle::~RequestViewerHandle() {
 void DomDistillerViewerSource::RequestViewerHandle::SendJavaScript(
     const std::string& buffer) {
   if (waiting_for_page_ready_) {
-    buffer_ += buffer;
+    buffers_.push_back(buffer);
   } else {
-    DCHECK(buffer_.empty());
+    DCHECK(buffers_.empty());
     if (web_contents()) {
       RunIsolatedJavaScript(web_contents()->GetPrimaryMainFrame(), buffer);
     }
@@ -174,12 +175,15 @@ void DomDistillerViewerSource::RequestViewerHandle::DOMContentLoaded(
     return;
   }
 
+  // Execute the scripts in buffer_ one-by-one, starting from the front of the
+  // list.
+  while (!buffers_.empty()) {
+    RunIsolatedJavaScript(web_contents()->GetPrimaryMainFrame(),
+                          buffers_.front());
+    buffers_.pop_front();
+  }
   // No SendJavaScript() calls allowed before |buffer_| is run and cleared.
   waiting_for_page_ready_ = false;
-  if (!buffer_.empty()) {
-    RunIsolatedJavaScript(web_contents()->GetPrimaryMainFrame(), buffer_);
-    buffer_.clear();
-  }
   // No need to Cancel() here.
 }
 
@@ -226,7 +230,8 @@ void DomDistillerViewerSource::StartDataRequest(
   if (remainder) {
     double scale = 1.0;
     if (base::StringToDouble(*remainder, &scale)) {
-      dom_distiller_service_->GetDistilledPagePrefs()->SetFontScaling(scale);
+      dom_distiller_service_->GetDistilledPagePrefs()->SetUserPrefFontScaling(
+          scale);
     }
   }
 
@@ -234,12 +239,12 @@ void DomDistillerViewerSource::StartDataRequest(
   // from |URLDataSource|. |web_contents| is the most convenient place to
   // obtain the full URL.
   // TODO(crbug.com/40095934): pass GURL in URLDataSource::StartDataRequest().
-  const std::string query = GURL("https://host/" + path).query();
+  const std::string query = GURL("https://host/" + path).GetQuery();
   GURL request_url = web_contents->GetVisibleURL();
   // The query should match what's seen in |web_contents|.
   // For javascript:window.open(), it's not the case, but it's not a supported
   // use case.
-  if (request_url.query() != query || request_url.path() != "/") {
+  if (request_url.GetQuery() != query || request_url.GetPath() != "/") {
     request_url = GURL();
   }
   RequestViewerHandle* request_viewer_handle =
@@ -273,7 +278,7 @@ void DomDistillerViewerSource::StartDataRequest(
 }
 
 std::string DomDistillerViewerSource::GetMimeType(const GURL& url) {
-  const std::string_view path = url.path_piece().substr(1);
+  const std::string_view path = url.path().substr(1);
   if (kViewerCssPath == path)
     return "text/css";
   if (kViewerLoadingImagePath == path)

@@ -7,6 +7,9 @@
 #include <string>
 
 #include "base/metrics/histogram_functions.h"
+#include "sql/database.h"
+#include "sql/error_delegate_util.h"
+#include "sql/sqlite_result_code.h"
 #include "third_party/leveldatabase/env_chromium.h"
 
 namespace content::indexed_db {
@@ -19,6 +22,11 @@ Status::Status(Status&& rhs) noexcept = default;
 
 Status::Status(leveldb::Status&& status) noexcept
     : type_(Type::kDatabaseEngine), leveldb_status_(std::move(status)) {}
+
+Status::Status(sql::Database& db) noexcept
+    : type_(Type::kDatabaseEngine),
+      sqlite_code_(sql::ToSqliteResultCode(db.GetErrorCode())),
+      msg_(db.GetErrorMessage()) {}
 
 Status::Status(Status::Type type, std::string_view msg)
     : type_(type), msg_(msg) {
@@ -60,7 +68,7 @@ Status Status::InvalidArgument(std::string_view msg) {
 
 // static
 Status Status::IOError(std::string_view msg) {
-  return Status(Type::kIoError, msg.empty() ? "IO Error" : msg);
+  return Status(Type::kIoError, msg);
 }
 
 bool Status::ok() const {
@@ -74,12 +82,16 @@ bool Status::IsNotFound() const {
 
 bool Status::IsCorruption() const {
   return type_ == Type::kCorruption ||
-         (leveldb_status_ && leveldb_status_->IsCorruption());
+         (leveldb_status_ && leveldb_status_->IsCorruption()) ||
+         (sqlite_code_ &&
+          sql::IsErrorCatastrophic(static_cast<int>(sqlite_code_.value())));
 }
 
 bool Status::IsIOError() const {
   return type_ == Type::kIoError ||
-         (leveldb_status_ && leveldb_status_->IsIOError());
+         (leveldb_status_ && leveldb_status_->IsIOError()) ||
+         sqlite_code_ == sql::SqliteResultCode::kIo ||
+         sqlite_code_ == sql::SqliteResultCode::kError;
 }
 
 bool Status::IsInvalidArgument() const {

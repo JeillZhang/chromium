@@ -7,7 +7,7 @@
 #include <memory>
 
 #include "base/feature_list.h"
-#include "components/optimization_guide/core/optimization_guide_model_provider.h"
+#include "components/optimization_guide/core/delivery/optimization_guide_model_provider.h"
 #include "components/permissions/features.h"
 #include "components/permissions/prediction_service/prediction_signature_model_executor.h"
 #include "components/version_info/version_info.h"
@@ -55,6 +55,7 @@ void PredictionModelHandler::ExecuteModelWithMetadata(
   // be used with the Signature runner
   const bool is_model_mismatch =
       base::FeatureList::IsEnabled(features::kCpssUseTfliteSignatureRunner) &&
+      prediction_model_metadata_.has_value() &&
       prediction_model_metadata_->version() != 2;
   base::UmaHistogramBoolean(
       "Permissions.PredictionService.SignatureModel.Mismatch",

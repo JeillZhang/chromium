@@ -195,9 +195,11 @@ class CORE_EXPORT InputType : public GarbageCollected<InputType> {
   virtual void SetValueAsDouble(double,
                                 TextFieldEventBehavior,
                                 ExceptionState&) const;
-  virtual void SetValueAsDecimal(const Decimal&,
-                                 TextFieldEventBehavior,
-                                 ExceptionState&) const;
+  virtual void SetValueAsDecimal(const Decimal&, TextFieldEventBehavior) const;
+
+  // Function that converts sanitized UI string value to its internal
+  // representation for use in the input's state.
+  virtual String ConvertFromVisibleValue(const String&) const;
 
   // Functions related to 'checked'
 
@@ -291,8 +293,7 @@ class CORE_EXPORT InputType : public GarbageCollected<InputType> {
   virtual bool IsEnumeratable();
   virtual bool IsCheckable();
   bool IsSteppable() const;
-  virtual HTMLFormControlElement::PopoverTriggerSupport
-  SupportsPopoverTriggering() const;
+  virtual PopoverTriggerSupport SupportsPopoverTriggering() const;
   virtual bool ShouldRespectHeightAndWidthAttributes();
   virtual int MaxLength() const;
   virtual int MinLength() const;

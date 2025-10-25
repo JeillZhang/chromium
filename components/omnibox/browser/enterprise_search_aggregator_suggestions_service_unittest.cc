@@ -5,7 +5,6 @@
 #include "components/omnibox/browser/enterprise_search_aggregator_suggestions_service.h"
 
 #include "base/functional/bind.h"
-#include "base/json/json_parser.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/strings/string_number_conversions.h"
@@ -72,7 +71,7 @@ class EnterpriseSearchAggregatorSuggestionsServiceTest : public testing::Test {
                 identity_test_env_.identity_manager(),
                 shared_url_loader_factory_)) {
     // Set up a variation.
-    variations::AssociateGoogleVariationID(
+    variations::AssociateGoogleVariationIDForTesting(
         variations::GOOGLE_WEB_PROPERTIES_ANY_CONTEXT, "trial name",
         "group name", kVariationID);
     base::FieldTrialList::CreateFieldTrial("trial name", "group name")
@@ -93,7 +92,7 @@ class EnterpriseSearchAggregatorSuggestionsServiceTest : public testing::Test {
   }
 
   base::test::TaskEnvironment task_environment_;
-  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
+  variations::test::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
@@ -131,8 +130,7 @@ TEST_F(EnterpriseSearchAggregatorSuggestionsServiceTest,
   experiment_ids_list.Append(kEnterpriseSearchAggregatorExperimentId);
   root.Set("experimentIds", std::move(experiment_ids_list));
 
-  std::string test_request_body;
-  base::JSONWriter::Write(root, &test_request_body);
+  std::string test_request_body = base::WriteJson(root).value_or("");
   const std::u16string query = u"test";
   const GURL test_endpoint = GURL("https://fake_url.com");
 
@@ -146,10 +144,10 @@ TEST_F(EnterpriseSearchAggregatorSuggestionsServiceTest,
 
   enterprise_search_aggregator_suggestions_service_
       ->CreateEnterpriseSearchAggregatorSuggestionsRequest(
-          query, test_endpoint, request_future.GetRepeatingCallback(),
+          query, test_endpoint, {0}, {{1, 2, 3, 5}},
+          request_future.GetRepeatingCallback(),
           loader_future.GetRepeatingCallback(),
-          complete_future.GetRepeatingCallback(),
-          std::vector<std::vector<int>>{std::vector<int>{1, 2, 3, 5}});
+          complete_future.GetRepeatingCallback());
 
   ASSERT_TRUE(request_future.Wait());
   ASSERT_TRUE(loader_future.Wait());
@@ -169,9 +167,10 @@ TEST_F(EnterpriseSearchAggregatorSuggestionsServiceTest,
       base::JSONReader::Read(resource_request.request_body->elements()
                                  ->at(0)
                                  .As<network::DataElementBytes>()
-                                 .AsStringPiece());
-  std::optional<base::Value> test_request_body_value =
-      base::JSONReader::Read(test_request_body);
+                                 .AsStringPiece(),
+                             base::JSON_PARSE_CHROMIUM_EXTENSIONS);
+  std::optional<base::Value> test_request_body_value = base::JSONReader::Read(
+      test_request_body, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   EXPECT_EQ(request_body, test_request_body_value);
 }
 
@@ -200,8 +199,7 @@ TEST_F(EnterpriseSearchAggregatorSuggestionsServiceTest,
   experiment_ids_list.Append(kEnterpriseSearchAggregatorExperimentId);
   root.Set("experimentIds", std::move(experiment_ids_list));
 
-  std::string test_request_body;
-  base::JSONWriter::Write(root, &test_request_body);
+  std::string test_request_body = base::WriteJson(root).value_or("");
   const std::u16string query = u"test";
   const GURL test_endpoint = GURL("https://fake_url.com");
 
@@ -215,10 +213,10 @@ TEST_F(EnterpriseSearchAggregatorSuggestionsServiceTest,
 
   enterprise_search_aggregator_suggestions_service_
       ->CreateEnterpriseSearchAggregatorSuggestionsRequest(
-          query, test_endpoint, request_future.GetRepeatingCallback(),
+          query, test_endpoint, {0}, {{2, 3, 5}},
+          request_future.GetRepeatingCallback(),
           loader_future.GetRepeatingCallback(),
-          complete_future.GetRepeatingCallback(),
-          std::vector<std::vector<int>>{std::vector<int>{2, 3, 5}});
+          complete_future.GetRepeatingCallback());
   ASSERT_TRUE(request_future.Wait());
   ASSERT_TRUE(loader_future.Wait());
 
@@ -237,9 +235,10 @@ TEST_F(EnterpriseSearchAggregatorSuggestionsServiceTest,
       base::JSONReader::Read(resource_request.request_body->elements()
                                  ->at(0)
                                  .As<network::DataElementBytes>()
-                                 .AsStringPiece());
-  std::optional<base::Value> test_request_body_value =
-      base::JSONReader::Read(test_request_body);
+                                 .AsStringPiece(),
+                             base::JSON_PARSE_CHROMIUM_EXTENSIONS);
+  std::optional<base::Value> test_request_body_value = base::JSONReader::Read(
+      test_request_body, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   EXPECT_EQ(request_body, test_request_body_value);
 }
 

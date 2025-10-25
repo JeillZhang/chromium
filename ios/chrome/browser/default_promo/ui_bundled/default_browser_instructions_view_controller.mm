@@ -4,9 +4,12 @@
 
 #import "ios/chrome/browser/default_promo/ui_bundled/default_browser_instructions_view_controller.h"
 
+#import "base/check.h"
 #import "base/i18n/rtl.h"
+#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
+#import "ios/chrome/common/ui/confirmation_alert/confirmation_alert_action_handler.h"
 #import "ios/chrome/common/ui/confirmation_alert/confirmation_alert_view_controller.h"
 #import "ios/chrome/common/ui/instruction_view/instruction_view.h"
 #import "ios/chrome/common/ui/util/constraints_ui_util.h"
@@ -25,13 +28,25 @@ NSString* const kDefaultBrowserAnimationDarkmode =
     @"default_browser_animation_darkmode";
 NSString* const kDefaultBrowserAnimationRtlDarkmode =
     @"default_browser_animation_rtl_darkmode";
+NSString* const kDefaultBrowserDefaultAppsAnimation =
+    @"default_browser_default_apps_animation";
+NSString* const kDefaultBrowserDefaultAppsAnimationRtl =
+    @"default_browser_default_apps_animation_rtl";
+NSString* const kDefaultBrowserDefaultAppsAnimationDarkmode =
+    @"default_browser_default_apps_animation_darkmode";
+NSString* const kDefaultBrowserDefaultAppsAnimationRtlDarkmode =
+    @"default_browser_default_apps_animation_rtl_darkmode";
 
 // Keys in the lottie assets.
+NSString* const kBrowserAppKeypath = @"IDS_BROWSER_APP";
 NSString* const kDefaultBrowserAppKeypath = @"IDS_DEFAULT_BROWSER_APP";
 NSString* const kChromeKeypath = @"IDS_CHROME";
 
 // Spacing used in the bottom alert view.
 constexpr CGFloat kSpacing = 24;
+
+// The spacing around the close button.
+constexpr CGFloat kCloseButtonSpacing = 20;
 
 // Vertical center offset for tablets.
 constexpr CGFloat kTabletCenterOffset = 40;
@@ -48,6 +63,12 @@ constexpr CGFloat kTabletCenterOffset = 40;
 // Subview for information and action part of the view.
 @property(nonatomic, strong) ConfirmationAlertViewController* alertScreen;
 
+// The navigation bar for the close button, if present.
+@property(nonatomic, strong) UINavigationBar* navigationBar;
+
+// The action handler for interactions in this View Controller.
+@property(nonatomic, weak) id<ConfirmationAlertActionHandler> actionHandler;
+
 @end
 
 NSString* const kDefaultBrowserInstructionsViewAnimationViewId =
@@ -59,58 +80,61 @@ NSString* const kDefaultBrowserInstructionsViewDarkAnimationViewId =
 @implementation DefaultBrowserInstructionsViewController
 
 - (instancetype)initWithDismissButton:(BOOL)hasDismissButton
+                       hasCloseButton:(BOOL)hasCloseButton
                      hasRemindMeLater:(BOOL)hasRemindMeLater
+            useDefaultAppsDestination:(BOOL)useDefaultAppsDestination
                              hasSteps:(BOOL)hasSteps
                         actionHandler:
                             (id<ConfirmationAlertActionHandler>)actionHandler
                             titleText:(NSString*)titleText {
   if ((self = [super init])) {
-    [self addVideoSection];
+    self.actionHandler = actionHandler;
+    useDefaultAppsDestination |= IsDefaultAppsDestinationAvailable() &&
+                                 IsUseDefaultAppsDestinationForPromosEnabled();
+    [self addVideoSection:useDefaultAppsDestination];
+    if (hasCloseButton) {
+      [self addNavigationBarAndCloseButton];
+    }
     [self addInformationSectionWithDismissButton:hasDismissButton
                                 hasRemindMeLater:hasRemindMeLater
+                       useDefaultAppsDestination:useDefaultAppsDestination
                                         hasSteps:hasSteps
                                    actionHandler:actionHandler
                                        titleText:titleText];
     [self.view setBackgroundColor:[UIColor colorNamed:kGrey100Color]];
 
-    if (@available(iOS 17, *)) {
-      NSArray<UITrait>* traits =
-          TraitCollectionSetForTraits(@[ UITraitUserInterfaceStyle.class ]);
-      [self registerForTraitChanges:traits
-                         withAction:@selector(selectAnimationForCurrentStyle)];
-    }
+    NSArray<UITrait>* traits =
+        TraitCollectionSetForTraits(@[ UITraitUserInterfaceStyle.class ]);
+    [self registerForTraitChanges:traits
+                       withAction:@selector(selectAnimationForCurrentStyle)];
   }
   return self;
 }
 
-#pragma mark - UIViewController
-
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (@available(iOS 17, *)) {
-    return;
-  }
-
-  [self selectAnimationForCurrentStyle];
-}
-#endif
-
 #pragma mark - Private
 
 // Adds the top part of the view which contains the video animation.
-- (void)addVideoSection {
+- (void)addVideoSection:(BOOL)useDefaultAppsDestination {
   NSString* animationAssetName;
   NSString* animationAssetNameDarkMode;
 
-  // TODO(crbug.com/40948842): Handle the case when the promo is displayed and
-  // the user switches between LTR and RLT.
-  if (base::i18n::IsRTL()) {
-    animationAssetName = kDefaultBrowserAnimationRtl;
-    animationAssetNameDarkMode = kDefaultBrowserAnimationRtlDarkmode;
+  if (useDefaultAppsDestination) {
+    if (base::i18n::IsRTL()) {
+      animationAssetName = kDefaultBrowserDefaultAppsAnimationRtl;
+      animationAssetNameDarkMode =
+          kDefaultBrowserDefaultAppsAnimationRtlDarkmode;
+    } else {
+      animationAssetName = kDefaultBrowserDefaultAppsAnimation;
+      animationAssetNameDarkMode = kDefaultBrowserDefaultAppsAnimationDarkmode;
+    }
   } else {
-    animationAssetName = kDefaultBrowserAnimation;
-    animationAssetNameDarkMode = kDefaultBrowserAnimationDarkmode;
+    if (base::i18n::IsRTL()) {
+      animationAssetName = kDefaultBrowserAnimationRtl;
+      animationAssetNameDarkMode = kDefaultBrowserAnimationRtlDarkmode;
+    } else {
+      animationAssetName = kDefaultBrowserAnimation;
+      animationAssetNameDarkMode = kDefaultBrowserAnimationDarkmode;
+    }
   }
 
   self.animationViewWrapper = [self createAnimation:animationAssetName];
@@ -123,6 +147,8 @@ NSString* const kDefaultBrowserInstructionsViewDarkAnimationViewId =
 
   // Set the text localization.
   NSDictionary* textProvider = @{
+    kBrowserAppKeypath :
+        l10n_util::GetNSString(IDS_IOS_DEFAULT_BROWSER_VIDEO_PROMO_BROWSER_APP),
     kDefaultBrowserAppKeypath : l10n_util::GetNSString(
         IDS_IOS_DEFAULT_BROWSER_VIDEO_PROMO_DEFAULT_BROWSER_APP),
     kChromeKeypath : l10n_util::GetNSString(IDS_IOS_SHORT_PRODUCT_NAME)
@@ -166,7 +192,7 @@ NSString* const kDefaultBrowserInstructionsViewDarkAnimationViewId =
   LottieAnimationConfiguration* config =
       [[LottieAnimationConfiguration alloc] init];
   config.animationName = animationAssetName;
-  config.loopAnimationCount = -1;  // Always loop.
+  config.shouldLoop = YES;
   return ios::provider::GenerateLottieAnimation(config);
 }
 
@@ -196,6 +222,7 @@ NSString* const kDefaultBrowserInstructionsViewDarkAnimationViewId =
 // If `titleText` is nil, default title will be used.
 - (void)addInformationSectionWithDismissButton:(BOOL)hasDismissButton
                               hasRemindMeLater:(BOOL)hasRemindMeLater
+                     useDefaultAppsDestination:(BOOL)useDefaultAppsDestination
                                       hasSteps:(BOOL)hasSteps
                                  actionHandler:
                                      (id<ConfirmationAlertActionHandler>)
@@ -226,14 +253,27 @@ NSString* const kDefaultBrowserInstructionsViewDarkAnimationViewId =
 
   // The view can have either instruction steps or subtitles.
   if (hasSteps) {
-    NSArray* defaultBrowserSteps = @[
-      l10n_util::GetNSString(
-          IDS_IOS_FIRST_RUN_DEFAULT_BROWSER_SCREEN_FIRST_STEP),
-      l10n_util::GetNSString(
-          IDS_IOS_FIRST_RUN_DEFAULT_BROWSER_SCREEN_SECOND_STEP),
-      l10n_util::GetNSString(
-          IDS_IOS_FIRST_RUN_DEFAULT_BROWSER_SCREEN_THIRD_STEP)
-    ];
+    NSMutableArray* defaultBrowserSteps = [[NSMutableArray alloc] init];
+    if (useDefaultAppsDestination) {
+      [defaultBrowserSteps
+          addObject:
+              l10n_util::GetNSString(
+                  IDS_IOS_FIRST_RUN_DEFAULT_BROWSER_SCREEN_DEFAULT_APPS_FIRST_STEP)];
+      [defaultBrowserSteps
+          addObject:
+              l10n_util::GetNSString(
+                  IDS_IOS_FIRST_RUN_DEFAULT_BROWSER_SCREEN_DEFAULT_APPS_SECOND_STEP)];
+    } else {
+      [defaultBrowserSteps
+          addObject:l10n_util::GetNSString(
+                        IDS_IOS_FIRST_RUN_DEFAULT_BROWSER_SCREEN_FIRST_STEP)];
+      [defaultBrowserSteps
+          addObject:l10n_util::GetNSString(
+                        IDS_IOS_FIRST_RUN_DEFAULT_BROWSER_SCREEN_SECOND_STEP)];
+    }
+    [defaultBrowserSteps
+        addObject:l10n_util::GetNSString(
+                      IDS_IOS_FIRST_RUN_DEFAULT_BROWSER_SCREEN_THIRD_STEP)];
 
     UIView* instructionView =
         [[InstructionView alloc] initWithList:defaultBrowserSteps];
@@ -242,8 +282,13 @@ NSString* const kDefaultBrowserInstructionsViewDarkAnimationViewId =
     alertScreen.underTitleView = instructionView;
     alertScreen.shouldFillInformationStack = YES;
   } else {
-    alertScreen.subtitleString = l10n_util::GetNSString(
-        IDS_IOS_DEFAULT_BROWSER_VIDEO_PROMO_SUBTITLE_TEXT);
+    if (useDefaultAppsDestination) {
+      alertScreen.subtitleString = l10n_util::GetNSString(
+          IDS_IOS_DEFAULT_BROWSER_VIDEO_PROMO_DEFAULT_APPS_SUBTITLE_TEXT);
+    } else {
+      alertScreen.subtitleString = l10n_util::GetNSString(
+          IDS_IOS_DEFAULT_BROWSER_VIDEO_PROMO_SUBTITLE_TEXT);
+    }
   }
 
   if (hasDismissButton) {
@@ -282,6 +327,48 @@ NSString* const kDefaultBrowserInstructionsViewDarkAnimationViewId =
     return -kTabletCenterOffset;
   }
   return 0;
+}
+
+// Helper to create the navigation bar.
+- (void)addNavigationBarAndCloseButton {
+  UINavigationBar* navigationBar = [[UINavigationBar alloc] init];
+  self.navigationBar = navigationBar;
+  navigationBar.translucent = YES;
+
+  UIBarButtonSystemItem buttonType = UIBarButtonSystemItemDone;
+  if (@available(iOS 26, *)) {
+    buttonType = UIBarButtonSystemItemCancel;
+  }
+
+  UINavigationItem* navigationItem = [[UINavigationItem alloc] init];
+  UIBarButtonItem* dismissButton = [[UIBarButtonItem alloc]
+      initWithBarButtonSystemItem:buttonType
+                           target:self
+                           action:@selector(didTapNavigationBarCloseButton)];
+  navigationItem.rightBarButtonItem = dismissButton;
+
+  navigationBar.translatesAutoresizingMaskIntoConstraints = NO;
+  [navigationBar setItems:@[ navigationItem ]];
+
+  [self.view addSubview:self.navigationBar];
+
+  [NSLayoutConstraint activateConstraints:@[
+    [self.navigationBar.topAnchor
+        constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor
+                       constant:kCloseButtonSpacing],
+    [navigationBar.leadingAnchor
+        constraintEqualToAnchor:self.view.leadingAnchor],
+    [navigationBar.trailingAnchor
+        constraintEqualToAnchor:self.view.trailingAnchor]
+  ]];
+}
+
+// Handle taps on the dismiss button.
+- (void)didTapNavigationBarCloseButton {
+  if ([self.actionHandler
+          respondsToSelector:@selector(confirmationAlertDismissAction)]) {
+    [self.actionHandler confirmationAlertDismissAction];
+  }
 }
 
 @end

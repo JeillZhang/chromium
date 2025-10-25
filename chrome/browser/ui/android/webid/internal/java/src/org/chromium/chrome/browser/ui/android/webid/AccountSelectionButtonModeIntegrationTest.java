@@ -47,6 +47,7 @@ import org.chromium.blink.mojom.RpMode;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.ui.android.webid.AccountSelectionProperties.HeaderProperties.HeaderType;
 import org.chromium.chrome.browser.ui.android.webid.data.Account;
+import org.chromium.chrome.browser.ui.android.webid.data.RelyingPartyData;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetTestSupport;
@@ -79,7 +80,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -98,7 +99,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
                             @Override
                             public Void answer(InvocationOnMock invocation) {
                                 mAccountSelection.showAccounts(
-                                        EXAMPLE_ETLD_PLUS_ONE,
+                                        new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                                         Arrays.asList(
                                                 mNewBobWithAddAccount, mReturningAnaWithAddAccount),
                                         Arrays.asList(mIdpDataWithAddAccount),
@@ -130,7 +131,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -149,7 +150,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
                             @Override
                             public Void answer(InvocationOnMock invocation) {
                                 mAccountSelection.showAccounts(
-                                        EXAMPLE_ETLD_PLUS_ONE,
+                                        new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                                         Arrays.asList(
                                                 mNewBobWithAddAccount, mReturningAnaWithAddAccount),
                                         Arrays.asList(mIdpDataWithAddAccount),
@@ -202,15 +203,16 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
                         /* secondaryDescription= */ null,
                         /* pictureBitmap= */ null,
                         /* circledBadgedPictureBitmap= */ null,
-                        /* isSignIn= */ true,
+                        /* isIdpClaimedSignIn= */ true,
                         /* isBrowserTrustedSignIn= */ false,
                         /* isFilteredOut= */ false,
+                        new int[0],
                         mIdpDataWithAddAccount);
 
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -229,7 +231,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
                             @Override
                             public Void answer(InvocationOnMock invocation) {
                                 mAccountSelection.showAccounts(
-                                        EXAMPLE_ETLD_PLUS_ONE,
+                                        new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                                         Arrays.asList(account, mReturningAnaWithAddAccount),
                                         Arrays.asList(mIdpDataWithAddAccount),
                                         Arrays.asList(account));
@@ -268,7 +270,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -311,7 +313,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -338,7 +340,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -367,7 +369,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount, mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -402,7 +404,9 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showLoadingDialog(
-                            EXAMPLE_ETLD_PLUS_ONE, TEST_ETLD_PLUS_ONE_2, RpContext.SIGN_IN);
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
+                            TEST_ETLD_PLUS_ONE_2,
+                            RpContext.SIGN_IN);
                 });
         pollUiThread(() -> getBottomSheetState() == BottomSheetController.SheetState.HALF);
 
@@ -418,7 +422,9 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showLoadingDialog(
-                            EXAMPLE_ETLD_PLUS_ONE, TEST_ETLD_PLUS_ONE_2, RpContext.SIGN_IN);
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
+                            TEST_ETLD_PLUS_ONE_2,
+                            RpContext.SIGN_IN);
                 });
         pollUiThread(() -> getBottomSheetState() == BottomSheetController.SheetState.HALF);
         BottomSheetTestSupport sheetSupport = new BottomSheetTestSupport(mBottomSheetController);
@@ -436,7 +442,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -468,7 +474,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -495,8 +501,8 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
-                            Arrays.asList(mNewBobWithAddAccount),
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
+                            Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
                     mAccountSelection.getMediator().setComponentShowTime(-1000);
@@ -521,7 +527,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -551,7 +557,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -586,7 +592,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -626,7 +632,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -673,7 +679,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -697,7 +703,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -728,7 +734,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAna, mNewBob),
                             Arrays.asList(mIdpData),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -755,7 +761,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -779,7 +785,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -808,7 +814,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -837,7 +843,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -857,7 +863,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showErrorDialog(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             TEST_ETLD_PLUS_ONE_2,
                             IDP_METADATA,
                             RpContext.SIGN_IN,
@@ -885,7 +891,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -906,10 +912,12 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showLoadingDialog(
-                            EXAMPLE_ETLD_PLUS_ONE, TEST_ETLD_PLUS_ONE_2, RpContext.SIGN_IN);
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
+                            TEST_ETLD_PLUS_ONE_2,
+                            RpContext.SIGN_IN);
                     mAccountSelection.getMediator().onModalDialogClosed();
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mReturningAnaWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -925,7 +933,9 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showLoadingDialog(
-                            EXAMPLE_ETLD_PLUS_ONE, TEST_ETLD_PLUS_ONE_2, RpContext.SIGN_IN);
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
+                            TEST_ETLD_PLUS_ONE_2,
+                            RpContext.SIGN_IN);
                 });
         pollUiThread(() -> getBottomSheetState() == BottomSheetController.SheetState.HALF);
 
@@ -949,7 +959,9 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showLoadingDialog(
-                            EXAMPLE_ETLD_PLUS_ONE, TEST_ETLD_PLUS_ONE_2, RpContext.SIGN_IN);
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
+                            TEST_ETLD_PLUS_ONE_2,
+                            RpContext.SIGN_IN);
                 });
         pollUiThread(() -> getBottomSheetState() == BottomSheetController.SheetState.HALF);
 
@@ -969,7 +981,9 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showLoadingDialog(
-                            EXAMPLE_ETLD_PLUS_ONE, TEST_ETLD_PLUS_ONE_2, RpContext.SIGN_IN);
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
+                            TEST_ETLD_PLUS_ONE_2,
+                            RpContext.SIGN_IN);
                 });
         pollUiThread(() -> getBottomSheetState() == BottomSheetController.SheetState.HALF);
 
@@ -994,7 +1008,9 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showLoadingDialog(
-                            EXAMPLE_ETLD_PLUS_ONE, TEST_ETLD_PLUS_ONE_2, RpContext.SIGN_IN);
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
+                            TEST_ETLD_PLUS_ONE_2,
+                            RpContext.SIGN_IN);
                 });
         pollUiThread(() -> getBottomSheetState() == BottomSheetController.SheetState.HALF);
 
@@ -1019,7 +1035,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -1048,7 +1064,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -1077,7 +1093,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -1102,7 +1118,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);
@@ -1133,7 +1149,7 @@ public class AccountSelectionButtonModeIntegrationTest extends AccountSelectionI
         runOnUiThreadBlocking(
                 () -> {
                     mAccountSelection.showAccounts(
-                            EXAMPLE_ETLD_PLUS_ONE,
+                            new RelyingPartyData(EXAMPLE_ETLD_PLUS_ONE, "", null),
                             Arrays.asList(mNewBobWithAddAccount),
                             Arrays.asList(mIdpDataWithAddAccount),
                             /* newAccounts= */ Collections.EMPTY_LIST);

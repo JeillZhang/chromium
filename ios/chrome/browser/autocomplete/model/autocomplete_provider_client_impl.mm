@@ -6,6 +6,7 @@
 
 #import "base/notreached.h"
 #import "base/strings/utf_string_conversions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/history/core/browser/history_service.h"
 #import "components/history/core/browser/top_sites.h"
 #import "components/keyed_service/core/service_access_type.h"
@@ -23,11 +24,13 @@
 #import "components/signin/public/identity_manager/identity_manager.h"
 #import "components/sync/service/sync_service.h"
 #import "components/unified_consent/url_keyed_data_collection_consent_helper.h"
+#import "ios/chrome/browser/aim/model/ios_chrome_aim_eligibility_service_factory.h"
 #import "ios/chrome/browser/autocomplete/model/autocomplete_classifier_factory.h"
 #import "ios/chrome/browser/autocomplete/model/autocomplete_scoring_model_service_factory.h"
 #import "ios/chrome/browser/autocomplete/model/in_memory_url_index_factory.h"
 #import "ios/chrome/browser/autocomplete/model/omnibox_pedal_implementation.h"
 #import "ios/chrome/browser/autocomplete/model/on_device_tail_model_service_factory.h"
+#import "ios/chrome/browser/autocomplete/model/prototype/gemini_prototype_omnibox_service_factory.h"
 #import "ios/chrome/browser/autocomplete/model/provider_state_service_factory.h"
 #import "ios/chrome/browser/autocomplete/model/remote_suggestions_service_factory.h"
 #import "ios/chrome/browser/autocomplete/model/shortcuts_backend_factory.h"
@@ -83,7 +86,7 @@ PrefService* AutocompleteProviderClientImpl::GetLocalState() {
 }
 
 std::string AutocompleteProviderClientImpl::GetApplicationLocale() const {
-  return GetApplicationContext()->GetApplicationLocale();
+  return GetApplicationContext()->GetApplicationLocaleStorage()->Get();
 }
 
 const AutocompleteSchemeClassifier&
@@ -199,6 +202,22 @@ AutocompleteProviderClientImpl::GetLensSuggestInputsWhenReady(
       << "GetLensSuggestInputsWhenReady is not implemented by default.";
 }
 
+tab_groups::TabGroupSyncService*
+AutocompleteProviderClientImpl::GetTabGroupSyncService() const {
+  return nullptr;
+}
+
+AimEligibilityService*
+AutocompleteProviderClientImpl::GetAimEligibilityService() const {
+  return IOSChromeAimEligibilityServiceFactory::GetForProfile(profile_);
+}
+
+GeminiPrototypeOmniboxService*
+AutocompleteProviderClientImpl::GetGeminiPrototypeOmniboxService() const {
+  return GeminiPrototypeOmniboxServiceFactory::GetForProfile(
+      ProfileIOS::FromBrowserState(profile_));
+}
+
 std::string AutocompleteProviderClientImpl::GetAcceptLanguages() const {
   return profile_->GetPrefs()->GetString(language::prefs::kAcceptLanguages);
 }
@@ -209,21 +228,19 @@ AutocompleteProviderClientImpl::GetEmbedderRepresentationOfAboutScheme() const {
 }
 
 std::vector<std::u16string> AutocompleteProviderClientImpl::GetBuiltinURLs() {
-  std::vector<std::string> chrome_builtins(
-      kChromeHostURLs, kChromeHostURLs + kNumberOfChromeHostURLs);
-  std::sort(chrome_builtins.begin(), chrome_builtins.end());
-
   std::vector<std::u16string> builtins;
-  for (auto& url : chrome_builtins) {
-    builtins.push_back(base::ASCIIToUTF16(url));
+  builtins.reserve(kChromeHostURLs.size());
+  for (const std::string_view host : kChromeHostURLs) {
+    builtins.push_back(base::UTF8ToUTF16(host));
   }
+  std::sort(builtins.begin(), builtins.end());
   return builtins;
 }
 
 std::vector<std::u16string>
 AutocompleteProviderClientImpl::GetBuiltinsToProvideAsUserTypes() {
-  return {base::ASCIIToUTF16(kChromeUIChromeURLsURL),
-          base::ASCIIToUTF16(kChromeUIVersionURL)};
+  return {base::ASCIIToUTF16(std::string_view(kChromeUIChromeURLsURL)),
+          base::ASCIIToUTF16(std::string_view(kChromeUIVersionURL))};
 }
 
 component_updater::ComponentUpdateService*
@@ -234,11 +251,6 @@ AutocompleteProviderClientImpl::GetComponentUpdateService() {
 signin::IdentityManager* AutocompleteProviderClientImpl::GetIdentityManager()
     const {
   return IdentityManagerFactory::GetForProfile(profile_);
-}
-
-tab_groups::TabGroupSyncService*
-AutocompleteProviderClientImpl::GetTabGroupSyncService() const {
-  return nullptr;
 }
 
 bool AutocompleteProviderClientImpl::IsOffTheRecord() const {
@@ -309,4 +321,9 @@ bool AutocompleteProviderClientImpl::in_background_state() const {
 void AutocompleteProviderClientImpl::set_in_background_state(
     bool in_background_state) {
   in_background_state_ = in_background_state;
+}
+
+base::WeakPtr<AutocompleteProviderClient>
+AutocompleteProviderClientImpl::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }

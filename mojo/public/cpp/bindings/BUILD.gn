@@ -6,7 +6,6 @@ import("//base/trace_event/tracing.gni")
 import("//build/buildflag_header.gni")
 import("//build/config/compiler/compiler.gni")
 import("//build/config/features.gni")
-import("//build/config/nacl/config.gni")
 import("//tools/ipc_fuzzer/ipc_fuzzer.gni")
 
 declare_args() {
@@ -201,6 +200,8 @@ component("bindings") {
     "lib/multiplex_router.h",
     "lib/native_enum_data.h",
     "lib/native_enum_serialization.h",
+    "lib/native_handle_type_converters.cc",
+    "lib/native_handle_type_converters.h",
     "lib/native_struct_serialization.cc",
     "lib/native_struct_serialization.h",
     "lib/pipe_control_message_handler.cc",
@@ -274,10 +275,7 @@ component("bindings") {
     "//mojo/public/interfaces/bindings",
   ]
 
-  deps = [
-    "//ipc:native_handle_type_converters",
-    "//mojo/core/embedder",
-  ]
+  deps = [ "//mojo/core/embedder" ]
 
   configs += [ "//build/config/compiler:wexit_time_destructors" ]
 

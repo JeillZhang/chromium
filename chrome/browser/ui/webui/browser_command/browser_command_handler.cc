@@ -22,6 +22,7 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/customize_chrome/side_panel_controller.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
+#include "chrome/browser/ui/tabs/split_tab_metrics.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/user_education/tutorial_identifiers.h"
@@ -38,6 +39,7 @@
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/core/common/safebrowsing_referral_methods.h"
 #include "components/saved_tab_groups/public/features.h"
+#include "components/tabs/public/tab_interface.h"
 #include "components/user_education/common/tutorial/tutorial_identifier.h"
 #include "components/user_education/common/tutorial/tutorial_service.h"
 #include "net/base/url_util.h"
@@ -48,10 +50,11 @@
 #include "ui/base/window_open_disposition_utils.h"
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_enabling.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/glic_settings_util.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
+#include "chrome/browser/glic/widget/glic_window_controller.h"
 #include "chrome/browser/ui/webui/webui_embedding_context.h"
 #endif  // BUILDFLAG(ENABLE_GLIC)
 
@@ -148,6 +151,13 @@ void BrowserCommandHandler::CanExecuteCommand(
     case Command::kOpenGlicSettings:
       can_execute = true;
       break;
+    case Command::kPrewarmGlicFre:
+      can_execute = true;
+      break;
+    case Command::kOpenSplitView:
+      // What's new module is gated on the kSideBySide flag already.
+      can_execute = true;
+      break;
   }
   std::move(callback).Run(can_execute);
 }
@@ -236,6 +246,12 @@ void BrowserCommandHandler::ExecuteCommandWithDisposition(
     }
     case Command::kOpenGlicSettings:
       OpenGlicSettings();
+      break;
+    case Command::kPrewarmGlicFre:
+      PrewarmGlicFre();
+      break;
+    case Command::kOpenSplitView:
+      OpenSplitView();
       break;
     default:
       NOTREACHED() << "Unspecified behavior for command " << id;
@@ -341,9 +357,6 @@ void BrowserCommandHandler::StartSavedTabGroupTutorial() {
 
 void BrowserCommandHandler::OpenGlic() {
 #if BUILDFLAG(ENABLE_GLIC)
-  if (!glic::GlicEnabling::IsEnabledForProfile(profile_)) {
-    return;
-  }
 
   glic::GlicKeyedService* glic_service = glic::GlicKeyedService::Get(profile_);
 
@@ -355,7 +368,8 @@ void BrowserCommandHandler::OpenGlic() {
 
   glic_service->window_controller().Toggle(
       browser_window, /*prevent_close=*/false,
-      glic::mojom::InvocationSource::kWhatsNew);
+      glic::mojom::InvocationSource::kWhatsNew,
+      /*prompt_suggestion=*/std::nullopt);
 #endif  // BUILDFLAG(ENABLE_GLIC)
 }
 
@@ -386,6 +400,24 @@ void BrowserCommandHandler::OpenGlicSettings() {
                   WindowOpenDisposition::SINGLETON_TAB);
   }
 #endif
+}
+
+void BrowserCommandHandler::PrewarmGlicFre() {
+#if BUILDFLAG(ENABLE_GLIC)
+  glic::GlicKeyedService* glic_service = glic::GlicKeyedService::Get(profile_);
+  if (glic_service) {
+    glic_service->TryPreloadFre(glic::GlicPrewarmingFreSource::kBrowserCommand);
+  }
+#endif  // BUILDFLAG(ENABLE_GLIC)
+}
+
+void BrowserCommandHandler::OpenSplitView() {
+  tabs::TabInterface* tab =
+      tabs::TabInterface::MaybeGetFromContents(web_contents_);
+  if (tab) {
+    chrome::NewSplitTab(tab->GetBrowserWindowInterface(),
+                        split_tabs::SplitTabCreatedSource::kWhatsNew);
+  }
 }
 
 void BrowserCommandHandler::OpenFeedbackForm() {

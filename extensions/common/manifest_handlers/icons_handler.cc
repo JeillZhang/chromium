@@ -13,6 +13,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/file_util.h"
@@ -22,6 +23,8 @@
 #include "extensions/common/manifest_handlers/icon_variants_handler.h"
 #include "extensions/strings/grit/extensions_strings.h"
 #include "ui/gfx/geometry/size.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -68,7 +71,7 @@ GURL IconsInfo::GetIconURL(const Extension* extension,
   const std::string& path =
       GetIcons(*extension, color_scheme).Get(size_in_px, match_type);
   return path.empty() ? GURL()
-                      : extension->ResolveExtensionURL(base::EscapePath(path));
+                      : extension->GetResourceURL(base::EscapePath(path));
 }
 
 bool IconsHandler::Parse(Extension* extension, std::u16string* error) {
@@ -82,7 +85,7 @@ bool IconsHandler::Parse(Extension* extension, std::u16string* error) {
 
   std::vector<std::string> warnings;
   if (!manifest_handler_helpers::LoadIconsFromDictionary(
-          *icons_dict, &icons_info->icons, error, &warnings)) {
+          *extension, *icons_dict, &icons_info->icons, error, &warnings)) {
     return false;
   }
   for (const auto& warning : warnings) {

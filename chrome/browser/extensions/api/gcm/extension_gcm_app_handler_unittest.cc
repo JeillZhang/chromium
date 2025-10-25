@@ -28,6 +28,7 @@
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/extensions/api/gcm/gcm_api.h"
 #include "chrome/browser/extensions/crx_installer.h"
+#include "chrome/browser/extensions/scoped_test_mv2_enabler.h"
 #include "chrome/browser/extensions/test_extension_service.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
@@ -41,10 +42,12 @@
 #include "components/gcm_driver/fake_gcm_app_handler.h"
 #include "components/gcm_driver/fake_gcm_client.h"
 #include "components/gcm_driver/fake_gcm_client_factory.h"
+#include "components/gcm_driver/fake_gcm_profile_service.h"
 #include "components/gcm_driver/gcm_client_factory.h"
 #include "components/gcm_driver/gcm_driver.h"
 #include "components/gcm_driver/gcm_profile_service.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/os_crypt/async/browser/test_utils.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
@@ -55,6 +58,7 @@
 #include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/uninstall_reason.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_features.h"
@@ -79,12 +83,15 @@
 #include "components/user_manager/user_manager_impl.h"
 #endif
 
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
+
 namespace extensions {
 
 namespace {
 
 const char kTestExtensionName[] = "FooBar";
 
+#if !BUILDFLAG(IS_ANDROID)
 void RequestProxyResolvingSocketFactoryOnUIThread(
     Profile* profile,
     base::WeakPtr<gcm::GCMProfileService> service,
@@ -106,6 +113,7 @@ void RequestProxyResolvingSocketFactory(
       FROM_HERE, base::BindOnce(&RequestProxyResolvingSocketFactoryOnUIThread,
                                 profile, service, std::move(receiver)));
 }
+#endif  // !BUILDFLAG(IS_ANDROID)
 
 }  // namespace
 
@@ -229,7 +237,11 @@ class FakeExtensionGCMAppHandler : public ExtensionGCMAppHandler {
 class ExtensionGCMAppHandlerTest : public testing::Test {
  public:
   static std::unique_ptr<KeyedService> BuildGCMProfileService(
+      os_crypt_async::OSCryptAsync* os_crypt,
       content::BrowserContext* context) {
+#if BUILDFLAG(IS_ANDROID)
+    return gcm::FakeGCMProfileService::Build(context);
+#else
     Profile* profile = Profile::FromBrowserContext(context);
     scoped_refptr<base::SequencedTaskRunner> ui_thread =
         content::GetUIThreadTaskRunner({});
@@ -248,11 +260,14 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
         gcm::GetProductCategoryForSubtypes(profile->GetPrefs()),
         IdentityManagerFactory::GetForProfile(profile),
         base::WrapUnique(new gcm::FakeGCMClientFactory(ui_thread, io_thread)),
-        ui_thread, io_thread, blocking_task_runner);
+        ui_thread, io_thread, blocking_task_runner, os_crypt);
+#endif  // BUILDFLAG(IS_ANDROID)
   }
 
   ExtensionGCMAppHandlerTest()
-      : task_environment_(content::BrowserTaskEnvironment::REAL_IO_THREAD) {
+      : task_environment_(content::BrowserTaskEnvironment::REAL_IO_THREAD),
+        os_crypt_(os_crypt_async::GetTestOSCryptAsyncForTesting(
+            /*is_sync_for_unittests=*/true)) {
     // Allow unpacked extensions without developer mode for testing.
     scoped_feature_list_.InitAndDisableFeature(
         extensions_features::kExtensionDisableUnsupportedDeveloper);
@@ -294,8 +309,9 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
 
     // Create GCMProfileService that talks with fake GCMClient.
     gcm::GCMProfileServiceFactory::GetInstance()->SetTestingFactoryAndUse(
-        profile(), base::BindRepeating(
-                       &ExtensionGCMAppHandlerTest::BuildGCMProfileService));
+        profile(),
+        base::BindRepeating(&ExtensionGCMAppHandlerTest::BuildGCMProfileService,
+                            os_crypt_.get()));
 
     // Create a fake version of ExtensionGCMAppHandler.
     gcm_app_handler_ =
@@ -427,6 +443,7 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
  private:
   base::test::ScopedFeatureList scoped_feature_list_;
   content::BrowserTaskEnvironment task_environment_;
+  std::unique_ptr<os_crypt_async::OSCryptAsync> os_crypt_;
   std::unique_ptr<content::InProcessUtilityThreadHelper>
       in_process_utility_thread_helper_;
   std::unique_ptr<TestingProfile> profile_;
@@ -442,6 +459,10 @@ class ExtensionGCMAppHandlerTest : public testing::Test {
   std::unique_ptr<FakeExtensionGCMAppHandler> gcm_app_handler_;
   gcm::GCMClient::Result registration_result_ = gcm::GCMClient::UNKNOWN_ERROR;
   gcm::GCMClient::Result unregistration_result_ = gcm::GCMClient::UNKNOWN_ERROR;
+
+  // TODO(https://crbug.com/40804030): Migrate this to only rely on MV3
+  // extensions.
+  ScopedTestMV2Enabler mv2_enabler_;
 };
 
 TEST_F(ExtensionGCMAppHandlerTest, AddAndRemoveAppHandler) {
@@ -485,8 +506,15 @@ TEST_F(ExtensionGCMAppHandlerTest, UnregisterOnExtensionUninstall) {
   waiter()->WaitUntilCompleted();
   EXPECT_EQ(instance_id::InstanceID::SUCCESS,
             gcm_app_handler()->delete_id_result());
+#if BUILDFLAG(IS_ANDROID)
+  // Unregistration is not supported on Android.
+  // TODO(crbug.com/421235963): Consider dropping support on other platforms.
+  EXPECT_EQ(gcm::GCMClient::UNKNOWN_ERROR,
+            gcm_app_handler()->unregistration_result());
+#else
   EXPECT_EQ(gcm::GCMClient::SUCCESS,
             gcm_app_handler()->unregistration_result());
+#endif
 }
 
 TEST_F(ExtensionGCMAppHandlerTest, UpdateExtensionWithGcmPermissionKept) {

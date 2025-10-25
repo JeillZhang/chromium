@@ -23,6 +23,8 @@ import org.chromium.chrome.browser.signin.services.SigninPreferencesManager;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.ui.signin.R;
 import org.chromium.chrome.browser.ui.signin.SigninAndHistorySyncActivityLauncher;
+import org.chromium.components.signin.SigninFeatureMap;
+import org.chromium.components.signin.SigninFeatures;
 import org.chromium.components.signin.base.CoreAccountInfo;
 import org.chromium.components.signin.identitymanager.ConsentLevel;
 import org.chromium.components.signin.identitymanager.IdentityManager;
@@ -76,7 +78,7 @@ public class BookmarkSigninPromoDelegate extends SigninPromoDelegate {
     }
 
     @Override
-    String getTitle() {
+    String getTitle(boolean hasAccountsOnDevice) {
         switch (mPromoState) {
             case PromoState.SIGNIN:
                 return mContext.getString(R.string.signin_promo_title_bookmarks);
@@ -89,7 +91,7 @@ public class BookmarkSigninPromoDelegate extends SigninPromoDelegate {
     }
 
     @Override
-    String getDescription() {
+    String getDescription(@Nullable String accountEmail) {
         switch (mPromoState) {
             case PromoState.SIGNIN:
                 return mContext.getString(R.string.signin_promo_description_bookmarks);
@@ -143,6 +145,11 @@ public class BookmarkSigninPromoDelegate extends SigninPromoDelegate {
             default:
                 throw new IllegalStateException("Forbidden promo type: " + mPromoState);
         }
+    }
+
+    @Override
+    boolean shouldShowSigninSnackbar() {
+        return SigninFeatureMap.isEnabled(SigninFeatures.ENABLE_SEAMLESS_SIGNIN);
     }
 
     @Override
@@ -213,16 +220,15 @@ public class BookmarkSigninPromoDelegate extends SigninPromoDelegate {
     private boolean canManuallyEnableSyncTypes() {
         SyncService syncService = SyncServiceFactory.getForProfile(mProfile);
         assumeNonNull(syncService);
-        boolean areTypesAlreadyEnabled =
-                syncService
-                        .getSelectedTypes()
-                        .containsAll(
-                                Set.of(
-                                        UserSelectableType.BOOKMARKS,
-                                        UserSelectableType.READING_LIST));
-        boolean areBookmarksManaged =
-                syncService.isTypeManagedByPolicy(UserSelectableType.BOOKMARKS);
 
-        return !areTypesAlreadyEnabled && !areBookmarksManaged;
+        for (@UserSelectableType
+        int type : Set.of(UserSelectableType.BOOKMARKS, UserSelectableType.READING_LIST)) {
+            boolean isTypeEnabled = syncService.getSelectedTypes().contains(type);
+            boolean isTypeManaged = syncService.isTypeManagedByPolicy(type);
+            if (!isTypeEnabled && !isTypeManaged) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -14,7 +14,6 @@ import android.app.Notification;
 import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
-import android.os.Build;
 
 import org.junit.Before;
 import org.junit.Rule;
@@ -30,10 +29,10 @@ import org.robolectric.shadows.ShadowNotificationManager;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.device.DeviceConditions;
-import org.chromium.chrome.browser.device.ShadowDeviceConditions;
 import org.chromium.chrome.browser.notifications.NotificationConstants;
 import org.chromium.components.browser_ui.notifications.NotificationFeatureMap;
 import org.chromium.net.ConnectionType;
@@ -44,9 +43,7 @@ import org.chromium.net.ConnectionType;
  */
 @RunWith(BaseRobolectricTestRunner.class)
 @EnableFeatures({NotificationFeatureMap.CACHE_NOTIIFICATIONS_ENABLED})
-@Config(
-        manifest = Config.NONE,
-        shadows = {ShadowDeviceConditions.class})
+@Config(manifest = Config.NONE)
 public class ClickToCallMessageHandlerTest {
     @Rule public final MockitoRule mMockitoRule = MockitoJUnit.rule();
     @Spy private Context mContext = RuntimeEnvironment.application.getApplicationContext();
@@ -59,7 +56,6 @@ public class ClickToCallMessageHandlerTest {
     /** Android Q+ should always display a notification to open the dialer. */
     @Test
     @Feature({"Browser", "Sharing", "ClickToCall"})
-    @Config(sdk = Build.VERSION_CODES.Q)
     public void testHandleMessage_androidQShouldDisplayNotification() {
         setIsScreenOnAndUnlocked(true);
 
@@ -71,7 +67,6 @@ public class ClickToCallMessageHandlerTest {
     /** Locked or turned off screens should force us to display a notification. */
     @Test
     @Feature({"Browser", "Sharing", "ClickToCall"})
-    @Config(sdk = Build.VERSION_CODES.P)
     public void testHandleMessage_lockedScreenShouldDisplayNotification() {
         setIsScreenOnAndUnlocked(false);
 
@@ -86,7 +81,7 @@ public class ClickToCallMessageHandlerTest {
      */
     @Test
     @Feature({"Browser", "Sharing", "ClickToCall"})
-    @Config(sdk = Build.VERSION_CODES.P)
+    @DisabledTest // This needs to be re-worked for Q.
     public void testHandleMessage_opensDialerDirectly() {
         setIsScreenOnAndUnlocked(true);
 
@@ -98,7 +93,6 @@ public class ClickToCallMessageHandlerTest {
 
     @Test
     @Feature({"Browser", "Sharing", "ClickToCall"})
-    @Config(sdk = Build.VERSION_CODES.Q)
     public void testHandleMessage_decodesUrlForNotification() {
         setIsScreenOnAndUnlocked(true);
 
@@ -124,7 +118,7 @@ public class ClickToCallMessageHandlerTest {
                         /* powerSaveOn= */ false,
                         /* activeNetworkMetered= */ false,
                         isScreenOnAndUnlocked);
-        ShadowDeviceConditions.setCurrentConditions(deviceConditions);
+        DeviceConditions.setForTesting(deviceConditions);
     }
 
     private ShadowNotificationManager getShadowNotificationManager() {

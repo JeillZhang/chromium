@@ -20,7 +20,6 @@
 #include "content/browser/webui/web_ui_impl.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/javascript_dialog_manager.h"
-#include "content/public/browser/media_player_watch_time.h"
 #include "content/public/browser/media_stream_request.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/select_audio_output_request.h"
@@ -29,7 +28,6 @@
 #include "content/public/common/javascript_dialog_type.h"
 #include "media/base/picture_in_picture_events_info.h"
 #include "media/mojo/mojom/media_player.mojom.h"
-#include "media/mojo/services/media_metrics_provider.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/pending_associated_remote.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
@@ -37,7 +35,6 @@
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/http/http_response_headers.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "services/device/public/mojom/geolocation_context.mojom.h"
 #include "services/device/public/mojom/wake_lock.mojom.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
@@ -53,22 +50,22 @@
 #include "third_party/blink/public/mojom/page/draggable_region.mojom-forward.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/accessibility/ax_mode.h"
+#include "ui/base/clipboard/clipboard_metadata.h"
 #include "ui/base/window_open_disposition.h"
 
 #if BUILDFLAG(IS_WIN)
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #endif
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
+#endif
+
+#if BUILDFLAG(IS_ANDROID) || (BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_IOS_TVOS))
 #include "services/device/public/mojom/nfc.mojom.h"
 #endif
 
 class GURL;
-
-namespace IPC {
-class Message;
-}
 
 namespace gfx {
 class Rect;
@@ -160,11 +157,7 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
 
   using ClipboardPasteData = content::ClipboardPasteData;
   using ClipboardEndpoint = content::ClipboardEndpoint;
-  using ClipboardMetadata = content::ClipboardMetadata;
-
-  // This is used to give the delegate a chance to filter IPC messages.
-  virtual bool OnMessageReceived(RenderFrameHostImpl* render_frame_host,
-                                 const IPC::Message& message);
+  using ClipboardMetadata = ui::ClipboardMetadata;
 
   // Notification from the renderer host that a suspicious navigation of the
   // main frame has been blocked. Allows the delegate to provide some UI to let
@@ -324,6 +317,12 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // Get the accessibility mode for the WebContents that owns this frame.
   virtual ui::AXMode GetAccessibilityMode();
 
+  // Asks whether the page is in a state of ignoring accessibility input events.
+  // This means if accessibility actions (other than hit testing) should be
+  // blocked. This is active while a ScopedIgnoreInputEvents token exists. See
+  // WebContents::IgnoreInputEvents for more information.
+  virtual bool ShouldIgnoreA11yInputEvents();
+
   // Called whenever the AXTreeID for the topmost RenderFrameHost has changed.
   virtual void AXTreeIDForMainFrameHasChanged() {}
 
@@ -343,9 +342,9 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // Gets the GeolocationContext associated with this delegate.
   virtual device::mojom::GeolocationContext* GetGeolocationContext();
 
-#if BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID) || (BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_IOS_TVOS))
   // Gets an NFC implementation within the context of this delegate.
-  virtual void GetNFC(RenderFrameHost* render_frame_host,
+  virtual void GetNFC(RenderFrameHostImpl* render_frame_host,
                       mojo::PendingReceiver<device::mojom::NFC> receiver);
 #endif
 
@@ -609,6 +608,15 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   virtual void OnTextCopiedToClipboard(RenderFrameHostImpl* render_frame_host,
                                        const std::u16string& copied_text) {}
 
+  // Allows embedder to override the clipboard types if a policy has inspected
+  // or modified the clipboard content. Called from
+  // `ClipboardHostImpl::ReadAvailableTypes()` by the browser process when a
+  // renderer needs to read available formats. Returns `std::nullopt` if there
+  // is no override for the current clipboard state.
+  virtual std::optional<std::vector<std::u16string>>
+  GetClipboardTypesIfPolicyApplied(
+      const ui::ClipboardSequenceNumberToken& seqno);
+
   // Notified when the main frame of `source` adjusts the page scale.
   virtual void OnPageScaleFactorChanged(PageImpl& source) {}
 
@@ -707,24 +715,6 @@ class CONTENT_EXPORT RenderFrameHostDelegate {
   // Returns the PrerenderHostRegistry to start/cancel prerendering. This
   // doesn't return nullptr except for some tests.
   virtual PrerenderHostRegistry* GetPrerenderHostRegistry();
-
-#if BUILDFLAG(ENABLE_PLUGINS)
-  virtual void OnPepperInstanceCreated(RenderFrameHostImpl* source,
-                                       int32_t pp_instance) {}
-  virtual void OnPepperInstanceDeleted(RenderFrameHostImpl* source,
-                                       int32_t pp_instance) {}
-  virtual void OnPepperStartsPlayback(RenderFrameHostImpl* source,
-                                      int32_t pp_instance) {}
-  virtual void OnPepperStopsPlayback(RenderFrameHostImpl* source,
-                                     int32_t pp_instance) {}
-  virtual void OnPepperPluginCrashed(RenderFrameHostImpl* source,
-                                     const base::FilePath& plugin_path,
-                                     base::ProcessId plugin_pid) {}
-  virtual void OnPepperPluginHung(RenderFrameHostImpl* source,
-                                  int plugin_child_id,
-                                  const base::FilePath& path,
-                                  bool is_hung) {}
-#endif
 
   // The load progress for the main frame was changed.
   virtual void DidChangeLoadProgressForMainFrame(RenderFrameHostImpl* source) {}

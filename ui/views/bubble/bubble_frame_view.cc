@@ -60,6 +60,8 @@ namespace views {
 
 namespace {
 
+constexpr int kMainImageBorderStrokeThickness = 1;
+
 // Get the |vertical| or horizontal amount that |available_bounds| overflows
 // |window_bounds|.
 int GetOverflowLength(const gfx::Rect& available_bounds,
@@ -115,7 +117,8 @@ BubbleFrameView::BubbleFrameView(const gfx::Insets& title_margins,
 
   auto minimize = CreateMinimizeButton(base::BindRepeating(
       [](BubbleFrameView* view, const ui::Event& event) {
-        if (view->input_protector_.IsPossiblyUnintendedInteraction(event)) {
+        if (view->input_protector_.IsPossiblyUnintendedInteraction(
+                event, /*allow_key_events=*/true)) {
           return;
         }
         view->GetWidget()->Minimize();
@@ -127,7 +130,8 @@ BubbleFrameView::BubbleFrameView(const gfx::Insets& title_margins,
 
   auto close = CreateCloseButton(base::BindRepeating(
       [](BubbleFrameView* view, const ui::Event& event) {
-        if (view->input_protector_.IsPossiblyUnintendedInteraction(event)) {
+        if (view->input_protector_.IsPossiblyUnintendedInteraction(
+                event, /*allow_key_events=*/true)) {
           return;
         }
         view->GetWidget()->CloseWithReason(
@@ -371,6 +375,11 @@ void BubbleFrameView::UpdateWindowIcon() {
 void BubbleFrameView::UpdateWindowTitle() {
   if (default_title_) {
     const WidgetDelegate* delegate = GetWidget()->widget_delegate();
+    // TODO(crbug.com/445859201): investigate which widget's delegate is null.
+    // This seems to happen on ChromeOS on a scheduled change of color mode.
+    if (!delegate) {
+      return;
+    }
     default_title_->SetVisible(delegate->ShouldShowWindowTitle() &&
                                !delegate->GetWindowTitle().empty());
     default_title_->SetText(delegate->GetWindowTitle());
@@ -452,7 +461,6 @@ void BubbleFrameView::UpdateMainImage() {
     // consider moving that functionality into ImageView or ImageModel without
     // having to specify an external size before painting.
     constexpr int kMainImageDialogWidthIncrease = 128;
-    constexpr int kBorderStrokeThickness = 1;
 
     // Use the `title_margins_` for the outer margins between the content and
     // the visible frame border. `border_insets` is the space outside the
@@ -462,9 +470,15 @@ void BubbleFrameView::UpdateMainImage() {
     const int border_margin_left = title_margins_.left();
     const int border_margin_top = title_margins_.top();
     const gfx::Insets border_insets = GetBorder()->GetInsets();
+    // To avoid the overlap between the left boundary of DialogClientView and
+    // the right boundary of image_view, which causes the right border to be
+    // invisible, the size of the image needs to be reduced by the width of the
+    // left and right borders of image_view. Meanwhile, DialogClientView should
+    // be laid out starting from the right side of the right border of
+    // image_view. Refer to the GetMainImageLeftInsets() for details.
     const int main_image_dimension = kMainImageDialogWidthIncrease -
                                      border_insets.left() - border_margin_left -
-                                     kBorderStrokeThickness;
+                                     kMainImageBorderStrokeThickness * 2;
     const int image_inset_left = border_insets.left() + border_margin_left;
     const int image_inset_top = border_insets.top() + border_margin_top;
     const gfx::Insets image_insets =
@@ -476,10 +490,10 @@ void BubbleFrameView::UpdateMainImage() {
     main_image_->SetImage(ui::ImageModel::FromImageSkia(
         gfx::ImageSkiaOperations::CreateCroppedCenteredRoundRectImage(
             gfx::Size(main_image_dimension, main_image_dimension),
-            border_radius - 2 * kBorderStrokeThickness,
+            border_radius - 2 * kMainImageBorderStrokeThickness,
             model.GetImage().AsImageSkia())));
     main_image_->SetBorder(views::CreateRoundedRectBorder(
-        kBorderStrokeThickness, border_radius, image_insets,
+        kMainImageBorderStrokeThickness, border_radius, image_insets,
         GetColorProvider()
             ? GetColorProvider()->GetColor(ui::kColorBubbleBorder)
             : gfx::kPlaceholderColor));
@@ -665,11 +679,17 @@ void BubbleFrameView::Layout(PassKey) {
   }
 
   // Lay out the client view.
-  LayoutSuperclass<NonClientFrameView>(this);
+  LayoutSuperclass<FrameView>(this);
 }
 
 void BubbleFrameView::OnThemeChanged() {
-  NonClientFrameView::OnThemeChanged();
+  // TODO(crbug.com/445859201): investigate which widget's delegate is null.
+  // This seems to happen on ChromeOS on a scheduled change of color mode.
+  if (!GetWidget() || !GetWidget()->widget_delegate()) {
+    return;
+  }
+
+  FrameView::OnThemeChanged();
   UpdateWindowTitle();
   UpdateSubtitle();
   ResetWindowControls();
@@ -704,7 +724,7 @@ void BubbleFrameView::ViewHierarchyChanged(
 }
 
 void BubbleFrameView::VisibilityChanged(View* starting_from, bool is_visible) {
-  NonClientFrameView::VisibilityChanged(starting_from, is_visible);
+  FrameView::VisibilityChanged(starting_from, is_visible);
   input_protector_.VisibilityChanged(is_visible);
 }
 
@@ -714,7 +734,7 @@ void BubbleFrameView::OnPaint(gfx::Canvas* canvas) {
 }
 
 void BubbleFrameView::PaintChildren(const PaintInfo& paint_info) {
-  NonClientFrameView::PaintChildren(paint_info);
+  FrameView::PaintChildren(paint_info);
 
   ui::PaintCache paint_cache;
   ui::PaintRecorder recorder(
@@ -840,6 +860,10 @@ bool BubbleFrameView::GetDisplayVisibleArrow() const {
 
 void BubbleFrameView::SetBackgroundColor(ui::ColorVariant color) {
   bubble_border_->SetColor(color);
+  if (!GetWidget()) {
+    return;
+  }
+
   UpdateClientViewBackground();
   SchedulePaint();
 }
@@ -872,8 +896,15 @@ void BubbleFrameView::UpdateClientViewBackground() {
         background_color().ResolveToSkColor(GetWidget()->GetColorProvider());
     const bool is_opaque = SkColor4f::FromColor(color).isOpaque();
     client_view->layer()->SetFillsBoundsOpaquely(is_opaque);
-    client_view->SetBackground(is_opaque ? CreateSolidBackground(color)
-                                         : nullptr);
+
+    const bool needs_background = is_opaque;
+    const bool has_background = !!client_view->background();
+    if (needs_background != has_background ||
+        (client_view->background() &&
+         client_view->background()->color() != background_color())) {
+      client_view->SetBackground(needs_background ? CreateSolidBackground(color)
+                                                  : nullptr);
+    }
   }
 }
 
@@ -953,7 +984,7 @@ gfx::Insets BubbleFrameView::GetClientViewInsets() const {
 gfx::Rect BubbleFrameView::GetAvailableScreenBounds(
     const gfx::Rect& rect) const {
   // The bubble attempts to fit within the current screen bounds.
-  return display::Screen::GetScreen()
+  return display::Screen::Get()
       ->GetDisplayNearestPoint(rect.CenterPoint())
       .work_area();
 }
@@ -1239,8 +1270,13 @@ int BubbleFrameView::GetMainImageLeftInsets() const {
   if (!main_image_->GetVisible()) {
     return 0;
   }
+  // Increase kMainImageBorderStrokeThickness to ensure that the layout of the
+  // right area starts from the right edge of the border, preventing the
+  // background color of the right area from overlapping with the border of
+  // image_view.
   return main_image_->GetPreferredSize({}).width() -
-         main_image_->GetBorder()->GetInsets().right();
+         main_image_->GetBorder()->GetInsets().right() +
+         kMainImageBorderStrokeThickness;
 }
 
 gfx::Point BubbleFrameView::GetButtonAreaTopRight() const {

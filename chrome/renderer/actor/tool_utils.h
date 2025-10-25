@@ -9,13 +9,15 @@
 #include <optional>
 #include <string>
 
+#include "base/functional/callback_forward.h"
+#include "base/memory/weak_ptr.h"
 #include "chrome/common/actor.mojom-forward.h"
+#include "chrome/renderer/actor/tool_base.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 
 namespace blink {
 class WebNode;
-class WebFrameWidget;
 }  // namespace blink
 
 namespace content {
@@ -28,7 +30,12 @@ class PointF;
 
 namespace actor {
 
-blink::WebNode GetNodeFromId(const content::RenderFrame& frame,
+struct ResolvedTarget;
+class ToolBase;
+
+// Returns the Blink node for the given DOMNodeId if one exists and its document
+// has the given frame as a local root. Returns a null WebNode otherwise.
+blink::WebNode GetNodeFromId(const content::RenderFrame& local_root_frame,
                              int32_t node_id);
 
 // Returns the center coordinates of the node's bounding box in widget space.
@@ -45,15 +52,22 @@ bool IsNodeFocused(const content::RenderFrame& frame,
 bool IsPointWithinViewport(const gfx::PointF& point,
                            const content::RenderFrame& frame);
 
+// Returns true if node appears (even partially) in the viewport.
+bool IsNodeWithinViewport(const blink::WebNode& node);
+
 std::string ToDebugString(const mojom::ToolTargetPtr& target);
 
 // Create and dispatch the mouse down event and corresponding mouse up, click
 // event to the widget.
-mojom::ActionResultPtr CreateAndDispatchClick(
+void CreateAndDispatchClick(
     blink::WebMouseEvent::Button button,
     int count,
-    const gfx::PointF& click_point,
-    blink::WebFrameWidget* widget);
+    const ResolvedTarget& click_point,
+    base::WeakPtr<ToolBase> tool,
+    base::OnceCallback<void(mojom::ActionResultPtr)> on_complete);
+
+// Converts Node to a debug string of tag name, id and class.
+std::string NodeToDebugSring(const blink::WebNode& node);
 
 }  // namespace actor
 

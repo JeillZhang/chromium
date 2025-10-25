@@ -46,7 +46,6 @@
 #include "components/policy/proto/chrome_extension_policy.pb.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "content/public/test/browser_test.h"
-#include "crypto/rsa_private_key.h"
 #include "crypto/sha2.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -347,7 +346,7 @@ class SigninExtensionsDeviceCloudPolicyBrowserTest
   // Intercepts the request for the test extension update manifest.
   std::unique_ptr<net::test_server::HttpResponse> InterceptUpdateManifest(
       const net::test_server::HttpRequest& request) {
-    if (request.GetURL().path() != kTestExtensionUpdateManifestPath) {
+    if (request.GetURL().GetPath() != kTestExtensionUpdateManifestPath) {
       return nullptr;
     }
 

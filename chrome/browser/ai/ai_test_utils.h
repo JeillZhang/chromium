@@ -5,12 +5,16 @@
 #ifndef CHROME_BROWSER_AI_AI_TEST_UTILS_H_
 #define CHROME_BROWSER_AI_AI_TEST_UTILS_H_
 
+#include <cstdint>
+#include <vector>
+
+#include "base/functional/callback_forward.h"
 #include "base/supports_user_data.h"
 #include "chrome/browser/ai/ai_manager.h"
 #include "chrome/browser/optimization_guide/mock_optimization_guide_keyed_service.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "components/component_updater/mock_component_updater_service.h"
-#include "components/optimization_guide/core/mock_optimization_guide_model_executor.h"
+#include "components/optimization_guide/core/model_execution/test/mock_on_device_capability.h"
 #include "components/update_client/crx_update_item.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -111,11 +115,24 @@ class AITestUtils {
     mojo::PendingRemote<blink::mojom::ModelDownloadProgressObserver>
     BindNewPipeAndPassRemote();
 
+    // Expects that the next `OnDownloadProgressUpdate` is called with
+    // `expected_downloaded_bytes` and `expected_total_bytes`. Once it receives
+    // an update, calls `callback`.
+    void ExpectReceivedUpdate(uint64_t expected_downloaded_bytes,
+                              uint64_t expected_total_bytes,
+                              base::OnceClosure callback);
+
+    // Overload that waits until the update is received.
     void ExpectReceivedUpdate(uint64_t expected_downloaded_bytes,
                               uint64_t expected_total_bytes);
 
     // Same as `ExpectReceivedUpdate` except it normalizes
     // `expected_downloaded_bytes` and `expected_total_bytes`.
+    void ExpectReceivedNormalizedUpdate(uint64_t expected_downloaded_bytes,
+                                        uint64_t expected_total_bytes,
+                                        base::OnceClosure callback);
+
+    // Overload that waits until the update is received.
     void ExpectReceivedNormalizedUpdate(uint64_t expected_downloaded_bytes,
                                         uint64_t expected_total_bytes);
 

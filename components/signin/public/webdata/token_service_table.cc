@@ -10,6 +10,8 @@
 #include "base/logging.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/strcat.h"
+#include "base/strings/string_util.h"
 #include "components/os_crypt/async/common/encryptor.h"
 #include "components/webdata/common/web_database.h"
 #include "sql/statement.h"
@@ -43,6 +45,11 @@ enum class SetTokenResult {
   kSqlFailure = 2,
   kMaxValue = kSqlFailure,
 };
+
+void RecordRemoveOtherTokensHistogram(size_t remove_count) {
+  base::UmaHistogramCounts100("Signin.TokenTable.RemoveOtherTokensCount",
+                              remove_count);
+}
 
 }  // namespace
 
@@ -114,6 +121,34 @@ bool TokenServiceTable::RemoveTokenForService(const std::string& service) {
   return result;
 }
 
+bool TokenServiceTable::RemoveOtherTokens(
+    const std::vector<std::string>& services_to_keep) {
+  if (services_to_keep.empty()) {
+    bool result = RemoveAllTokens();
+    if (result) {
+      RecordRemoveOtherTokensHistogram(db()->GetLastChangeCount());
+    }
+    return result;
+  }
+
+  std::vector<std::string_view> placeholders(services_to_keep.size(), "?");
+  std::string query =
+      base::StrCat({"DELETE FROM token_service WHERE service NOT IN (",
+                    base::JoinString(placeholders, ","), ")"});
+
+  sql::Statement s(db()->GetUniqueStatement(query));
+  for (size_t i = 0; i < services_to_keep.size(); ++i) {
+    s.BindString(i, services_to_keep[i]);
+  }
+
+  bool result = s.Run();
+  LOG_IF(ERROR, !result) << "Failed to remove other tokens";
+  if (result) {
+    RecordRemoveOtherTokensHistogram(db()->GetLastChangeCount());
+  }
+  return result;
+}
+
 bool TokenServiceTable::SetTokenForService(
     const std::string& service,
     const std::string& token,
@@ -164,15 +199,11 @@ TokenServiceTable::Result TokenServiceTable::GetAllTokens(
   while (s.Step()) {
     ReadOneTokenResult read_token_result = READ_ONE_TOKEN_MAX_VALUE;
 
-    std::string encrypted_token;
     std::string decrypted_token;
-    std::string service;
-    std::vector<uint8_t> wrapped_binding_key;
-    service = s.ColumnString(0);
-    bool entry_ok = !service.empty() &&
-                    s.ColumnBlobAsString(1, &encrypted_token) &&
-                    s.ColumnBlobAsVector(2, &wrapped_binding_key);
-    if (entry_ok) {
+    std::string service = s.ColumnString(0);
+    if (!service.empty()) {
+      std::string encrypted_token = s.ColumnBlobAsString(1);
+      std::vector<uint8_t> wrapped_binding_key = s.ColumnBlobAsVector(2);
       os_crypt_async::Encryptor::DecryptFlags flags;
       if (encryptor()->DecryptString(encrypted_token, &decrypted_token,
                                      &flags)) {

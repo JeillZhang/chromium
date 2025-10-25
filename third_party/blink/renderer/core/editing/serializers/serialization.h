@@ -62,6 +62,8 @@ struct ShadowRootInclusion final {
     // Include any shadow root (open or closed) marked `serializable`. Also
     // include any shadow root in the include_shadow_roots list.
     kIncludeAnySerializableShadowRoots,
+    // Include all shadow roots for requests by the inspector.
+    kIncludeAllShadowRootsForInspector,
   };
 
   ShadowRootInclusion() = default;
@@ -91,6 +93,7 @@ DocumentFragment* CreateFragmentForInnerOuterHTML(
     ParserContentPolicy,
     Element::ParseDeclarativeShadowRoots parse_declarative_shadows,
     Element::ForceHtml force_html,
+    CustomElementRegistry* registry,
     ExceptionState&);
 DocumentFragment* CreateFragmentForTransformToFragment(
     const String&,

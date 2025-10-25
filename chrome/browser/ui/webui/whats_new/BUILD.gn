@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//chrome/common/features.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 
 assert(!is_android && !is_fuchsia)
@@ -27,6 +28,8 @@ source_set("whats_new") {
     sources += [
       "whats_new_fetcher.h",
       "whats_new_handler.h",
+      "whats_new_interaction_data.cc",
+      "whats_new_interaction_data.h",
       "whats_new_registrar.h",
       "whats_new_storage_service_impl.h",
       "whats_new_ui.h",
@@ -44,6 +47,10 @@ source_set("whats_new") {
       "//ui/webui",
       "//ui/webui/resources/js/browser_command:mojo_bindings",
     ]
+
+    if (enable_glic) {
+      public_deps += [ "//chrome/browser/glic" ]
+    }
   }
 }
 source_set("impl") {
@@ -103,6 +110,7 @@ if (is_linux || is_mac || is_win) {
       "//base/test:test_support",
       "//chrome/browser/ui",
       "//chrome/browser/ui:test_support",
+      "//chrome/browser/ui:ui_features",
       "//chrome/browser/ui/hats",
       "//chrome/browser/ui/hats:test_support",
       "//chrome/common:chrome_features",
@@ -132,6 +140,7 @@ if (!is_android && !is_chromeos) {
       "//base/test:test_support",
       "//chrome/browser:browser_process",
       "//chrome/browser:global_features",
+      "//chrome/browser/ui:ui_features",
       "//chrome/common:version_header",
       "//chrome/test:test_support_ui",
       "//components/user_education/common",

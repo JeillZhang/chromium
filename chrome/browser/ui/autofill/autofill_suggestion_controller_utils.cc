@@ -43,7 +43,9 @@ bool IsAcceptableSuggestionType(SuggestionType id) {
 
 bool IsFooterSuggestionType(SuggestionType type) {
   switch (type) {
+    case SuggestionType::kAllLoyaltyCardsEntry:
     case SuggestionType::kAllSavedPasswordsEntry:
+    case SuggestionType::kFreeformFooter:
     case SuggestionType::kManageAddress:
     case SuggestionType::kManageAutofillAi:
     case SuggestionType::kManageCreditCard:
@@ -83,6 +85,8 @@ bool IsFooterSuggestionType(SuggestionType type) {
     case SuggestionType::kMerchantPromoCodeEntry:
     case SuggestionType::kMixedFormMessage:
     case SuggestionType::kPasswordEntry:
+    case SuggestionType::kBackupPasswordEntry:
+    case SuggestionType::kTroubleSigningInEntry:
     case SuggestionType::kPasswordFieldByFieldFilling:
     case SuggestionType::kPlusAddressError:
     case SuggestionType::kSaveAndFillCreditCardEntry:
@@ -91,10 +95,19 @@ bool IsFooterSuggestionType(SuggestionType type) {
     case SuggestionType::kVirtualCreditCardEntry:
     case SuggestionType::kIdentityCredential:
     case SuggestionType::kWebauthnCredential:
-    case SuggestionType::kWebauthnSignInWithAnotherDevice:
     case SuggestionType::kFillAutofillAi:
     case SuggestionType::kBnplEntry:
+    case SuggestionType::kOneTimePasswordEntry:
       return false;
+    case SuggestionType::kWebauthnSignInWithAnotherDevice:
+      // The hybrid item is reintroduced as a footer.
+#if !BUILDFLAG(IS_ANDROID)
+      return base::FeatureList::IsEnabled(
+          password_manager::features::
+              kAutofillReintroduceHybridPasskeyDropdownItem);
+#else
+      return false;
+#endif  // !BUILDFLAG(IS_ANDROID)
   }
 }
 
@@ -227,12 +240,12 @@ std::vector<Suggestion> UpdateSuggestionsFromDataList(
   }
 
   // Prepend the parameters to the suggestions we already have.
-  suggestions.insert(suggestions.begin(), options.size(), Suggestion());
+  suggestions.insert(suggestions.begin(), options.size(),
+                     Suggestion(SuggestionType::kDatalistEntry));
   for (size_t i = 0; i < options.size(); i++) {
     suggestions[i].main_text =
         Suggestion::Text(options[i].value, Suggestion::Text::IsPrimary(true));
     suggestions[i].labels = {{Suggestion::Text(options[i].text)}};
-    suggestions[i].type = SuggestionType::kDatalistEntry;
   }
   return suggestions;
 }

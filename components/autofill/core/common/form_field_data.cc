@@ -31,7 +31,7 @@ namespace {
 
 // Increment this anytime pickle format is modified as well as provide
 // deserialization routine from previous kFormFieldDataPickleVersion format.
-const int kFormFieldDataPickleVersion = 9;
+const int kFormFieldDataPickleVersion = 10;
 
 void WriteSelectOption(const SelectOption& option, base::Pickle* pickle) {
   pickle->WriteString16(option.value);
@@ -257,91 +257,17 @@ bool DeserializeSection11(base::PickleIterator* iter,
   return true;
 }
 
-}  // namespace
-
-Section Section::FromAutocomplete(Section::Autocomplete autocomplete) {
-  Section section;
-  if (autocomplete.section.empty() && autocomplete.mode == HtmlFieldMode::kNone)
-    return section;
-  section.value_ = std::move(autocomplete);
-  return section;
-}
-
-Section Section::FromFieldIdentifier(
-    const FormFieldData& field,
-    base::flat_map<LocalFrameToken, size_t>& frame_token_ids) {
-  Section section;
-  // Set the section's value based on the field identifiers: the field's name,
-  // mapped frame id, renderer id. We do not use LocalFrameTokens but instead
-  // map them to consecutive integers using `frame_token_ids`, which uniquely
-  // identify a frame within a given FormStructure. Since we do not intend to
-  // compare sections from different FormStructures, this is sufficient.
-  //
-  // We intentionally do not include the LocalFrameToken in the section
-  // because frame tokens should not be sent to a renderer.
-  //
-  // TODO(crbug.com/40200532): Remove special handling of FrameTokens.
-  size_t generated_frame_id =
-      frame_token_ids.emplace(field.host_frame(), frame_token_ids.size())
-          .first->second;
-  section.value_ = FieldIdentifier(base::UTF16ToUTF8(field.name()),
-                                   generated_frame_id, field.renderer_id());
-  return section;
-}
-
-Section::Section() = default;
-
-Section::Section(const Section& section) = default;
-
-Section::~Section() = default;
-
-Section::operator bool() const {
-  return !is_default();
-}
-
-bool Section::is_from_autocomplete() const {
-  return std::holds_alternative<Autocomplete>(value_);
-}
-
-bool Section::is_from_fieldidentifier() const {
-  return std::holds_alternative<FieldIdentifier>(value_);
-}
-
-bool Section::is_default() const {
-  return std::holds_alternative<Default>(value_);
-}
-
-std::string Section::ToString() const {
-  static constexpr char kDefaultSection[] = "-default";
-
-  std::string section_name;
-  if (const Autocomplete* autocomplete = std::get_if<Autocomplete>(&value_)) {
-    // To prevent potential section name collisions, append `kDefaultSection`
-    // suffix to fields without a `HtmlFieldMode`. Without this, 'autocomplete'
-    // attribute values "section--shipping street-address" and "shipping
-    // street-address" would have the same prefix.
-    section_name = autocomplete->section +
-                   (autocomplete->mode != HtmlFieldMode::kNone
-                        ? "-" + HtmlFieldModeToString(autocomplete->mode)
-                        : kDefaultSection);
-  } else if (const FieldIdentifier* f = std::get_if<FieldIdentifier>(&value_)) {
-    FieldIdentifier field_identifier = *f;
-    section_name = base::StrCat(
-        {field_identifier.field_name, "_",
-         base::NumberToString(field_identifier.local_frame_id), "_",
-         base::NumberToString(field_identifier.field_renderer_id.value())});
+bool DeserializeSection13(base::PickleIterator* iter,
+                          FormFieldData* field_data) {
+  std::u16string nonce;
+  if (!iter->ReadString16(&nonce)) {
+    return false;
   }
-
-  return section_name.empty() ? kDefaultSection : section_name;
+  field_data->set_nonce(std::move(nonce));
+  return true;
 }
 
-LogBuffer& operator<<(LogBuffer& buffer, const Section& section) {
-  return buffer << section.ToString();
-}
-
-std::ostream& operator<<(std::ostream& os, const Section& section) {
-  return os << section.ToString();
-}
+}  // namespace
 
 LogBuffer& operator<<(LogBuffer& buffer, FormControlType type) {
   return buffer << FormControlTypeToString(type);
@@ -368,17 +294,6 @@ base::optional_ref<const SelectOption> FormFieldData::selected_option() const {
   return std::nullopt;
 }
 
-bool FormFieldData::SameFieldAs(const FormFieldData& field) const {
-  auto equality_tuple = [](const FormFieldData& f) {
-    return std::tie(f.label_, f.name_, f.name_attribute_, f.id_attribute_,
-                    f.form_control_type_, f.autocomplete_attribute_,
-                    f.placeholder_, f.max_length_, f.css_classes_,
-                    f.is_focusable_, f.should_autocomplete_, f.role_,
-                    f.text_direction_, f.options_);
-  };
-  return equality_tuple(*this) == equality_tuple(field);
-}
-
 bool FormFieldData::IsTextInputElement() const {
   return form_control_type() == FormControlType::kInputText ||
          form_control_type() == FormControlType::kInputPassword ||
@@ -397,9 +312,25 @@ bool FormFieldData::IsSelectElement() const {
   return form_control_type() == FormControlType::kSelectOne;
 }
 
+bool FormFieldData::IsFocusable() const {
+  if (base::FeatureList::IsEnabled(
+          features::kAutofillSupportPresentationRole)) {
+    return is_focusable();
+  }
+  return is_focusable() && role() != RoleAttribute::kPresentation;
+}
+
 // static
 bool FormFieldData::DeepEqual(const FormFieldData& a, const FormFieldData& b) {
-  return a.global_id() == b.global_id() && a.SameFieldAs(b);
+  auto equality_tuple = [](const FormFieldData& f) {
+    return std::tie(f.renderer_id_, f.host_frame_, f.label_, f.name_,
+                    f.name_attribute_, f.id_attribute_, f.nonce_,
+                    f.form_control_type_, f.autocomplete_attribute_,
+                    f.placeholder_, f.max_length_, f.css_classes_,
+                    f.is_focusable_, f.should_autocomplete_, f.role_,
+                    f.text_direction_, f.options_);
+  };
+  return equality_tuple(a) == equality_tuple(b);
 }
 
 FormFieldData::FillData::FillData() = default;
@@ -410,7 +341,6 @@ FormFieldData::FillData::FillData(const FormFieldData& field)
     : value(field.value()),
       renderer_id(field.renderer_id()),
       host_form_id(field.host_form_id()),
-      section(field.section()),
       is_autofilled(field.is_autofilled()),
       force_override(field.force_override()) {}
 
@@ -459,7 +389,11 @@ std::optional<FormControlType> StringToFormControlTypeDiscouraged(
        i <= base::to_underlying(FormControlType::kMaxValue); ++i) {
     FormControlType type = static_cast<FormControlType>(i);
     if (mojom::IsKnownEnumValue(type) &&
-        type_string == FormControlTypeToString(type)) {
+        type_string == FormControlTypeToString(type) &&
+        ((type != FormControlType::kInputCheckbox &&
+          type != FormControlType::kInputRadio) ||
+         !base::FeatureList::IsEnabled(
+             features::kAutofillIgnoreCheckableElements))) {
       return type;
     }
   }
@@ -488,6 +422,7 @@ void SerializeFormFieldData(const FormFieldData& field_data,
   pickle->WriteUInt32(field_data.properties_mask());
   pickle->WriteString16(field_data.id_attribute());
   pickle->WriteString16(field_data.name_attribute());
+  pickle->WriteString16(field_data.nonce());
 }
 
 bool DeserializeFormFieldData(base::PickleIterator* iter,
@@ -619,6 +554,23 @@ bool DeserializeFormFieldData(base::PickleIterator* iter,
       }
       break;
     }
+    case 10: {
+      if (!DeserializeSection1(iter, &temp_form_field_data) ||
+          !DeserializeSection6(iter, &temp_form_field_data) ||
+          !DeserializeSection7(iter, &temp_form_field_data) ||
+          !DeserializeSection2(iter, &temp_form_field_data) ||
+          !DeserializeSection12(iter, &temp_form_field_data) ||
+          !DeserializeSection4(iter, &temp_form_field_data) ||
+          !DeserializeSection8(iter, &temp_form_field_data) ||
+          !DeserializeSection9(iter, &temp_form_field_data) ||
+          !DeserializeSection10(iter, &temp_form_field_data) ||
+          !DeserializeSection11(iter, &temp_form_field_data) ||
+          !DeserializeSection13(iter, &temp_form_field_data)) {
+        LOG(ERROR) << "Could not deserialize FormFieldData from pickle";
+        return false;
+      }
+      break;
+    }
     default: {
       LOG(ERROR) << "Unknown FormFieldData pickle version " << version;
       return false;
@@ -706,7 +658,6 @@ LogBuffer& operator<<(LogBuffer& buffer, const FormFieldData& field) {
                  : "");
   buffer << Tr{} << "Aria label:" << field.aria_label();
   buffer << Tr{} << "Aria description:" << field.aria_description();
-  buffer << Tr{} << "Section:" << field.section();
   buffer << Tr{} << "Is focusable:" << field.is_focusable();
   buffer << Tr{} << "Is enabled:" << field.is_enabled();
   buffer << Tr{} << "Is readonly:" << field.is_readonly();

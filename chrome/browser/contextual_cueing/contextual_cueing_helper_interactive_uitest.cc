@@ -16,6 +16,7 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
@@ -23,6 +24,7 @@
 #include "chrome/browser/ui/tabs/glic_nudge_delegate.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+#include "chrome/browser/ui/views/interaction/browser_elements_views.h"
 #include "chrome/browser/ui/views/tabs/glic_button.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_action_container.h"
 #include "chrome/common/chrome_features.h"
@@ -30,6 +32,7 @@
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/optimization_guide/core/hints/optimization_metadata.h"
+#include "components/optimization_guide/core/optimization_guide_proto_util.h"
 #include "components/optimization_guide/proto/contextual_cueing_metadata.pb.h"
 #include "components/optimization_guide/proto/icon_view_metadata.pb.h"
 #include "components/page_content_annotations/core/page_content_annotations_features.h"
@@ -50,6 +53,7 @@ class FakeGlicNudgeDelegate : public GlicNudgeDelegate {
       future_.SetValue();
     }
   }
+  void OnHideGlicNudgeUI() override { last_nudge_label_ = ""; }
   bool GetIsShowingGlicNudge() override { return !last_nudge_label_.empty(); }
   void WaitUntilValidNudge() { future_.Get(); }
   std::string last_nudge_label_;
@@ -95,7 +99,8 @@ class ContextualCueingHelperBrowserTest
       cueing_metadata = *override_metadata;
     }
     optimization_guide::OptimizationMetadata metadata;
-    metadata.SetAnyMetadataForTesting(cueing_metadata);
+    metadata.set_any_metadata(
+        optimization_guide::AnyWrapProto(cueing_metadata));
     OptimizationGuideKeyedServiceFactory::GetForProfile(browser()->profile())
         ->AddHintForTesting(
             https_server_.GetURL("enabled.com",
@@ -112,11 +117,8 @@ class ContextualCueingHelperBrowserTest
   }
 
   glic::GlicButton* GetGlicButtonForBrowser(Browser* browser) {
-    TabStripActionContainer* const container =
-        BrowserView::GetBrowserViewForBrowser(browser)
-            ->tab_strip_region_view()
-            ->GetTabStripActionContainer();
-    return container->GetGlicButton();
+    return BrowserElementsViews::From(browser)->GetViewAs<glic::GlicButton>(
+        kGlicButtonElementId);
   }
 
  protected:

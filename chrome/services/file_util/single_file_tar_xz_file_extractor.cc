@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chrome/services/file_util/single_file_tar_xz_file_extractor.h"
 
 #include <stddef.h>
@@ -17,10 +12,12 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/containers/span.h"
 #include "base/numerics/safe_conversions.h"
 #include "chrome/services/file_util/public/mojom/constants.mojom.h"
 #include "chrome/services/file_util/single_file_tar_reader.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/lzma_sdk/C/7zCrc.h"
 #include "third_party/lzma_sdk/C/Xz.h"
 #include "third_party/lzma_sdk/C/XzCrc64.h"
@@ -50,8 +47,8 @@ class ExtractorInner {
   chrome::file_util::mojom::ExtractionResult Extract() {
     std::vector<uint8_t> xz_buffer(kXzBufferSize);
     while (true) {
-      const int bytes_read = src_file_.ReadAtCurrentPos(
-          reinterpret_cast<char*>(xz_buffer.data()), xz_buffer.size());
+      const int bytes_read = UNSAFE_TODO(src_file_.ReadAtCurrentPos(
+          reinterpret_cast<char*>(xz_buffer.data()), xz_buffer.size()));
       if (bytes_read < 0)
         return chrome::file_util::mojom::ExtractionResult::kGenericError;
       if (bytes_read == 0) {

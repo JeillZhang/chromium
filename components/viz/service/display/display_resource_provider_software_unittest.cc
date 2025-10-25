@@ -98,10 +98,9 @@ class DisplayResourceProviderSoftwareTest : public testing::Test {
 
     std::fill(span.begin(), span.end(), value);
 
-    auto transferable_resource = TransferableResource::MakeSoftwareSharedImage(
-        shared_image, shared_image_interface->GenVerifiedSyncToken(), size,
-        SinglePlaneFormat::kBGRA_8888,
-        TransferableResource::ResourceSource::kTileRasterTask);
+    auto transferable_resource = TransferableResource::Make(
+        shared_image, TransferableResource::ResourceSource::kTileRasterTask,
+        shared_image_interface->GenVerifiedSyncToken());
 
     auto callback = base::BindOnce(&MockReleaseCallback::Released,
                                    base::Unretained(&release_callback),
@@ -132,9 +131,11 @@ TEST_F(DisplayResourceProviderSoftwareTest, ReadSoftwareResources) {
   std::vector<ReturnedResource> returned_to_child;
   int child_id = resource_provider_->CreateChild(
       base::BindRepeating(&CollectResources, &returned_to_child), SurfaceId());
+
+  CHECK(child_context_provider_);
   child_resource_provider_->PrepareSendToParent(
       {resource_id}, &send_to_parent,
-      static_cast<RasterContextProvider*>(nullptr));
+      child_context_provider_->SharedImageInterface());
   resource_provider_->ReceiveFromChild(child_id, send_to_parent);
 
   // In DisplayResourceProvider's namespace, use the mapped resource id.

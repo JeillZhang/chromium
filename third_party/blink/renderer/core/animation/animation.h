@@ -43,7 +43,6 @@
 #include "third_party/blink/renderer/core/animation/animation_effect.h"
 #include "third_party/blink/renderer/core/animation/animation_effect_owner.h"
 #include "third_party/blink/renderer/core/animation/compositor_animations.h"
-#include "third_party/blink/renderer/core/animation/keyframe_effect.h"
 #include "third_party/blink/renderer/core/animation/timeline_offset.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/dom_exception.h"
@@ -53,18 +52,30 @@
 #include "third_party/blink/renderer/platform/animation/compositor_animation_client.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation_delegate.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
+#include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/heap/prefinalizer.h"
 
 namespace blink {
 
 class AnimationTimeline;
+class AnimationTrigger;
 class Element;
 class PaintArtifactCompositor;
 class StyleChangeReasonForTracing;
 class TreeScope;
 class TimelineRange;
-class AnimationTrigger;
+
+// This should be kept in sync with the `BlinkAnimationType` histogram.
+enum class BlinkAnimationType : int {
+  kAllAnimations = 0,
+  kSvgAnimations = 1,
+  kNonCompositedAnimations = 2,
+  kCompositedAnimations = 3,
+  kSvgNonCompositedAnimations = 4,
+  kSvgCompositedAnimations = 5,
+  kAnimationTypeEnumMax = 6
+};
 
 class CORE_EXPORT Animation : public EventTarget,
                               public ActiveScriptWrappable<Animation>,
@@ -108,10 +119,7 @@ class CORE_EXPORT Animation : public EventTarget,
                            AnimationTimeline*,
                            ExceptionState&);
 
-  Animation(ExecutionContext*,
-            AnimationTimeline*,
-            AnimationEffect*,
-            AnimationTrigger*);
+  Animation(ExecutionContext*, AnimationTimeline*, AnimationEffect*);
   ~Animation() override;
   void Dispose();
 
@@ -436,8 +444,10 @@ class CORE_EXPORT Animation : public EventTarget,
   using NativePaintWorkletReasons = uint32_t;
   NativePaintWorkletReasons GetNativePaintWorkletReasons() const;
 
-  static RangeBoundary* ToRangeBoundary(std::optional<TimelineOffset> offset);
-  static RangeBoundary* ToRangeBoundary(TimelineOffsetOrAuto offset_or_auto);
+  static RangeBoundary* ToRangeBoundary(std::optional<TimelineOffset> offset,
+                                        float zoom);
+  static RangeBoundary* ToRangeBoundary(TimelineOffsetOrAuto offset_or_auto,
+                                        float zoom);
 
   struct AnimationTriggerData {
     // The most recent `animation-play-state` value for |animation_|. This will
@@ -456,6 +466,9 @@ class CORE_EXPORT Animation : public EventTarget,
 
   void SetPausedForTrigger(bool paused_for_trigger) {
     paused_for_trigger_ = paused_for_trigger;
+    if (effect()) {
+      effect()->SetPausedForTrigger(paused_for_trigger);
+    }
   }
   bool PausedForTrigger() const { return paused_for_trigger_; }
   void ResetPlayback();
@@ -467,6 +480,14 @@ class CORE_EXPORT Animation : public EventTarget,
   void PlayInternal(AutoRewind auto_rewind, ExceptionState& exception_state);
   void PauseInternal(ExceptionState& exception_state);
   void ReverseInternal(ExceptionState& exception_state);
+
+  void AddTrigger(AnimationTrigger* trigger);
+  void RemoveTrigger(AnimationTrigger* trigger);
+
+  // Playback rate that will take effect once any pending tasks are resolved.
+  // If there are no pending tasks, then the effective playback rate equals the
+  // active playback rate.
+  double EffectivePlaybackRate() const;
 
  protected:
   DispatchEventResult DispatchEventInternal(Event&) override;
@@ -485,10 +506,6 @@ class CORE_EXPORT Animation : public EventTarget,
   AnimationTimeDelta EffectEnd() const;
   bool Limited(std::optional<AnimationTimeDelta> current_time) const;
 
-  // Playback rate that will take effect once any pending tasks are resolved.
-  // If there are no pending tasks, then the effective playback rate equals the
-  // active playback rate.
-  double EffectivePlaybackRate() const;
   void ApplyPendingPlaybackRate();
 
   std::optional<AnimationTimeDelta> CalculateStartTime(
@@ -573,6 +590,12 @@ class CORE_EXPORT Animation : public EventTarget,
       const RangeBoundary* boundary,
       double default_percent,
       ExceptionState& exception_state);
+
+  void DisassociateTriggers();
+
+  // Returns the effective zoom for the keyframe effect's target, or 1.f if
+  // there is no keyframe effect or no target with computed style.
+  float GetKeyframeEffectTargetZoom() const;
 
   String id_;
 
@@ -744,13 +767,16 @@ class CORE_EXPORT Animation : public EventTarget,
   // event.
   bool paused_for_trigger_ = false;
 
-  Member<AnimationTrigger> trigger_;
+  HeapHashSet<WeakMember<AnimationTrigger>> triggers_;
+
   AnimationTriggerData trigger_data_;
 
   FRIEND_TEST_ALL_PREFIXES(AnimationAnimationTestCompositing,
                            NoCompositeWithoutCompositedElementId);
   FRIEND_TEST_ALL_PREFIXES(AnimationAnimationTestNoCompositing,
                            PendingActivityWithFinishedEventListener);
+  friend class ScriptedTimelineTriggerTest;
+  FRIEND_TEST_ALL_PREFIXES(CSSAnimationsTriggerTest, ChangeTriggerName);
 };
 
 }  // namespace blink

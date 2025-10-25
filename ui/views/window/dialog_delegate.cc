@@ -228,6 +228,10 @@ bool DialogDelegate::ShouldIgnoreButtonPressedEventHandling(
   return false;
 }
 
+bool DialogDelegate::ShouldAllowKeyEventsDuringInputProtection() const {
+  return true;
+}
+
 bool DialogDelegate::Cancel() {
   DCHECK(!already_started_close_);
   if (HasCallback(cancel_callback_)) {
@@ -251,6 +255,7 @@ bool DialogDelegate::RunCloseCallback(
   if (std::holds_alternative<base::OnceClosure>(callback)) {
     already_started_close_ = true;
     std::get<base::OnceClosure>(std::move(callback)).Run();
+    return true;
   } else {
     base::WeakPtr<Widget> weak_ptr = GetWidget()->GetWeakPtr();
     bool already_started_close =
@@ -261,9 +266,10 @@ bool DialogDelegate::RunCloseCallback(
       return false;
     }
     already_started_close_ = already_started_close;
+    return already_started_close_;
   }
 
-  return already_started_close_;
+  NOTREACHED();
 }
 
 View* DialogDelegate::GetInitiallyFocusedView() {
@@ -301,10 +307,9 @@ ClientView* DialogDelegate::CreateClientView(Widget* widget) {
   return new DialogClientView(widget, TransferOwnershipOfContentsView());
 }
 
-std::unique_ptr<NonClientFrameView> DialogDelegate::CreateNonClientFrameView(
-    Widget* widget) {
+std::unique_ptr<FrameView> DialogDelegate::CreateFrameView(Widget* widget) {
   return use_custom_frame() ? CreateDialogFrameView(widget)
-                            : WidgetDelegate::CreateNonClientFrameView(widget);
+                            : WidgetDelegate::CreateFrameView(widget);
 }
 
 void DialogDelegate::WindowWillClose() {
@@ -345,7 +350,7 @@ bool DialogDelegate::EscShouldCancelDialog() const {
 }
 
 // static
-std::unique_ptr<NonClientFrameView> DialogDelegate::CreateDialogFrameView(
+std::unique_ptr<FrameView> DialogDelegate::CreateDialogFrameView(
     Widget* widget) {
   LayoutProvider* provider = LayoutProvider::Get();
   auto frame = std::make_unique<BubbleFrameView>(
@@ -411,7 +416,7 @@ views::View* DialogDelegate::GetFootnoteViewForTesting() const {
     return footnote_view_.get();
   }
 
-  NonClientFrameView* frame = GetWidget()->non_client_view()->frame_view();
+  FrameView* frame = GetWidget()->non_client_view()->frame_view();
 
   // CreateDialogFrameView above always uses BubbleFrameView. There are
   // subclasses that override CreateDialogFrameView, but none of them override

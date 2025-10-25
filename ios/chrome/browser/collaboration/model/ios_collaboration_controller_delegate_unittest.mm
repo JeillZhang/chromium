@@ -5,6 +5,7 @@
 #import "ios/chrome/browser/collaboration/model/ios_collaboration_controller_delegate.h"
 
 #import "base/check.h"
+#import "base/test/metrics/user_action_tester.h"
 #import "base/test/mock_callback.h"
 #import "base/test/scoped_feature_list.h"
 #import "components/collaboration/test_support/mock_collaboration_service.h"
@@ -55,11 +56,9 @@ using testing::_;
 using testing::Return;
 
 namespace collaboration {
-
 namespace {
-std::unique_ptr<KeyedService> BuildTestShareKitService(
-    web::BrowserState* context) {
-  ProfileIOS* profile = ProfileIOS::FromBrowserState(context);
+
+std::unique_ptr<KeyedService> BuildTestShareKitService(ProfileIOS* profile) {
   data_sharing::DataSharingService* data_sharing_service =
       data_sharing::DataSharingServiceFactory::GetForProfile(profile);
   TabGroupService* tab_group_service =
@@ -70,16 +69,16 @@ std::unique_ptr<KeyedService> BuildTestShareKitService(
 }
 
 std::unique_ptr<KeyedService> BuildFakeTabGroupSyncService(
-    web::BrowserState* context) {
+    ProfileIOS* profile) {
   return std::make_unique<tab_groups::FakeTabGroupSyncService>();
 }
 
-std::unique_ptr<KeyedService> BuildTestSyncService(web::BrowserState* context) {
+std::unique_ptr<KeyedService> BuildTestSyncService(ProfileIOS* profile) {
   return std::make_unique<syncer::TestSyncService>();
 }
 
 std::unique_ptr<KeyedService> BuildMockCollaborationService(
-    web::BrowserState* context) {
+    ProfileIOS* profile) {
   ServiceStatus collaboration_status;
   collaboration_status.collaboration_status =
       CollaborationStatus::kEnabledCreateAndJoin;
@@ -90,8 +89,7 @@ std::unique_ptr<KeyedService> BuildMockCollaborationService(
   return std::move(mock_collaboration_service);
 }
 
-std::unique_ptr<KeyedService> BuildTestFaviconLoader(
-    web::BrowserState* context) {
+std::unique_ptr<KeyedService> BuildTestFaviconLoader(ProfileIOS* profile) {
   return std::make_unique<TestFaviconLoader>();
 }
 
@@ -104,7 +102,6 @@ class IOSCollaborationControllerDelegateTest : public PlatformTest {
     scoped_feature_list_.InitWithFeatures(
         /*enabled_features=*/
         {
-            kTabGroupSync,
             data_sharing::features::kDataSharingFeature,
         },
         /*disable_features=*/{});
@@ -247,16 +244,18 @@ class IOSCollaborationControllerDelegateTest : public PlatformTest {
   web::WebTaskEnvironment task_environment_;
   IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   base::test::ScopedFeatureList scoped_feature_list_;
-  raw_ptr<tab_groups::TabGroupSyncService> tab_group_sync_service_;
-  raw_ptr<MockCollaborationService> mock_collaboration_service_;
+  raw_ptr<tab_groups::TabGroupSyncService, DanglingUntriaged>
+      tab_group_sync_service_;
+  raw_ptr<MockCollaborationService, DanglingUntriaged>
+      mock_collaboration_service_;
   std::unique_ptr<IOSCollaborationControllerDelegate> delegate_;
-  raw_ptr<WebStateList> web_state_list_;
+  raw_ptr<WebStateList, DanglingUntriaged> web_state_list_;
   id signin_coordinator_mock_;
   id application_commands_mock_;
   std::unique_ptr<Browser> browser_;
   std::unique_ptr<TestProfileIOS> profile_;
   UIViewController* base_view_controller_;
-  raw_ptr<const TabGroup> tab_group_;
+  raw_ptr<const TabGroup, DanglingUntriaged> tab_group_;
   raw_ptr<ShareKitService> share_kit_service_;
   ServiceStatus collaboration_status_;
 };
@@ -340,14 +339,17 @@ TEST_F(IOSCollaborationControllerDelegateTest, ShowJoinDialogCancel) {
 // Tests `ShowManageDialog` and accept.
 TEST_F(IOSCollaborationControllerDelegateTest, ShowManageDialogAccept) {
   InitDelegate(FlowType::kShareOrManage);
+  // Share the group.
+  tab_group_sync_service_->MakeTabGroupShared(
+      tab_group_->tab_group_id(), syncer::CollaborationId("collaboration"),
+      tab_groups::TabGroupSyncService::TabGroupSharingCallback());
+  // Prepare the callback.
   base::MockCallback<CollaborationControllerDelegate::ResultCallback>
       mock_callback;
   EXPECT_CALL(mock_callback,
               Run(CollaborationControllerDelegate::Outcome::kSuccess));
 
-  data_sharing::SharedDataPreview preview_data;
-  delegate_->ShowJoinDialog(data_sharing::GroupToken(), preview_data,
-                            mock_callback.Get());
+  delegate_->ShowManageDialog(tab_group_->tab_group_id(), mock_callback.Get());
 
   FakeShareKitFlowViewController* share_kit_flow_view_controller =
       ShareKitFlowFromBaseViewController(base_view_controller_);
@@ -361,12 +363,15 @@ TEST_F(IOSCollaborationControllerDelegateTest, ShowManageDialogCancel) {
   InitDelegate(FlowType::kShareOrManage);
   base::MockCallback<CollaborationControllerDelegate::ResultCallback>
       mock_callback;
+  // Share the group.
+  tab_group_sync_service_->MakeTabGroupShared(
+      tab_group_->tab_group_id(), syncer::CollaborationId("collaboration"),
+      tab_groups::TabGroupSyncService::TabGroupSharingCallback());
+  // Prepare the callback.
   EXPECT_CALL(mock_callback,
               Run(CollaborationControllerDelegate::Outcome::kCancel));
 
-  data_sharing::SharedDataPreview preview_data;
-  delegate_->ShowJoinDialog(data_sharing::GroupToken(), preview_data,
-                            mock_callback.Get());
+  delegate_->ShowManageDialog(tab_group_->tab_group_id(), mock_callback.Get());
 
   FakeShareKitFlowViewController* share_kit_flow_view_controller =
       ShareKitFlowFromBaseViewController(base_view_controller_);
@@ -474,6 +479,109 @@ TEST_F(IOSCollaborationControllerDelegateTest,
        NotifySignInAndSyncStatusChange) {
   InitDelegate(FlowType::kShareOrManage);
   delegate_->NotifySignInAndSyncStatusChange();
+}
+
+// Tests that showing the join screen records the correct user actions.
+TEST_F(IOSCollaborationControllerDelegateTest, JoinUMA) {
+  base::UserActionTester user_action_tester;
+  InitDelegate(FlowType::kJoin);
+  EXPECT_EQ(1, user_action_tester.GetActionCount("IOSCollaborationInitJoin"));
+  data_sharing::SharedDataPreview preview_data;
+  base::MockCallback<CollaborationControllerDelegate::ResultCallback>
+      mock_callback;
+
+  delegate_->ShowJoinDialog(data_sharing::GroupToken(), preview_data,
+                            mock_callback.Get());
+
+  EXPECT_EQ(
+      1, user_action_tester.GetActionCount("IOSCollaborationShowJoinDialog"));
+}
+
+// Tests that showing the share screen records the correct user actions.
+TEST_F(IOSCollaborationControllerDelegateTest, ShareUMA) {
+  base::UserActionTester user_action_tester;
+  InitDelegate(FlowType::kShareOrManage);
+  EXPECT_EQ(1, user_action_tester.GetActionCount(
+                   "IOSCollaborationInitShareOrManage"));
+  // Prepare the callback.
+  base::MockCallback<
+      CollaborationControllerDelegate::ResultWithGroupTokenCallback>
+      mock_callback;
+
+  delegate_->ShowShareDialog(tab_group_->tab_group_id(), mock_callback.Get());
+
+  EXPECT_EQ(
+      1, user_action_tester.GetActionCount("IOSCollaborationShowShareDialog"));
+}
+
+// Tests that showing the manage screen records the correct user actions.
+TEST_F(IOSCollaborationControllerDelegateTest, ManageUMA) {
+  base::UserActionTester user_action_tester;
+  InitDelegate(FlowType::kShareOrManage);
+  EXPECT_EQ(1, user_action_tester.GetActionCount(
+                   "IOSCollaborationInitShareOrManage"));
+  // Share the group.
+  tab_group_sync_service_->MakeTabGroupShared(
+      tab_group_->tab_group_id(), syncer::CollaborationId("collaboration"),
+      tab_groups::TabGroupSyncService::TabGroupSharingCallback());
+  // Prepare the callback.
+  base::MockCallback<CollaborationControllerDelegate::ResultCallback>
+      mock_callback;
+
+  delegate_->ShowManageDialog(tab_group_->tab_group_id(), mock_callback.Get());
+
+  EXPECT_EQ(
+      1, user_action_tester.GetActionCount("IOSCollaborationShowManageDialog"));
+}
+
+// Tests that showing the leave screen records the correct user actions.
+TEST_F(IOSCollaborationControllerDelegateTest, LeaveUMA) {
+  base::UserActionTester user_action_tester;
+  InitDelegate(FlowType::kLeaveOrDelete);
+  EXPECT_EQ(1, user_action_tester.GetActionCount(
+                   "IOSCollaborationInitLeaveOrDelete"));
+  base::MockCallback<
+      base::OnceCallback<void(CollaborationControllerDelegate::ResultCallback)>>
+      leave_completion_callback;
+  delegate_->SetLeaveOrDeleteConfirmationCallback(
+      leave_completion_callback.Get());
+  // Share the group.
+  tab_group_sync_service_->MakeTabGroupShared(
+      tab_group_->tab_group_id(), syncer::CollaborationId("collaboration"),
+      tab_groups::TabGroupSyncService::TabGroupSharingCallback());
+  // Prepare the callback.
+  base::MockCallback<CollaborationControllerDelegate::ResultCallback>
+      mock_callback;
+
+  delegate_->ShowLeaveDialog(tab_group_->tab_group_id(), mock_callback.Get());
+
+  EXPECT_EQ(
+      1, user_action_tester.GetActionCount("IOSCollaborationShowLeaveDialog"));
+}
+
+// Tests that showing the delete screen records the correct user actions.
+TEST_F(IOSCollaborationControllerDelegateTest, DeleteUMA) {
+  base::UserActionTester user_action_tester;
+  InitDelegate(FlowType::kLeaveOrDelete);
+  EXPECT_EQ(1, user_action_tester.GetActionCount(
+                   "IOSCollaborationInitLeaveOrDelete"));
+  base::MockCallback<
+      base::OnceCallback<void(CollaborationControllerDelegate::ResultCallback)>>
+      delete_completion_callback;
+  delegate_->SetLeaveOrDeleteConfirmationCallback(
+      delete_completion_callback.Get());
+  // Share the group.
+  tab_group_sync_service_->MakeTabGroupShared(
+      tab_group_->tab_group_id(), syncer::CollaborationId("collaboration"),
+      tab_groups::TabGroupSyncService::TabGroupSharingCallback());
+  // Prepare the callback.
+  base::MockCallback<CollaborationControllerDelegate::ResultCallback>
+      mock_callback;
+
+  delegate_->ShowDeleteDialog(tab_group_->tab_group_id(), mock_callback.Get());
+
+  EXPECT_EQ(
+      1, user_action_tester.GetActionCount("IOSCollaborationShowDeleteDialog"));
 }
 
 }  // namespace collaboration

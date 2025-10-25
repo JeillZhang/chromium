@@ -90,8 +90,9 @@ bool ToolbarActionHoverCardController::IsHoverCardVisible() const {
 bool ToolbarActionHoverCardController::IsHoverCardShowingForAction(
     ToolbarActionView* action_view) const {
   DCHECK(action_view);
-  return action_view->GetCurrentWebContents() && IsHoverCardVisible() &&
-         !fade_animator_->IsFadingOut() && GetTargetAnchorView() == action_view;
+  return extensions_container_->GetCurrentWebContents() &&
+         IsHoverCardVisible() && !fade_animator_->IsFadingOut() &&
+         GetTargetAnchorView() == action_view;
 }
 
 void ToolbarActionHoverCardController::UpdateHoverCard(
@@ -118,8 +119,9 @@ void ToolbarActionHoverCardController::UpdateHoverCard(
   }
 
   // If there's nothing to attach to then there's no point in creating a card.
-  if (!hover_card_ && (!action_view || !action_view->GetCurrentWebContents() ||
-                       !extensions_container_->GetWidget())) {
+  if (!hover_card_ &&
+      (!action_view || !extensions_container_->GetCurrentWebContents() ||
+       !extensions_container_->GetWidget())) {
     return;
   }
 
@@ -142,7 +144,7 @@ void ToolbarActionHoverCardController::UpdateHoverCard(
       break;
   }
 
-  if (action_view && action_view->GetCurrentWebContents()) {
+  if (action_view && extensions_container_->GetCurrentWebContents()) {
     UpdateOrShowHoverCard(action_view, update_type);
   } else {
     HideHoverCard();
@@ -203,7 +205,8 @@ void ToolbarActionHoverCardController::UpdateOrShowHoverCard(
 void ToolbarActionHoverCardController::UpdateHoverCardContent(
     ToolbarActionView* action_view) {
   DCHECK(action_view);
-  content::WebContents* web_contents = action_view->GetCurrentWebContents();
+  content::WebContents* web_contents =
+      extensions_container_->GetCurrentWebContents();
   DCHECK(web_contents);
 
   // If the hover card is transitioning between extensions, we need to do a
@@ -385,19 +388,14 @@ void ToolbarActionHoverCardController::OnViewIsDeleting(
 
 void ToolbarActionHoverCardController::OnViewVisibilityChanged(
     views::View* observed_view,
-    views::View* starting_view) {
+    views::View* starting_view,
+    bool visible) {
   // Only care about target action view becoming invisible.
   if (observed_view != target_action_view_) {
     return;
   }
-  // Visibility comes from `starting_view` or the widget, if no starting view;
-  // see documentation for ViewObserver::OnViewVisibilityChanged().
-  const bool visible = starting_view
-                           ? starting_view->GetVisible()
-                           : (observed_view->GetWidget() &&
-                              observed_view->GetWidget()->IsVisible());
-  // If visibility changed to false, treat it as if the target action view had
-  // gone away.
+  // If visibility anywhere in the hierarchy changed to false, then the target
+  // view is not visible, so treat it as if it is going away.
   if (!visible) {
     OnViewIsDeleting(observed_view);
   }

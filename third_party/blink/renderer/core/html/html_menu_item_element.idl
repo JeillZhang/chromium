@@ -4,13 +4,13 @@
 
 [
     Exposed=Window,
-    HTMLConstructor,
     RuntimeEnabled=MenuElements
 ] interface HTMLMenuItemElement : HTMLElement {
+    [HTMLConstructor] constructor();
     [CEReactions, Reflect] attribute boolean disabled;
-    [ImplementedAs=Checked] attribute boolean checked;
+    [CEReactions] attribute boolean checked;
 
     // Command Invokers
-    [RuntimeEnabled=HTMLCommandAttributes, CEReactions, Reflect=commandfor] attribute Element? commandForElement;
-    [RuntimeEnabled=HTMLCommandAttributes, CEReactions] attribute DOMString command;
+    [CEReactions, Reflect=commandfor] attribute Element? commandForElement;
+    [CEReactions] attribute DOMString command;
 };

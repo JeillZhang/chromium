@@ -90,7 +90,7 @@ void AboutThisSideSidePanelCoordinator::RegisterEntry(
             &AboutThisSideSidePanelCoordinator::GetOpenInNewTabUrl,
             base::Unretained(this)),
         /*more_info_callback=*/base::NullCallback(),
-        SidePanelEntry::kSidePanelDefaultContentWidth);
+        /*default_content_width_callback=*/base::NullCallback());
     registry->Register(std::move(entry));
   }
 }
@@ -190,7 +190,7 @@ SidePanelUI* AboutThisSideSidePanelCoordinator::GetSidePanelUI() {
 
 GURL AboutThisSideSidePanelCoordinator::GetOpenInNewTabUrl() {
   DCHECK(last_url_info_.has_value());
-  DCHECK(!base::Contains(last_url_info_.value().new_tab_url.query_piece(),
+  DCHECK(!base::Contains(last_url_info_.value().new_tab_url.query(),
                          page_info::AboutThisSiteRenderModeParameterName));
   return last_url_info_.value().new_tab_url;
 }

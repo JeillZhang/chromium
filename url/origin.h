@@ -12,10 +12,9 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "base/component_export.h"
-#include "base/debug/alias.h"
-#include "base/debug/crash_logging.h"
 #include "base/gtest_prod_util.h"
 #include "base/strings/string_util.h"
 #include "base/trace_event/base_tracing_forward.h"
@@ -46,11 +45,6 @@ namespace IPC {
 template <class P>
 struct ParamTraits;
 }  // namespace IPC
-
-namespace ipc_fuzzer {
-template <class T>
-struct FuzzTraits;
-}  // namespace ipc_fuzzer
 
 namespace mojo {
 template <typename DataViewType, typename T>
@@ -292,6 +286,13 @@ class COMPONENT_EXPORT(URL) Origin {
   friend bool operator==(const Origin& left, const Origin& right) = default;
   friend auto operator<=>(const Origin& left, const Origin& right) = default;
 
+  // Allows Origin to be used as a key in ABSL (for example, absl::flat_hash_set
+  // or absl::flat_hash_map).
+  template <typename H>
+  friend H AbslHashValue(H h, const Origin& o) {
+    return H::combine(std::move(h), o.tuple_, o.nonce_);
+  }
+
   // Creates a new opaque origin that is guaranteed to be cross-origin to all
   // currently existing origins. An origin created by this method retains its
   // identity across copies. Copies are guaranteed to be same-origin to each
@@ -357,7 +358,6 @@ class COMPONENT_EXPORT(URL) Origin {
   friend class net::SchemefulSite;
   friend class OriginTest;
   friend struct mojo::UrlOriginAdapter;
-  friend struct ipc_fuzzer::FuzzTraits<Origin>;
   friend struct mojo::StructTraits<url::mojom::OriginDataView, url::Origin>;
   friend IPC::ParamTraits<url::Origin>;
   friend COMPONENT_EXPORT(URL) std::ostream& operator<<(std::ostream& out,
@@ -402,6 +402,13 @@ class COMPONENT_EXPORT(URL) Origin {
     // |token_| lazy-initialization. Equality comparisons do not.
     std::strong_ordering operator<=>(const Nonce& other) const;
     bool operator==(const Nonce& other) const;
+
+    // Hashes the Nonce for absl hash containers. Will trigger |token_|
+    // lazy-initialization.
+    template <typename H>
+    friend H AbslHashValue(H h, const Nonce& n) {
+      return H::combine(std::move(h), n.token());
+    }
 
    private:
     friend class OriginTest;
@@ -486,29 +493,6 @@ COMPONENT_EXPORT(URL)
 std::ostream& operator<<(std::ostream& out, const Origin::Nonce& origin);
 
 COMPONENT_EXPORT(URL) bool IsSameOriginWith(const GURL& a, const GURL& b);
-
-// DEBUG_ALIAS_FOR_ORIGIN(var_name, origin) copies `origin` into a new
-// stack-allocated variable named `<var_name>`. This helps ensure that the
-// value of `origin` gets preserved in crash dumps.
-#define DEBUG_ALIAS_FOR_ORIGIN(var_name, origin) \
-  DEBUG_ALIAS_FOR_CSTR(var_name, (origin).Serialize().c_str(), 128)
-
-namespace debug {
-
-class COMPONENT_EXPORT(URL) ScopedOriginCrashKey {
- public:
-  ScopedOriginCrashKey(base::debug::CrashKeyString* crash_key,
-                       const url::Origin* value);
-  ~ScopedOriginCrashKey();
-
-  ScopedOriginCrashKey(const ScopedOriginCrashKey&) = delete;
-  ScopedOriginCrashKey& operator=(const ScopedOriginCrashKey&) = delete;
-
- private:
-  base::debug::ScopedCrashKeyString scoped_string_value_;
-};
-
-}  // namespace debug
 
 }  // namespace url
 

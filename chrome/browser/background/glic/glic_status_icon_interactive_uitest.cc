@@ -9,10 +9,10 @@
 #include "chrome/browser/background/glic/glic_background_mode_manager.h"
 #include "chrome/browser/background/glic/glic_status_icon.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/glic_pref_names.h"
 #include "chrome/browser/glic/glic_profile_manager.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/test_support/glic_test_util.h"
 #include "chrome/browser/glic/test_support/interactive_glic_test.h"
 #include "chrome/browser/glic/widget/glic_window_controller.h"
@@ -22,7 +22,8 @@
 #include "chrome/browser/status_icons/status_tray.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
-#include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+#include "chrome/browser/ui/views/frame/tab_strip_view_interface.h"
+#include "chrome/browser/ui/views/interaction/browser_elements_views.h"
 #include "chrome/browser/ui/views/tabs/glic_button.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/interaction/interactive_browser_test.h"
@@ -93,10 +94,9 @@ class GlicStatusIconUiTest : public test::InteractiveGlicTest,
 
   auto ForceEmptyButtonBounds(Browser* browser) {
     return Do([browser] {
-      auto* glic_button = browser->window()
-                              ->AsBrowserView()
-                              ->tab_strip_region_view()
-                              ->GetGlicButton();
+      auto* glic_button =
+          BrowserElementsViews::From(browser)->GetViewAs<glic::GlicButton>(
+              kGlicButtonElementId);
       glic_button->SetSize(gfx::Size(0, 0));
     });
   }
@@ -132,6 +132,10 @@ class GlicStatusIconUiTest : public test::InteractiveGlicTest,
 // show button is clicked before the button view is shown, but to reliably
 // reproduce the issue, we force the view to have zero bounds here.
 IN_PROC_BROWSER_TEST_P(GlicStatusIconUiTest, ShowClose) {
+  if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+    // TODO(b/453696965): Broken in multi-instance.
+    GTEST_SKIP() << "Skipping for kGlicMultiInstance";
+  }
   Profile* other_profile = CreateSecondProfile();
   RunTestSequence(
       VerifyStatusIconVisibility(false), EnableGlicLauncher(),

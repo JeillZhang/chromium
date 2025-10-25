@@ -32,6 +32,7 @@
 #include <memory>
 
 #include "base/notreached.h"
+#include "base/time/time.h"
 #include "cc/paint/paint_canvas.h"
 #include "cc/trees/paint_holding_reason.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -130,6 +131,10 @@ class CORE_EXPORT EmptyChromeClient : public ChromeClient {
   void StopDeferringCommits(LocalFrame& main_frame,
                             cc::PaintHoldingCommitTrigger) override {}
   void SetShouldThrottleFrameRate(bool flag, LocalFrame& main_frame) override {}
+  void RequestMainFrameOnCompositorAnimation(
+      LocalFrame&,
+      cc::PropertyChangeForcesCommitCriteria animation_forces_commit) override {
+  }
   void StartDragging(LocalFrame*,
                      const WebDragData&,
                      DragOperationsMask,
@@ -201,6 +206,9 @@ class CORE_EXPORT EmptyChromeClient : public ChromeClient {
   const display::ScreenInfos& GetScreenInfos(LocalFrame&) const override {
     return empty_screen_infos_;
   }
+  const display::ScreenInfo& GetOriginalScreenInfo(LocalFrame&) const override {
+    return empty_screen_infos_.current();
+  }
   void ContentsSizeChanged(LocalFrame*, const gfx::Size&) const override {}
   void ShowMouseOverURL(const HitTestResult&) override {}
   void UpdateTooltipUnderCursor(LocalFrame&,
@@ -252,9 +260,6 @@ class CORE_EXPORT EmptyChromeClient : public ChromeClient {
   void RegisterPopupOpeningObserver(PopupOpeningObserver*) override {}
   void UnregisterPopupOpeningObserver(PopupOpeningObserver*) override {}
   void NotifyPopupOpeningObservers() const override {}
-
-  void RequestBeginMainFrameNotExpected(LocalFrame& frame,
-                                        bool request) override {}
   int GetLayerTreeId(LocalFrame& frame) override { return 0; }
   void SetCursorForPlugin(const ui::Cursor&, LocalFrame*) override {}
   void InstallSupplements(LocalFrame&) override {}
@@ -382,6 +387,7 @@ class CORE_EXPORT EmptyLocalFrameClient : public LocalFrameClient {
 
   bool NavigateBackForward(
       int offset,
+      base::TimeTicks,
       std::optional<scheduler::TaskAttributionId>) const override {
     return false;
   }

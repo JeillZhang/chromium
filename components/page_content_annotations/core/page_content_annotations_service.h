@@ -29,8 +29,8 @@
 #include "components/history/core/browser/url_row.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/omnibox/common/zero_suggest_cache_service_interface.h"
+#include "components/optimization_guide/core/delivery/model_info.h"
 #include "components/optimization_guide/core/hints/optimization_guide_decision.h"
-#include "components/optimization_guide/core/model_info.h"
 #include "components/optimization_guide/machine_learning_tflite_buildflags.h"
 #include "components/optimization_guide/proto/hints.pb.h"
 #include "components/optimization_guide/proto/page_entities_metadata.pb.h"
@@ -56,8 +56,14 @@ class OptimizationGuideModelProvider;
 class OptimizationMetadata;
 }  // namespace optimization_guide
 
+namespace passage_embeddings {
+class Embedder;
+class EmbedderMetadataProvider;
+}  // namespace passage_embeddings
+
 namespace page_content_annotations {
 
+class OnDeviceCategoryClassifier;
 class PageContentAnnotationsModelManager;
 class PageContentAnnotationsServiceBrowserTest;
 class PageContentAnnotationsValidator;
@@ -129,7 +135,7 @@ class PageContentAnnotationsService
   class PageContentAnnotationsObserver : public base::CheckedObserver {
    public:
     virtual void OnPageContentAnnotated(
-        const GURL& url,
+        const HistoryVisit& visit,
         const PageContentAnnotationsResult& result) = 0;
   };
 
@@ -145,6 +151,8 @@ class PageContentAnnotationsService
       const base::FilePath& database_dir,
       OptimizationGuideLogger* optimization_guide_logger,
       optimization_guide::OptimizationGuideDecider* optimization_guide_decider,
+      passage_embeddings::EmbedderMetadataProvider* embedder_metadata_provider,
+      passage_embeddings::Embedder* embedder,
       scoped_refptr<base::SequencedTaskRunner> background_task_runner);
   ~PageContentAnnotationsService() override;
   PageContentAnnotationsService(const PageContentAnnotationsService&) = delete;
@@ -216,6 +224,13 @@ class PageContentAnnotationsService
     return optimization_guide_logger_;
   }
 
+  // Classifies categories for a piece of text.
+  //
+  // DO NOT USE. This is temporary until the rest of the API is hooked up.
+  void ClassifyCategoriesForText(
+      const std::string& text,
+      base::OnceCallback<void(std::vector<Category>)> callback);
+
  private:
 #if BUILDFLAG(BUILD_WITH_TFLITE_LIB)
   // Callback invoked when a single |visit| has been annotated.
@@ -253,6 +268,7 @@ class PageContentAnnotationsService
 
   std::unique_ptr<PageContentAnnotationsModelManager> model_manager_;
 
+  std::unique_ptr<OnDeviceCategoryClassifier> on_device_category_classifier_;
 #endif
 
   // The annotator to use for requests to |BatchAnnotate| and |Annotate|. In
@@ -311,13 +327,13 @@ class PageContentAnnotationsService
   void OnURLQueried(const HistoryVisit& visit,
                     PersistAnnotationsCallback callback,
                     PageContentAnnotationsType annotation_type,
-                    history::QueryURLResult url_result);
+                    history::QueryURLAndVisitsResult url_result);
 
   // Notifies the PageContentAnnotationsResult to the observers for
   // |annotation_type|.
   void NotifyPageContentAnnotatedObservers(
       AnnotationType annotation_type,
-      const GURL& url,
+      const page_content_annotations::HistoryVisit& visit,
       const PageContentAnnotationsResult& page_content_annotations_result);
 
   // Callback invoked when a response for |optimization_type| has been received

@@ -5,166 +5,239 @@
 #ifndef CHROME_BROWSER_WEB_APPLICATIONS_COMMANDS_MANIFEST_SILENT_UPDATE_COMMAND_H_
 #define CHROME_BROWSER_WEB_APPLICATIONS_COMMANDS_MANIFEST_SILENT_UPDATE_COMMAND_H_
 
-#include "chrome/browser/web_applications/commands/web_app_command.h"
-#include "chrome/browser/web_applications/locks/app_lock.h"
-#include "chrome/browser/web_applications/manifest_update_utils.h"
-#include "chrome/browser/web_applications/web_app_icon_manager.h"
-#include "chrome/browser/web_applications/web_app_origin_association_manager.h"
-#include "chrome/browser/web_applications/web_contents/web_app_data_retriever.h"
-#include "third_party/abseil-cpp/absl/container/flat_hash_map.h"
+#include <iosfwd>
+#include <memory>
+#include <optional>
 
-class GURL;
+#include "base/functional/callback_forward.h"
+#include "base/location.h"
+#include "base/memory/weak_ptr.h"
+#include "base/types/pass_key.h"
+#include "chrome/browser/web_applications/commands/web_app_command.h"
+#include "chrome/browser/web_applications/jobs/manifest_to_web_app_install_info_job.h"
+#include "chrome/browser/web_applications/locks/noop_lock.h"
+#include "chrome/browser/web_applications/model/web_app_comparison.h"
+#include "chrome/browser/web_applications/web_app_icon_manager.h"
+#include "chrome/browser/web_applications/web_app_install_info.h"
+#include "components/webapps/common/web_app_id.h"
+#include "content/public/browser/web_contents_observer.h"
 
 namespace content {
 class WebContents;
 }  // namespace content
 
 namespace web_app {
+namespace proto {
+class PendingUpdateInfo;
+}  // namespace proto
 
-struct WebAppInstallInfo;
+class AppLock;
+class NoopLock;
+class ManifestToWebAppInstallInfoJob;
 
-// Used to uniquely identify an icon url for app updates.
-struct SizeAndPurpose {
-  gfx::Size size;
-  IconPurpose purpose;
-
-  bool operator<(const SizeAndPurpose& other) const;
-  bool operator==(const SizeAndPurpose& other) const;
-
-  struct absl_container_hash {
-    using is_transparent = void;
-    size_t operator()(const SizeAndPurpose& key) const;
-  };
+// Not actually used in production logic. This is just for debugging output.
+enum class ManifestSilentUpdateCommandStage {
+  kNotStarted,
+  kFetchingNewManifestData,
+  kLoadingExistingManifestData,
+  kAcquiringAppLock,
+  kConstructingWebAppInfo,
+  kLoadingExistingAndNewManifestIcons,
+  kComparingManifestData,
+  kFinalizingSilentManifestChanges,
+  kWritingPendingUpdateIconBitmapsToDisk,
+  kDeletingPendingUpdateIconsFromDisk
 };
 
-// Documentation: docs/webapps/manifest_update_process.md
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
 //
-// Checks whether the installed web app associated with a given WebContents has
-// out of date manifest data and what to update it to.
+// LINT.IfChange(ManifestSilentUpdateCheckResult)
+enum class ManifestSilentUpdateCheckResult {
+  kAppNotInstalled = 0,
+  kAppUpdateFailedDuringInstall = 1,
+  kSystemShutdown = 2,
+  kAppSilentlyUpdated = 3,
+  kAppUpToDate = 4,
+  kIconReadFromDiskFailed = 5,
+  kWebContentsDestroyed = 6,
+  kAppOnlyHasSecurityUpdate = 7,
+  kAppHasNonSecurityAndSecurityChanges = 8,
+  kPendingIconWriteToDiskFailed = 9,
+  kInvalidManifest = 10,
+  kInvalidPendingUpdateInfo = 11,
+  kUserNavigated = 12,
+  kManifestToWebAppInstallInfoError = 13,
+  kAppHasSecurityUpdateDueToThrottle = 14,
+  kMaxValue = kAppHasSecurityUpdateDueToThrottle,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/webapps/enums.xml:WebAppManifestSilentUpdateCheckResult)
+
+bool IsAppUpdated(ManifestSilentUpdateCheckResult result);
+
+// Declare the logging operator before the command declaration, so the templated
+// completion method can use it to log the result.
+std::ostream& operator<<(std::ostream& os,
+                         ManifestSilentUpdateCheckResult result);
+
+// Returns all the information necessary for a manifest's silent update to have
+// finished running, including the result of a silent update command and the
+// timestamp of a silent icon update if that happened.
+struct ManifestSilentUpdateCompletionInfo {
+  ManifestSilentUpdateCompletionInfo();
+  explicit ManifestSilentUpdateCompletionInfo(
+      ManifestSilentUpdateCheckResult result);
+  ~ManifestSilentUpdateCompletionInfo() = default;
+  base::Value::Dict ToDebugValue();
+
+  // Move operation only for simplicity.
+  ManifestSilentUpdateCompletionInfo(ManifestSilentUpdateCompletionInfo&&);
+  ManifestSilentUpdateCompletionInfo& operator=(
+      ManifestSilentUpdateCompletionInfo&&);
+
+  ManifestSilentUpdateCheckResult result;
+  std::optional<base::Time> time_for_icon_diff_check;
+};
+
+// Downloads a currently linked manifest in the given web contents. Non-security
+// -sensitive manifest members are updated immediately. Security sensitive
+// changes are saved in the WebApp's PendingUpdateInfo.
+//
+// Invariants:
+// - This command assumes that the load for the given web contents has been
+//  completed, and the manifest is already linked.
 //
 // High level procedure for this command:
-// - Download new manifest data from site including external resources (such as
-//   icon bitmaps only if the url changes from the saved information).
+// - Download new manifest data from site.
 // - Load existing manifest data from disk including external resources.
-// - Diff manifest data.
-// - Resolve any changes to app identity by confirming the change with the user,
-//   silently allowing them, or reverting them.
-// - Return back to the caller to schedule applying the changes back to disk.
-//
-// TODO(crbug.com/414851433): Rename this to ManifestUpdateCheckCommand and
-// remove existing ManifestUpdateCheckCommand.
+// - Diff the non-security sensitive manifest data. This includes all fields of
+//   the manifest excluding icons and app name.
+// - Update non-security sensitive fields silently.
+// - Choose two golden icons (one each from the new and existing manifest).
+// - Compare their icon's URL which determines a silent update of the icon (<10%
+//   image diff) or store it as a PendingUpdateInfo (>10% image diff).
+// - Finalize silent update of icon (if needed) and destroy command.
 class ManifestSilentUpdateCommand
-    : public WebAppCommand<AppLock,
-                           ManifestUpdateCheckResult,
-                           std::unique_ptr<WebAppInstallInfo>>,
+    : public WebAppCommand<NoopLock, ManifestSilentUpdateCompletionInfo>,
       public content::WebContentsObserver {
  public:
-  using CompletedCallback = base::OnceCallback<void(
-      ManifestUpdateCheckResult check_result,
-      std::unique_ptr<WebAppInstallInfo> new_install_info)>;
+  using CompletedCallback =
+      base::OnceCallback<void(ManifestSilentUpdateCompletionInfo check_result)>;
 
   ManifestSilentUpdateCommand(
-      const GURL& url,
-      const webapps::AppId& app_id,
-      base::Time check_time,
-      base::WeakPtr<content::WebContents> web_contents,
-      CompletedCallback callback,
-      std::unique_ptr<WebAppDataRetriever> data_retriever,
-      std::unique_ptr<WebAppIconDownloader> icon_downloader);
+      content::WebContents& web_contents,
+      std::optional<base::Time> previous_time_for_silent_icon_update,
+      CompletedCallback callback);
 
   ~ManifestSilentUpdateCommand() override;
 
+  // content::WebContentsObserver:
+  void PrimaryPageChanged(content::Page& page) override;
+
  protected:
   // WebAppCommand:
-  void StartWithLock(std::unique_ptr<AppLock> lock) override;
+  void StartWithLock(std::unique_ptr<NoopLock> lock) override;
 
  private:
-  // Keys an icon's size and purpose to its URL. This is only done for manifest
-  // icons and do not include file handling, shortcut, or home tab icons. The
-  // creation is done in the
-  // ManifestUpdateCheckStage::kDownloadingNewManifestData and the
-  // ManifestUpdateCheckStage::kLoadingExistingManifestData stage.
-  absl::flat_hash_map<SizeAndPurpose, GURL> CreateIconSizeAndPurposeMap(
-      const std::vector<apps::IconInfo>& icon_infos);
+  void SetStage(ManifestSilentUpdateCommandStage stage);
 
-  // Stage: Download the new manifest data
-  // (ManifestUpdateCheckStage::kDownloadingNewManifestData).
-  void DownloadNewManifestData(base::OnceClosure next_step_callback);
-  void DownloadNewManifestJson(
-      WebAppDataRetriever::CheckInstallabilityCallback next_step_callback);
-  void StashNewManifestJson(base::OnceClosure next_step_callback,
-                            blink::mojom::ManifestPtr opt_manifest,
-                            bool valid_manifest_for_web_app,
-                            webapps::InstallableStatusCode installable_status);
-  void ValidateNewScopeExtensions(
-      OnDidGetWebAppOriginAssociations next_step_callback);
-  void StashValidatedScopeExtensions(
-      base::OnceClosure next_step_callback,
-      ScopeExtensions validated_scope_extensions);
+  void OnManifestFetchedAcquireAppLock(
+      blink::mojom::ManifestPtr opt_manifest,
+      bool valid_manifest_for_web_app,
+      webapps::InstallableStatusCode installable_status);
 
-  // Stage: Loading existing manifest data from disk.
-  // (ManifestUpdateCheckStage::kLoadingExistingManifestData)
-  void LoadExistingManifestData(base::OnceClosure next_step_callback);
-  void LoadExistingAppIcons(
-      WebAppIconManager::ReadIconBitmapsCallback next_step_callback);
-  void StashExistingAppIcons(base::OnceClosure next_step_callback,
-                             IconBitmaps icon_bitmaps);
-  void LoadExistingShortcutsMenuIcons(
-      WebAppIconManager::ReadShortcutsMenuIconsCallback next_step_callback);
-  void StashExistingShortcutsMenuIcons(
-      base::OnceClosure next_step_callback,
-      ShortcutsMenuIconBitmaps shortcuts_menu_icon_bitmaps);
+  void StartManifestToInstallInfoJob(blink::mojom::ManifestPtr opt_manifest);
 
-  // Stage: Evaluates if icon bitmaps should be downloaded or if it already
-  // exists from disk, then stashes the icon bitmaps.
-  // (ManifestUpdateCheckStage::kDownloadingChangedIconUrlBitmaps)
-  void DownloadChangedIconUrlBitmaps(base::OnceClosure next_step_callback);
-  void DownloadNewIconBitmaps(
-      WebAppIconDownloader::WebAppIconDownloaderCallback next_step_callback);
-  void StashNewIconBitmaps(base::OnceClosure next_step_callback,
-                           IconsDownloadedResult result,
-                           IconsMap icons_map,
-                           DownloadedIconsHttpResults icons_http_results);
+  // The `install_info` will have icons populated if they were found in the
+  // manifest.
+  void OnWebAppInfoCreatedFromManifest(
+      std::unique_ptr<WebAppInstallInfo> install_info);
 
-  // Stage: Update check complete.
-  // (ManifestUpdateCheckStage::kComplete)
-  void CheckComplete();
+  // Identify whether or not the app needs to be silently updated, or if a
+  // pending update needs to be stored, and starts the writes if needed.
+  void FinalizeUpdateIfSilentChangesExist(bool is_trusted_install);
 
-  const WebApp& GetWebApp() const;
+  void UpdateFinalizedWritePendingInfo(
+      std::optional<proto::PendingUpdateInfo> pending_update_info,
+      const webapps::AppId& app_id,
+      webapps::InstallResultCode code);
+
+  void WritePendingUpdateInfoThenComplete(
+      std::optional<proto::PendingUpdateInfo>,
+      ManifestSilentUpdateCheckResult result);
+
+  void WritePendingUpdateToWebAppUpdateObservers(
+      std::optional<proto::PendingUpdateInfo> pending_update);
+
+  void CompleteCommandAndSelfDestruct(
+      base::Location location,
+      ManifestSilentUpdateCheckResult check_result);
 
   bool IsWebContentsDestroyed();
-  void CompleteCommandAndSelfDestruct(ManifestUpdateCheckResult check_result);
 
   base::WeakPtr<ManifestSilentUpdateCommand> GetWeakPtr() {
     return weak_factory_.GetWeakPtr();
   }
 
-  // Manifest update check request parameters.
-  const GURL url_;
-  const webapps::AppId app_id_;
-  base::Time check_time_;
+  // Loads `existing_trusted_icon_bitmaps_`, `existing_manifest_icon_bitmaps_`,
+  // and `existing_shortcuts_menu_icon_bitmaps_`, and then calls `on_complete`.
+  void LoadExistingAppAndShortcutIcons(base::OnceClosure on_complete);
+  void OnAppIconsLoaded(WebAppIconManager::WebAppBitmaps icon_bitmaps);
+  void OnShortcutIconsLoaded(
+      ShortcutsMenuIconBitmaps shortcuts_menu_icon_bitmaps);
 
+  // Manifest update check request parameters.
+  webapps::AppId app_id_;
+
+  // Populated when the command should fail, but the command hasn't started yet.
+  // Used for when the attached page is navigated or changed, so the manifest
+  // cannot be loaded from here.
+  std::optional<ManifestSilentUpdateCheckResult> failed_before_start_;
   // Resources and helpers used to fetch manifest data.
-  std::unique_ptr<AppLock> lock_;
-  base::WeakPtr<content::WebContents> web_contents_;
+  std::unique_ptr<NoopLock> lock_;
   std::unique_ptr<WebAppDataRetriever> data_retriever_;
-  std::unique_ptr<WebAppIconDownloader> icon_downloader_;
+  std::unique_ptr<AppLock> app_lock_;
+
 
   // Temporary variables stored here while the update check progresses
   // asynchronously.
   std::unique_ptr<WebAppInstallInfo> new_install_info_;
-  IconBitmaps existing_app_icon_bitmaps_;
+  WebAppComparison web_app_comparison_;
+  IconBitmaps existing_manifest_icon_bitmaps_;
+  IconBitmaps existing_trusted_icon_bitmaps_;
+  IconBitmaps pending_trusted_icon_bitmaps_;
+  IconBitmaps pending_manifest_icon_bitmaps_;
   ShortcutsMenuIconBitmaps existing_shortcuts_menu_icon_bitmaps_;
-  absl::flat_hash_map<SizeAndPurpose, GURL> new_icon_size_and_purpose_map_;
-  absl::flat_hash_map<SizeAndPurpose, GURL> existing_icon_size_and_purpose_map_;
-  ManifestDataChanges manifest_data_changes_;
+
+  // Stores whether a silent update can happen depending on the state of the
+  // system after the manifest update process has started and the web app's new
+  // fields have been downloaded.
+  bool silent_update_required_ = false;
+
+  // Stores whether a silent update is allowed depending on the state of the web
+  // app itself, like if the app is trusted, or if the generated icons can be
+  // fixed. For these cases, a pending update is not stored inside the web app.
+  bool silently_update_app_identity_ = false;
+
+  base::WeakPtr<content::WebContents> web_contents_;
+  // Note: This must be destroyed before `new_install_info_` since it holds a
+  // raw_ptr to it.
+  std::unique_ptr<ManifestToWebAppInstallInfoJob> manifest_to_install_info_job_;
 
   // Debug info.
-  ManifestUpdateCheckStage stage_ = ManifestUpdateCheckStage::kPendingAppLock;
+  ManifestSilentUpdateCommandStage stage_ =
+      ManifestSilentUpdateCommandStage::kFetchingNewManifestData;
+
+  // Stores the last time a silent icon update was triggered for `app_id_` if
+  // that happened.
+  std::optional<base::Time> previous_time_for_silent_icon_update_;
+  ManifestSilentUpdateCompletionInfo completion_info_;
 
   base::WeakPtrFactory<ManifestSilentUpdateCommand> weak_factory_{this};
 };
 
+std::ostream& operator<<(std::ostream& os,
+                         ManifestSilentUpdateCheckResult stage);
 }  // namespace web_app
 
 #endif  // CHROME_BROWSER_WEB_APPLICATIONS_COMMANDS_MANIFEST_SILENT_UPDATE_COMMAND_H_

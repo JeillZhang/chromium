@@ -19,7 +19,6 @@
 #include "gpu/vulkan/vulkan_fence_helper.h"
 #include "gpu/vulkan/vulkan_function_pointers.h"
 #include "gpu/vulkan/vulkan_implementation.h"
-#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/gpu_memory_buffer_handle.h"
 #include "ui/gl/buildflags.h"
 
@@ -146,13 +145,12 @@ SharedImageUsageSet SupportedUsage() {
       SHARED_IMAGE_USAGE_WEBGPU_STORAGE_TEXTURE |
 #endif
       SHARED_IMAGE_USAGE_GLES2_READ | SHARED_IMAGE_USAGE_GLES2_WRITE |
-      SHARED_IMAGE_USAGE_GLES2_FOR_RASTER_ONLY |
       SHARED_IMAGE_USAGE_DISPLAY_WRITE | SHARED_IMAGE_USAGE_DISPLAY_READ |
       SHARED_IMAGE_USAGE_RASTER_READ | SHARED_IMAGE_USAGE_RASTER_WRITE |
-      SHARED_IMAGE_USAGE_RASTER_OVER_GLES2_ONLY |
-      SHARED_IMAGE_USAGE_OOP_RASTERIZATION | SHARED_IMAGE_USAGE_VIDEO_DECODE |
+      SHARED_IMAGE_USAGE_VIDEO_DECODE |
       SHARED_IMAGE_USAGE_HIGH_PERFORMANCE_GPU | SHARED_IMAGE_USAGE_CPU_UPLOAD |
-      SHARED_IMAGE_USAGE_CPU_WRITE_ONLY;
+      SHARED_IMAGE_USAGE_CPU_WRITE_ONLY |
+      SHARED_IMAGE_USAGE_RASTER_COPY_SOURCE | SHARED_IMAGE_USAGE_CPU_READ;
 
 #if BUILDFLAG(IS_FUCHSIA)
   supported_usage |= SHARED_IMAGE_USAGE_SCANOUT;
@@ -289,15 +287,13 @@ bool ExternalVkImageBackingFactory::IsSupported(
     return false;
   }
 
-  if (gmb_type == gfx::EMPTY_BUFFER) {
-    if (usage.Has(SHARED_IMAGE_USAGE_CPU_WRITE_ONLY)) {
-      // Only CPU writable when the client provides a NativePixmap.
-      return false;
-    }
-  } else {
-    if (!CanImportGpuMemoryBuffer(gmb_type)) {
-      return false;
-    }
+  if (gmb_type == gfx::EMPTY_BUFFER &&
+      usage.Has(SHARED_IMAGE_USAGE_CPU_WRITE_ONLY)) {
+    // Only CPU writable when the client provides a NativePixmap.
+    return false;
+  }
+  if (gmb_type != gfx::EMPTY_BUFFER && !CanImportGpuMemoryBuffer(gmb_type)) {
+    return false;
   }
 
   if (thread_safe) {

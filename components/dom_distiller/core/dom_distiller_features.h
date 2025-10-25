@@ -15,10 +15,24 @@ bool IsDomDistillerEnabled();
 
 bool ShouldStartDistillabilityService();
 
+BASE_DECLARE_FEATURE(kReaderModeUseReadability);
+bool ShouldUseReadabilityDistiller();
+bool ShouldUseReadabilityHeuristic();
+int GetReadabilityHeuristicMinScore();
+int GetReadabilityHeuristicMinContentLength();
+int GetMinimumAllowableDistilledContentLength();
+
 #if BUILDFLAG(IS_ANDROID)
-BASE_DECLARE_FEATURE(kReaderModeAutoDistill);
+// Feature declarations below -- alphabetical order.
+BASE_DECLARE_FEATURE(kReaderModeDistillInApp);
 BASE_DECLARE_FEATURE(kReaderModeImprovements);
 #endif
+
+
+#if BUILDFLAG(IS_IOS)
+// Feature to enable the new CSS for Reader mode.
+BASE_DECLARE_FEATURE(kEnableReaderModeNewCss);
+#endif  // BUILDFLAG(IS_IOS)
 
 }  // namespace dom_distiller
 

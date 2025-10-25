@@ -27,7 +27,6 @@
 
 #include "base/check_op.h"
 #include "base/dcheck_is_on.h"
-#include "base/memory/scoped_refptr.h"
 #include "base/notreached.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/text.h"
@@ -79,11 +78,6 @@ class CORE_EXPORT LayoutText : public LayoutObject {
   const char* GetName() const override {
     NOT_DESTROYED();
     return "LayoutText";
-  }
-
-  bool IsLayoutNGObject() const override {
-    NOT_DESTROYED();
-    return true;
   }
 
   bool IsTextFragment() const {
@@ -377,9 +371,13 @@ class CORE_EXPORT LayoutText : public LayoutObject {
  protected:
   void WillBeDestroyed() override;
 
-  void StyleWillChange(StyleDifference, const ComputedStyle&) final;
+  void StyleWillChange(StyleDifference,
+                       const ComputedStyle& new_style,
+                       StyleChangeContext&) override;
 
-  void StyleDidChange(StyleDifference, const ComputedStyle* old_style) override;
+  void StyleDidChange(StyleDifference,
+                      const ComputedStyle* old_style,
+                      const StyleChangeContext&) override;
 
   void InLayoutNGInlineFormattingContextWillChange(bool) final;
 

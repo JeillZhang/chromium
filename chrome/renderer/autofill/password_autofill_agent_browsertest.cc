@@ -3,10 +3,6 @@
 // found in the LICENSE file.
 
 #include <string>
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
 
 #include "components/autofill/content/renderer/password_autofill_agent.h"
 
@@ -284,14 +280,6 @@ const char kPasswordChangeWithoutFormHTML[] =
     "  <INPUT type='password' id='newpassword'/>"
     "  <INPUT type='password' id='confirmpassword'/>"
     "  <INPUT type='submit' value='Change pwd'/>"
-    "</DIV>";
-
-const char kPasswordChangeFormWithoutSubmitHTML[] =
-    "<DIV>"
-    "  <INPUT type='text' id='username'/>"
-    "  <INPUT type='password' id='password'/>"
-    "  <INPUT type='password' id='newpassword'/>"
-    "  <INPUT type='password' id='confirmpassword'/>"
     "</DIV>";
 
 const char kCreditCardFormHTML[] =
@@ -2213,9 +2201,12 @@ TEST_F(PasswordAutofillAgentTest, FillIntoReadonlyTextField) {
 
   // If the field is readonly, it should not be affected.
   SetElementReadOnly(username_element_, true);
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(false));
   password_autofill_agent_->FillField(
       form_util::GetFieldRendererId(username_element_), kAliceUsername16,
-      AutofillSuggestionTriggerSource::kUnspecified);
+      autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger,
+      mock_reply.Get());
   CheckTextFieldsDOMState(
       /*username=*/std::string(), /*username_autofilled=*/false,
       /*password=*/std::string(), /*password_autofilled=*/false);
@@ -2228,9 +2219,12 @@ TEST_F(PasswordAutofillAgentTest, FillIntoUsernameField) {
       /*username=*/std::string(), /*username_autofilled=*/false,
       /*password=*/std::string(), /*password_autofilled=*/false);
 
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(true));
   password_autofill_agent_->FillField(
       form_util::GetFieldRendererId(username_element_), kAliceUsername16,
-      AutofillSuggestionTriggerSource::kUnspecified);
+      autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger,
+      mock_reply.Get());
   CheckTextFieldsDOMState(
       /*username=*/kAliceUsername, /*username_autofilled=*/true,
       /*password=*/std::string(), /*password_autofilled=*/false);
@@ -2243,9 +2237,12 @@ TEST_F(PasswordAutofillAgentTest, FillIntoPasswordField) {
       /*username=*/std::string(), /*username_autofilled=*/false,
       /*password=*/std::string(), /*password_autofilled=*/false);
 
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(true));
   password_autofill_agent_->FillField(
       form_util::GetFieldRendererId(password_element_), kAlicePassword16,
-      AutofillSuggestionTriggerSource::kUnspecified);
+      autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger,
+      mock_reply.Get());
   CheckTextFieldsDOMState(
       /*username=*/std::string(), /*username_autofilled=*/false,
       /*password=*/kAlicePassword, /*password_autofilled=*/true);
@@ -2258,9 +2255,12 @@ TEST_F(PasswordAutofillAgentTest, FillIntoRandomField) {
   // The field should not be autocompleted.
   EXPECT_EQ(std::string(), random_element.Value().Utf8());
 
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(true));
   password_autofill_agent_->FillField(
       form_util::GetFieldRendererId(random_element), kAliceUsername16,
-      AutofillSuggestionTriggerSource::kUnspecified);
+      autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger,
+      mock_reply.Get());
   EXPECT_EQ(kAliceUsername, random_element.Value().Utf8());
 }
 
@@ -2274,9 +2274,12 @@ TEST_F(PasswordAutofillAgentTest, FillIntoNonExistingField) {
       /*password=*/std::string(), /*password_autofilled=*/false);
   EXPECT_EQ(std::string(), random_element.Value().Utf8());
 
+  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
+  EXPECT_CALL(mock_reply, Run(false));
   password_autofill_agent_->FillField(
       FieldRendererId(), kAliceUsername16,
-      AutofillSuggestionTriggerSource::kUnspecified);
+      autofill::FieldPropertiesFlags::kAutofilledOnUserTrigger,
+      mock_reply.Get());
   // Neither field should be autocompleted.
   CheckTextFieldsDOMState(
       /*username=*/std::string(), /*username_autofilled=*/false,
@@ -5214,67 +5217,6 @@ TEST_F(PasswordAutofillAgentTest, FillChangePasswordFormFailed) {
   EXPECT_EQ(u"", password.Value().Utf16());
   EXPECT_EQ(u"", new_password.Value().Utf16());
   EXPECT_EQ(u"", confirmation_password.Value().Utf16());
-}
-
-TEST_F(PasswordAutofillAgentTest, SubmitChangePassword) {
-  LoadHTML(kPasswordChangeFormHTML);
-  UpdateUrlForHTML(kPasswordChangeFormHTML);
-
-  WebInputElement password = GetInputElementByID("password");
-
-  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
-  EXPECT_CALL(mock_reply, Run(true));
-  ASSERT_FALSE(fake_driver_.called_password_form_submitted());
-  password_autofill_agent_->SubmitFormWithEnter(
-      autofill::form_util::GetFieldRendererId(password), mock_reply.Get());
-
-  // Wait for submission event.
-  EXPECT_TRUE(base::test::RunUntil(
-      [&]() { return fake_driver_.called_password_form_submitted(); }));
-}
-
-TEST_F(PasswordAutofillAgentTest,
-       SubmitChangePasswordFailedWhenNoElementFound) {
-  LoadHTML(kPasswordChangeFormHTML);
-  UpdateUrlForHTML(kPasswordChangeFormHTML);
-
-  WebInputElement password = GetInputElementByID("password");
-
-  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
-  EXPECT_CALL(mock_reply, Run(false));
-  ASSERT_FALSE(fake_driver_.called_password_form_submitted());
-  password_autofill_agent_->SubmitFormWithEnter(autofill::FieldRendererId(0),
-                                                mock_reply.Get());
-  EXPECT_FALSE(fake_driver_.called_password_form_submitted());
-}
-
-TEST_F(PasswordAutofillAgentTest, SubmitChangePasswordFailedWhenNoFormTag) {
-  LoadHTML(kPasswordChangeWithoutFormHTML);
-  UpdateUrlForHTML(kPasswordChangeWithoutFormHTML);
-
-  WebInputElement password = GetInputElementByID("password");
-
-  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
-  EXPECT_CALL(mock_reply, Run(false));
-  ASSERT_FALSE(fake_driver_.called_password_form_submitted());
-  password_autofill_agent_->SubmitFormWithEnter(
-      autofill::form_util::GetFieldRendererId(password), mock_reply.Get());
-  EXPECT_FALSE(fake_driver_.called_password_form_submitted());
-}
-
-TEST_F(PasswordAutofillAgentTest,
-       SubmitChangePasswordFailedWhenNoSubmitElement) {
-  LoadHTML(kPasswordChangeFormWithoutSubmitHTML);
-  UpdateUrlForHTML(kPasswordChangeFormWithoutSubmitHTML);
-
-  WebInputElement password = GetInputElementByID("password");
-
-  base::MockCallback<base::OnceCallback<void(bool)>> mock_reply;
-  EXPECT_CALL(mock_reply, Run(false));
-  ASSERT_FALSE(fake_driver_.called_password_form_submitted());
-  password_autofill_agent_->SubmitFormWithEnter(
-      autofill::form_util::GetFieldRendererId(password), mock_reply.Get());
-  EXPECT_FALSE(fake_driver_.called_password_form_submitted());
 }
 
 // Check that a dynamic form submission can be detected after the form is

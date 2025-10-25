@@ -24,7 +24,6 @@
 #include "content/public/test/test_browser_context.h"
 #include "content/test/test_navigation_url_loader_delegate.h"
 #include "content/test/test_web_contents.h"
-#include "ipc/ipc_message.h"
 #include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/cert/cert_status_flags.h"
@@ -215,7 +214,7 @@ TEST_F(NavigationURLLoaderTest, RequestFailedCertErrorFatal) {
   auto* storage_partition = browser_context_->GetDefaultStoragePartition();
   base::RunLoop run_loop;
   storage_partition->GetNetworkContext()->AddHSTS(
-      url.host(), expiry, include_subdomains, run_loop.QuitClosure());
+      url.GetHost(), expiry, include_subdomains, run_loop.QuitClosure());
   run_loop.Run();
 
   TestNavigationURLLoaderDelegate delegate;

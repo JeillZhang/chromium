@@ -32,7 +32,6 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/keyed_service/content/browser_context_keyed_service_shutdown_notifier_factory.h"
-#include "components/nacl/common/buildflags.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/plugin_service.h"
@@ -42,7 +41,6 @@
 #include "content/public/common/content_constants.h"
 #include "extensions/buildflags/buildflags.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "url/gurl.h"
@@ -55,10 +53,6 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/webview_info.h"
-#endif
-
-#if BUILDFLAG(ENABLE_NACL)
-#include "components/nacl/common/nacl_constants.h"
 #endif
 
 using content::PluginService;
@@ -148,11 +142,11 @@ bool IsPluginLoadingAccessibleResourceInWebView(
     return false;
   }
 
-  const std::string extension_id = resource.host();
+  const std::string extension_id = resource.GetHost();
   const extensions::Extension* extension =
       extension_registry->enabled_extensions().GetByID(extension_id);
   if (!extension || !extensions::WebviewInfo::IsResourceWebviewAccessible(
-                        extension, partition_id, resource.path())) {
+                        extension, partition_id, resource.GetPath())) {
     return false;
   }
 

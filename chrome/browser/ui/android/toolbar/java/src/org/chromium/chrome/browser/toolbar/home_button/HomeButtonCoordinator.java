@@ -4,8 +4,6 @@
 
 package org.chromium.chrome.browser.toolbar.home_button;
 
-import static org.chromium.components.browser_ui.widget.BrowserUiListMenuUtils.buildMenuListItem;
-
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.view.View;
@@ -17,18 +15,23 @@ import androidx.annotation.VisibleForTesting;
 import androidx.core.widget.ImageViewCompat;
 
 import org.chromium.base.Callback;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.tabmodel.IncognitoStateProvider;
+import org.chromium.chrome.browser.theme.ThemeColorProvider;
 import org.chromium.chrome.browser.toolbar.MenuBuilderHelper;
 import org.chromium.chrome.browser.toolbar.R;
 import org.chromium.chrome.browser.toolbar.top.HomeButtonDisplay;
+import org.chromium.chrome.browser.toolbar.top.ToolbarChildButton;
 import org.chromium.components.browser_ui.widget.BrowserUiListMenuUtils;
+import org.chromium.components.browser_ui.widget.ListItemBuilder;
 import org.chromium.ui.listmenu.BasicListMenu;
 import org.chromium.ui.listmenu.ListMenu;
 import org.chromium.ui.listmenu.ListMenuDelegate;
 import org.chromium.ui.modelutil.MVCListAdapter;
 import org.chromium.ui.widget.RectProvider;
+
+import java.util.function.Supplier;
 
 /**
  * Root component for the {@link HomeButton} on the toolbar. Currently owns context menu for the
@@ -36,7 +39,7 @@ import org.chromium.ui.widget.RectProvider;
  */
 // TODO(crbug.com/40676825): Fix the visibility bug on NTP.
 @NullMarked
-public class HomeButtonCoordinator implements HomeButtonDisplay {
+public class HomeButtonCoordinator extends ToolbarChildButton implements HomeButtonDisplay {
     private static final int ID_SETTINGS = 0;
 
     private final Context mContext;
@@ -53,13 +56,18 @@ public class HomeButtonCoordinator implements HomeButtonDisplay {
      * @param onClickListener Listener invoked when button is clicked.
      * @param onMenuClickCallback Callback when home button menu item is clicked.
      * @param isHomepageMenuDisabledSupplier Supplier for whether the home button menu is enabled.
+     * @param themeColorProvider a provider that notifies about theme changes.
+     * @param incognitoStateProvider a provider that notifies about incognito state changes.
      */
     public HomeButtonCoordinator(
             Context context,
             View homeButton,
             OnClickListener onClickListener,
             Callback<Context> onMenuClickCallback,
-            Supplier<Boolean> isHomepageMenuDisabledSupplier) {
+            Supplier<Boolean> isHomepageMenuDisabledSupplier,
+            ThemeColorProvider themeColorProvider,
+            IncognitoStateProvider incognitoStateProvider) {
+        super(context, themeColorProvider, incognitoStateProvider);
         mContext = context;
         mHomeButton = (HomeButton) homeButton;
         mOnMenuClickCallback = onMenuClickCallback;
@@ -76,15 +84,16 @@ public class HomeButtonCoordinator implements HomeButtonDisplay {
             RectProvider rectProvider = MenuBuilderHelper.getRectProvider(mHomeButton);
             mMenuList = new MVCListAdapter.ModelList();
             mMenuList.add(
-                    buildMenuListItem(
-                            R.string.options_homepage_edit_title,
-                            ID_SETTINGS,
-                            R.drawable.ic_edit_24dp));
+                    new ListItemBuilder()
+                            .withTitleRes(R.string.options_homepage_edit_title)
+                            .withMenuId(ID_SETTINGS)
+                            .withStartIconRes(R.drawable.ic_edit_24dp)
+                            .build());
             BasicListMenu listMenu =
                     BrowserUiListMenuUtils.getBasicListMenu(
                             mContext,
                             mMenuList,
-                            (model) -> mOnMenuClickCallback.onResult(mContext));
+                            (model, unusedView) -> mOnMenuClickCallback.onResult(mContext));
             mListMenuDelegate =
                     new ListMenuDelegate() {
                         @Override
@@ -113,6 +122,16 @@ public class HomeButtonCoordinator implements HomeButtonDisplay {
     @Override
     public void setVisibility(int visibility) {
         mHomeButton.setVisibility(visibility);
+    }
+
+    @Override
+    public void setVisibility(boolean isVisible) {
+        setVisibility(isVisible ? View.VISIBLE : View.GONE);
+    }
+
+    @Override
+    public boolean isVisible() {
+        return getVisibility() == View.VISIBLE;
     }
 
     @Override

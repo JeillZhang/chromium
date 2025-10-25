@@ -8,12 +8,14 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
+#include "components/data_sharing/public/features.h"
 #include "components/data_sharing/public/group_data.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "google_apis/gaia/gaia_id.h"
 #include "url/android/gurl_android.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
+#include "components/data_sharing/public/jni_headers/DataSharingConversionUtils_jni.h"
 #include "components/data_sharing/public/jni_headers/DataSharingNetworkResult_jni.h"
 #include "components/data_sharing/public/jni_headers/GroupData_jni.h"
 #include "components/data_sharing/public/jni_headers/GroupMember_jni.h"
@@ -31,11 +33,8 @@ namespace data_sharing::conversion {
 
 ScopedJavaLocalRef<jobject> CreateJavaGroupMember(JNIEnv* env,
                                                   const GroupMember& member) {
-  auto gaia_id = member.gaia_id.empty()
-                     ? ScopedJavaLocalRef<jobject>()
-                     : ConvertToJavaGaiaId(env, member.gaia_id);
   return Java_GroupMember_createGroupMember(
-      env, gaia_id, ConvertUTF8ToJavaString(env, member.display_name),
+      env, member.gaia_id, ConvertUTF8ToJavaString(env, member.display_name),
       ConvertUTF8ToJavaString(env, member.email), static_cast<int>(member.role),
       url::GURLAndroid::FromNativeGURL(env, member.avatar_url),
       ConvertUTF8ToJavaString(env, member.given_name));
@@ -118,3 +117,12 @@ ScopedJavaLocalRef<jobject> CreateDataSharingNetworkResult(
 }
 
 }  // namespace data_sharing::conversion
+
+namespace data_sharing {
+
+// static
+jint JNI_DataSharingConversionUtils_GetServerEnvironment(JNIEnv* env) {
+  return static_cast<jint>(data_sharing::features::GetServerEnvironment());
+}
+
+}  // namespace data_sharing

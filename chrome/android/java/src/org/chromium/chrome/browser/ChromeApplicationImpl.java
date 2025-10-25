@@ -8,10 +8,12 @@ import android.app.Application;
 import android.content.res.Configuration;
 
 import org.chromium.base.BinderCallsListener;
+import org.chromium.base.SysUtils;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.version_info.Channel;
 import org.chromium.base.version_info.VersionConstants;
 import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.accessibility.hierarchysnapshotter.HierarchySnapshotter;
 import org.chromium.chrome.browser.app.notifications.ContextualNotificationPermissionRequesterImpl;
 import org.chromium.chrome.browser.background_task_scheduler.ChromeBackgroundTaskFactory;
@@ -36,6 +38,7 @@ import org.chromium.url.GURL;
  * <p>Note: All application logic should be added to {@link ChromeApplicationImpl}, which will be
  * called from the superclass. See {@link SplitCompatApplication} for more info.
  */
+@NullMarked
 public class ChromeApplicationImpl extends SplitCompatApplication.Impl {
     public ChromeApplicationImpl() {}
 
@@ -55,16 +58,19 @@ public class ChromeApplicationImpl extends SplitCompatApplication.Impl {
             BrowserUiUtilsCachedFlags.getInstance()
                     .setAsyncNotificationManagerFlag(
                             ChromeFeatureList.sAsyncNotificationManager.isEnabled());
+            // TODO(crbug.com/423925400): Remove if finch is initialized earlier
+            SysUtils.setLowMemoryDeviceThresholdMb(
+                    ChromeFeatureList.sLowMemoryDeviceThresholdMb.getValue());
 
-            if (ChromeFeatureList.sTraceBinderIpc.isEnabled()) {
+            // Only trace Binder IPCs for pre-Beta channels.
+            if (VersionConstants.CHANNEL <= Channel.DEV) {
                 BinderCallsListener.getInstance().installListener();
             }
 
             // Only load the native library early for non-test builds since some tests use the
             // "--disable-native-initialization" switch, and the CommandLine is not initialized at
             // this point to check.
-            if (!BuildConfig.IS_FOR_TEST
-                    && !ChromeFeatureList.sSkipIsolatedSplitPreload.isEnabled()) {
+            if (!BuildConfig.IS_FOR_TEST && !ChromeFeatureList.sLoadNativeEarly.isEnabled()) {
                 // Kick off library loading in a separate thread so it's ready when we need it.
                 new Thread(() -> LibraryLoader.getInstance().ensureInitialized()).start();
             }

@@ -10,6 +10,7 @@
 #include "ash/wm/window_resizer.h"
 #include "base/bit_cast.h"
 #include "base/command_line.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/single_thread_task_runner.h"
@@ -461,7 +462,7 @@ WaylandRemoteShell::WaylandRemoteShell(
   helper->AddFrameThrottlingObserver();
   helper->SetDefaultScaleCancellation(use_default_scale_cancellation_);
 
-  layout_mode_ = display::Screen::GetScreen()->InTabletMode()
+  layout_mode_ = display::Screen::Get()->InTabletMode()
                      ? ZCR_REMOTE_SHELL_V1_LAYOUT_MODE_TABLET
                      : ZCR_REMOTE_SHELL_V1_LAYOUT_MODE_WINDOWED;
 
@@ -618,7 +619,7 @@ void WaylandRemoteShell::SendDisplayMetrics() {
     return;
   needs_send_display_metrics_ = false;
 
-  const display::Screen* screen = display::Screen::GetScreen();
+  const display::Screen* screen = display::Screen::Get();
   double default_dsf = GetDefaultDeviceScaleFactor();
 
   for (const auto& display : screen->GetAllDisplays()) {
@@ -867,7 +868,7 @@ void WaylandRemoteShell::OnRemoteSurfaceStateChanged(
     case WindowStateType::kPinned:
       state_type = ZCR_REMOTE_SHELL_V1_STATE_TYPE_PINNED;
       break;
-    case WindowStateType::kTrustedPinned:
+    case WindowStateType::kLockedFullscreen:
       state_type = ZCR_REMOTE_SHELL_V1_STATE_TYPE_TRUSTED_PINNED;
       break;
     case WindowStateType::kPrimarySnapped:
@@ -1146,7 +1147,7 @@ void remote_surface_pin(wl_client* client,
                         wl_resource* resource,
                         int32_t trusted) {
   GetUserDataAs<ClientControlledShellSurface>(resource)->SetPinned(
-      trusted ? chromeos::WindowPinType::kTrustedPinned
+      trusted ? chromeos::WindowPinType::kLockedFullscreen
               : chromeos::WindowPinType::kPinned);
 }
 

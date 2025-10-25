@@ -64,6 +64,7 @@ class BookmarksMessageHandler : public content::WebUIMessageHandler,
 
   // syncer::SyncServiceObserver:
   void OnStateChanged(syncer::SyncService* sync_service) override;
+  void OnSyncShutdown(syncer::SyncService* sync_service) override;
 
   // bookmarks::BookmarkModelObserver
   void BookmarkModelLoaded(bool ids_reassigned) override;
@@ -97,6 +98,10 @@ class BookmarksMessageHandler : public content::WebUIMessageHandler,
   // account.
   bool batch_updates_ongoing_ = false;
   bool need_local_count_update_ = false;
+
+  // Keep track of the previous bookmarks sync state to filter out irrelevant
+  // updates coming from `SyncService`.
+  bool is_bookmarks_sync_active_ = false;
 
   PrefChangeRegistrar pref_change_registrar_;
 

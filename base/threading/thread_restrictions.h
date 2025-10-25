@@ -124,6 +124,7 @@
 
 class BrowserProcessImpl;
 class BrowserThemePack;
+class ChromeContentRendererClient;
 class ChromeNSSCryptoModuleDelegate;
 class DesktopNotificationBalloon;
 class FirefoxProfileLock;
@@ -163,7 +164,9 @@ bool HasWaylandDisplay(base::Environment* env);
 
 namespace android_webview {
 class AwBrowserContext;
+class AwBrowserContextStore;
 class AwFormDatabaseService;
+class AwMetricsServiceClient;
 class CookieManager;
 class JsSandboxIsolate;
 class OverlayProcessorWebView;
@@ -299,7 +302,8 @@ bool InitializeStaticGLBindings(GLImplementationParts);
 }
 }  // namespace gl
 namespace gpu {
-class GpuMemoryBufferImplDXGI;
+class MappableBufferAHB;
+class MappableBufferDXGI;
 }
 namespace history_report {
 class HistoryReportJniBridge;
@@ -342,11 +346,10 @@ class V4L2DevicePoller;  // TODO(crbug.com/41486289): remove this.
 namespace memory_instrumentation {
 class OSMetrics;
 }
-namespace memory_pressure {
+namespace content {
 class UserLevelMemoryPressureSignalGenerator;
 }
 namespace metrics {
-class AndroidMetricsServiceClient;
 class CleanExitBeacon;
 }  // namespace metrics
 namespace midi {
@@ -446,12 +449,6 @@ class VrShell;
 namespace web {
 class WebMainLoop;
 }  // namespace web
-namespace weblayer {
-class BrowserContextImpl;
-class ContentBrowserClientImpl;
-class ProfileImpl;
-class WebLayerPathProvider;
-}  // namespace weblayer
 // NOTE: Please do not append entries here. Put them in the list above and keep
 // the list sorted.
 
@@ -507,7 +504,7 @@ class Thread;
 
 // NaCL doesn't support stack capture.
 // Android can hang in stack capture (crbug.com/959139).
-#if BUILDFLAG(IS_NACL) || BUILDFLAG(IS_ANDROID)
+#if BUILDFLAG(IS_ANDROID)
 #define CAPTURE_THREAD_RESTRICTIONS_STACK_TRACES() false
 #else
 // Stack capture is slow. Only enable it in developer builds, to avoid user
@@ -574,6 +571,7 @@ class BASE_EXPORT ScopedAllowBlocking {
   // Sorted by class name (with namespace), #if blocks at the bottom.
   friend class ::BrowserProcessImpl;
   friend class ::BrowserThemePack;  // http://crbug.com/80206
+  friend class ::ChromeContentRendererClient;
   friend class ::DesktopNotificationBalloon;
   friend class ::FirefoxProfileLock;
   friend class ::GaiaConfig;
@@ -582,6 +580,9 @@ class BASE_EXPORT ScopedAllowBlocking {
   friend class ::StartupTabProviderImpl;
   friend class ::WebEngineBrowserMainParts;
   friend class android_webview::AwBrowserContext;
+  friend class android_webview::AwBrowserContextStore;
+  friend class android_webview::AwMetricsServiceClient;
+  friend class android_webview::CookieManager;
   friend class android_webview::ScopedAllowInitGLBindings;
   friend class ash::LoginEventRecorder;
   friend class ash::StartupCustomizationDocument;  // http://crosbug.com/11103
@@ -610,6 +611,7 @@ class BASE_EXPORT ScopedAllowBlocking {
   friend class content::
       ScopedAllowBlockingForViewAura;  // http://crbug.com/332579
   friend class content::ShellPathProvider;
+  friend class content::UserLevelMemoryPressureSignalGenerator;
   friend class content::WebContentsViewMac;
   friend class cronet::CronetContext;
   friend class cronet::CronetPrefsManager;
@@ -622,8 +624,6 @@ class BASE_EXPORT ScopedAllowBlocking {
   friend class io_thread::IOSIOThread;
   friend class media::FileVideoCaptureDeviceFactory;
   friend class memory_instrumentation::OSMetrics;
-  friend class memory_pressure::UserLevelMemoryPressureSignalGenerator;
-  friend class metrics::AndroidMetricsServiceClient;
   friend class metrics::CleanExitBeacon;
   friend class module_installer::ScopedAllowModulePakLoad;
   friend class net::GSSAPISharedLibrary;    // http://crbug.com/66702
@@ -644,10 +644,6 @@ class BASE_EXPORT ScopedAllowBlocking {
   friend class ui::DrmDisplayHostManager;
   friend class ui::ScopedAllowBlockingForGbmSurface;
   friend class ui::SelectFileDialogLinux;
-  friend class weblayer::BrowserContextImpl;
-  friend class weblayer::ContentBrowserClientImpl;
-  friend class weblayer::ProfileImpl;
-  friend class weblayer::WebLayerPathProvider;
 #if BUILDFLAG(IS_MAC)
   friend class printing::PrintBackendServiceImpl;
 #endif
@@ -828,6 +824,7 @@ class BASE_EXPORT
   // Allowed usage:
   // Sorted by class name (with namespace).
   friend class ::BrowserProcessImpl;  // http://crbug.com/125207
+  friend class ::ChromeContentRendererClient;
   friend class ::KeyStorageLinux;
   friend class ::NativeDesktopMediaList;
   friend class android::JavaHandlerThread;
@@ -859,7 +856,8 @@ class BASE_EXPORT
   friend class content::SynchronousCompositor;
   friend class content::SynchronousCompositorHost;
   friend class content::SynchronousCompositorSyncCallBridge;
-  friend class gpu::GpuMemoryBufferImplDXGI;
+  friend class gpu::MappableBufferAHB;
+  friend class gpu::MappableBufferDXGI;
   friend class media::AudioInputDevice;
   friend class media::AudioOutputDevice;
   friend class media::MailboxVideoFrameConverter;

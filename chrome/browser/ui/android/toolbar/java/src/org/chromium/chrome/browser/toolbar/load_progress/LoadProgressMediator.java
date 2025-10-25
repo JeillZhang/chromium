@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.toolbar.load_progress;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import org.chromium.base.MathUtils;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
@@ -83,23 +85,12 @@ public class LoadProgressMediator {
                                                 tab.getUrl(),
                                                 tab.isIncognito(),
                                                 tab.isNativePage()
-                                                        && tab.getNativePage().isPdf())) {
+                                                        && assumeNonNull(tab.getNativePage())
+                                                                .isPdf())) {
                                     return;
                                 }
 
                                 updateLoadProgress(progress);
-                            }
-
-                            @Override
-                            public void onWebContentsSwapped(
-                                    Tab tab, boolean didStartLoad, boolean didFinishLoad) {
-                                // If loading both started and finished before we swapped in the
-                                // WebContents, we won't get any load progress signals. Otherwise,
-                                // we should receive at least one real signal so we don't need to
-                                // simulate them.
-                                if (didStartLoad && didFinishLoad && !mPreventUpdates) {
-                                    mLoadProgressSimulator.start();
-                                }
                             }
 
                             @Override
@@ -135,7 +126,7 @@ public class LoadProgressMediator {
             if (NativePage.isNativePageUrl(
                     tab.getUrl(),
                     tab.isIncognito(),
-                    tab.isNativePage() && tab.getNativePage().isPdf())) {
+                    tab.isNativePage() && assumeNonNull(tab.getNativePage()).isPdf())) {
                 finishLoadProgress(false);
             } else {
                 startLoadProgress();

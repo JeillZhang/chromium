@@ -10,7 +10,6 @@ import json
 import logging
 import optparse
 import signal
-import subprocess
 import sys
 import textwrap
 import tempfile
@@ -91,9 +90,6 @@ class WPTAdapter:
         env_total_shards = host.environ.get('GTEST_TOTAL_SHARDS')
         if env_total_shards is not None:
             cls._ensure_value(options, 'total_shards', int(env_total_shards))
-        if options.use_upstream_wpt:
-            # do not use expectations when run with upstream WPT
-            options.no_expectations = True
         if options.product in cls.PORT_NAME_BY_PRODUCT:
             port_name = cls.PORT_NAME_BY_PRODUCT[options.product]
         port = host.port_factory.get(port_name, options)
@@ -180,6 +176,7 @@ class WPTAdapter:
         runner_options.no_capture_stdio = True
         runner_options.pause_after_test = False
         runner_options.headless = self.options.headless
+        runner_options.trace_categories = self.options.trace_categories
 
         # Set up logging as early as possible.
         self._set_up_runner_output_options(runner_options)
@@ -279,16 +276,23 @@ class WPTAdapter:
         elif self.options.timeout_multiplier:
             runner_options.timeout_multiplier = self.options.timeout_multiplier
 
-        if self.options.use_upstream_wpt:
-            # when running with upstream, the goal is to get wpt report that can
-            # be uploaded to wpt.fyi. We do not really care if tests failed or
-            # not. Add '--no-fail-on-unexpected' so that the overall result is
-            # success. Add '--no-restart-on-unexpected' to speed up the test. On
-            # Android side, we are always running with one emulator or worker,
-            # so do not add '--run-by-dir=0'
+        if self.options.no_expectations:
+            # When running with `--no-expectations` or `--use-upstream-wpt`, the
+            # goal is to gather data, such as:
+            #   * Reports to wpt.fyi (https://github.com/w3c/wptreport)
+            #   * Traces
+            #   * Code coverage profiles
+            #
+            # ... not to verify browser code changes. Therefore, test failures
+            # should not cause the shard to fail, and there's no need to retry
+            # any tests to work around flakiness.
             runner_options.fail_on_unexpected = False
-            runner_options.restart_on_unexpected = False
             runner_options.retry_unexpected = 0
+            # To speed up testing, don't restart browsers after unexpected
+            # failures.
+            runner_options.restart_on_unexpected = False
+            # Don't add `--run-by-dir=0` because Android currently always uses
+            # one emulator or worker.
         else:
             # Unexpected subtest passes in wptrunner are equivalent to baseline
             # mismatches in `run_web_tests.py`, so don't pass
@@ -480,6 +484,7 @@ class WPTAdapter:
             logger.debug(f'Running WPT tests from {self.tests_root}')
 
             runner_options.run_info = tmp_dir
+            runner_options.deps_path = self.fs.join(tmp_dir, 'deps')
             self._initialize_run_info(tmp_dir, self.tests_root)
             if self.options.wrapper:
                 runner_options.debug_test = True
@@ -497,7 +502,7 @@ class WPTAdapter:
         show_results = self.port.get_option('show_results')
         try:
             with self.test_env() as runner_options:
-                run = _load_entry_point()
+                run = _load_entry_point(runner_options.deps_path)
                 exit_code = 1 if run(**vars(runner_options)) else 0
         except KeyboardInterrupt:
             logger.critical('Harness exited after signal interrupt')
@@ -531,8 +536,8 @@ class WPTAdapter:
             # `run_wpt_tests` does not run in the upstream checkout's git
             # context, so wptrunner cannot infer the latest revision. Manually
             # add the revision here.
-            run_info['revision'] = self.host.git(
-                path=tests_root).current_revision()
+            if git := self.host.git(tests_root):
+                run_info['revision'] = git.current_revision()
 
         # The filename must be `mozinfo.json` for wptrunner to read it from the
         # `--run-info` directory.
@@ -614,22 +619,30 @@ class WPTAdapter:
         rev_list_output = self.host.executive.run_command(
             [wpt_executable, 'rev-list', '--epoch', '3h'])
         commit = rev_list_output.splitlines()[0]
-        self.host.git(path=local_wpt.path).run(['checkout', commit])
+        git = self.host.git(local_wpt.path)
+        assert git, 'cloned repo should have a `git` environment'
+        git.run(['checkout', commit])
         # Update wpt manifest immediately after checkout.
         self.port.wpt_manifest('external/wpt')
         logger.info('Running against upstream wpt@%s', commit)
 
 
-def _load_entry_point():
+def _load_entry_point(deps_path: str):
     """Import and return a callable that runs wptrunner.
+
+    Arguments:
+        deps_path: Scratch directory for installing dependencies. Third-party
+            Python packages are not installed here because vpython already
+            installs them elsewhere. However, in `--stable` mode, other
+            dependencies like `chromedriver` may be downloaded here from Chrome
+            for Testing. Therefore, this directory should not be tracked by
+            `git`.
 
     Returns:
         Callable whose keyword arguments are the namespace corresponding to
         command line options.
     """
-    # vpython, not virtualenv, vends third-party packages in chromium/src.
-    dummy_venv = Virtualenv(path_finder.get_source_dir(),
-                            skip_virtualenv_setup=True)
+    dummy_venv = Virtualenv(deps_path, skip_virtualenv_setup=True)
     return functools.partial(run.run, dummy_venv)
 
 
@@ -671,22 +684,18 @@ def parse_arguments(argv):
     return options, args
 
 
-def _install_xcode(xcode_build_version: str):
+def _maybe_install_xcode(build_version: str | None):
+    if not build_version:
+        logger.warning('Skipping Xcode installation (no build version given)')
+        return
+
     path_finder.add_build_ios_to_sys_path()
-    import xcode_util as xcode
-    if xcode_build_version:
-        try:
-            xcode.install_xcode('../../mac_toolchain', xcode_build_version,
-                                '../../Xcode.app', '../../Runtime-ios-',
-                                product.IOS_VERSION)
-        except subprocess.CalledProcessError as e:
-            logger.error('Xcode build version %s failed to install: %s ',
-                         xcode_build_version, e)
-        else:
-            logger.info('Xcode build version %s successfully installed.',
-                        xcode_build_version)
-    else:
-        logger.warning('Skip the Xcode installation, no xcode_build_version.')
+    import xcode_util
+    xcode_util.install_xcode('../../mac_toolchain', build_version,
+                             '../../Xcode.app', '../../Runtime-ios-',
+                             product.IOS_DEVICE, product.IOS_VERSION)
+    logger.info('Xcode build version %s successfully installed.',
+                build_version)
 
 
 def main(argv) -> int:
@@ -709,9 +718,9 @@ def main(argv) -> int:
     exit_code = exit_codes.UNEXPECTED_ERROR_EXIT_STATUS
     try:
         adapter = WPTAdapter.from_args(host, argv)
-        if (adapter.product.name == 'chrome_ios'
-                and adapter.options.xcode_build_version):
-            _install_xcode(adapter.options.xcode_build_version)
+        if adapter.product.name == 'chrome_ios':
+            # Xcode needs to be installed early so that `git clone` works.
+            _maybe_install_xcode(adapter.options.xcode_build_version)
         if adapter.options.use_upstream_wpt:
             adapter.checkout_upstream_wpt()
         adapter.set_up_derived_options()

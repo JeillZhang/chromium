@@ -17,8 +17,9 @@
 #include "base/gtest_prod_util.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/sequence_checker.h"
 #include "build/build_config.h"
 #include "components/services/storage/public/mojom/blob_storage_context.mojom.h"
 #include "components/services/storage/public/mojom/cache_storage_control.mojom.h"
@@ -361,9 +362,6 @@ class CONTENT_EXPORT CacheStorage : public CacheStorageCacheObserver {
 
   size_t handle_ref_count_ = 0;
 
-  // Performs backend specific operations (memory vs disk).
-  std::unique_ptr<CacheLoader> cache_loader_;
-
   // The quota manager.
   scoped_refptr<storage::QuotaManagerProxy> quota_manager_proxy_;
 
@@ -372,6 +370,9 @@ class CONTENT_EXPORT CacheStorage : public CacheStorageCacheObserver {
 
   // The owner that this CacheStorage is associated with.
   const storage::mojom::CacheStorageOwner owner_;
+
+  // Performs backend specific operations (memory vs disk).
+  std::unique_ptr<CacheLoader> cache_loader_;
 
   CacheStorageSchedulerId init_id_ = -1;
 

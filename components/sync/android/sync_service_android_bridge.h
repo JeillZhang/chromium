@@ -79,6 +79,7 @@ class SyncServiceAndroidBridge : public SyncServiceObserver {
   jboolean IsUsingExplicitPassphrase(JNIEnv* env);
   jint GetPassphraseType(JNIEnv* env);
   jint GetTransportState(JNIEnv* env);
+  jint GetUserActionableError(JNIEnv* env);
   void SetEncryptionPassphrase(
       JNIEnv* env,
       const base::android::JavaParamRef<jstring>& passphrase);
@@ -90,8 +91,6 @@ class SyncServiceAndroidBridge : public SyncServiceObserver {
   void GetAllNodes(JNIEnv* env,
                    const base::android::JavaParamRef<jobject>& callback);
   GoogleServiceAuthError GetAuthError(JNIEnv* env);
-  jboolean HasUnrecoverableError(JNIEnv* env);
-  jboolean RequiresClientUpgrade(JNIEnv* env);
   base::android::ScopedJavaLocalRef<jobject> GetAccountInfo(JNIEnv* env);
   jboolean HasSyncConsent(JNIEnv* env);
   jboolean IsPassphrasePromptMutedForCurrentProductVersion(JNIEnv* env);

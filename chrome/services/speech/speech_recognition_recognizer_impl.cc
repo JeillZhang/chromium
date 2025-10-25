@@ -25,6 +25,7 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/services/speech/soda/soda_client_impl.h"
+#include "chrome/services/speech/speech_timestamp_estimator.h"
 #include "components/soda/constants.h"
 #include "google_apis/google_api_keys.h"
 #include "media/base/audio_buffer.h"
@@ -80,22 +81,16 @@ void OnSodaResponse(const char* serialized_proto,
     const soda::chrome::SodaRecognitionResult& result =
         response.recognition_result();
 
-    const bool is_final =
-        result.result_type() == soda::chrome::SodaRecognitionResult::FINAL;
+    auto speech_recognition_result = media::SpeechRecognitionResult(
+        result.hypothesis(0),
+        result.result_type() == soda::chrome::SodaRecognitionResult::FINAL);
 
-    auto speech_recognition_result =
-        media::SpeechRecognitionResult(result.hypothesis(0), is_final);
-
-    // TODO(crbug.com/413823334): Check if we can add `TimingInformation` to non
-    // final `SpeechRecognitionResults`, if this proves to be useful downstream.
-    if (is_final && result.has_timing_metrics()) {
-      const auto& timing_metrics = result.timing_metrics();
-
+    if (result.has_timing_metrics()) {
       speech_recognition_result.timing_information = media::TimingInformation();
       speech_recognition_result.timing_information->audio_start_time =
-          base::Microseconds(timing_metrics.audio_start_time_usec());
+          base::Microseconds(result.timing_metrics().audio_start_time_usec());
       speech_recognition_result.timing_information->audio_end_time =
-          base::Microseconds(timing_metrics.event_end_time_usec());
+          base::Microseconds(result.timing_metrics().event_end_time_usec());
     }
 
     DCHECK(result.hypothesis_size());
@@ -209,8 +204,42 @@ void SpeechRecognitionRecognizerImpl::OnRecognitionEvent(
     session_contains_speech_ = true;
   }
 
-  if (!client_remote_.is_bound())
+  if (!client_remote_.is_bound()) {
     return;
+  }
+
+  if (event.timing_information.has_value()) {
+    using SpeechTimestamp = SpeechTimestampEstimator::SpeechTimestamp;
+    auto& timing_info = event.timing_information.value();
+
+    // During ResetSoda(), we reset `timestamp_estimator_`, and the next few
+    // transcriptions might have missing or wrong timestamps, but they should
+    // quickly return to being consistent.
+    //
+    // Indeed, due to threading, there might be `OnRecognitionEvent()` calls in
+    // flight from a previous SODA session, which arrive after
+    // `timestamp_estimator_` is reset. If the `timing_info` passed to the new
+    // estimator is out of bounds, nothing happens and `media_timestamps` will
+    // be empty. If the `timing_info` is in bounds, `media_timestamps` will have
+    // the wrong timestamps, and those timestamps will also be missing from
+    // future transcriptions.
+    //
+    // Correctly handling this scenario would add a fair bit more complexity,
+    // which might not be warranted at this time.
+    std::vector<media::MediaTimestampRange> media_timestamps;
+    if (event.is_final) {
+      media_timestamps = timestamp_estimator_->TakeTimestampsInRange(
+          SpeechTimestamp(timing_info.audio_start_time),
+          SpeechTimestamp(timing_info.audio_end_time));
+    } else {
+      media_timestamps = timestamp_estimator_->PeekTimestampsInRange(
+          SpeechTimestamp(timing_info.audio_start_time),
+          SpeechTimestamp(timing_info.audio_end_time));
+    }
+    if (!media_timestamps.empty()) {
+      timing_info.originating_media_timestamps = std::move(media_timestamps);
+    }
+  }
 
   client_remote_->OnSpeechRecognitionRecognitionEvent(
       std::move(event),
@@ -254,6 +283,7 @@ SpeechRecognitionRecognizerImpl::SpeechRecognitionRecognizerImpl(
       config_paths_(config_paths),
       primary_language_name_(primary_language_name),
       mask_offensive_words_(mask_offensive_words),
+      timestamp_estimator_(std::make_unique<SpeechTimestampEstimator>()),
       speech_recognition_service_(speech_recognition_service) {
   recognition_event_callback_ = base::BindPostTaskToCurrentDefault(
       base::BindRepeating(&SpeechRecognitionRecognizerImpl::OnRecognitionEvent,
@@ -341,6 +371,10 @@ void SpeechRecognitionRecognizerImpl::SendAudioToSpeechRecognitionService(
     return;
   }
 
+  auto buffer_duration = SpeechTimestampEstimator::PlaybackDuration(
+      media::AudioTimestampHelper::FramesToTime(buffer->frame_count,
+                                                buffer->sample_rate));
+
   // Skip this buffer if there has been no nonzero data for several seconds.
   if (options_->skip_continuously_empty_audio) {
     const bool buffer_is_zero =
@@ -350,14 +384,31 @@ void SpeechRecognitionRecognizerImpl::SendAudioToSpeechRecognitionService(
     if (!buffer_is_zero) {
       last_non_empty_audio_time_ = now;
     }
-    if (now - last_non_empty_audio_time_ > base::Seconds(10)) {
+
+    // Brief periods of empty audio can be meaningful input to the speech
+    // recognition engine. Only drop `buffer` after 10s of silence to save on
+    // computations, once we're fairly sure the silence isn't meaningful.
+    constexpr base::TimeDelta kSilenceThreshold = base::Seconds(10);
+    if (now - last_non_empty_audio_time_ > kSilenceThreshold) {
       // No nonzero data for several seconds. Don't send this buffer of zeroes.
+
+      // Forward `media_start_pts` since we can seek into the middle of long
+      // stretches of silence.
+      AddMediaTimestampToEstimator(media_start_pts);
+
+      timestamp_estimator_->OnSilentMediaDropped(std::move(buffer_duration));
       return;
     }
   }
 
   // OK, everything is verified, let's send the audio.
   SendAudioToSpeechRecognitionServiceInternal(std::move(buffer));
+
+  // Update `timestamp_estimator_` after sending audio to SODA, since it might
+  // be reset along with SODA after audio parameter changes.
+  AddMediaTimestampToEstimator(media_start_pts);
+
+  timestamp_estimator_->AppendDuration(std::move(buffer_duration));
 }
 
 void SpeechRecognitionRecognizerImpl::OnSpeechRecognitionError() {
@@ -508,8 +559,17 @@ void SpeechRecognitionRecognizerImpl::ResetSoda() {
   // to determine the appropriate language pack path. Note that
   // SodaInstaller::GetLanguagePath() is not implemented outside of Chrome OS,
   // and options_->language is not set for Live Caption.
+  std::optional<speech::SodaLanguagePackComponentConfig> language_config =
+      speech::GetLanguageComponentConfigMatchingLanguageSubtag(
+          primary_language_name_);
+  auto primary_language_name = language_config.has_value()
+                                   ? language_config.value().language_name
+                                   : primary_language_name_;
   std::string language_pack_directory =
-      config_paths_[primary_language_name_].AsUTF8Unsafe();
+      config_paths_[language_config.has_value()
+                        ? language_config.value().language_name
+                        : primary_language_name_]
+          .AsUTF8Unsafe();
 
   // Initialize the SODA instance with the serialized config.
   config_msg_ = soda::chrome::ExtendedSodaConfigMsg();
@@ -525,8 +585,7 @@ void SpeechRecognitionRecognizerImpl::ResetSoda() {
   config_msg_.set_enable_speaker_change_detection(
       base::FeatureList::IsEnabled(media::kSpeakerChangeDetection));
   config_msg_.set_mask_offensive_words(mask_offensive_words_);
-  if (base::FeatureList::IsEnabled(media::kLiveCaptionMultiLanguage) &&
-      config_paths_.size() > 0) {
+  if (config_paths_.size() > 0) {
     auto* multilang_config = config_msg_.mutable_multilang_config();
     multilang_config->set_rewind_when_switching_language(true);
     auto& multilang_language_pack_directory =
@@ -559,11 +618,23 @@ void SpeechRecognitionRecognizerImpl::ResetSoda() {
   config.callback_handle = this;
   CHECK(soda_client_);
   soda_client_->Reset(config, sample_rate_, channel_count_);
+
+  timestamp_estimator_ = std::make_unique<SpeechTimestampEstimator>();
 }
 
 soda::chrome::ExtendedSodaConfigMsg*
 SpeechRecognitionRecognizerImpl::GetExtendedSodaConfigMsgForTesting() {
   return &config_msg_;
+}
+
+void SpeechRecognitionRecognizerImpl::AddMediaTimestampToEstimator(
+    const std::optional<base::TimeDelta>& media_start_pts) {
+  if (!media_start_pts.has_value()) {
+    return;
+  }
+
+  timestamp_estimator_->AddPlaybackStart(
+      SpeechTimestampEstimator::MediaTimestamp(media_start_pts.value()));
 }
 
 }  // namespace speech

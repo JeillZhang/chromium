@@ -357,9 +357,10 @@ TEST_P(CanvasResourceDispatcherTest, DispatchFrame) {
   ScopedTestingPlatformSupport<TestingPlatformSupport> platform;
   ::testing::InSequence s;
 
-  // To intercept SubmitCompositorFrame/SubmitCompositorFrameSync messages sent
-  // by theCanvasResourceDispatcher, we have to override the Mojo
-  // EmbeddedFrameSinkProvider interface impl and its CompositorFrameSinkClient.
+  // To intercept SubmitCompositorFrame messages sent by
+  // theCanvasResourceDispatcher, we have to override the Mojo
+  // EmbeddedFrameSinkProvider interface impl and its
+  // CompositorFrameSinkClient.
   MockEmbeddedFrameSinkProvider mock_embedded_frame_sink_provider;
   mojo::Receiver<mojom::blink::EmbeddedFrameSinkProvider>
       embedded_frame_sink_provider_receiver(&mock_embedded_frame_sink_provider);
@@ -399,9 +400,9 @@ TEST_P(CanvasResourceDispatcherTest, DispatchFrame) {
   EXPECT_CALL(*(Dispatcher()), PostImageToPlaceholder(_, _));
   EXPECT_CALL(mock_embedded_frame_sink_provider.mock_compositor_frame_sink(),
               SubmitCompositorFrame_(_))
-      .WillOnce(::testing::WithArg<0>(
-          ::testing::Invoke([context_alpha, expected_throttle](
-                                const viz::CompositorFrame* frame) {
+      .WillOnce(
+          ::testing::WithArg<0>([context_alpha, expected_throttle](
+                                    const viz::CompositorFrame* frame) {
             EXPECT_EQ(frame->metadata.may_throttle_if_undrawn_frames,
                       expected_throttle);
 
@@ -431,7 +432,7 @@ TEST_P(CanvasResourceDispatcherTest, DispatchFrame) {
                       kTopLeft_GrSurfaceOrigin);
             EXPECT_EQ(frame->resource_list.front().alpha_type,
                       kPremul_SkAlphaType);
-          })));
+          }));
 
   constexpr SkIRect damage_rect = SkIRect::MakeWH(kDamageWidth, kDamageHeight);
   Dispatcher()->DispatchFrame(canvas_resource, damage_rect,

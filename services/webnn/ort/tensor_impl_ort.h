@@ -20,25 +20,28 @@ class TensorImplOrt final : public WebNNTensorImpl {
  public:
   TensorImplOrt(
       mojo::PendingAssociatedReceiver<mojom::WebNNTensor> receiver,
-      WebNNContextImpl* context,
+      base::WeakPtr<WebNNContextImpl> context,
       mojom::TensorInfoPtr tensor_info,
       scoped_refptr<QueueableResourceState<BufferContentOrt>> buffer_state);
 
   TensorImplOrt(const TensorImplOrt&) = delete;
   TensorImplOrt& operator=(const TensorImplOrt&) = delete;
-  ~TensorImplOrt() override;
 
   const scoped_refptr<QueueableResourceState<BufferContentOrt>>&
   GetBufferState() const;
 
  private:
+  ~TensorImplOrt() override;
+
   void ReadTensorImpl(ReadTensorCallback callback) override;
   void WriteTensorImpl(mojo_base::BigBuffer src_buffer) override;
-
-  SEQUENCE_CHECKER(sequence_checker_);
+  bool ImportTensorImpl() override;
+  void ExportTensorImpl(
+      std::unique_ptr<gpu::WebNNTensorRepresentation::ScopedAccess> access)
+      override;
 
   scoped_refptr<QueueableResourceState<BufferContentOrt>> buffer_state_
-      GUARDED_BY_CONTEXT(sequence_checker_);
+      GUARDED_BY_CONTEXT(gpu_sequence_checker_);
 };
 
 }  // namespace webnn::ort

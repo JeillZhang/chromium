@@ -6,11 +6,13 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/test/bind.h"
 #include "base/test/test_mock_time_task_runner.h"
@@ -23,20 +25,22 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/test/mock_browser_window_interface.h"
+#include "chrome/browser/ui/recently_audible_helper.h"
 #include "chrome/browser/ui/tab_ui_helper.h"
 #include "chrome/browser/ui/tabs/alert/tab_alert.h"
+#include "chrome/browser/ui/tabs/alert/tab_alert_controller.h"
 #include "chrome/browser/ui/tabs/organization/tab_declutter_controller.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_sync_service_initialized_observer.h"
-#include "chrome/browser/ui/tabs/tab_utils.h"
+#include "chrome/browser/ui/tabs/split_tab_metrics.h"
 #include "chrome/browser/ui/tabs/test_tab_strip_model_delegate.h"
-#include "chrome/browser/ui/tabs/test_util.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/webui/metrics_reporter/metrics_reporter.h"
 #include "chrome/browser/ui/webui/metrics_reporter/mock_metrics_reporter.h"
 #include "chrome/browser/ui/webui/tab_search/tab_search.mojom-forward.h"
 #include "chrome/browser/ui/webui/tab_search/tab_search_ui.h"
 #include "chrome/browser/ui/webui/webui_embedding_context.h"
+#include "chrome/browser/vr/vr_tab_helper.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_profile_manager.h"
@@ -53,12 +57,26 @@
 #include "content/public/test/test_web_ui.h"
 #include "content/public/test/web_contents_tester.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "ui/base/unowned_user_data/unowned_user_data_host.h"
+#include "ui/base/unowned_user_data/user_data_factory.h"
 #include "ui/gfx/color_utils.h"
 
 using testing::_;
 using testing::Truly;
 
 namespace {
+
+class TabSearchTabStripModelDelegate : public TestTabStripModelDelegate {
+ public:
+  TabSearchTabStripModelDelegate() = default;
+
+  void WillAddWebContents(content::WebContents* contents) override {
+    TestTabStripModelDelegate::WillAddWebContents(contents);
+    // VrTabHelper and audible helper are needed for tab alerts.
+    vr::VrTabHelper::CreateForWebContents(contents);
+    RecentlyAudibleHelper::CreateForWebContents(contents);
+  }
+};
 
 constexpr char kTabUrl1[] = "http://foo/1";
 constexpr char kTabUrl2[] = "http://foo/2";
@@ -205,6 +223,10 @@ class TabSearchPageHandlerTest : public BrowserWithTestWindowTest {
     handler_ = std::make_unique<TestTabSearchPageHandler>(
         page_.BindAndGetRemote(), web_ui(), webui_controller_.get());
     EXPECT_CALL(page_, HostWindowChanged()).Times(1);
+    feature_list_.InitWithFeatures(
+        {features::kTabstripDeclutter, features::kTabstripDedupe,
+         features::kSideBySide},
+        {});
 
     // Wait for the TabGroupSyncService to properly initialize before making any
     // changes to tab groups.
@@ -293,18 +315,13 @@ class TabSearchPageHandlerTest : public BrowserWithTestWindowTest {
 
  private:
   std::unique_ptr<Browser> CreateTestBrowser(Profile* profile, bool popup) {
-    auto window = std::make_unique<TestBrowserWindow>();
     Browser::Type type = popup ? Browser::TYPE_POPUP : Browser::TYPE_NORMAL;
-
-    std::unique_ptr<Browser> browser =
-        CreateBrowser(profile, type, false, window.get());
-    // Self deleting.
-    new TestBrowserWindowOwner(std::move(window));
-    return browser;
+    return CreateBrowser(profile, type, false);
   }
 
   std::unique_ptr<content::WebContents> web_contents_;
   content::TestWebUI web_ui_;
+  base::test::ScopedFeatureList feature_list_;
   raw_ptr<Profile, DanglingUntriaged> profile2_;
   std::unique_ptr<Browser> browser2_;
   std::unique_ptr<Browser> browser3_;
@@ -389,6 +406,52 @@ TEST_F(TabSearchPageHandlerTest, GetTabs) {
   handler()->GetProfileData(std::move(callback3));
 }
 
+TEST_F(TabSearchPageHandlerTest, TabActivationChangedByInteraction) {
+  EXPECT_CALL(page_, TabUpdated(_)).Times(1);
+  EXPECT_CALL(page_, TabsRemoved(_)).Times(1);
+
+  AddTabWithTitle(browser1(), GURL(kTabUrl1), kTabName1);
+  AddTabWithTitle(browser1(), GURL(kTabUrl2), kTabName2);
+
+  base::TimeTicks tab1_ticks;
+  base::TimeTicks tab2_ticks;
+
+  // Get initial last active time ticks.
+  tab_search::mojom::PageHandler::GetProfileDataCallback callback1 =
+      base::BindLambdaForTesting(
+          [&](tab_search::mojom::ProfileDataPtr profile_tabs) {
+            ASSERT_EQ(2u, profile_tabs->windows.size());
+            auto* window1 = profile_tabs->windows[0].get();
+            ASSERT_EQ(2u, window1->tabs.size());
+            // Tabs are in index order.
+            tab1_ticks = window1->tabs[0]->last_active_time_ticks;
+            tab2_ticks = window1->tabs[1]->last_active_time_ticks;
+          });
+  handler()->GetProfileData(std::move(callback1));
+
+  auto task_runner = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
+  task_runner->FastForwardBy(base::Seconds(1));
+
+  // Simulate interaction with the first tab.
+  browser1()->tab_strip_model()->GetWebContentsAt(0)->Copy();
+
+  // Get last active time ticks again and verify.
+  tab_search::mojom::PageHandler::GetProfileDataCallback callback2 =
+      base::BindLambdaForTesting(
+          [&](tab_search::mojom::ProfileDataPtr profile_tabs) {
+            ASSERT_EQ(2u, profile_tabs->windows.size());
+            auto* window1 = profile_tabs->windows[0].get();
+            ASSERT_EQ(2u, window1->tabs.size());
+            base::TimeTicks new_tab1_ticks =
+                window1->tabs[0]->last_active_time_ticks;
+            base::TimeTicks new_tab2_ticks =
+                window1->tabs[1]->last_active_time_ticks;
+            EXPECT_GT(new_tab1_ticks, tab1_ticks);
+            EXPECT_EQ(new_tab2_ticks, tab2_ticks);
+          });
+  handler()->GetProfileData(std::move(callback2));
+}
+
 TEST_F(TabSearchPageHandlerTest, TabsAndGroups) {
   ASSERT_TRUE(browser()->tab_strip_model()->SupportsTabGroups());
 
@@ -465,11 +528,12 @@ TEST_F(TabSearchPageHandlerTest, MediaTabsTest) {
   std::unique_ptr<content::WebContents> test_web_contents(
       content::WebContentsTester::CreateTestWebContents(
           content::WebContents::CreateParams(profile())));
-  content::WebContentsTester::For(test_web_contents.get())
-      ->SetIsCurrentlyAudible(true);
+  content::WebContentsTester* const raw_test_web_contents =
+      content::WebContentsTester::For(test_web_contents.get());
   AddTab(browser(), GURL(kTabUrl1));
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
   tab_strip_model->DiscardWebContentsAt(0, std::move(test_web_contents));
+  raw_test_web_contents->SetIsCurrentlyAudible(true);
   NavigateAndCommitActiveTab(GURL(kTabUrl1));
   tab_search::mojom::PageHandler::GetProfileDataCallback callback =
       base::BindLambdaForTesting(
@@ -964,21 +1028,22 @@ TEST_F(TabSearchPageHandlerTest,
 
 class TabSearchPageHandlerDeclutterTest : public TabSearchPageHandlerTest {
  public:
-  TabSearchPageHandlerDeclutterTest() {
-    feature_list_.InitWithFeatures(
-        {features::kTabstripDeclutter, features::kTabstripDedupe}, {});
-  }
+  TabSearchPageHandlerDeclutterTest() = default;
+  ~TabSearchPageHandlerDeclutterTest() override = default;
 
   void SetUp() override {
     TabSearchPageHandlerTest::SetUp();
 
     testing_profile_ = std::make_unique<TestingProfile>();
-    tab_strip_model_delegate_ = std::make_unique<TestTabStripModelDelegate>();
+    tab_strip_model_delegate_ =
+        std::make_unique<TabSearchTabStripModelDelegate>();
     tab_strip_model_ = std::make_unique<TabStripModel>(
         tab_strip_model_delegate_.get(), testing_profile_.get());
 
     browser_window_interface_ = std::make_unique<MockBrowserWindowInterface>();
-    ON_CALL(*browser_window_interface_, GetTabStripModel)
+    ON_CALL(*browser_window_interface_, GetUnownedUserDataHost())
+        .WillByDefault(::testing::ReturnRef(user_data_host_));
+    ON_CALL(*browser_window_interface_, GetTabStripModel())
         .WillByDefault(::testing::Return(tab_strip_model_.get()));
 
     tab_declutter_controller_ = std::make_unique<MockTabDeclutterController>(
@@ -989,6 +1054,7 @@ class TabSearchPageHandlerDeclutterTest : public TabSearchPageHandlerTest {
   }
 
   void TearDown() override {
+    tab_interface_to_alert_controller_.clear();
     // Remove the tab declutter observation first.
     handler()->SetTabDeclutterControllerForTesting(nullptr);
 
@@ -1005,6 +1071,14 @@ class TabSearchPageHandlerDeclutterTest : public TabSearchPageHandlerTest {
   TabStripModel* fake_tab_strip_model() { return tab_strip_model_.get(); }
   Profile* testing_profile() { return testing_profile_.get(); }
 
+  void CloseTab(int index) {
+    tabs::TabInterface* const tab_interface =
+        fake_tab_strip_model()->GetTabAtIndex(index);
+    tab_interface_to_alert_controller_.erase(tab_interface);
+    fake_tab_strip_model()->CloseWebContentsAt(index,
+                                               TabCloseTypes::CLOSE_NONE);
+  }
+
   tabs::TabInterface* AppendBackgroundTab() {
     std::unique_ptr<tabs::TabModel> tab_model =
         std::make_unique<tabs::TabModel>(
@@ -1015,18 +1089,27 @@ class TabSearchPageHandlerDeclutterTest : public TabSearchPageHandlerTest {
     tabs::TabInterface* const tab_interface = tab_model.get();
     tab_features->SetTabUIHelperForTesting(
         std::make_unique<TabUIHelper>(*tab_interface));
+    std::unique_ptr<tabs::TabAlertController> tab_alert_controller =
+        tabs::TabFeatures::GetUserDataFactoryForTesting()
+            .CreateInstance<tabs::TabAlertController>(*tab_interface,
+                                                      *tab_interface);
+    tab_interface_to_alert_controller_.insert(
+        {tab_interface, std::move(tab_alert_controller)});
     fake_tab_strip_model()->AppendTab(std::move(tab_model), false);
     return tab_interface;
   }
 
  private:
-  base::test::ScopedFeatureList feature_list_;
+  ui::UnownedUserDataHost user_data_host_;
   std::unique_ptr<TestingProfile> testing_profile_;
-  std::unique_ptr<TestTabStripModelDelegate> tab_strip_model_delegate_;
+  std::unique_ptr<TabSearchTabStripModelDelegate> tab_strip_model_delegate_;
   std::unique_ptr<TabStripModel> tab_strip_model_;
   std::unique_ptr<MockTabDeclutterController> tab_declutter_controller_;
   std::unique_ptr<MockBrowserWindowInterface> browser_window_interface_;
-  tabs::PreventTabFeatureInitialization prevent_;
+  const tabs::TabModel::PreventFeatureInitializationForTesting prevent_;
+  ui::UserDataFactory::ScopedOverride tab_alert_controller_override_;
+  std::map<tabs::TabInterface* const, std::unique_ptr<tabs::TabAlertController>>
+      tab_interface_to_alert_controller_;
 };
 
 TEST_F(TabSearchPageHandlerDeclutterTest, TabDeclutterFindUnusedTabs) {
@@ -1199,7 +1282,7 @@ TEST_F(TabSearchPageHandlerDeclutterTest, TabDeclutterUnusedTabChanges) {
   EXPECT_EQ(handler()->stale_tabs_for_testing().size(), 7u);
 
   // Detach a stale tab. It should remove it from the internal stale tab list.
-  fake_tab_strip_model()->CloseWebContentsAt(4, TabCloseTypes::CLOSE_NONE);
+  CloseTab(4);
   EXPECT_EQ(handler()->stale_tabs_for_testing().size(), 6u);
 
   fake_tab_strip_model()->AddToNewGroup(
@@ -1212,8 +1295,7 @@ TEST_F(TabSearchPageHandlerDeclutterTest, TabDeclutterUnusedTabChanges) {
   EXPECT_EQ(handler()->duplicate_tabs_for_testing()[duplicate_tabs_url].size(),
             3u);
 
-  fake_tab_strip_model()->CloseWebContentsAt(
-      fake_tab_strip_model()->GetTabCount() - 2, TabCloseTypes::CLOSE_NONE);
+  CloseTab(fake_tab_strip_model()->GetTabCount() - 2);
   EXPECT_EQ(handler()->duplicate_tabs_for_testing()[duplicate_tabs_url].size(),
             2u);
 }
@@ -1290,8 +1372,9 @@ TEST_F(TabSearchPageHandlerTest, ReplaceActiveSplitTab) {
   AddTab(browser(), GURL(kTabUrl2));
   AddTab(browser(), GURL(kTabUrl3));
   TabStripModel* tab_strip_model = browser()->tab_strip_model();
-  const split_tabs::SplitTabId split_id =
-      tab_strip_model->AddToNewSplit({1}, split_tabs::SplitTabVisualData());
+  const split_tabs::SplitTabId split_id = tab_strip_model->AddToNewSplit(
+      {1}, split_tabs::SplitTabVisualData(),
+      split_tabs::SplitTabCreatedSource::kToolbarButton);
 
   const split_tabs::SplitTabData* split_data =
       tab_strip_model->GetSplitData(split_id);

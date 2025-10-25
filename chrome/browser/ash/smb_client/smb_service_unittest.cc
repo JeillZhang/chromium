@@ -9,6 +9,7 @@
 #include "base/test/gmock_callback_support.h"
 #include "chrome/browser/ash/smb_client/smb_service_test_base.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "storage/browser/file_system/external_mount_points.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -211,7 +212,8 @@ TEST_F(SmbServiceWithSmbfsTest, MountPreconfigured) {
   const char kPremountPath[] = "smb://preconfigured/share";
   const char kPreconfiguredShares[] =
       R"([{"mode":"pre_mount","share_url":"\\\\preconfigured\\share"}])";
-  auto parsed_shares = base::JSONReader::Read(kPreconfiguredShares);
+  auto parsed_shares = base::JSONReader::Read(
+      kPreconfiguredShares, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   ASSERT_TRUE(parsed_shares);
   profile()->GetPrefs()->Set(prefs::kNetworkFileSharesPreconfiguredShares,
                              *parsed_shares);
@@ -260,7 +262,8 @@ TEST_F(SmbServiceWithSmbfsTest, MountPreconfigured) {
 TEST_F(SmbServiceWithSmbfsTest, MountInvalidPreconfigured) {
   const char kPreconfiguredShares[] =
       R"([{"mode":"pre_mount","share_url":"\\\\preconfigured"}])";
-  auto parsed_shares = base::JSONReader::Read(kPreconfiguredShares);
+  auto parsed_shares = base::JSONReader::Read(
+      kPreconfiguredShares, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   ASSERT_TRUE(parsed_shares);
   profile()->GetPrefs()->Set(prefs::kNetworkFileSharesPreconfiguredShares,
                              *parsed_shares);
@@ -478,7 +481,8 @@ TEST_F(SmbServiceWithSmbfsTest, IsAnySmbShareConfigured) {
   // Add a preconfigured share
   const char kPreconfiguredShares[] =
       R"([{"mode":"pre_mount","share_url":"\\\\preconfigured\\share"}])";
-  auto parsed_shares = base::JSONReader::Read(kPreconfiguredShares);
+  auto parsed_shares = base::JSONReader::Read(
+      kPreconfiguredShares, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   ASSERT_TRUE(parsed_shares);
   profile()->GetPrefs()->Set(prefs::kNetworkFileSharesPreconfiguredShares,
                              *parsed_shares);

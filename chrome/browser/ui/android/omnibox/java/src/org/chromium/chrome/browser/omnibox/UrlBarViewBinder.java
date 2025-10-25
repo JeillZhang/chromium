@@ -12,7 +12,8 @@ import android.text.TextUtils;
 import android.view.ActionMode;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.RequiresApi;
+import androidx.constraintlayout.widget.ConstraintLayout;
+import androidx.constraintlayout.widget.ConstraintLayout.LayoutParams;
 
 import com.google.android.material.color.MaterialColors;
 
@@ -23,8 +24,6 @@ import org.chromium.chrome.browser.omnibox.UrlBarProperties.AutocompleteText;
 import org.chromium.chrome.browser.omnibox.UrlBarProperties.UrlBarTextState;
 import org.chromium.ui.modelutil.PropertyKey;
 import org.chromium.ui.modelutil.PropertyModel;
-
-import java.util.Optional;
 
 /** Handles translating the UrlBar model data to the view state. */
 @NullMarked
@@ -48,18 +47,20 @@ class UrlBarViewBinder {
                         autocomplete.userText,
                         autocomplete.autocompleteText,
                         TextUtils.isEmpty(autocomplete.additionalText)
-                                ? Optional.empty()
-                                : Optional.of(autocomplete.additionalText));
+                                ? null
+                                : autocomplete.additionalText);
             }
         } else if (UrlBarProperties.DELEGATE.equals(propertyKey)) {
             view.setDelegate(model.get(UrlBarProperties.DELEGATE));
         } else if (UrlBarProperties.FOCUS_CHANGE_CALLBACK.equals(propertyKey)) {
-            final Optional<Callback<Boolean>> focusChangeCallback =
-                    Optional.ofNullable(model.get(UrlBarProperties.FOCUS_CHANGE_CALLBACK));
+            final Callback<Boolean> focusChangeCallback =
+                    model.get(UrlBarProperties.FOCUS_CHANGE_CALLBACK);
             view.setOnFocusChangeListener(
                     (v, focused) -> {
                         if (focused) view.setIgnoreTextChangesForAutocomplete(false);
-                        focusChangeCallback.ifPresent(cb -> cb.onResult(focused));
+                        if (focusChangeCallback != null) {
+                            focusChangeCallback.onResult(focused);
+                        }
                     });
         } else if (UrlBarProperties.SHOW_CURSOR.equals(propertyKey)) {
             view.setCursorVisible(model.get(UrlBarProperties.SHOW_CURSOR));
@@ -99,15 +100,17 @@ class UrlBarViewBinder {
                     view.getPaddingStart(), verticalPadding, view.getPaddingEnd(), verticalPadding);
             view.setUseSmallTextHeight(useSmallText);
             view.setHint(getHintForTextSize(model));
+            ConstraintLayout.LayoutParams layoutParams =
+                    (ConstraintLayout.LayoutParams) view.getLayoutParams();
+            layoutParams.width =
+                    useSmallText ? LayoutParams.WRAP_CONTENT : LayoutParams.MATCH_CONSTRAINT;
         } else if (UrlBarProperties.HINT_TEXT_COLOR.equals(propertyKey)) {
             view.setHintTextColor(model.get(UrlBarProperties.HINT_TEXT_COLOR));
         } else if (UrlBarProperties.INCOGNITO_COLORS_ENABLED.equals(propertyKey)) {
             final boolean incognitoColorsEnabled =
                     model.get(UrlBarProperties.INCOGNITO_COLORS_ENABLED);
             updateHighlightColor(view, incognitoColorsEnabled);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                updateCursorAndSelectHandleColor(view, incognitoColorsEnabled);
-            }
+            updateCursorAndSelectHandleColor(view, incognitoColorsEnabled);
         } else if (UrlBarProperties.URL_DIRECTION_LISTENER.equals(propertyKey)) {
             view.setUrlDirectionListener(model.get(UrlBarProperties.URL_DIRECTION_LISTENER));
         } else if (UrlBarProperties.TEXT_CHANGE_LISTENER.equals(propertyKey)) {
@@ -155,7 +158,6 @@ class UrlBarViewBinder {
         view.setHighlightColor(highlightColor);
     }
 
-    @RequiresApi(api = Build.VERSION_CODES.Q)
     private static void updateCursorAndSelectHandleColor(UrlBar view, boolean useIncognitoColors) {
         // These get* methods may fail on some devices, so we're calling all of them before
         // applying tint to any of the drawables. See https://crbug.com/1263630.

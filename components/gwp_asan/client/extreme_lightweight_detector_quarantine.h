@@ -42,11 +42,11 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/component_export.h"
 #include "base/memory/raw_ref.h"
 #include "base/rand_util.h"
 #include "base/thread_annotations.h"
 #include "base/trace_event/malloc_dump_provider.h"
+#include "components/gwp_asan/client/export.h"
 #include "partition_alloc/internal_allocator_forward.h"
 #include "partition_alloc/partition_alloc_forward.h"
 #include "partition_alloc/partition_lock.h"
@@ -63,11 +63,12 @@ struct ExtremeLightweightDetectorQuarantineBranchConfig {
 
 class ExtremeLightweightDetectorQuarantineBranch;
 
-class COMPONENT_EXPORT(GWP_ASAN) ExtremeLightweightDetectorQuarantineRoot {
+class GWP_ASAN_EXPORT ExtremeLightweightDetectorQuarantineRoot {
  public:
   explicit ExtremeLightweightDetectorQuarantineRoot(
       partition_alloc::PartitionRoot& allocator_root)
       : allocator_root_(allocator_root) {}
+  ~ExtremeLightweightDetectorQuarantineRoot();
 
   ExtremeLightweightDetectorQuarantineBranch CreateBranch(
       const ExtremeLightweightDetectorQuarantineBranchConfig& config);
@@ -100,7 +101,7 @@ class COMPONENT_EXPORT(GWP_ASAN) ExtremeLightweightDetectorQuarantineRoot {
   friend class ExtremeLightweightDetectorQuarantineBranch;
 };
 
-class COMPONENT_EXPORT(GWP_ASAN) ExtremeLightweightDetectorQuarantineBranch {
+class GWP_ASAN_EXPORT ExtremeLightweightDetectorQuarantineBranch {
  public:
   using Root = ExtremeLightweightDetectorQuarantineRoot;
 
@@ -118,12 +119,10 @@ class COMPONENT_EXPORT(GWP_ASAN) ExtremeLightweightDetectorQuarantineBranch {
   // Quarantines an object. If the object is too large, this may return `false`,
   // meaning that quarantine request has failed (and freed immediately).
   // Otherwise, returns `true`.
-  bool Quarantine(
-      void* object,
-      partition_alloc::internal::SlotSpanMetadata<
-          partition_alloc::internal::MetadataKind::kReadOnly>* slot_span,
-      uintptr_t slot_start,
-      size_t usable_size);
+  bool Quarantine(void* object,
+                  partition_alloc::internal::SlotSpanMetadata* slot_span,
+                  uintptr_t slot_start,
+                  size_t usable_size);
 
   // Dequarantine all entries **held by this branch**.
   // It is possible that another branch with entries and it remains untouched.

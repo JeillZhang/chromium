@@ -27,7 +27,6 @@
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_listener.h"
-#include "ipc/ipc_message.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 #include "mojo/public/cpp/platform/named_platform_channel.h"
@@ -92,7 +91,6 @@ class WtsSessionProcessDelegate::Core
                      DWORD error) override;
 
   // IPC::Listener implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
   void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
   void OnAssociatedInterfaceRequest(
@@ -355,12 +353,6 @@ void WtsSessionProcessDelegate::Core::OnIOCompleted(
       break;
     }
   }
-}
-
-bool WtsSessionProcessDelegate::Core::OnMessageReceived(
-    const IPC::Message& message) {
-  DCHECK(caller_task_runner_->BelongsToCurrentThread());
-  NOTREACHED() << "Received unexpected IPC type: " << message.type();
 }
 
 void WtsSessionProcessDelegate::Core::OnChannelConnected(int32_t peer_pid) {

@@ -50,37 +50,23 @@ String TextRun::NormalizedUTF16() const {
     UChar32 character;
     UNSAFE_TODO(U16_NEXT(source, position, len, character));
     // Don't normalize tabs as they are not treated as spaces for word-end.
-    if (NormalizeSpace() &&
-        Character::IsNormalizedCanvasSpaceCharacter(character)) {
-      character = kSpaceCharacter;
-    } else if (Character::TreatAsSpace(character) &&
-               character != kNoBreakSpaceCharacter) {
-      character = kSpaceCharacter;
+    if (Character::TreatAsSpace(character) &&
+        character != uchar::kNoBreakSpace) {
+      character = uchar::kSpace;
     } else if (Character::TreatAsZeroWidthSpaceInComplexScriptLegacy(
                    character)) {
       // Repalce only ZWS-like characters in BMP because we'd like to avoid
       // changing the string length.
       DCHECK_LT(character, 0x10000);
-      character = kZeroWidthSpaceCharacter;
+      character = uchar::kZeroWidthSpace;
     }
 
-    UNSAFE_TODO(
-        U16_APPEND(buffer.Characters(), result_length, len, character, error));
+    U16_APPEND(buffer.Span(), result_length, len, character, error);
     DCHECK(!error);
   }
 
   DCHECK(result_length <= len);
   return String::Adopt(buffer);
-}
-
-unsigned TextRun::IndexOfSubRun(const TextRun& sub_run) const {
-  if (Is8Bit() == sub_run.Is8Bit() && sub_run.text_.Bytes() >= text_.Bytes()) {
-    size_t start_index = Is8Bit() ? sub_run.Span8().data() - Span8().data()
-                                  : sub_run.Span16().data() - Span16().data();
-    if (start_index + sub_run.length() <= length())
-      return static_cast<unsigned>(start_index);
-  }
-  return std::numeric_limits<unsigned>::max();
 }
 
 }  // namespace blink

@@ -25,6 +25,7 @@
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/extensions/browser_action_drag_data.h"
+#include "chrome/browser/ui/views/extensions/extension_action_platform_delegate_views.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_coordinator.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_view.h"
 #include "chrome/browser/ui/views/extensions/extensions_request_access_button.h"
@@ -34,7 +35,6 @@
 #include "chrome/browser/ui/views/frame/toolbar_button_provider.h"
 #include "chrome/browser/ui/views/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_action_hover_card_controller.h"
-#include "chrome/browser/ui/views/toolbar/toolbar_actions_bar_bubble_views.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/feature_engagement/public/event_constants.h"
@@ -213,7 +213,7 @@ ExtensionsToolbarContainer::~ExtensionsToolbarContainer() {
     widgets.push_back(anchored_widget.widget);
   }
   for (auto* widget : widgets) {
-    widget->Close();
+    widget->CloseNow();
   }
   // The widgets should close synchronously (resulting in OnWidgetClosing()),
   // so |anchored_widgets_| should now be empty.
@@ -286,8 +286,8 @@ void ExtensionsToolbarContainer::UpdateAction(
     const ToolbarActionsModel::ActionId& action_id) {
   ToolbarActionViewController* action = GetActionForId(action_id);
   if (action) {
-    action->UpdateState();
     ToolbarActionView* action_view = GetViewForId(action_id);
+    action_view->UpdateState();
     // Only update hover card if it's currently showing for action, otherwise it
     // would mistakenly show the hover card.
     if (action_hover_card_controller_->IsHoverCardShowingForAction(
@@ -395,8 +395,8 @@ void ExtensionsToolbarContainer::UpdateRequestAccessButton(
 void ExtensionsToolbarContainer::UpdateAllIcons() {
   UpdateControlsVisibility();
 
-  for (const auto& action : actions_) {
-    action->UpdateState();
+  for (const auto& icon : icons_) {
+    icon.second->UpdateState();
   }
 
   if (close_side_panel_button_) {
@@ -471,6 +471,10 @@ bool ExtensionsToolbarContainer::ShouldForceVisibility(
 
 void ExtensionsToolbarContainer::UpdateIconVisibility(
     const std::string& extension_id) {
+  if (!GetWidget() || GetWidget()->IsClosed()) {
+    return;
+  }
+
   ToolbarActionView* const action_view = GetViewForId(extension_id);
   if (!action_view) {
     return;
@@ -655,20 +659,6 @@ bool ExtensionsToolbarContainer::ShowToolbarActionPopupForAPICall(
   return true;
 }
 
-void ExtensionsToolbarContainer::ShowToolbarActionBubble(
-    std::unique_ptr<ToolbarActionsBarBubbleDelegate> controller) {
-  const std::string extension_id = controller->GetAnchorActionId();
-
-  views::View* const anchor_view = GetViewForId(extension_id);
-
-  views::Widget* const widget = views::BubbleDialogDelegateView::CreateBubble(
-      std::make_unique<ToolbarActionsBarBubbleViews>(
-          anchor_view ? anchor_view : GetExtensionsButton(),
-          anchor_view != nullptr, std::move(controller)));
-
-  ShowWidgetForExtension(widget, extension_id);
-}
-
 void ExtensionsToolbarContainer::ToggleExtensionsMenu() {
   GetExtensionsButton()->ToggleExtensionsMenu();
 }
@@ -711,8 +701,10 @@ void ExtensionsToolbarContainer::ReorderAllChildViews() {
 
 void ExtensionsToolbarContainer::CreateActionForId(
     const ToolbarActionsModel::ActionId& action_id) {
-  actions_.push_back(
-      ExtensionActionViewController::Create(action_id, browser_, this));
+  actions_.push_back(ExtensionActionViewController::Create(
+      action_id, browser_, this,
+      std::make_unique<ExtensionActionPlatformDelegateViews>(browser_.get(),
+                                                             this)));
   auto icon = std::make_unique<ToolbarActionView>(actions_.back().get(), this);
   // Set visibility before adding to prevent extraneous animation.
   icon->SetVisible(ToolbarActionsModel::CanShowActionsInToolbar(*browser_) &&
@@ -904,7 +896,9 @@ void ExtensionsToolbarContainer::OnWidgetDestroying(views::Widget* widget) {
   iter->widget->RemoveObserver(this);
   const std::string extension_id = std::move(iter->extension_id);
   anchored_widgets_.erase(iter);
-  UpdateIconVisibility(extension_id);
+  if (GetWidget() && !GetWidget()->IsClosed()) {
+    UpdateIconVisibility(extension_id);
+  }
 }
 
 size_t ExtensionsToolbarContainer::WidthToIconCount(int x_offset) {
@@ -1001,12 +995,13 @@ void ExtensionsToolbarContainer::OnMenuOpening() {
   // Record IPH usage, which should only be shown when any extension has access.
   if (GetExtensionsButton()->state() ==
       ExtensionsToolbarButton::State::kAnyExtensionHasAccess) {
-    browser_->window()->NotifyFeaturePromoFeatureUsed(
-        feature_engagement::kIPHExtensionsMenuFeature,
-        FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
+    BrowserUserEducationInterface::From(browser_)
+        ->NotifyFeaturePromoFeatureUsed(
+            feature_engagement::kIPHExtensionsMenuFeature,
+            FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   } else {
     // Otherwise, just close the IPH if it's present.
-    browser_->window()->AbortFeaturePromo(
+    BrowserUserEducationInterface::From(browser_)->AbortFeaturePromo(
         feature_engagement::kIPHExtensionsMenuFeature);
   }
 
@@ -1088,6 +1083,22 @@ void ExtensionsToolbarContainer::CollapseConfirmation() {
 
   request_access_button_->ResetConfirmation();
   UpdateControlsVisibility();
+}
+
+void ExtensionsToolbarContainer::ShowContextMenuAsFallback(
+    const extensions::ExtensionId& action_id) {
+  GetViewForId(action_id)->ShowContextMenuAsFallback();
+}
+
+void ExtensionsToolbarContainer::OnPopupShown(
+    const extensions::ExtensionId& action_id,
+    bool by_user) {
+  GetViewForId(action_id)->OnPopupShown(by_user);
+}
+
+void ExtensionsToolbarContainer::OnPopupClosed(
+    const extensions::ExtensionId& action_id) {
+  GetViewForId(action_id)->OnPopupClosed();
 }
 
 void ExtensionsToolbarContainer::OnMouseExited(const ui::MouseEvent& event) {

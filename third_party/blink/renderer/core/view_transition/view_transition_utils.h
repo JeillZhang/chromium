@@ -24,7 +24,7 @@ class ViewTransition;
 class CORE_EXPORT ViewTransitionUtils {
  public:
   // Scope class used during getComputedStyle to ensure we don't expose internal
-  // pseudo elements before the start phase on the transition.
+  // pseudo-elements before the start phase on the transition.
   class GetPropertyCSSValueScope {
     STACK_ALLOCATED();
 
@@ -40,9 +40,10 @@ class CORE_EXPORT ViewTransitionUtils {
   using PseudoFunctor = base::FunctionRef<void(PseudoElement*)>;
   using PseudoPredicate = base::FunctionRef<bool(PseudoElement*)>;
 
-  static void ForEachTransitionPseudo(Element&, PseudoFunctor);
+  enum class Filter { kDirectChildren, kDescendants };
+
+  static void ForEachTransitionPseudo(const Element&, PseudoFunctor, Filter);
   static PseudoElement* FindPseudoIf(const Element&, PseudoPredicate);
-  static void ForEachDirectTransitionPseudo(const Element*, PseudoFunctor);
 
   // Returns the view transition in-progress in the given document, if one
   // exists.
@@ -78,7 +79,7 @@ class CORE_EXPORT ViewTransitionUtils {
   static DOMViewTransition* GetTransitionScriptDelegate(
       const Document& document);
 
-  // Returns the ::view-transition pseudo element that is the root of the
+  // Returns the ::view-transition pseudo-element that is the root of the
   // view-transition DOM hierarchy.
   static PseudoElement* GetRootPseudo(const Document& document);
 
@@ -87,7 +88,7 @@ class CORE_EXPORT ViewTransitionUtils {
       const Document& document);
 
   // Returns true if the given layout object corresponds to the root
-  // ::view-transition pseudo element of a view transition hierarchy.
+  // ::view-transition pseudo-element of a view transition hierarchy.
   static bool IsViewTransitionRoot(const LayoutObject& object);
 
   // Returns true if this element is a view transition participant. This is a

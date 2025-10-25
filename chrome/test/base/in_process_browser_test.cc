@@ -26,7 +26,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
-#include "base/test/test_file_util.h"
 #include "base/test/test_switches.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -61,6 +60,8 @@
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar_controller_util.h"
 #include "chrome/common/chrome_constants.h"
@@ -78,13 +79,13 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/captive_portal/core/buildflags.h"
 #include "components/custom_handlers/test_protocol_handler_registry_delegate.h"
-#include "components/embedder_support/switches.h"
 #include "components/feature_engagement/public/feature_list.h"
 #include "components/google/core/common/google_util.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/os_crypt/async/browser/key_provider.h"
 #include "components/os_crypt/sync/os_crypt_mocker.h"
 #include "components/password_manager/core/browser/password_manager_switches.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_main_parts.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/common/content_paths.h"
@@ -106,6 +107,7 @@
 #endif
 
 #if BUILDFLAG(IS_WIN)
+#include "base/test/test_file_util.h"
 #include "base/win/scoped_com_initializer.h"
 #include "base/win/windows_version.h"
 #include "components/version_info/version_info.h"
@@ -370,6 +372,10 @@ void InProcessBrowserTest::Initialize() {
   launch_browser_for_testing_ =
       std::make_unique<ash::full_restore::ScopedLaunchBrowserForTesting>();
 #endif
+#if BUILDFLAG(IS_WIN)
+  base::GetPathsAllowedToLeak() = {L"\\Sync Data", L"\\Local Storage\\leveldb",
+                                   L"\\DataSharing", L"\\Collaboration"};
+#endif  // BUILDFLAG(IS_WIN)
 }
 
 InProcessBrowserTest::~InProcessBrowserTest() {
@@ -392,7 +398,7 @@ void InProcessBrowserTest::SetUp() {
   // reloaded out from under them. Tests that expect or desire this behavior can
   // append embedder_support::kEnableAutoReload, which will override the disable
   // here.
-  command_line->AppendSwitch(embedder_support::kDisableAutoReload);
+  command_line->AppendSwitch(switches::kDisableAutoReload);
 
   // Allow subclasses to change the command line before running any tests.
   SetUpCommandLine(command_line);
@@ -495,6 +501,10 @@ void InProcessBrowserTest::SetUp() {
   // Disable the notification delay timer used to prevent non system
   // notifications from showing up right after login.
   ash::ShellTestApi::SetUseLoginNotificationDelayForTest(false);
+
+  // On CrOS, we need to use ash::Shell to get all root windows.
+  views::test::WidgetTest::SetRootWindowProvider(
+      base::BindRepeating(&ash::Shell::GetAllRootWindows));
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
   // Redirect the default download directory to a temporary directory.
@@ -558,6 +568,7 @@ void InProcessBrowserTest::TearDown() {
 #if BUILDFLAG(IS_CHROMEOS)
   ash::device_sync::DeviceSyncImpl::Factory::SetCustomFactory(nullptr);
   launch_browser_for_testing_ = nullptr;
+  views::test::WidgetTest::SetRootWindowProvider(base::NullCallback());
 #endif
 }
 
@@ -585,10 +596,8 @@ void InProcessBrowserTest::CreatedBrowserMainParts(
       std::make_unique<OSCryptAsyncExtraSetUp>());
 }
 
-void InProcessBrowserTest::SelectFirstBrowser() {
-  const BrowserList* browser_list = BrowserList::GetInstance();
-  if (!browser_list->empty())
-    browser_ = browser_list->get(0);
+void InProcessBrowserTest::SetBrowser(BrowserWindowInterface* browser) {
+  browser_ = browser ? browser->GetBrowserForMigrationOnly() : nullptr;
 }
 
 void InProcessBrowserTest::RecordPropertyFromMap(
@@ -622,13 +631,15 @@ Profile* InProcessBrowserTest::GetProfile() const {
   return browser() ? browser()->profile() : nullptr;
 }
 
-void InProcessBrowserTest::CloseBrowserSynchronously(Browser* browser) {
+void InProcessBrowserTest::CloseBrowserSynchronously(
+    BrowserWindowInterface* browser) {
   CloseBrowserAsynchronously(browser);
   ui_test_utils::WaitForBrowserToClose(browser);
 }
 
-void InProcessBrowserTest::CloseBrowserAsynchronously(Browser* browser) {
-  browser->window()->Close();
+void InProcessBrowserTest::CloseBrowserAsynchronously(
+    BrowserWindowInterface* browser) {
+  browser->GetWindow()->Close();
 #if BUILDFLAG(IS_MAC)
   // BrowserWindowController depends on the auto release pool being recycled
   // in the message loop to delete itself.
@@ -653,7 +664,7 @@ void InProcessBrowserTest::RunUntilBrowserProcessQuits() {
 // navigation to tests, which should make sure navigations succeed when
 // appropriate. See https://crbug.com/425335
 bool InProcessBrowserTest::AddTabAtIndexToBrowser(
-    Browser* browser,
+    BrowserWindowInterface* browser,
     int index,
     const GURL& url,
     ui::PageTransition transition,
@@ -662,7 +673,7 @@ bool InProcessBrowserTest::AddTabAtIndexToBrowser(
 }
 
 bool InProcessBrowserTest::AddTabAtIndexToBrowser(
-    Browser* browser,
+    BrowserWindowInterface* browser,
     int index,
     const GURL& url,
     ui::PageTransition transition) {
@@ -822,7 +833,7 @@ void InProcessBrowserTest::PreRunTestOnMainThread() {
   // Pump startup related events.
   content::RunAllPendingInMessageLoop();
 
-  SelectFirstBrowser();
+  SetBrowser(GetLastActiveBrowserWindowInterfaceWithAnyProfile());
   if (browser_ && !browser_->tab_strip_model()->empty()) {
     base::WeakPtr<content::WebContents> tab =
         browser_->tab_strip_model()->GetActiveWebContents()->GetWeakPtr();

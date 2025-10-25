@@ -542,32 +542,56 @@ inline CSSValueID PlatformEnumToCSSValueID(TryTactic v) {
 }
 
 template <>
-inline EAnimationTriggerType CssValueIDToPlatformEnum(CSSValueID v) {
+inline EAnimationTriggerBehavior CssValueIDToPlatformEnum(CSSValueID v) {
   switch (v) {
-    case CSSValueID::kOnce:
-      return EAnimationTriggerType::kOnce;
-    case CSSValueID::kRepeat:
-      return EAnimationTriggerType::kRepeat;
-    case CSSValueID::kAlternate:
-      return EAnimationTriggerType::kAlternate;
-    case CSSValueID::kState:
-      return EAnimationTriggerType::kState;
+    case CSSValueID::kPlay:
+      return EAnimationTriggerBehavior::kPlay;
+    case CSSValueID::kPause:
+      return EAnimationTriggerBehavior::kPause;
+    case CSSValueID::kReset:
+      return EAnimationTriggerBehavior::kReset;
+    case CSSValueID::kPlayOnce:
+      return EAnimationTriggerBehavior::kPlayOnce;
+    case CSSValueID::kPlayAlternate:
+      return EAnimationTriggerBehavior::kPlayAlternate;
+    case CSSValueID::kPlayForwards:
+      return EAnimationTriggerBehavior::kPlayForwards;
+    case CSSValueID::kPlayBackwards:
+      return EAnimationTriggerBehavior::kPlayBackwards;
+    case CSSValueID::kPlayPause:
+      return EAnimationTriggerBehavior::kPlayPause;
+    case CSSValueID::kReplay:
+      return EAnimationTriggerBehavior::kReplay;
+    case CSSValueID::kNone:
+      return EAnimationTriggerBehavior::kNone;
     default:
       NOTREACHED();
   }
 }
 
 template <>
-inline CSSValueID PlatformEnumToCSSValueID(EAnimationTriggerType v) {
+inline CSSValueID PlatformEnumToCSSValueID(EAnimationTriggerBehavior v) {
   switch (v) {
-    case EAnimationTriggerType::kOnce:
-      return CSSValueID::kOnce;
-    case EAnimationTriggerType::kRepeat:
-      return CSSValueID::kRepeat;
-    case EAnimationTriggerType::kAlternate:
-      return CSSValueID::kAlternate;
-    case EAnimationTriggerType::kState:
-      return CSSValueID::kState;
+    case EAnimationTriggerBehavior::kPlay:
+      return CSSValueID::kPlay;
+    case EAnimationTriggerBehavior::kPause:
+      return CSSValueID::kPause;
+    case EAnimationTriggerBehavior::kReset:
+      return CSSValueID::kReset;
+    case EAnimationTriggerBehavior::kPlayOnce:
+      return CSSValueID::kPlayOnce;
+    case EAnimationTriggerBehavior::kPlayAlternate:
+      return CSSValueID::kPlayAlternate;
+    case EAnimationTriggerBehavior::kPlayForwards:
+      return CSSValueID::kPlayForwards;
+    case EAnimationTriggerBehavior::kPlayBackwards:
+      return CSSValueID::kPlayBackwards;
+    case EAnimationTriggerBehavior::kPlayPause:
+      return CSSValueID::kPlayPause;
+    case EAnimationTriggerBehavior::kReplay:
+      return CSSValueID::kReplay;
+    case EAnimationTriggerBehavior::kNone:
+      return CSSValueID::kNone;
     default:
       NOTREACHED();
   }
@@ -584,6 +608,68 @@ inline CSSValueID PlatformEnumToCSSValueID(FlexWrapMode v) {
       return CSSValueID::kWrapReverse;
     default:
       NOTREACHED();
+  }
+}
+
+template <>
+inline CSSValueID PlatformEnumToCSSValueID(PositionAreaRegion v) {
+  switch (v) {
+    case PositionAreaRegion::kNone:
+      return CSSValueID::kNone;
+    case PositionAreaRegion::kAll:
+      return CSSValueID::kSpanAll;
+    case PositionAreaRegion::kCenter:
+      return CSSValueID::kCenter;
+    case PositionAreaRegion::kStart:
+      return CSSValueID::kStart;
+    case PositionAreaRegion::kEnd:
+      return CSSValueID::kEnd;
+    case PositionAreaRegion::kSelfStart:
+      return CSSValueID::kSelfStart;
+    case PositionAreaRegion::kSelfEnd:
+      return CSSValueID::kSelfEnd;
+    case PositionAreaRegion::kInlineStart:
+      return CSSValueID::kInlineStart;
+    case PositionAreaRegion::kInlineEnd:
+      return CSSValueID::kInlineEnd;
+    case PositionAreaRegion::kSelfInlineStart:
+      return CSSValueID::kSelfInlineStart;
+    case PositionAreaRegion::kSelfInlineEnd:
+      return CSSValueID::kSelfInlineEnd;
+    case PositionAreaRegion::kBlockStart:
+      return CSSValueID::kBlockStart;
+    case PositionAreaRegion::kBlockEnd:
+      return CSSValueID::kBlockEnd;
+    case PositionAreaRegion::kSelfBlockStart:
+      return CSSValueID::kSelfBlockStart;
+    case PositionAreaRegion::kSelfBlockEnd:
+      return CSSValueID::kSelfBlockEnd;
+    case PositionAreaRegion::kTop:
+      return CSSValueID::kTop;
+    case PositionAreaRegion::kBottom:
+      return CSSValueID::kBottom;
+    case PositionAreaRegion::kLeft:
+      return CSSValueID::kLeft;
+    case PositionAreaRegion::kRight:
+      return CSSValueID::kRight;
+    case PositionAreaRegion::kXStart:
+      return CSSValueID::kXStart;
+    case PositionAreaRegion::kXEnd:
+      return CSSValueID::kXEnd;
+    case PositionAreaRegion::kYStart:
+      return CSSValueID::kYStart;
+    case PositionAreaRegion::kYEnd:
+      return CSSValueID::kYEnd;
+    case PositionAreaRegion::kSelfXStart:
+      return CSSValueID::kSelfXStart;
+    case PositionAreaRegion::kSelfXEnd:
+      return CSSValueID::kSelfXEnd;
+    case PositionAreaRegion::kSelfYStart:
+      return CSSValueID::kSelfYStart;
+    case PositionAreaRegion::kSelfYEnd:
+      return CSSValueID::kSelfYEnd;
+    case PositionAreaRegion::kAny:
+      return CSSValueID::kAny;
   }
 }
 

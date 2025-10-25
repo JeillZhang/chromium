@@ -5,20 +5,27 @@
 package org.chromium.chrome.browser.multiwindow;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.hardware.display.DisplayManager;
 import android.util.Pair;
 
+import androidx.annotation.IntDef;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
 import org.chromium.base.CommandLine;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.multiwindow.UiUtils.NameWindowDialogSource;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabGroupMetadata;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabModelObserver;
+import org.chromium.components.messages.MessageDispatcher;
+import org.chromium.content_public.browser.LoadUrlParams;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -30,6 +37,8 @@ import java.util.List;
  */
 @NullMarked
 public abstract class MultiInstanceManager {
+    public static final int INVALID_TASK_ID = -1; // Defined in android.app.ActivityTaskManager.
+
     /** Should be called when multi-instance mode is started. */
     public static void onMultiInstanceModeStarted() {
         // When a second instance is created, the merged instance task id should be cleared.
@@ -77,6 +86,30 @@ public abstract class MultiInstanceManager {
     public abstract boolean isStartedUpCorrectly(int activityTaskId);
 
     /**
+     * Creates a new {@link Intent} for a new instance of the main Chrome window (Task).
+     *
+     * <p>The root {@link Activity} of the new Chrome window depends on the implementation. It can
+     * be either {@code ChromeTabbedActivity} or {@code ChromeTabbedActivity2}.
+     *
+     * <p>The intended use cases of this method:
+     *
+     * <ul>
+     *   <li>The caller doesn't (need to) know the specifics of the {@link Intent}, such as flags,
+     *       Extras, the target {@link Activity}, the new window's instance ID, etc. An example of
+     *       this is the "open new window" option in the app menu.
+     *   <li>The caller is in a modularized target and can't depend on code at the "glue" layer,
+     *       such as {@link MultiWindowUtils#createNewWindowIntent}. In this case, the caller should
+     *       inject {@link MultiInstanceManager} at the "glue" layer, then use it in the caller's
+     *       internal logic to create the {@link Intent}.
+     * </ul>
+     *
+     * @param isIncognito Whether the new window should be in the incognito mode.
+     * @return The new {@link Intent} as described above, or {@code null} if the new window cannot
+     *     be created.
+     */
+    public abstract @Nullable Intent createNewWindowIntent(boolean isIncognito);
+
+    /**
      * Merges tabs from a second ChromeTabbedActivity instance if necessary and calls
      * finishAndRemoveTask() on the other activity.
      */
@@ -84,12 +117,12 @@ public abstract class MultiInstanceManager {
     public abstract void maybeMergeTabs();
 
     /**
-     * Open a new instance of the ChromeTabbedActivity window and move the specified tab from
+     * Open a new instance of the ChromeTabbedActivity window and move the specified tabs from
      * existing instance to the new one.
      *
-     * @param tab Tab that is to be moved to a new Chrome instance.
+     * @param tabs Tabs that are to be moved to a new Chrome instance.
      */
-    public void moveTabToNewWindow(Tab tab) {
+    public void moveTabsToNewWindow(List<Tab> tabs) {
         // Not implemented
     }
 
@@ -104,13 +137,38 @@ public abstract class MultiInstanceManager {
     }
 
     /**
-     * Move the specified tab to the current instance of the ChromeTabbedActivity window.
+     * Move the specified tabs to the current instance of the ChromeTabbedActivity window.
      *
      * @param activity Activity of the Chrome Window in which the tab is to be moved.
-     * @param tab Tab that is to be moved to the current instance.
+     * @param tabs The list of tabs that is to be moved to the current instance.
      * @param atIndex Tab position index in the destination window instance.
      */
-    public void moveTabToWindow(Activity activity, Tab tab, int atIndex) {
+    public void moveTabsToWindow(@Nullable Activity activity, List<Tab> tabs, int atIndex) {
+        // Not implemented
+    }
+
+    /**
+     * Move the specified tabs to the specified instance of the ChromeTabbedActivity window.
+     *
+     * @param info {@link InstanceInfo} describing the destination window.
+     * @param tabs The list of tabs that is to be moved to the current instance.
+     * @param atIndex Tab position index in the destination window instance.
+     */
+    public void moveTabsToWindow(InstanceInfo info, List<Tab> tabs, int atIndex) {
+        // Not implemented
+    }
+
+    /**
+     * Move the specified tabs to the specified instance of the ChromeTabbedActivity window and
+     * merge with the destination tab group. The tabs are added to the end of the destination tab
+     * group. If the activity from {@code info} does not exist, this will not create a new window.
+     *
+     * @param info {@link InstanceInfo} describing the destination window.
+     * @param tabs The list of ungrouped tabs that is to be moved to the current instance.
+     * @param destTabId The id of the tab in the destination tab group. The tab with this ID must
+     *     exist in the destination window, otherwise this operation will fail.
+     */
+    public void moveTabsToWindowAndMergeToDest(InstanceInfo info, List<Tab> tabs, int destTabId) {
         // Not implemented
     }
 
@@ -122,18 +180,41 @@ public abstract class MultiInstanceManager {
      * @param atIndex Tab position index in the destination window instance.
      */
     public void moveTabGroupToWindow(
-            Activity activity, TabGroupMetadata tabGroupMetadata, int atIndex) {
+            @Nullable Activity activity, TabGroupMetadata tabGroupMetadata, int atIndex) {
         // Not implemented
     }
 
     /**
-     * If there's only one window currently, moves {@param tab} to a new window. Otherwise, opens a
-     * dialog to select which window to move {@param tab} to.
+     * Move an entire tab group to the specified instance of the ChromeTabbedActivity window.
      *
-     * @param tab The tab to move.
+     * @param info {@link InstanceInfo} describing the destination window.
+     * @param tabGroupMetadata The object containing the metadata of the tab group.
+     * @param atIndex Tab position index in the destination window instance.
      */
-    public void moveTabToOtherWindow(Tab tab) {
+    public void moveTabGroupToWindow(
+            InstanceInfo info, TabGroupMetadata tabGroupMetadata, int atIndex) {
         // Not implemented
+    }
+
+    /**
+     * If there's only one window currently, moves {@param tabs} to a new window. Otherwise, opens a
+     * dialog to select which window to move {@param tabs} to.
+     *
+     * @param tabs The list of tabs to move.
+     */
+    public void moveTabsToOtherWindow(List<Tab> tabs) {
+        // Not implemented
+    }
+
+    /**
+     * If there's only one window currently, opens the {@param loadUrlParams} in a new window.
+     * Otherwise, opens a dialog to select which window to move the {@param loadUrlParams} to.
+     *
+     * @param loadUrlParams The url to open.
+     * @param parentTabId The ID of the parent tab.
+     */
+    public void openUrlInSelectedWindow(LoadUrlParams loadUrlParams, int parentTabId) {
+        // not implemented
     }
 
     /**
@@ -151,6 +232,14 @@ public abstract class MultiInstanceManager {
      *     newly launched.
      */
     public List<InstanceInfo> getInstanceInfo() {
+        return getInstanceInfo(PersistedInstanceType.ANY);
+    }
+
+    /**
+     * @return List of {@link InstanceInfo} structs with {@link PersistedInstanceType} {@param type}
+     *     for an activity that can be switched to, or newly launched.
+     */
+    public List<InstanceInfo> getInstanceInfo(@PersistedInstanceType int type) {
         return Collections.emptyList();
     }
 
@@ -210,6 +299,38 @@ public abstract class MultiInstanceManager {
         // Not implemented
     }
 
+    /**
+     * Shows a message to notify the user when excess of {@link MultiWindowUtils#getMaxInstances()}
+     * running activities have been finished after an instance limit downgrade causing existence of
+     * more active instances than the instance limit.
+     *
+     * @param messageDispatcher The {@link MessageDispatcher} to enqueue the instance restoration
+     *     message.
+     * @return {@code true} if the instance restoration message was shown, {@code false} otherwise.
+     */
+    public boolean showInstanceRestorationMessage(@Nullable MessageDispatcher messageDispatcher) {
+        return false;
+    }
+
+    /**
+     * Shows a message to notify the user that a new window cannot be created because {@link
+     * MultiWindowUtils#getMaxInstances()} activities already exist.
+     *
+     * @param messageDispatcher The {@link MessageDispatcher} to enqueue the instance limit message.
+     */
+    public void showInstanceCreationLimitMessage(@Nullable MessageDispatcher messageDispatcher) {
+        // Not implemented
+    }
+
+    /**
+     * Shows a dialog to name the current window.
+     *
+     * @param source The {@link NameWindowDialogSource} that tracks the caller of this method.
+     */
+    public void showNameWindowDialog(@NameWindowDialogSource int source) {
+        // Not implemented
+    }
+
     public abstract void setCurrentDisplayIdForTesting(int displayId);
 
     public abstract @Nullable DisplayManager.DisplayListener getDisplayListenerForTesting();
@@ -223,4 +344,16 @@ public abstract class MultiInstanceManager {
 
     public abstract void setTabModelObserverForTesting(
             TabModelSelectorTabModelObserver tabModelObserver);
+
+    @IntDef({
+        PersistedInstanceType.ANY,
+        PersistedInstanceType.ACTIVE,
+        PersistedInstanceType.INACTIVE
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface PersistedInstanceType {
+        int ANY = 0;
+        int ACTIVE = 1;
+        int INACTIVE = 2;
+    }
 }

@@ -132,7 +132,6 @@ class CORE_EXPORT ImageBitmap final : public ScriptWrappable,
     // to be removed.
     bool should_scale_input = false;
     bool has_color_space_conversion = false;
-    bool source_is_unpremul = false;
     bool orientation_from_image = true;
     // TODO(crbug.com/40773069): The value of `resize_width`, `resize_height`,
     // and `crop_rect` are computed incorrectly. Remove this when all code that
@@ -178,8 +177,8 @@ class CORE_EXPORT ImageBitmap final : public ScriptWrappable,
       PaintRecord,
       const gfx::Rect&,
       scoped_refptr<base::SequencedTaskRunner>,
-      WTF::CrossThreadOnceFunction<void(sk_sp<SkImage>,
-                                        const ImageOrientationEnum)> callback);
+      CrossThreadOnceFunction<void(sk_sp<SkImage>, const ImageOrientationEnum)>
+          callback);
   scoped_refptr<StaticBitmapImage> image_;
   bool is_neutered_ = false;
   int32_t memory_usage_ = 0;

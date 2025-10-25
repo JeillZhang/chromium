@@ -31,8 +31,7 @@
 #include "v8/include/v8-object.h"
 #include "v8/include/v8-primitive.h"
 
-namespace extensions {
-namespace messaging_util {
+namespace extensions::messaging_util {
 
 namespace {
 
@@ -70,7 +69,7 @@ std::unique_ptr<Message> MessageFromJSONString(v8::Isolate* isolate,
   // A 64 MB JSON-ifiable object is scary enough as is.
   static constexpr size_t kMaxMessageLength = 1024 * 1024 * 64;
   if (message_length > kMaxMessageLength) {
-    *error_out = "Message length exceeded maximum allowed length.";
+    *error_out = "Message length exceeded maximum allowed length of 64MB.";
     return nullptr;
   }
 
@@ -124,7 +123,7 @@ std::unique_ptr<Message> MessageFromV8(v8::Local<v8::Context> context,
   // TODO(crbug.com/40321352): Incorporate `format` while serializing the
   // message.
   DCHECK(!value.IsEmpty());
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Context::Scope context_scope(context);
 
   // TODO(devlin): For some reason, we don't use the signature for
@@ -169,7 +168,7 @@ v8::Local<v8::Value> MessageToV8(v8::Local<v8::Context> context,
   // TODO(crbug.com/40321352): Incorporate `message.format` while deserializing
   // the message.
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
   v8::Context::Scope context_scope(context);
 
   v8::Local<v8::String> v8_message_string =
@@ -214,7 +213,7 @@ MessageOptions ParseMessageOptions(v8::Local<v8::Context> context,
   DCHECK(!v8_options.IsEmpty());
   DCHECK(!v8_options->IsNull());
 
-  v8::Isolate* isolate = context->GetIsolate();
+  v8::Isolate* isolate = v8::Isolate::GetCurrent();
 
   MessageOptions options;
 
@@ -428,5 +427,4 @@ std::string GetEventForChannel(const MessagingEndpoint& source_endpoint,
   return event_name;
 }
 
-}  // namespace messaging_util
-}  // namespace extensions
+}  // namespace extensions::messaging_util

@@ -28,8 +28,10 @@ class BrowserContext;
 class BrowserContextImpl;
 class PersistentRepeatingTimer;
 
-// BtmServiceImpl is intentionally *not* exposed in the Content API — we only
-// want other `//content` code (such as the BTM implementation) to access it.
+// `BtmServiceImpl` is intentionally *not* exposed in the Content API — we only
+// want other `//content` code (such as the BTM implementation) to access it, as
+// `BtmServiceImpl` is an implementation detail that `//content` embedders
+// shouldn't know about.
 class CONTENT_EXPORT BtmServiceImpl : public BtmService {
  public:
   using StatefulBounceCallback = base::RepeatingCallback<void(const GURL&)>;
@@ -62,6 +64,8 @@ class CONTENT_EXPORT BtmServiceImpl : public BtmService {
   // with no grace period.
   void DeleteEligibleSitesImmediately(DeletedSitesCallback callback) override;
 
+  // Processes a redirect chain to identify and record bounces. The main
+  // entrypoint for the BTM feature to act on navigations.
   void HandleRedirectChain(std::vector<BtmRedirectInfoPtr> redirects,
                            BtmRedirectChainInfoPtr chain,
                            StatefulBounceCallback stateful_bounce_callback);
@@ -73,13 +77,11 @@ class CONTENT_EXPORT BtmServiceImpl : public BtmService {
       base::Time bound,
       CheckUserActivationCallback callback) const override;
 
-  // This allows unit-testing the metrics emitted by HandleRedirect() without
-  // instantiating BtmService.
-  static void HandleRedirectForTesting(const BtmRedirectInfo& redirect,
-                                       const BtmRedirectChainInfo& chain,
-                                       RecordBounceCallback callback) {
-    HandleRedirect(redirect, chain, callback);
-  }
+  // This allows unit-testing the metrics recording without instantiating
+  // BtmService. Just calls the internal RecordRedirectMetrics function.
+  static void RecordRedirectMetricsForTesting(
+      const BtmRedirectInfo& redirect,
+      const BtmRedirectChainInfo& chain);
 
   void SetStorageClockForTesting(base::Clock* clock) {
     DCHECK(storage_);
@@ -87,6 +89,10 @@ class CONTENT_EXPORT BtmServiceImpl : public BtmService {
   }
 
   void OnTimerFiredForTesting() { OnTimerFired(); }
+
+#if BUILDFLAG(IS_FUCHSIA) && defined(IS_WEB_ENGINE)
+  void WaitForFuchsiaCleanupForTesting() { fuchsia_cleanup_loop_.Run(); }
+#endif
 
   void AddObserver(Observer* observer) override;
   void RemoveObserver(const Observer* observer) override;
@@ -115,6 +121,7 @@ class CONTENT_EXPORT BtmServiceImpl : public BtmService {
  private:
   std::unique_ptr<PersistentRepeatingTimer> CreateTimer();
 
+  // Processes redirects to identify and record bounces.
   void HandleRedirects(std::vector<BtmRedirectInfoPtr> redirects,
                        BtmRedirectChainInfoPtr chain,
                        StatefulBounceCallback stateful_bounce_callback,
@@ -123,9 +130,6 @@ class CONTENT_EXPORT BtmServiceImpl : public BtmService {
   void RecordBounce(StatefulBounceCallback stateful_bounce_callback,
                     const BtmRedirectInfo& redirect,
                     const BtmRedirectChainInfo& chain);
-  static void HandleRedirect(const BtmRedirectInfo& redirect,
-                             const BtmRedirectChainInfo& chain,
-                             RecordBounceCallback callback);
 
   scoped_refptr<base::SequencedTaskRunner> CreateTaskRunner();
   scoped_refptr<base::SequencedTaskRunner> CreateTaskRunnerForResource(
@@ -149,7 +153,19 @@ class CONTENT_EXPORT BtmServiceImpl : public BtmService {
   base::SequenceBound<BtmStorage> storage_;
   base::ObserverList<Observer> observers_;
 
+  // A map from site (eTLD+1) to the number of tabs that have that site open.
+  // Used to avoid clearing state for sites that are currently in use.
   std::map<std::string, int> open_sites_;
+
+#if BUILDFLAG(IS_FUCHSIA) && defined(IS_WEB_ENGINE)
+  // If running on WebEngine on Fuchsia, any existing BTM database file is
+  // asynchronously deleted. This RunLoop allows tests to wait for the
+  // deletion to complete.
+  //
+  // TODO: crbug.com/434764000 - delete this once we are confident any leftover
+  // database files have been removed on WebEngine on Fuchsia.
+  base::RunLoop fuchsia_cleanup_loop_;
+#endif
 
   base::WeakPtrFactory<BtmServiceImpl> weak_factory_{this};
 };

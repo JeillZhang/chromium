@@ -5,10 +5,14 @@
 #ifndef COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_EXECUTION_TEST_RESPONSE_HOLDER_H_
 #define COMPONENTS_OPTIMIZATION_GUIDE_CORE_MODEL_EXECUTION_TEST_RESPONSE_HOLDER_H_
 
+#include <vector>
+
 #include "base/memory/weak_ptr.h"
 #include "base/test/test_future.h"
+#include "components/optimization_guide/core/model_execution/on_device_capability.h"
+#include "components/optimization_guide/core/model_execution/remote_model_executor.h"
 #include "components/optimization_guide/core/model_quality/model_quality_log_entry.h"
-#include "components/optimization_guide/core/optimization_guide_model_executor.h"
+#include "components/optimization_guide/core/optimization_guide_util.h"
 
 namespace optimization_guide {
 
@@ -21,9 +25,12 @@ class RemoteResponseHolder {
 
   bool GetFinalStatus() { return future_.Get(); }
 
-  std::string GetComposeOutput();
+  template <typename T>
+  T GetOutput() const {
+    return *ParsedAnyMetadata<T>(result_->response.value());
+  }
 
-  OptimizationGuideModelExecutionError::ModelExecutionError error() {
+  OptimizationGuideModelExecutionError::ModelExecutionError error() const {
     return result_->response.error().error();
   }
 

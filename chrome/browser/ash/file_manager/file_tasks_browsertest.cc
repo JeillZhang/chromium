@@ -35,6 +35,7 @@
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
 #include "chrome/browser/apps/app_service/app_service_test.h"
+#include "chrome/browser/apps/app_service/chrome_app_deprecation/chrome_app_deprecation.h"
 #include "chrome/browser/apps/app_service/launch_result_type.h"
 #include "chrome/browser/apps/app_service/publishers/app_publisher.h"
 #include "chrome/browser/ash/arc/fileapi/arc_documents_provider_util.h"
@@ -648,6 +649,8 @@ IN_PROC_BROWSER_TEST_P(FileTasksBrowserTest, ExecuteChromeApp) {
   }
 
   std::string extension_id = InstallTiffHandlerChromeApp();
+  apps::chrome_app_deprecation::ScopedAddAppToAllowlistForTesting allowlist(
+      extension_id);
 
   Profile* const profile = browser()->profile();
   std::vector<storage::FileSystemURL> files =
@@ -767,7 +770,7 @@ class FileTasksPolicyBrowserTest : public FileTasksBrowserTest {
       // |test|.
       bool expect_dlp_blocked =
           test.dlp_source_url &&
-          UNSAFE_TODO(strcmp(test.dlp_source_url, blockedUrl)) == 0;
+          (std::string_view(test.dlp_source_url) == blockedUrl);
       EXPECT_EQ(expect_dlp_blocked,
                 std::ranges::all_of(resulting_tasks.tasks,
                                     &FullTaskDescriptor::is_dlp_blocked));

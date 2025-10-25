@@ -7,6 +7,8 @@
 
 #include <CoreFoundation/CoreFoundation.h>
 
+#include <memory>
+
 #include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -25,6 +27,10 @@ namespace web {
 
 class BrowserState;
 class WKContentRuleListProvider;
+
+// Keys for the static content rule lists managed by this provider.
+inline constexpr char kBlockLocalResourcesRuleListKey[] = "BlockLocalResources";
+inline constexpr char kMixedContentUpgradeRuleListKey[] = "MixedContentUpgrade";
 
 // A provider class associated with a single web::BrowserState object. Manages
 // the lifetime and performs setup of WKWebViewConfiguration and instances. Not
@@ -95,7 +101,7 @@ class WKWebViewConfigurationProvider : public base::SupportsUserData::Data {
 
   // Returns WKContentRuleListProvider associated with WKWebViewConfiguration.
   // Callers must not retain the returned object.
-  WKContentRuleListProvider* GetContentRuleListProvider();
+  WKContentRuleListProvider& GetContentRuleListProvider();
 
   // Registers callback to be invoked when the website data store is updated for
   // this provider.
@@ -103,7 +109,13 @@ class WKWebViewConfigurationProvider : public base::SupportsUserData::Data {
       WebSiteDataStoreUpdatedCallbackList::CallbackType callback);
 
  private:
+  friend class WKWebViewConfigurationProviderTest;
   explicit WKWebViewConfigurationProvider(BrowserState* browser_state);
+  // Constructor that allows for injecting a custom rule list provider.
+  // Used for testing.
+  WKWebViewConfigurationProvider(
+      BrowserState* browser_state,
+      std::unique_ptr<WKContentRuleListProvider> rule_list_provider);
   WKWebViewConfigurationProvider() = delete;
 
   // Mark copy-constructible and copy-assignable deleted.
@@ -111,6 +123,9 @@ class WKWebViewConfigurationProvider : public base::SupportsUserData::Data {
       delete;
   WKWebViewConfigurationProvider& operator=(
       const WKWebViewConfigurationProvider&) = delete;
+
+  // Performs the initialization logic shared amongst constructors.
+  void Initialize();
 
   SEQUENCE_CHECKER(_sequence_checker_);
 

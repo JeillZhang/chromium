@@ -13,7 +13,6 @@
 
 #include "base/run_loop.h"
 #include "base/time/time.h"
-#include "base/types/optional_ref.h"
 #include "components/autofill/core/browser/autofill_trigger_source.h"
 #include "components/autofill/core/browser/filling/test_form_filler.h"
 #include "components/autofill/core/browser/foundations/browser_autofill_manager.h"
@@ -26,7 +25,6 @@ namespace autofill {
 
 class MockBnplManager;
 class AutofillDriver;
-class FormStructure;
 class TestPersonalDataManager;
 
 class TestBrowserAutofillManager : public BrowserAutofillManager {
@@ -52,20 +50,22 @@ class TestBrowserAutofillManager : public BrowserAutofillManager {
   void OnTextFieldValueChanged(const FormData& form,
                                const FieldGlobalId& field_id,
                                const base::TimeTicks timestamp) override;
+  void OnDidEndTextFieldEditing() override;
   void OnTextFieldDidScroll(const FormData& form,
                             const FieldGlobalId& field_id) override;
   void OnSelectControlSelectionChanged(const FormData& form,
                                        const FieldGlobalId& field_id) override;
-  void OnAskForValuesToFill(const FormData& form,
-                            const FieldGlobalId& field_id,
-                            const gfx::Rect& caret_bounds,
-                            AutofillSuggestionTriggerSource trigger_source,
-                            base::optional_ref<const PasswordSuggestionRequest>
-                                password_request) override;
+  void OnSelectFieldOptionsDidChange(const FormData& form) override;
+  void OnAskForValuesToFill(
+      const FormData& form,
+      const FieldGlobalId& field_id,
+      const gfx::Rect& caret_bounds,
+      AutofillSuggestionTriggerSource trigger_source,
+      std::optional<PasswordSuggestionRequest> password_request) override;
   void OnFocusOnFormField(const FormData& form,
                           const FieldGlobalId& field_id) override;
-  void OnDidFillAutofillFormData(const FormData& form,
-                                 const base::TimeTicks timestamp) override;
+  void OnDidAutofillForm(const FormData& form,
+                         const base::TimeTicks timestamp) override;
   void OnJavaScriptChangedAutofilledValue(
       const FormData& form,
       const FieldGlobalId& field_id,
@@ -99,10 +99,6 @@ class TestBrowserAutofillManager : public BrowserAutofillManager {
       const std::vector<FieldType>& server_types,
       bool preserve_values_in_form_structure = false);
 
-  void AddSeenFormStructure(std::unique_ptr<FormStructure> form_structure);
-
-  void ClearFormStructures();
-
   const std::string& GetSubmittedFormSignature();
 
   // Helper to skip irrelevant params.
@@ -111,8 +107,7 @@ class TestBrowserAutofillManager : public BrowserAutofillManager {
       const FieldGlobalId& field_id,
       AutofillSuggestionTriggerSource trigger_source =
           AutofillSuggestionTriggerSource::kTextFieldValueChanged,
-      const std::optional<PasswordSuggestionRequest>& password_request =
-          std::nullopt);
+      std::optional<PasswordSuggestionRequest> password_request = std::nullopt);
 
  private:
   const gfx::Image card_image_ = gfx::test::CreateImage(40, 24);

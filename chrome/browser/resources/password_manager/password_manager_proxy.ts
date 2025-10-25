@@ -4,13 +4,20 @@
 
 /**
  * @fileoverview PasswordManagerProxy is an abstraction over
- * chrome.passwordsPrivate which facilitates testing.
+ * chrome.passwordsPrivate and a Mojo remote. It is intended to facilitate
+ * testing. The chrome.passwordsPrivate API is being migrated to use Mojo.
  */
+
+import {loadTimeData} from 'chrome://resources/js/load_time_data.js';
+
+import {type ActorLoginPermission, PageCallbackRouter, PageHandlerFactory, PageHandlerRemote} from './password_manager.mojom-webui.js';
 
 export type BlockedSite = chrome.passwordsPrivate.ExceptionEntry;
 
 export type AccountStorageEnabledStateChangedListener =
     (enabledState: boolean) => void;
+export type ShouldShowAccountStorageToggleChangedListener = (show: boolean) =>
+    void;
 export type CredentialsChangedListener =
     (credentials: chrome.passwordsPrivate.PasswordUiEntry[]) => void;
 export type PasswordCheckStatusChangedListener =
@@ -191,6 +198,14 @@ export interface PasswordManagerProxy {
       reason: chrome.passwordsPrivate.PlaintextReason): Promise<string>;
 
   /**
+   * Copies the backup password for a specific ID to the clipboard.
+   * @param id The id for the password entry being being retrieved.
+   * @return A promise that resolves to `true` if the copy was successful, and
+   *     `false` otherwise.
+   */
+  copyPlaintextBackupPassword(id: number): Promise<boolean>;
+
+  /**
    * Saves a new password entry described by the given |options|.
    * @param options Details about a new password and storage to be used.
    * @return A promise that resolves when the new entry is added.
@@ -229,6 +244,14 @@ export interface PasswordManagerProxy {
    */
   removeCredential(
       id: number, fromStores: chrome.passwordsPrivate.PasswordStoreSet): void;
+
+  /**
+   * Should remove the backup password of a credential and notify that the list
+   * has changed.
+   * @param id The id for the credential being updated. No-op if |id| is not in
+   *     the list.
+   */
+  removeBackupPassword(id: number): void;
 
   /**
    * Should remove the blocked site and notify that the list has changed.
@@ -352,6 +375,19 @@ export interface PasswordManagerProxy {
       listener: AccountStorageEnabledStateChangedListener): void;
 
   /**
+   * Add an observer to the account storage toggle visibility state.
+   */
+  addShouldShowAccountStorageSettingToggleListener(
+      listener: ShouldShowAccountStorageToggleChangedListener): void;
+
+
+  /**
+   * Remove an observer to the account storage toggle visibility state.
+   */
+  removeShouldShowAccountStorageSettingToggleListener(
+      listener: ShouldShowAccountStorageToggleChangedListener): void;
+
+  /**
    * Requests the account-storage enabled state of the current user.
    * @return A promise that resolves to the enabled state.
    */
@@ -362,6 +398,13 @@ export interface PasswordManagerProxy {
    * @param enabled Whether the user wants to enable or disable.
    */
   setAccountStorageEnabled(enabled: boolean): void;
+
+  /**
+   * Requests whether the account storage toggle should be shown.
+   * @return A promise that resolves to whether the toggle should be shown.
+   */
+  shouldShowAccountStorageSettingToggle(): Promise<boolean>;
+
 
   /**
    * Moves a list of passwords from the device to the account
@@ -394,12 +437,32 @@ export interface PasswordManagerProxy {
    * Deletes all password manager data (passwords, passkeys, etc.)
    */
   deleteAllPasswordManagerData(): Promise<boolean>;
+
+  /**
+   * Returns the list of sites that can be used for Actor Login.
+   */
+  getActorLoginPermissions(): Promise<ActorLoginPermission[]>;
+
+  /**
+   * Revokes actor login permission for all credentials matching the site.
+   */
+  revokeActorLoginPermission(site: ActorLoginPermission): void;
 }
 
 /**
  * Implementation that accesses the private API.
  */
 export class PasswordManagerImpl implements PasswordManagerProxy {
+  callbackRouter: PageCallbackRouter = new PageCallbackRouter();
+  handler: PageHandlerRemote = new PageHandlerRemote();
+
+  constructor() {
+    const factory = PageHandlerFactory.getRemote();
+    factory.createPageHandler(
+        this.callbackRouter.$.bindNewPipeAndPassRemote(),
+        this.handler.$.bindNewPipeAndPassReceiver());
+  }
+
   addSavedPasswordListChangedListener(listener: CredentialsChangedListener) {
     chrome.passwordsPrivate.onSavedPasswordsListChanged.addListener(listener);
   }
@@ -493,6 +556,11 @@ export class PasswordManagerImpl implements PasswordManagerProxy {
     return chrome.passwordsPrivate.requestPlaintextPassword(id, reason);
   }
 
+  copyPlaintextBackupPassword(id: number) {
+    return this.handler.copyPlaintextBackupPassword(id).then(
+        result => result.success);
+  }
+
   addPassword(options: chrome.passwordsPrivate.AddPasswordOptions) {
     return chrome.passwordsPrivate.addPassword(options);
   }
@@ -504,6 +572,10 @@ export class PasswordManagerImpl implements PasswordManagerProxy {
   removeCredential(
       id: number, fromStores: chrome.passwordsPrivate.PasswordStoreSet) {
     chrome.passwordsPrivate.removeCredential(id, fromStores);
+  }
+
+  removeBackupPassword(id: number) {
+    this.handler.removeBackupPassword(id);
   }
 
   removeBlockedSite(id: number) {
@@ -588,7 +660,11 @@ export class PasswordManagerImpl implements PasswordManagerProxy {
   }
 
   extendAuthValidity() {
-    chrome.passwordsPrivate.extendAuthValidity();
+    if (!loadTimeData.getBoolean('enablePasswordManagerMojoApi')) {
+      chrome.passwordsPrivate.extendAuthValidity();
+      return;
+    }
+    this.handler.extendAuthValidity();
   }
 
   addAccountStorageEnabledStateListener(
@@ -603,12 +679,28 @@ export class PasswordManagerImpl implements PasswordManagerProxy {
         listener);
   }
 
+  addShouldShowAccountStorageSettingToggleListener(
+      listener: ShouldShowAccountStorageToggleChangedListener) {
+    chrome.passwordsPrivate.onShouldShowAccountStorageSettingToggleChanged
+        .addListener(listener);
+  }
+
+  removeShouldShowAccountStorageSettingToggleListener(
+      listener: ShouldShowAccountStorageToggleChangedListener) {
+    chrome.passwordsPrivate.onShouldShowAccountStorageSettingToggleChanged
+        .removeListener(listener);
+  }
+
   isAccountStorageEnabled() {
     return chrome.passwordsPrivate.isAccountStorageEnabled();
   }
 
   setAccountStorageEnabled(enabled: boolean) {
     chrome.passwordsPrivate.setAccountStorageEnabled(enabled);
+  }
+
+  shouldShowAccountStorageSettingToggle() {
+    return chrome.passwordsPrivate.shouldShowAccountStorageSettingToggle();
   }
 
   movePasswordsToAccount(ids: number[]) {
@@ -636,15 +728,26 @@ export class PasswordManagerImpl implements PasswordManagerProxy {
   }
 
   deleteAllPasswordManagerData() {
-    return chrome.passwordsPrivate.deleteAllPasswordManagerData();
+    return loadTimeData.getBoolean('enablePasswordManagerMojoApi') ?
+        this.handler.deleteAllPasswordManagerData().then(
+            result => result.success) :
+        chrome.passwordsPrivate.deleteAllPasswordManagerData();
+  }
+
+  getActorLoginPermissions() {
+    return this.handler.getActorLoginPermissions().then(result => result.sites);
+  }
+
+  revokeActorLoginPermission(site: ActorLoginPermission) {
+    this.handler.revokeActorLoginPermission(site);
   }
 
   static getInstance(): PasswordManagerProxy {
     return instance || (instance = new PasswordManagerImpl());
   }
 
-  static setInstance(obj: PasswordManagerProxy) {
-    instance = obj;
+  static setInstance(proxy: PasswordManagerProxy) {
+    instance = proxy;
   }
 }
 

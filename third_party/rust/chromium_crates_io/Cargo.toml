@@ -22,20 +22,22 @@ bitflags = "2"
 bytes = "1"
 cxx = "1"
 fend-core = "1"
-font-types = "0.8"
+font-types = "0.10"
 hex = "0.4"
 lazy_static = "1"
 libc = "0.2"
 png = "=0.18.0-rc"
 proc-macro2 = "1"
-prost = "0.13.3"
+prost = "0.14.1"
 qr_code = "2"
 quote = "1"
-read-fonts = "0.27.3"
+read-fonts = "0.35.0"
 rustc-demangle-capi = "0.1"
-skrifa = "0.29"
+serde = "1.0.219"
+skrifa = "0.37.0"
 small_ctor = "0.1"
 static_assertions = "1"
+xml = "1.0.0"
 
 [dependencies.bytemuck]
 version = "1"
@@ -82,7 +84,7 @@ version = "2.0.0"
 default-features = false
 
 [dependencies.llguidance]
-version = "0.7.13"
+version = "1.0.0"
 default-features = false
 features = ["lark"]
 
@@ -106,15 +108,25 @@ features = ["unbounded_depth", "float_roundtrip"]
 version = "2.6.1"
 features = ["core_hint_black_box"]
 
+[dependencies.symphonia]
+version = "0.5.4"
+
+# Disable the default lists of codecs and supported containers, and only support
+# codecs specifically added in `features`. Enabling new codec support requires a
+# package configuration through gnrt vendor and gnrt gen.
+default-features = false
+features = ["flac"]
+
 [dependencies.syn]
 version = "2"
 features = ["full"]
 
 [dependencies.temporal_capi]
-version = "0.0.8"
-features = ["compiled_data"]
+version = "0.1.0"
+features = ["zoneinfo64"]
 
 [dependencies.zip]
-version = "3.0.0"
+version = "5.1.1"
 default-features = false
 features = ["deflate-flate2"]
+

@@ -7,12 +7,29 @@
 
 #import <UIKit/UIKit.h>
 
+#import "ios/chrome/browser/intelligence/page_action_menu/ui/page_action_menu_consumer.h"
+#import "ios/chrome/browser/reader_mode/ui/reader_mode_options_consumer.h"
+
 @protocol BWGCommands;
 @protocol LensOverlayCommands;
 @protocol PageActionMenuCommands;
+@protocol PageActionMenuMutator;
+@protocol PageActionMenuViewControllerDelegate;
+@protocol ReaderModeCommands;
 
 // The view controller representing the presented page action menu UI.
-@interface PageActionMenuViewController : UIViewController
+@interface PageActionMenuViewController
+    : UIViewController <PageActionMenuConsumer, ReaderModeOptionsConsumer>
+
+// The delegate for this view controller.
+@property(nonatomic, weak) id<PageActionMenuViewControllerDelegate> delegate;
+
+// Returns the appropriate detent value for a sheet presentation in `context`.
+- (CGFloat)resolveDetentValueForSheetPresentation:
+    (id<UISheetPresentationControllerDetentResolutionContext>)context;
+
+// The mutator for communicating with the mediator.
+@property(nonatomic, weak) id<PageActionMenuMutator> mutator;
 
 // The handler for sending BWG commands.
 @property(nonatomic, weak) id<BWGCommands> BWGHandler;
@@ -22,6 +39,9 @@
 
 // The handler for sending lens overlay commands.
 @property(nonatomic, weak) id<LensOverlayCommands> lensOverlayHandler;
+
+// The handler for sending reader mode commands.
+@property(nonatomic, weak) id<ReaderModeCommands> readerModeHandler;
 
 @end
 

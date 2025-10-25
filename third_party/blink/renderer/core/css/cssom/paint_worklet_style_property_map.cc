@@ -34,8 +34,7 @@ class PaintWorkletStylePropertyMapIterationSource final
 
   bool FetchNextItem(ScriptState*,
                      String& key,
-                     CSSStyleValueVector& value,
-                     ExceptionState&) override {
+                     CSSStyleValueVector& value) override {
     if (index_ >= values_.size()) {
       return false;
     }
@@ -178,7 +177,7 @@ CSSStyleValueVector PaintWorkletStylePropertyMap::getAll(
   CSSPropertyID property_id = CssPropertyID(execution_context, property_name);
   if (property_id == CSSPropertyID::kInvalid) {
     exception_state.ThrowTypeError(
-        WTF::StrCat({"Invalid propertyName: ", property_name}));
+        StrCat({"Invalid propertyName: ", property_name}));
     return CSSStyleValueVector();
   }
 
@@ -205,9 +204,7 @@ unsigned PaintWorkletStylePropertyMap::size() const {
 }
 
 PaintWorkletStylePropertyMap::IterationSource*
-PaintWorkletStylePropertyMap::CreateIterationSource(
-    ScriptState* script_state,
-    ExceptionState& exception_state) {
+PaintWorkletStylePropertyMap::CreateIterationSource(ScriptState* script_state) {
   // TODO(xidachen): implement this function. Note that the output should be
   // sorted.
   HeapVector<PaintWorkletStylePropertyMap::StylePropertyMapEntry> result;

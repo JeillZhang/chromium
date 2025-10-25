@@ -59,7 +59,6 @@
 #include "third_party/blink/public/mojom/frame/sudden_termination_disabler_type.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/frame/viewport_intersection_state.mojom-blink.h"
 #include "third_party/blink/public/mojom/input/focus_type.mojom-blink-forward.h"
-#include "third_party/blink/public/mojom/lcp_critical_path_predictor/lcp_critical_path_predictor.mojom-blink.h"
 #include "third_party/blink/public/mojom/link_to_text/link_to_text.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/loader/pause_subresource_loading_handle.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/navigation/renderer_content_settings.mojom.h"
@@ -92,7 +91,6 @@
 #include "third_party/blink/renderer/platform/loader/fetch/client_hints_preferences.h"
 #include "third_party/blink/renderer/platform/loader/fetch/loader_freeze_mode.h"
 #include "third_party/blink/renderer/platform/mojo/browser_interface_broker_proxy_impl.h"
-#include "third_party/blink/renderer/platform/mojo/heap_mojo_associated_remote.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_unique_receiver_set.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_wrapper_mode.h"
@@ -127,7 +125,6 @@ class BoxShadowPaintImageGenerator;
 class ClipPathPaintImageGenerator;
 class Color;
 class ContentCaptureManager;
-class ContextMenuInsetsChangedObserver;
 class CoreProbeSink;
 class Document;
 class Editor;
@@ -172,16 +169,13 @@ class WebPrescientNetworking;
 class URLLoader;
 struct BlinkTransferableMessage;
 struct WebScriptSource;
+class WindowControlsOverlayChangedDelegate;
 
 namespace v8_compile_hints {
 class V8LocalCompileHintsProducer;
 }  // namespace v8_compile_hints
 
 enum class BackForwardCacheAware;
-
-#if !BUILDFLAG(IS_ANDROID)
-class WindowControlsOverlayChangedDelegate;
-#endif
 
 extern template class CORE_EXTERN_TEMPLATE_EXPORT Supplement<LocalFrame>;
 
@@ -379,15 +373,8 @@ class CORE_EXPORT LocalFrame final
   // rect has changed.
   void NotifyVirtualKeyboardOverlayRectObservers(const gfx::Rect&) const;
 
-  void RegisterContextMenuInsetsChangedObserver(
-      ContextMenuInsetsChangedObserver*);
-
-  // Notify observers that the context menu insets have changes. If the passed
-  // rect is empty, the insets should be removed.
-  void NotifyContextMenuInsetsObservers(const gfx::Rect&) const;
-
   // This call will "show interest" in the Element with the provided DOMNodeID,
-  // which is presumed to have an `interesttarget` attribute.
+  // which is presumed to have an `interestfor` attribute.
   void ShowInterestInElement(int) const;
 
   // Bubbles a logical scroll to the parent frame, if one exists. For a local
@@ -405,6 +392,10 @@ class CORE_EXPORT LocalFrame final
       mojom::blink::ScrollDirection direction,
       ui::ScrollGranularity granularity,
       Frame* child);
+
+  void NetworkBecameAlmostIdle(base::TimeDelta almost_idle_start_time);
+  void NetworkBecameIdle(base::TimeDelta idle_start_time);
+  void RequestNetworkIdleCallback(base::OnceClosure callback);
 
   // =========================================================================
   // All public functions below this point are candidates to move out of
@@ -469,7 +460,7 @@ class CORE_EXPORT LocalFrame final
   String SelectedText() const;
   String SelectedText(const TextIteratorBehavior& behavior) const;
   String SelectedTextForClipboard() const;
-  void TextSelectionChanged(const WTF::String& selection_text,
+  void TextSelectionChanged(const String& selection_text,
                             uint32_t offset,
                             const gfx::Range& range) const;
 
@@ -707,13 +698,9 @@ class CORE_EXPORT LocalFrame final
 
   void SetReducedAcceptLanguage(const AtomicString& reduced_accept_language);
 
-  // Overlays a color on top of this LocalFrameView if it is associated with
-  // the main frame. Should not have multiple consumers.
-  void SetMainFrameColorOverlay(SkColor color);
+  // Overlays a color on top of this LocalFrameView.
+  void SetFrameColorOverlay(SkColor color);
 
-  // Overlays a color on top of this LocalFrameView if it is associated with
-  // a subframe. Should not have multiple consumers.
-  void SetSubframeColorOverlay(SkColor color);
   void UpdateFrameColorOverlayPrePaint();
 
   void PaintFrameColorOverlay(GraphicsContext&);
@@ -784,8 +771,8 @@ class CORE_EXPORT LocalFrame final
   void AdvanceFocusForIME(mojom::blink::FocusType focus_type);
   void PostMessageEvent(
       const std::optional<RemoteFrameToken>& source_frame_token,
-      const String& source_origin,
-      const String& target_origin,
+      scoped_refptr<const SecurityOrigin> source_origin,
+      scoped_refptr<const SecurityOrigin> target_origin,
       BlinkTransferableMessage message);
 
   void SetScaleFactor(float scale);
@@ -793,10 +780,9 @@ class CORE_EXPORT LocalFrame final
   void SetInitialFocus(bool reverse);
 
 #if BUILDFLAG(IS_MAC)
-  void GetCharacterIndexAtPoint(const gfx::Point& point);
+  uint32_t GetCharacterIndexAtPoint(const gfx::Point& point);
 #endif
 
-#if !BUILDFLAG(IS_ANDROID)
   void UpdateWindowControlsOverlay(const gfx::Rect& bounding_rect_in_dips);
   void RegisterWindowControlsOverlayChangedDelegate(
       WindowControlsOverlayChangedDelegate*);
@@ -809,7 +795,6 @@ class CORE_EXPORT LocalFrame final
   bool IsWindowControlsOverlayVisible() const {
     return is_window_controls_overlay_visible_;
   }
-#endif  // !BUILDFLAG(IS_ANDROID)
 
   SystemClipboard* GetSystemClipboard();
 
@@ -868,12 +853,8 @@ class CORE_EXPORT LocalFrame final
   void OnFirstPaint(bool text_painted, bool image_painted);
 
   // Invoked on first contentful paint on this frame.
-  void OnFirstContentfulPaint();
-
-#if BUILDFLAG(IS_MAC)
-  void ResetTextInputHostForTesting();
-  void RebindTextInputHostForTesting();
-#endif
+  void OnFirstContentfulPaint(const base::TimeTicks& paint_time,
+                              const base::TimeTicks& navigation_time);
 
   void WriteIntoTrace(perfetto::TracedValue ctx) const;
 
@@ -885,7 +866,7 @@ class CORE_EXPORT LocalFrame final
   void SetBackgroundColorPaintImageGeneratorForTesting(
       BackgroundColorPaintImageGenerator* generator);
 
-  std::optional<SkColor> GetFrameOverlayColorForTesting() const;
+  std::optional<SkColor> GetFrameOverlayColor() const;
 
   // Returns a PendingRemote resolved via this frame's BrowserInterfaceBroker
   // for use when creating the PublicUrlManager instance in threaded worklets.
@@ -897,12 +878,11 @@ class CORE_EXPORT LocalFrame final
 
   // Take a snapshot for relevant scrollers at the beginning of a frame update.
   // https://drafts.csswg.org/scroll-animations-1/#avoiding-cycles
-  void UpdateScrollSnapshots();
-
+  //
   // Each ScrollSnapshotClients has their internal state updated at
   // a specific point in the lifecycle (see call to UpdateSnapshot).
   // Since this call takes place *before* layout, ScrollSnapshotClients also
-  // get an additional opportunity to update their state (see ValidateSnapshot).
+  // get an additional opportunity to update their state (see UpdateSnapshot).
   //
   // The lifecycle update will call this function after style and layout has
   // completed. The function will then go though all clients, and compare the
@@ -914,7 +894,11 @@ class CORE_EXPORT LocalFrame final
   // Returns true if all client states are valid, otherwise returns false.
   //
   // https://github.com/w3c/csswg-drafts/issues/5261
-  bool ValidateScrollSnapshotClients();
+  bool UpdateScrollSnapshotClients();
+  // Separate invocation for UpdateScrollSnapshotClients when called for
+  // ServiceScrollAnimations(). See documentation for
+  // ScrollSnapshotClient::UpdateSnapshotForServiceAnimations().
+  void UpdateScrollSnapshotClientsForServiceAnimations();
 
   void ClearScrollSnapshotClients();
 
@@ -985,6 +969,12 @@ class CORE_EXPORT LocalFrame final
     return frame_visibility_observers_;
   }
 
+  bool IsCaretBrowsingOverridden() { return is_caret_browsing_overridden_; }
+
+  void SetIsCaretBrowsingOverridden(bool overridden) {
+    is_caret_browsing_overridden_ = overridden;
+  }
+
  private:
   friend class FrameNavigationDisabler;
   // LocalFrameMojoHandler is a part of LocalFrame.
@@ -1033,8 +1023,6 @@ class CORE_EXPORT LocalFrame final
   // updating all other frames in the frame tree.
   bool ConsumeTransientUserActivation(UserActivationUpdateSource update_source);
 
-  void SetFrameColorOverlay(SkColor color);
-
   void DidFreeze();
   void DidResume();
   void SetContextPaused(bool);
@@ -1052,10 +1040,8 @@ class CORE_EXPORT LocalFrame final
                                     String& clip_html,
                                     gfx::Rect& clip_rect);
 
-#if !BUILDFLAG(IS_ANDROID)
   void SetTitlebarAreaDocumentStyleEnvironmentVariables() const;
   void MaybeUpdateWindowControlsOverlayWithNewZoomLevel();
-#endif
 
   void EnsureLinkPreviewTriggererInitialized();
 
@@ -1071,10 +1057,6 @@ class CORE_EXPORT LocalFrame final
   // Keeps track of all the registered VK observers.
   HeapHashSet<WeakMember<VirtualKeyboardOverlayChangedObserver>>
       virtual_keyboard_overlay_changed_observers_;
-
-  // Keeps track of all the registered context menu insets observers.
-  HeapHashSet<WeakMember<ContextMenuInsetsChangedObserver>>
-      context_menu_insets_changed_observers_;
 
   HeapHashSet<WeakMember<WidgetCreationObserver>> widget_creation_observers_;
 
@@ -1121,6 +1103,7 @@ class CORE_EXPORT LocalFrame final
 
   Member<AdTracker> ad_tracker_;
   Member<IdlenessDetector> idleness_detector_;
+  base::OnceClosure network_idle_callback_;
   Member<AttributionSrcLoader> attribution_src_loader_;
   Member<InspectorIssueReporter> inspector_issue_reporter_;
   Member<InspectorTraceEvents> inspector_trace_events_;
@@ -1185,7 +1168,6 @@ class CORE_EXPORT LocalFrame final
   // be registered at the actual elements as the references here are weak.
   HeapHashSet<WeakMember<ScrollSnapshotClient>> scroll_snapshot_clients_;
 
-#if !BUILDFLAG(IS_ANDROID)
   bool is_window_controls_overlay_visible_ = false;
   // |layout_zoom_factor_| is asynchronously set sometimes (most prominently
   // seen on mac) in |LocalFrame| via |WebFrameWidgetImpl::SetZoomLevel| on
@@ -1196,7 +1178,6 @@ class CORE_EXPORT LocalFrame final
   gfx::Rect window_controls_overlay_rect_;
   WeakMember<WindowControlsOverlayChangedDelegate>
       window_controls_overlay_changed_delegate_;
-#endif
 
   // The evidence for or against a frame being an ad frame. `std::nullopt` if
   // not yet set or if the frame is a subfiltering root frame. (Only non-root
@@ -1239,6 +1220,11 @@ class CORE_EXPORT LocalFrame final
   // is allowed to load a new child opaque-ads fenced frame.
   bool ancestor_or_self_has_cspee_ = false;
 
+  // Used to prevent signaling idle network notifications more than once for a
+  // given document. Reset when a new document is committed.
+  bool notified_initial_network_almost_idle_ = false;
+  bool notified_initial_network_idle_ = false;
+
   // Reduced accept language for top-level frame.
   AtomicString reduced_accept_language_;
 
@@ -1261,6 +1247,9 @@ class CORE_EXPORT LocalFrame final
   std::unique_ptr<WebLinkPreviewTriggerer> link_preview_triggerer_;
 
   HeapHashSet<WeakMember<FrameVisibilityObserver>> frame_visibility_observers_;
+
+  // Whether caret browsing mode has been overridden by the embedder or not.
+  bool is_caret_browsing_overridden_ = false;
 
   void OnStorageAccessCallback(base::OnceCallback<void(bool)> callback,
                                mojom::blink::StorageTypeAccessed storage_type,

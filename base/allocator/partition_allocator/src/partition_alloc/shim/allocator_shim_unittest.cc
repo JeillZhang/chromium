@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "partition_alloc/shim/allocator_shim.h"
 
 #include <atomic>
@@ -98,6 +103,17 @@ class AllocatorShimTest : public testing::Test {
     }
     return g_mock_dispatch.next->alloc_zero_initialized_function(n, size,
                                                                  context);
+  }
+
+  static void* MockAllocZeroInitUnchecked(size_t n,
+                                          size_t size,
+                                          void* context) {
+    const size_t real_size = n * size;
+    if (instance_ && real_size < MaxSizeTracked()) {
+      ++(instance_->zero_allocs_intercepted_by_size[real_size]);
+    }
+    return g_mock_dispatch.next->alloc_zero_initialized_unchecked_function(
+        n, size, context);
   }
 
   static void* MockAllocAligned(size_t alignment, size_t size, void* context) {
@@ -403,8 +419,11 @@ AllocatorDispatch g_mock_dispatch = {
     &AllocatorShimTest::MockAlloc,          /* alloc_function */
     &AllocatorShimTest::MockAllocUnchecked, /* alloc_unchecked_function */
     &AllocatorShimTest::MockAllocZeroInit, /* alloc_zero_initialized_function */
-    &AllocatorShimTest::MockAllocAligned,  /* alloc_aligned_function */
-    &AllocatorShimTest::MockRealloc,       /* realloc_function */
+    &AllocatorShimTest::
+        MockAllocZeroInitUnchecked, /* alloc_zero_initialized_unchecked_function
+                                     */
+    &AllocatorShimTest::MockAllocAligned,      /* alloc_aligned_function */
+    &AllocatorShimTest::MockRealloc,           /* realloc_function */
     &AllocatorShimTest::MockReallocUnchecked,  /* realloc_unchecked_function */
     &AllocatorShimTest::MockFree,              /* free_function */
     &AllocatorShimTest::MockFreeWithSize,      /* free_with_size_function */

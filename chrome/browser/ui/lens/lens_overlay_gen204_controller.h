@@ -5,14 +5,16 @@
 #ifndef CHROME_BROWSER_UI_LENS_LENS_OVERLAY_GEN204_CONTROLLER_H_
 #define CHROME_BROWSER_UI_LENS_LENS_OVERLAY_GEN204_CONTROLLER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/lens/core/mojom/lens.mojom.h"
 #include "components/lens/lens_overlay_invocation_source.h"
 #include "services/network/public/cpp/simple_url_loader.h"
-#include "third_party/lens_server_proto/lens_overlay_request_id.pb.h"
 
 class Profile;
 
 namespace lens {
+
+class LensOverlayRequestId;
 
 // Sends gen204 pings for the Lens Overlay.
 class LensOverlayGen204Controller {

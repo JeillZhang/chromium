@@ -37,6 +37,8 @@ source_set("indexed_db") {
     "instance/backing_store.h",
     "instance/backing_store_pre_close_task_queue.cc",
     "instance/backing_store_pre_close_task_queue.h",
+    "instance/backing_store_util.cc",
+    "instance/backing_store_util.h",
     "instance/bucket_context.cc",
     "instance/bucket_context.h",
     "instance/bucket_context_handle.cc",
@@ -70,12 +72,20 @@ source_set("indexed_db") {
     "instance/lock_request_data.h",
     "instance/pending_connection.cc",
     "instance/pending_connection.h",
+    "instance/record.cc",
+    "instance/record.h",
+    "instance/sqlite/active_blob_streamer.cc",
+    "instance/sqlite/active_blob_streamer.h",
+    "instance/sqlite/backing_store_cursor_impl.cc",
+    "instance/sqlite/backing_store_cursor_impl.h",
     "instance/sqlite/backing_store_database_impl.cc",
     "instance/sqlite/backing_store_database_impl.h",
     "instance/sqlite/backing_store_impl.cc",
     "instance/sqlite/backing_store_impl.h",
     "instance/sqlite/backing_store_transaction_impl.cc",
     "instance/sqlite/backing_store_transaction_impl.h",
+    "instance/sqlite/blob_writer.cc",
+    "instance/sqlite/blob_writer.h",
     "instance/sqlite/database_connection.cc",
     "instance/sqlite/database_connection.h",
     "instance/transaction.cc",
@@ -89,6 +99,7 @@ source_set("indexed_db") {
 
   deps = [
     "//base",
+    "//components/base32",
     "//components/services/storage",
     "//components/services/storage/public/cpp",
     "//components/services/storage/public/mojom",
@@ -119,6 +130,7 @@ source_set("unit_tests") {
   }
 
   sources = [
+    "file_path_util_unittest.cc",
     "file_stream_reader_to_data_pipe_unittest.cc",
     "indexed_db_context_unittest.cc",
     "indexed_db_leveldb_coding_unittest.cc",
@@ -126,16 +138,25 @@ source_set("unit_tests") {
     "indexed_db_unittest.cc",
     "instance/active_blob_registry_unittest.cc",
     "instance/backing_store_pre_close_task_queue_unittest.cc",
+    "instance/backing_store_test_base.cc",
+    "instance/backing_store_test_base.h",
+    "instance/backing_store_unittest.cc",
     "instance/bucket_context_unittest.cc",
     "instance/database_unittest.cc",
     "instance/fake_transaction.cc",
     "instance/fake_transaction.h",
-    "instance/leveldb/backing_store_unittest.cc",
     "instance/leveldb/cleanup_on_io_error_unittest.cc",
     "instance/leveldb/cleanup_scheduler_unittest.cc",
+    "instance/leveldb/leveldb_backing_store_unittest.cc",
     "instance/leveldb/tombstone_sweeper_unittest.cc",
+    "instance/mock_blob_storage_context.cc",
+    "instance/mock_blob_storage_context.h",
     "instance/mock_factory_client.cc",
     "instance/mock_factory_client.h",
+    "instance/mock_file_system_access_context.cc",
+    "instance/mock_file_system_access_context.h",
+    "instance/sqlite/backing_store_sqlite_unittest.cc",
+    "instance/sqlite/database_connection_unittest.cc",
     "instance/transaction_unittest.cc",
     "list_set_unittest.cc",
     "mock_mojo_indexed_db_database_callbacks.cc",
@@ -158,6 +179,8 @@ source_set("unit_tests") {
     # of :indexed_db headers. This has to be done through //content/browser to
     # avoid doubling symbols.
     "//content/browser:for_content_tests",
+    "//mojo/public/cpp/test_support:test_utils",
+    "//sql:test_support",
     "//storage/browser",
     "//storage/browser:test_support",
     "//testing/gmock",
@@ -165,6 +188,10 @@ source_set("unit_tests") {
     "//third_party/blink/public/common",
     "//third_party/leveldatabase",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 mojom("internals_mojo_bindings") {

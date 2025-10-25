@@ -15,20 +15,26 @@
 #include "build/build_config.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
-#include "components/permissions/permission_hats_trigger_helper.h"
+#include "components/permissions/permission_decision.h"
 #include "components/permissions/permission_request_data.h"
 #include "components/permissions/permission_request_enums.h"
 #include "components/permissions/request_type.h"
+#include "components/permissions/resolvers/permission_prompt_options.h"
 #include "content/public/browser/global_routing_id.h"
 #include "url/gurl.h"
 
+namespace content {
+class PermissionController;
+}
+
 namespace permissions {
+
 enum class RequestType;
 // Describes the interface a feature making permission requests should
 // implement. A class of this type is registered with the permission request
 // manager to receive updates about the result of the permissions request
 // from the bubble or infobar. It should live until it is unregistered or until
-// RequestFinished is called.
+// its destructor is called.
 // Note that no particular guarantees are made about what exact UI surface
 // is presented to the user. The delegate may be coalesced with other bubble
 // requests, or depending on the situation, not shown at all.
@@ -42,8 +48,7 @@ class PermissionRequest {
   // If `is_one_time` is true, the decision will last until all tabs of
   // `requesting_origin_` are closed or navigated away from.
   using PermissionDecidedCallback = base::RepeatingCallback<void(
-      ContentSetting /*result*/,
-      bool /*is_one_time*/,
+      PermissionDecision /*decision*/,
       bool /*is_final_decision*/,
       const PermissionRequestData& /*request_data*/)>;
 
@@ -156,6 +161,14 @@ class PermissionRequest {
   // element.
   bool IsEmbeddedPermissionElementInitiated() const;
 
+  // Whether the request was initiated by the user clicking on the geolocation
+  // element.
+  bool IsGeolocationElementInitiated() const;
+
+  // Returns if a request can be auto-granted heuristically. No prompt will be
+  // shown for the request.
+  bool IsEligibleForHeuristicAutoGrant() const;
+
   // Returns the position of the element that caused the prompt to open.
   std::optional<gfx::Rect> GetAnchorElementPosition() const;
 
@@ -182,6 +195,12 @@ class PermissionRequest {
   // request types.
   PermissionRequestGestureType GetGestureType() const;
 
+  // Used to store the prompt options for the permission request.
+  void SetPromptOptions(PromptOptions prompt_options);
+
+  // Return stored prompt options.
+  const PromptOptions& prompt_options() const { return data_->prompt_options; }
+
   virtual const std::vector<std::string>& GetRequestedAudioCaptureDeviceIds()
       const;
   virtual const std::vector<std::string>& GetRequestedVideoCaptureDeviceIds()
@@ -191,11 +210,16 @@ class PermissionRequest {
   // this permission request.
   ContentSettingsType GetContentSettingsType() const;
 
+  // Whether the source frame that is the origin of this permission request has
+  // a permission on status change event listener subscribed.
+  bool IsSourceSubscribedToPermissionChangeEvent(
+      content::PermissionController* controller) const;
+
   void set_requesting_frame_id(content::GlobalRenderFrameHostId id) {
     data_->id.set_global_render_frame_host_id(id);
   }
 
-  const content::GlobalRenderFrameHostId& get_requesting_frame_id() {
+  const content::GlobalRenderFrameHostId& get_requesting_frame_id() const {
     return data_->id.global_render_frame_host_id();
   }
 
@@ -204,12 +228,6 @@ class PermissionRequest {
   virtual std::u16string GetPermissionNameTextFragment() const;
 
   bool uses_automatic_embargo() const { return uses_automatic_embargo_; }
-
-  std::optional<PermissionHatsTriggerHelper::PreviewParametersForHats>
-  get_preview_parameters() const;
-
-  void set_preview_parameters(
-      PermissionHatsTriggerHelper::PreviewParametersForHats preview_parmeters);
 
  protected:
   // Sets whether this request is permission element initiated, for testing
@@ -228,9 +246,6 @@ class PermissionRequest {
   base::OnceClosure request_finished_callback_;
 
   const bool uses_automatic_embargo_ = true;
-
-  std::optional<PermissionHatsTriggerHelper::PreviewParametersForHats>
-      preview_parameters_;
 
   base::WeakPtrFactory<PermissionRequest> weak_factory_{this};
 };

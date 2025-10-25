@@ -450,21 +450,15 @@ inline bool DecodeEscaped(const CHAR* spec,
   return true;
 }
 
-// Appends the given substring to the output, escaping "some" characters that
+// Appends the given string to the output, escaping "some" characters that
 // it feels may not be safe. It assumes the input values are all contained in
 // 8-bit although it allows any type.
 //
 // This is used in error cases to append invalid output so that it looks
 // approximately correct. Non-error cases should not call this function since
 // the escaping rules are not guaranteed!
-void AppendInvalidNarrowString(const char* spec,
-                               size_t begin,
-                               size_t end,
-                               CanonOutput* output);
-void AppendInvalidNarrowString(const char16_t* spec,
-                               size_t begin,
-                               size_t end,
-                               CanonOutput* output);
+void AppendInvalidNarrowString(std::string_view input, CanonOutput* output);
+void AppendInvalidNarrowString(std::u16string_view input, CanonOutput* output);
 
 // Misc canonicalization helpers ----------------------------------------------
 
@@ -526,13 +520,11 @@ bool SetupUTF16OverrideComponents(const char* base,
 
 // Implemented in url_canon_path.cc, these are required by the relative URL
 // resolver as well, so we declare them here.
-bool CanonicalizePartialPathInternal(const char* spec,
-                                     const Component& path,
+bool CanonicalizePartialPathInternal(std::string_view path,
                                      size_t path_begin_in_output,
                                      CanonMode canon_mode,
                                      CanonOutput* output);
-bool CanonicalizePartialPathInternal(const char16_t* spec,
-                                     const Component& path,
+bool CanonicalizePartialPathInternal(std::u16string_view path,
                                      size_t path_begin_in_output,
                                      CanonMode canon_mode,
                                      CanonOutput* output);

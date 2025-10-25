@@ -18,9 +18,11 @@
 #include "components/browsing_data/core/counters/autofill_counter.h"
 #include "components/browsing_data/core/counters/history_counter.h"
 #include "components/browsing_data/core/counters/passwords_counter.h"
+#include "components/browsing_data/core/features.h"
 #include "components/browsing_data/core/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/base/features.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
@@ -52,7 +54,6 @@ std::u16string CreatePasswordDomainExamples(
   return domains_list;
 }
 
-#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 // Constructs the text to be displayed by the history counter from the given
 // `history_result`. The string is based on the unique domains within the
 // deletion range and if there are synced entries within the deletion range.
@@ -105,7 +106,6 @@ std::u16string CreateHistoryCounterString(
   return l10n_util::GetStringFUTF16(
       IDS_DEL_BROWSING_HISTORY_COUNTER_SINGLE_DOMAIN_TEXT, last_visited_domain);
 }
-#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
 }  // namespace
 
 namespace browsing_data {
@@ -288,7 +288,6 @@ std::u16string GetCounterTextFromResult(
     NOTREACHED();
   }
 
-  // TODO(crbug.com/397187800): Migrate to displaying the domains for Desktop.
   if (pref_name == prefs::kDeleteBrowsingHistory) {
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
     // History counter.
@@ -296,6 +295,13 @@ std::u16string GetCounterTextFromResult(
         static_cast<const HistoryCounter::HistoryResult*>(result));
 #else   // !(BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS))
     // History counter.
+    if (base::FeatureList::IsEnabled(features::kDbdRevampDesktop)) {
+      return CreateHistoryCounterString(
+          static_cast<const HistoryCounter::HistoryResult*>(result));
+    }
+
+    // TODO(crbug.com/397187800): Clean up item count strings logic once
+    // kDbdRevampDesktop is launched.
     const HistoryCounter::HistoryResult* history_result =
         static_cast<const HistoryCounter::HistoryResult*>(result);
     BrowsingDataCounter::ResultInt local_item_count = history_result->Value();
@@ -354,7 +360,11 @@ std::u16string GetCounterTextFromResult(
       }
     }
 
-    bool synced = autofill_result->is_sync_enabled();
+    // TODO(crbug.com/40066949): Clean this up once Sync-the-feature is gone on
+    // all platforms.
+    bool synced = !base::FeatureList::IsEnabled(
+                      syncer::kReplaceSyncPromosWithSignInPromos) &&
+                  autofill_result->is_sync_enabled();
 
     // TODO(crbug.com/371539581): Exclude payment methods from this part,
     // because it can be attributed as "synced", while payment methods are

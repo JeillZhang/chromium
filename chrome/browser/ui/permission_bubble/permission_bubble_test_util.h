@@ -42,6 +42,7 @@ class TestPermissionBubbleViewDelegate
   void Deny() override {}
   void Dismiss() override {}
   void Ignore() override {}
+  void SetPromptOptions(PromptOptions prompt_options) override {}
   void FinalizeCurrentRequests() override {}
   void OpenHelpCenterLink(const ui::Event& event) override {}
   void PreIgnoreQuietPrompt() override {}
@@ -64,9 +65,7 @@ class TestPermissionBubbleViewDelegate
   base::WeakPtr<permissions::PermissionPrompt::Delegate> GetWeakPtr() override;
 
   void set_requests(
-      std::vector<std::unique_ptr<permissions::PermissionRequest>> requests) {
-    requests_ = std::move(requests);
-  }
+      std::vector<std::unique_ptr<permissions::PermissionRequest>> requests);
 
  private:
   std::vector<std::unique_ptr<permissions::PermissionRequest>> requests_;

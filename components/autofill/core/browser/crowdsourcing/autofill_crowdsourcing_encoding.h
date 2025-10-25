@@ -38,8 +38,8 @@ struct EncodeUploadRequestOptions {
     Field& operator=(Field&&);
     ~Field();
 
-    // All date format strings that match the field value.
-    base::flat_set<std::u16string> format_strings;
+    // All format strings that match the field value.
+    std::set<std::pair<FormatString_Type, std::u16string>> format_strings;
 
     // Strength of the single username vote signal, if applicable.
     std::optional<AutofillUploadContents::Field::SingleUsernameVoteType>
@@ -87,6 +87,10 @@ struct EncodeUploadRequestOptions {
   // The randomized encoder to use to encode form metadata during upload.
   // If this is nullptr, no randomized metadata is sent.
   std::optional<RandomizedEncoder> encoder;
+
+  // The language detected for this form's page, before any translations
+  // performed by Chrome.
+  LanguageCode current_page_language;
 
   // The type of the event that was taken as an indication that the form has
   // been successfully submitted.

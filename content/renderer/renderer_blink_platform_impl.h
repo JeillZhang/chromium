@@ -90,7 +90,10 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
                                   uint64_t salt) override;
   blink::WebString UserAgent() override;
   blink::UserAgentMetadata UserAgentMetadata() override;
-  bool IsRedirectSafe(const GURL& from_url, const GURL& to_url) override;
+  bool IsRedirectSafe(
+      const GURL& from_url,
+      const GURL& to_url,
+      const std::optional<url::Origin>& request_initiator) override;
   void AppendVariationsThrottles(
       const url::Origin& top_origin,
       std::vector<std::unique_ptr<blink::URLLoaderThrottle>>* throttles)
@@ -114,7 +117,7 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
       const blink::WebURL& request_url) const override;
   bool IsolateStartsInBackground() override;
   blink::WebString DefaultLocale() override;
-  void SuddenTerminationChanged(bool enabled) override;
+  void SetSuddenTerminationAllowed(bool allowed) override;
   viz::FrameSinkId GenerateFrameSinkId() override;
   bool IsLockedToSite() const override;
   bool IsThreadedAnimationEnabled() override;
@@ -174,10 +177,16 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   bool AllowsLoopbackInPeerConnection() override;
   blink::WebVideoCaptureImplManager* GetVideoCaptureImplManager() override;
   std::unique_ptr<blink::WebGraphicsContext3DProvider>
-  CreateOffscreenGraphicsContext3DProvider(
-      const blink::Platform::ContextAttributes& attributes,
+  CreateWebGLGraphicsContextProvider(
+      bool prefer_low_power_gpu,
+      bool fail_if_major_performance_caveat,
+      blink::Platform::WebGLContextType context_type,
       const blink::WebURL& document_url,
-      blink::Platform::GraphicsInfo* gl_info) override;
+      blink::Platform::WebGLContextInfo* gl_info) override;
+  std::unique_ptr<blink::WebGraphicsContext3DProvider>
+  CreateRasterGraphicsContextProvider(
+      const blink::WebURL& document_url,
+      blink::Platform::RasterContextType context_type) override;
   std::unique_ptr<blink::WebGraphicsContext3DProvider>
   CreateSharedOffscreenGraphicsContext3DProvider() override;
   std::unique_ptr<blink::WebGraphicsContext3DProvider>
@@ -223,6 +232,10 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
       blink::MediaInspectorContext* inspector_context,
       scoped_refptr<base::SingleThreadTaskRunner> owner_task_runner,
       bool is_on_worker) override;
+  void AddCreateRemoteChildrenEvent(
+      const std::optional<base::UnguessableToken>& navigation_metrics_token,
+      const base::TimeTicks& start_time,
+      const base::TimeDelta& elapsed_time) override;
   media::GpuVideoAcceleratorFactories* GetGpuFactories() override;
   scoped_refptr<base::SequencedTaskRunner> MediaThreadTaskRunner() override;
   base::WeakPtr<media::DecoderFactory> GetMediaDecoderFactory() override;
@@ -249,6 +262,7 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
   std::pair<base::TimeDelta, base::TimeDelta>
   InertAndMinimumIntervalOfUserLevelMemoryPressureSignal() override;
 #endif  // BUILDFLAG(IS_ANDROID)
+  void OnV8HeapLastResortGC() override;
 
   // Tells this platform that the renderer is locked to a site (i.e., a scheme
   // plus eTLD+1, such as https://google.com), or to a more specific origin.
@@ -262,19 +276,16 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
  private:
   bool CheckPreparsedJsCachingEnabled() const;
 
-  void Collect3DContextInformation(blink::Platform::GraphicsInfo* gl_info,
-                                   const gpu::GPUInfo& gpu_info) const;
+  void CollectWebGLContextInfo(blink::Platform::WebGLContextInfo* gl_info,
+                               const gpu::GPUInfo& gpu_info) const;
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || \
     BUILDFLAG(IS_WIN)
   std::unique_ptr<blink::WebSandboxSupport> sandbox_support_;
 #endif
 
-  // This counter keeps track of the number of times sudden termination is
-  // enabled or disabled. It starts at 0 (enabled) and for every disable
-  // increments by 1, for every enable decrements by 1. When it reaches 0,
-  // we tell the browser to enable fast termination.
-  int sudden_termination_disables_;
+  // Number of active process-level sudden termination disablers.
+  int sudden_termination_disables_ = 0;
 
   // If true, the renderer process is locked to a site.
   bool is_locked_to_site_;

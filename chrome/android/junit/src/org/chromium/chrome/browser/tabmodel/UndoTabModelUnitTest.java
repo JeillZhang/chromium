@@ -55,6 +55,9 @@ import java.util.concurrent.TimeoutException;
  * Unit tests for undo and restoring of tabs in a {@link TabModel}. For additional tests that are
  * impossible or difficult to implement as unit test see {@link UndoTabModelTest}.
  */
+// TODO(crbug.com/454298057): TabModelImpl will be deleted (replaced by TabCollectionTabModelImpl).
+// These tests need to be migrated to UndoTabModelTest.java as the new implementation requires
+// native and a mock is insufficient here.
 @RunWith(BaseRobolectricTestRunner.class)
 public class UndoTabModelUnitTest {
     private static final long FAKE_NATIVE_ADDRESS = 123L;
@@ -90,14 +93,15 @@ public class UndoTabModelUnitTest {
     @Before
     public void setUp() {
         // Disable HomepageManager#shouldCloseAppWithZeroTabs() for TabModelImpl#closeAllTabs().
-        HomepageManager.getInstance().setPrefHomepageEnabled(false);
+        HomepageManager.getInstance().setJavaPrefHomepageEnabled(false);
 
         when(mIncognitoProfile.isOffTheRecord()).thenReturn(true);
 
         PriceTrackingFeatures.setPriceAnnotationsEnabledForTesting(false);
 
         TabModelJniBridgeJni.setInstanceForTesting(mTabModelJniBridge);
-        when(mTabModelJniBridge.init(any(), any(), anyInt(), anyBoolean()))
+        when(mTabModelJniBridge.init(
+                        any(TabModelJniBridge.class), any(Profile.class), anyInt(), anyBoolean()))
                 .thenReturn(FAKE_NATIVE_ADDRESS);
 
         when(mTabModelDelegate.isReparentingInProgress()).thenReturn(false);
@@ -151,7 +155,7 @@ public class UndoTabModelUnitTest {
         @Override
         public void removeTab(
                 @NonNull Tab tab, boolean allowDialog, @Nullable TabModelActionListener listener) {
-            assert false : "Not reached.";
+            throw new AssertionError("Not reached.");
         }
     }
 
@@ -179,7 +183,7 @@ public class UndoTabModelUnitTest {
                             mTabModelDelegate,
                             tabRemover,
                             supportUndo,
-                            /* isArchivedTabModel= */ true);
+                            /* isArchivedTabModel= */ false);
             when(mTabModelSelector.getModel(true)).thenReturn(tabModel);
         } else {
             tabModel =
@@ -195,7 +199,7 @@ public class UndoTabModelUnitTest {
                             mTabModelDelegate,
                             tabRemover,
                             supportUndo,
-                            /* isArchivedTabModel= */ true);
+                            /* isArchivedTabModel= */ false);
             when(mTabModelSelector.getModel(false)).thenReturn(tabModel);
         }
         // Assume the model is the current and active model.
@@ -272,7 +276,8 @@ public class UndoTabModelUnitTest {
         model.addObserver(
                 new TabModelObserver() {
                     @Override
-                    public void tabPendingClosure(Tab tab) {
+                    public void onTabClosePending(
+                            List<Tab> tab, boolean isAllTabs, @TabClosingSource int closingSource) {
                         didReceivePendingClosureHelper.notifyCalled();
                     }
                 });
@@ -285,7 +290,7 @@ public class UndoTabModelUnitTest {
 
         boolean didMakePending = undoable && model.supportsPendingClosures();
 
-        // Make sure the TabModel throws a tabPendingClosure callback if necessary.
+        // Make sure the TabModel throws a onTabClosePending callback if necessary.
         if (didMakePending) didReceivePendingClosureHelper.waitForCallback(0);
 
         // Check post conditions
@@ -302,7 +307,10 @@ public class UndoTabModelUnitTest {
         model.addObserver(
                 new TabModelObserver() {
                     @Override
-                    public void multipleTabsPendingClosure(List<Tab> tabs, boolean isAllTabs) {
+                    public void onTabClosePending(
+                            List<Tab> tabs,
+                            boolean isAllTabs,
+                            @TabClosingSource int closingSource) {
                         didReceivePendingClosureHelper.notifyCalled();
                     }
                 });
@@ -310,7 +318,7 @@ public class UndoTabModelUnitTest {
 
         boolean didMakePending = undoable && model.supportsPendingClosures();
 
-        // Make sure the TabModel throws a tabPendingClosure callback if necessary.
+        // Make sure the TabModel throws a onTabClosePending callback if necessary.
         if (didMakePending) didReceivePendingClosureHelper.waitForCallback(0);
     }
 
@@ -348,9 +356,15 @@ public class UndoTabModelUnitTest {
         assertTrue(model.isClosurePending(tab.getId()));
         assertNull(model.getTabById(tab.getId()));
 
+        final CallbackHelper didReceiveWillCancelClosureHelper = new CallbackHelper();
         final CallbackHelper didReceiveClosureCancelledHelper = new CallbackHelper();
         model.addObserver(
                 new TabModelObserver() {
+                    @Override
+                    public void willUndoTabClosure(List<Tab> tabs, boolean isAllTabs) {
+                        didReceiveWillCancelClosureHelper.notifyCalled();
+                    }
+
                     @Override
                     public void tabClosureUndone(Tab tab) {
                         didReceiveClosureCancelledHelper.notifyCalled();
@@ -360,7 +374,8 @@ public class UndoTabModelUnitTest {
         // Take action.
         model.cancelTabClosure(tab.getId());
 
-        // Make sure the TabModel throws a tabClosureUndone.
+        // Make sure the TabModel throws a willUndoTabClosure and tabClosureUndone.
+        didReceiveWillCancelClosureHelper.waitForCallback(0);
         didReceiveClosureCancelledHelper.waitForCallback(0);
 
         // Check post conditions.
@@ -372,6 +387,7 @@ public class UndoTabModelUnitTest {
 
     private void cancelAllTabClosures(final TabModel model, final Tab[] expectedToClose)
             throws TimeoutException {
+        final CallbackHelper willUndoTabClosureHelper = new CallbackHelper();
         final CallbackHelper tabClosureUndoneHelper = new CallbackHelper();
 
         for (int i = 0; i < expectedToClose.length; i++) {
@@ -385,6 +401,11 @@ public class UndoTabModelUnitTest {
             model.addObserver(
                     new TabModelObserver() {
                         @Override
+                        public void willUndoTabClosure(List<Tab> tabs, boolean isAllTabs) {
+                            willUndoTabClosureHelper.notifyCalled();
+                        }
+
+                        @Override
                         public void tabClosureUndone(Tab currentTab) {
                             tabClosureUndoneHelper.notifyCalled();
                         }
@@ -396,6 +417,7 @@ public class UndoTabModelUnitTest {
             model.cancelTabClosure(tab.getId());
         }
 
+        willUndoTabClosureHelper.waitForCallback(0, expectedToClose.length);
         tabClosureUndoneHelper.waitForCallback(0, expectedToClose.length);
 
         for (int i = 0; i < expectedToClose.length; i++) {
@@ -1486,7 +1508,7 @@ public class UndoTabModelUnitTest {
         checkState(model, new Tab[] {tab0, tab3}, tab3, sEmptyList, fullList, tab3);
 
         // 4.
-        model.moveTab(tab0.getId(), 2);
+        model.moveTab(tab0.getId(), 1);
         fullList = new Tab[] {tab3, tab0};
         checkState(model, new Tab[] {tab3, tab0}, tab3, sEmptyList, fullList, tab3);
         assertTrue(tab1.isClosing());

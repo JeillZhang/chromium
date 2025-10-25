@@ -16,7 +16,7 @@
 #include "components/server_certificate_database/server_certificate_database.h"
 #include "components/server_certificate_database/server_certificate_database.pb.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #include "ui/web_dialogs/web_dialog_delegate.h"
 
 namespace content {
@@ -40,7 +40,6 @@ class CertificateViewerDialog : public ui::WebDialogDelegate {
  public:
   static CertificateViewerDialog* ShowConstrained(
       std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> certs,
-      std::vector<std::string> cert_nicknames,
       content::WebContents* web_contents,
       gfx::NativeWindow parent);
 
@@ -57,6 +56,11 @@ class CertificateViewerDialog : public ui::WebDialogDelegate {
       content::WebContents* web_contents,
       gfx::NativeWindow parent);
 
+  using MockShowCallback = base::RepeatingCallback<void(
+      std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> certs,
+      content::WebContents* web_contents)>;
+  static void MockForTesting(MockShowCallback callback);
+
   CertificateViewerDialog(const CertificateViewerDialog&) = delete;
   CertificateViewerDialog& operator=(const CertificateViewerDialog&) = delete;
 
@@ -71,7 +75,6 @@ class CertificateViewerDialog : public ui::WebDialogDelegate {
   // If |modifications_callback| is not null, |cert_metadata| must be present.
   static CertificateViewerDialog* ShowConstrained(
       std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> certs,
-      std::vector<std::string> cert_nicknames,
       std::optional<
           chrome_browser_server_certificate_database::CertificateMetadata>
           cert_metadata,
@@ -84,7 +87,6 @@ class CertificateViewerDialog : public ui::WebDialogDelegate {
   // viewer.
   CertificateViewerDialog(
       std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> certs,
-      std::vector<std::string> cert_nicknames,
       std::optional<
           chrome_browser_server_certificate_database::CertificateMetadata>
           cert_metadata,

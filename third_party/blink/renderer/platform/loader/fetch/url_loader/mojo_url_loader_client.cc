@@ -278,8 +278,8 @@ void MojoURLLoaderClient::Freeze(LoaderFreezeMode mode) {
   }
   if (mode == LoaderFreezeMode::kNone) {
     task_runner_->PostTask(
-        FROM_HERE, WTF::BindOnce(&MojoURLLoaderClient::FlushDeferredMessages,
-                                 weak_factory_.GetWeakPtr()));
+        FROM_HERE, blink::BindOnce(&MojoURLLoaderClient::FlushDeferredMessages,
+                                   weak_factory_.GetWeakPtr()));
   } else if (mode == LoaderFreezeMode::kBufferIncoming &&
              !has_received_complete_ &&
              !back_forward_cache_eviction_timer_.IsRunning()) {
@@ -288,7 +288,7 @@ void MojoURLLoaderClient::Freeze(LoaderFreezeMode mode) {
     back_forward_cache_eviction_timer_.SetTaskRunner(task_runner_);
     back_forward_cache_eviction_timer_.Start(
         FROM_HERE, back_forward_cache_timeout_,
-        WTF::BindOnce(
+        blink::BindOnce(
             &MojoURLLoaderClient::EvictFromBackForwardCacheDueToTimeout,
             weak_factory_.GetWeakPtr()));
   }
@@ -390,9 +390,11 @@ void MojoURLLoaderClient::OnReceiveRedirect(
     OnComplete(network::URLLoaderCompletionStatus(net::ERR_ABORTED));
     return;
   }
+
   if (!bypass_redirect_checks_ &&
       !Platform::Current()->IsRedirectSafe(GURL(last_loaded_url_),
-                                           redirect_info.new_url)) {
+                                           redirect_info.new_url,
+                                           redirect_info.original_initiator)) {
     OnComplete(network::URLLoaderCompletionStatus(net::ERR_UNSAFE_REDIRECT));
     return;
   }

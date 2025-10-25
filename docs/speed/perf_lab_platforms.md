@@ -15,6 +15,8 @@
  * [android-nissa-uldren-8gb-perf](https://ci.chromium.org/p/chrome/builders/ci/android-nissa-uldren-8gb-perf): Nissa SKU uldren_99C4LZ/Q1XT/6W_8GB.
  * [android-pixel-fold-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel-fold-perf): Android U.
  * [android-pixel-tangor-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel-tangor-perf): Android U.
+ * [android-pixel25-ultra-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel25-ultra-perf): Android B.
+ * [android-pixel25-ultra-xl-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel25-ultra-xl-perf): Android B.
  * [android-pixel4-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel4-perf): Android R.
  * [android-pixel4_webview-perf](https://ci.chromium.org/p/chrome/builders/ci/android-pixel4_webview-perf): Android R.
  * [android-pixel4_webview-perf-pgo](https://ci.chromium.org/p/chrome/builders/ci/android-pixel4_webview-perf-pgo): Android R.
@@ -40,6 +42,7 @@
  * [mac-m1_mini_2020-perf-pgo](https://ci.chromium.org/p/chrome/builders/ci/mac-m1_mini_2020-perf-pgo): Mac M1 Mini 2020.
  * [mac-m2-pro-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-m2-pro-perf): Mac M2 PRO Baremetal ARM.
  * [mac-m3-pro-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-m3-pro-perf): Mac M3 PRO ARM.
+ * [mac-m4-mini-perf](https://ci.chromium.org/p/chrome/builders/ci/mac-m4-mini-perf): Mac M4 mini ARM.
 
 ### Win
 
@@ -47,7 +50,7 @@
  * [win-10_amd_laptop-perf](https://ci.chromium.org/p/chrome/builders/ci/win-10_amd_laptop-perf): Windows 10 Laptop with AMD chipset..
  * [win-10_laptop_low_end-perf](https://ci.chromium.org/p/chrome/builders/ci/win-10_laptop_low_end-perf): Low end windows 10 HP laptops. HD Graphics 5500, x86-64-i3-5005U, SSD, 4GB RAM..
  * [win-11-perf](https://ci.chromium.org/p/chrome/builders/ci/win-11-perf): Windows Dell PowerEdge R350.
- * [win-11_laptop_low_end-perf](https://ci.chromium.org/p/chrome/builders/ci/win-11_laptop_low_end-perf): Low end windows 11 laptops.SSD, 4GB RAM..
+ * [win-arm64-snapdragon-elite-perf](https://ci.chromium.org/p/chrome/builders/ci/win-arm64-snapdragon-elite-perf): Windows Dell Snapdragon Elite.
 
 ## Pinpoint-Only Platforms
 
@@ -76,7 +79,9 @@
 ### Fuchsia
 
  * [fuchsia-perf-nsn](https://ci.chromium.org/p/chrome/builders/ci/fuchsia-perf-nsn).
+ * [fuchsia-perf-nsn-pgo](https://ci.chromium.org/p/chrome/builders/ci/fuchsia-perf-nsn-pgo).
  * [fuchsia-perf-shk](https://ci.chromium.org/p/chrome/builders/ci/fuchsia-perf-shk).
+ * [fuchsia-perf-shk-pgo](https://ci.chromium.org/p/chrome/builders/ci/fuchsia-perf-shk-pgo).
 
 ### Linux
 
@@ -85,5 +90,4 @@
 ### Win
 
  * [win-10_laptop_low_end-perf_HP-Candidate](https://ci.chromium.org/p/chrome/builders/ci/win-10_laptop_low_end-perf_HP-Candidate): HP 15-BS121NR Laptop Candidate.
- * [win-arm64-snapdragon-plus-perf](https://ci.chromium.org/p/chrome/builders/ci/win-arm64-snapdragon-plus-perf): Windows Dell Snapdragon Plus.
 

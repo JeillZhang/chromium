@@ -18,7 +18,10 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
-#include "components/optimization_guide/proto/features/scam_detection.pb.h"
+#include "base/unguessable_token.h"
+#include "components/autofill/core/browser/foundations/autofill_manager.h"
+#include "components/autofill/core/browser/foundations/scoped_autofill_managers_observation.h"
+#include "components/keyed_service/core/keyed_service.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/safe_browsing/content/browser/async_check_tracker.h"
 #include "components/safe_browsing/content/browser/base_ui_manager.h"
@@ -26,7 +29,6 @@
 #include "components/safe_browsing/content/common/safe_browsing.mojom.h"
 #include "components/safe_browsing/core/browser/db/database_manager.h"
 #include "components/safe_browsing/core/browser/safe_browsing_token_fetcher.h"
-#include "components/safe_browsing/core/browser/verdict_cache_manager.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "content/public/browser/global_routing_id.h"
 #include "content/public/browser/navigation_entry.h"
@@ -45,6 +47,7 @@ class TickClock;
 namespace safe_browsing {
 class ClientPhishingRequest;
 class ClientSideDetectionService;
+class VerdictCacheManager;
 
 using HostInnerTextCallback = base::OnceCallback<void(std::string)>;
 
@@ -55,7 +58,8 @@ using HostInnerTextCallback = base::OnceCallback<void(std::string)>;
 class ClientSideDetectionHost
     : public content::WebContentsObserver,
       public permissions::PermissionRequestManager::Observer,
-      public AsyncCheckTracker::Observer {
+      public AsyncCheckTracker::Observer,
+      public autofill::AutofillManager::Observer {
  public:
   // These values are persisted to logs. Entries should not be renumbered and
   // numeric values should never be reused.
@@ -99,6 +103,50 @@ class ClientSideDetectionHost
     virtual void GetInnerText(HostInnerTextCallback callback) = 0;
   };
 
+  // Delegate for handling intelligent scanning using on-device models. This
+  // object is responsible for all interactions with the on-device model.
+  class IntelligentScanDelegate : public KeyedService {
+   public:
+    // Represents the result of an intelligent scan.
+    struct IntelligentScanResult {
+      static constexpr int kModelVersionUnavailable = -1;
+      static IntelligentScanResult Failure(int model_version);
+
+      std::string brand;
+      std::string intent;
+      int model_version;
+      bool execution_success;
+    };
+    using InquireOnDeviceModelDoneCallback =
+        base::OnceCallback<void(IntelligentScanResult)>;
+
+    ~IntelligentScanDelegate() override = default;
+
+    // Determines if an intelligent scan should be requested based on the
+    // verdict.
+    virtual bool ShouldRequestIntelligentScan(
+        ClientPhishingRequest* verdict) = 0;
+    // Returns |on_device_model_available_| which indicates the availability of
+    // on-device model session creation. Also logs failed eligibility reason
+    // histograms if |log_failed_eligibility_reason| is true.
+    virtual bool IsOnDeviceModelAvailable(
+        bool log_failed_eligibility_reason) = 0;
+    // Gets the intelligent scan result from the on-device model. The callback
+    // will return an empty optional if the on-device model is not available.
+    // Returns a token that can be used to cancel the request. The token will be
+    // std::nullopt in case the inquiry fails immediately without start.
+    virtual std::optional<base::UnguessableToken> InquireOnDeviceModel(
+        std::string rendered_texts,
+        InquireOnDeviceModelDoneCallback callback) = 0;
+    // Cancels a specific on-device model session. If the |session_id| is
+    // ongoing, it will return true, and false otherwise.
+    virtual bool CancelSession(const base::UnguessableToken& session_id) = 0;
+    // Determines if a scam warning should be shown based on the intelligent
+    // scan verdict.
+    virtual bool ShouldShowScamWarning(
+        std::optional<IntelligentScanVerdict> verdict) = 0;
+  };
+
   // The caller keeps ownership of the tab object and is responsible for
   // ensuring that it stays valid until WebContentsDestroyed is called.
   // The caller also keeps ownership of pref_service. The
@@ -108,6 +156,7 @@ class ClientSideDetectionHost
   static std::unique_ptr<ClientSideDetectionHost> Create(
       content::WebContents* tab,
       std::unique_ptr<Delegate> delegate,
+      IntelligentScanDelegate* intelligent_scan_delegate,
       PrefService* pref_service,
       std::unique_ptr<SafeBrowsingTokenFetcher> token_fetcher,
       bool is_off_the_record,
@@ -132,6 +181,8 @@ class ClientSideDetectionHost
   void VibrationRequested() override;
   void DidToggleFullscreenModeForTab(bool entered_fullscreen,
                                      bool will_cause_resize) override;
+  void OnTextCopiedToClipboard(content::RenderFrameHost* render_frame_host,
+                               const std::u16string& copied_text) override;
 
   // permissions::PermissionRequestManager::Observer methods:
   void OnPromptAdded() override;
@@ -145,10 +196,19 @@ class ClientSideDetectionHost
 
   void RegisterAsyncCheckTracker();
 
+  // autofill::AutofillManager::Observer method:
+  void OnFieldTypesDetermined(
+      autofill::AutofillManager& manager,
+      autofill::FormGlobalId formId,
+      autofill::AutofillManager::Observer::FieldTypeSource source) override;
+
+  void RegisterAutofillManager();
+
  protected:
   explicit ClientSideDetectionHost(
       content::WebContents* tab,
       std::unique_ptr<Delegate> delegate,
+      IntelligentScanDelegate* intelligent_scan_delegate,
       PrefService* pref_service,
       std::unique_ptr<SafeBrowsingTokenFetcher> token_fetcher,
       bool is_off_the_record,
@@ -213,6 +273,28 @@ class ClientSideDetectionHost
       AsyncCheckTrackerTriggersClassificationRequestOnAllowlistMatch);
   FRIEND_TEST_ALL_PREFIXES(ClientSideDetectionHostScamDetectionTest,
                            KeyboardLockRequestTriggersOnDeviceLLM);
+  FRIEND_TEST_ALL_PREFIXES(ClientSideDetectionHostClipboardTest,
+                           ClipboardApiTriggersPreclassificationCheck);
+  FRIEND_TEST_ALL_PREFIXES(ClientSideDetectionHostClipboardTest,
+                           ClipboardApiClassificationTriggersCSPPPing);
+  FRIEND_TEST_ALL_PREFIXES(
+      ClientSideDetectionHostCreditCardFormTest,
+      NonCreditCardFormDoesNotTriggerPreclassificationChecks);
+  FRIEND_TEST_ALL_PREFIXES(
+      ClientSideDetectionHostCreditCardFormTest,
+      FeatureDisabledDoesNotTriggerPreclassificationChecks);
+  FRIEND_TEST_ALL_PREFIXES(ClientSideDetectionHostCreditCardFormTest,
+                           ESBDisabledDoesNotTriggerPreclassificationChecks);
+  FRIEND_TEST_ALL_PREFIXES(
+      ClientSideDetectionHostCreditCardFormTest,
+      EventDoesNotTriggerPreclassificationChecksWhenESBDisabled);
+  FRIEND_TEST_ALL_PREFIXES(
+      ClientSideDetectionHostCreditCardFormTest,
+      CreditCardFormDoesNotStartPreclassificationOnHighSiteEngagement);
+  FRIEND_TEST_ALL_PREFIXES(ClientSideDetectionHostCreditCardFormTest,
+                           CreditCardFormTriggersPreclassificationCheck);
+  FRIEND_TEST_ALL_PREFIXES(ClientSideDetectionHostCreditCardFormTest,
+                           CreditCardFormClassificationTriggersCSDPing);
 
   // Helper function to create preclassification check once requirements are
   // met.
@@ -262,7 +344,8 @@ class ClientSideDetectionHost
   // last step before sending the ping to the server.
   void MaybeGetAccessToken(
       std::unique_ptr<ClientPhishingRequest> verdict,
-      std::optional<bool> did_match_high_confidence_allowlist);
+      std::optional<bool> did_match_high_confidence_allowlist,
+      bool is_on_device_model_invoked);
 
   // Callback that is called when the server ping back is
   // done. Display an interstitial if |is_phishing| is true.
@@ -317,6 +400,29 @@ class ClientSideDetectionHost
     delegate_ = std::move(delegate);
   }
 
+  void set_intelligent_scan_delegate_for_testing(
+      IntelligentScanDelegate* intelligent_scan_delegate) {
+    intelligent_scan_delegate_ = intelligent_scan_delegate;
+  }
+
+  // Callbacks for when preclassification is started/done.
+  using PreclassificationStarted =
+      base::RepeatingCallback<void(ClientSideDetectionType)>;
+  using PreclassificationDone =
+      base::RepeatingCallback<void(ClientSideDetectionType)>;
+
+  // Sets a callback to be notified when preclassification is started.
+  void set_preclassification_started_callback_for_testing(
+      const PreclassificationStarted& callback) {
+    preclassification_started_cb_for_testing_ = callback;
+  }
+
+  // Sets a callback to be notified when preclassification is done.
+  void set_preclassification_done_callback_for_testing(
+      const PreclassificationDone& callback) {
+    preclassification_done_cb_for_testing_ = callback;
+  }
+
   // Check if CSD can get an access Token. Should be enabled only for ESB
   // users, who are signed in and not in incognito mode.
   bool CanGetAccessToken();
@@ -331,6 +437,13 @@ class ClientSideDetectionHost
                         std::optional<bool> did_match_high_confidence_allowlist,
                         const std::string& access_token);
 
+  // Returns true if phishing detection should not proceed beyond
+  // preclassification. The purpose of triggering only preclassification is to
+  // have an initial assessment on how often we'll be hitting the allowlist and
+  // triggering the classification. Detection should not go further than
+  // recording metrics.
+  bool ShouldStopAtPreClassification();
+
   // Check if sample ping can be sent to Safe Browsing.
   bool CanSendSamplePing();
 
@@ -342,12 +455,12 @@ class ClientSideDetectionHost
       std::optional<bool> did_match_high_confidence_allowlist,
       std::string inner_text);
 
-  // Callback function when InquireOnDeviceModel from the CSD service is
-  // completed.
+  // Callback function when InquireOnDeviceModel from the intelligent scan
+  // delegate is completed.
   void OnInquireOnDeviceModelDone(
       std::unique_ptr<ClientPhishingRequest> verdict,
       std::optional<bool> did_match_high_confidence_allowlist,
-      std::optional<optimization_guide::proto::ScamDetectionResponse> response);
+      IntelligentScanDelegate::IntelligentScanResult response);
 
   // Returns bool if for a |client_side_detection_Type|, the last URL is the
   // same as the last committed URL on the RenderFrameHost.
@@ -379,9 +492,14 @@ class ClientSideDetectionHost
 
   // Records the start time of when phishing detection started.
   base::TimeTicks phishing_detection_start_time_;
+  // Records the start time of when image embedding started.
+  base::TimeTicks image_embedding_start_time_;
   raw_ptr<const base::TickClock> tick_clock_;
 
   std::unique_ptr<Delegate> delegate_;
+
+  // A keyed service with profile lifetime.
+  raw_ptr<IntelligentScanDelegate> intelligent_scan_delegate_;
 
   // Unowned object used for getting preference settings.
   raw_ptr<PrefService> pref_service_;
@@ -424,6 +542,22 @@ class ClientSideDetectionHost
 
   base::ScopedObservation<AsyncCheckTracker, AsyncCheckTracker::Observer>
       async_check_observation_{this};
+
+  // Manages lifetime registration of this instance as an
+  // AutofillManager::Observer.
+  autofill::ScopedAutofillManagersObservation autofill_managers_observation_{
+      this};
+
+  // Callback settable by tests for verifying whether
+  // MaybeStartPreClassification resulted in starting preclassification.
+  PreclassificationStarted preclassification_started_cb_for_testing_;
+
+  // Callback settable by tests for verifying whether
+  // OnPhishingPreClassificationDone was called at the end of preclassification.
+  PreclassificationDone preclassification_done_cb_for_testing_;
+
+  // The session ID for the current intelligent scan request.
+  std::optional<base::UnguessableToken> intelligent_scan_session_id_;
 
   base::WeakPtrFactory<ClientSideDetectionHost> weak_factory_{this};
 };

@@ -13,6 +13,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
+#include "build/android_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/tabs/tab_enums.h"
 #include "components/captive_portal/core/captive_portal_types.h"
@@ -38,6 +39,7 @@
 #endif
 
 class Browser;
+class BrowserWindowInterface;
 class Profile;
 
 namespace content {
@@ -73,13 +75,16 @@ struct NavigateParams {
 #if BUILDFLAG(IS_ANDROID)
   explicit NavigateParams(
       std::unique_ptr<content::WebContents> contents_to_insert);
-#else
-  NavigateParams(Browser* browser,
+#endif
+
+#if !BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_DESKTOP_ANDROID)
+  NavigateParams(BrowserWindowInterface* a_browser,
                  const GURL& a_url,
                  ui::PageTransition a_transition);
-  NavigateParams(Browser* browser,
+  NavigateParams(BrowserWindowInterface* a_browser,
                  std::unique_ptr<content::WebContents> contents_to_insert);
 #endif
+
   NavigateParams(Profile* profile,
                  const GURL& a_url,
                  ui::PageTransition a_transition);
@@ -259,21 +264,25 @@ struct NavigateParams {
   };
   PathBehavior path_behavior = RESPECT;
 
-#if !BUILDFLAG(IS_ANDROID)
-  // [in]  Specifies a Browser object where the navigation could occur or the
-  //       tab could be added. Navigate() is not obliged to use this Browser if
-  //       it is not compatible with the operation being performed. This can be
-  //       NULL, in which case |initiating_profile| must be provided.
-  // [out] Specifies the Browser object where the navigation occurred or the
-  //       tab was added. Guaranteed non-NULL unless the disposition did not
-  //       require a navigation, in which case this is set to NULL
-  //       (SAVE_TO_DISK, IGNORE_ACTION).
-  // Note: If |show_window| is set to false and a new Browser is created by
-  //       Navigate(), the caller is responsible for showing it so that its
-  //       window can assume responsibility for the Browser's lifetime (Browser
-  //       objects are deleted when the user closes a visible browser window).
-  raw_ptr<Browser, AcrossTasksDanglingUntriaged> browser = nullptr;
+#if !BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_DESKTOP_ANDROID)
+  // [in]  Specifies a BrowserWindowInterface object where the navigation
+  //       could occur or the tab could be added. Navigate() is not obliged to
+  //       use this BrowserWindowInterface if it is not compatible with the
+  //       operation being performed. This can be NULL, in which case
+  //       |initiating_profile| must be provided.
+  // [out] Specifies the BrowserWindowInterface object where the navigation
+  //       occurred or the tab was added. Guaranteed non-NULL unless the
+  //       disposition did not require a navigation, in which case this is set
+  //       to NULL (SAVE_TO_DISK, IGNORE_ACTION).
+  // Note: If |show_window| is set to false and a new BrowserWindowInterface is
+  //       created by Navigate(), the caller is responsible for showing it so
+  //       that its window can assume responsibility for the Browser's lifetime
+  //       (Browser objects are deleted when the user closes a visible browser
+  //       window).
+  raw_ptr<BrowserWindowInterface, AcrossTasksDanglingUntriaged> browser;
+#endif
 
+#if !BUILDFLAG(IS_ANDROID)
   // The group the caller would like the tab to be added to.
   std::optional<tab_groups::TabGroupId> group;
 
@@ -316,13 +325,9 @@ struct NavigateParams {
   // Optional URLLoaderFactory to facilitate blob URL loading.
   scoped_refptr<network::SharedURLLoaderFactory> blob_url_loader_factory;
 
-  // Indicates that the navigation should happen in an pwa window if
-  // possible, i.e. if the is a PWA installed for the target URL.
-  bool open_pwa_window_if_possible = false;
-
-  // Indicates that the navigation must happen in a PWA window. If a PWA
-  // window can't be created, the navigation will be cancelled.
-  bool force_open_pwa_window = false;
+  // Indicates that this is a service worker openWindow() call targeting a new
+  // window.
+  bool is_service_worker_open_window = false;
 
   // The time when the input which led to the navigation occurred. Currently
   // only set when a link is clicked or the navigation takes place from the

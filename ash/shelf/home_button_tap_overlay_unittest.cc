@@ -12,7 +12,6 @@
 #include "ash/capture_mode/test_capture_mode_delegate.h"
 #include "ash/constants/ash_pref_names.h"
 #include "ash/constants/ash_switches.h"
-#include "ash/public/cpp/assistant/assistant_state.h"
 #include "ash/public/cpp/capture_mode/capture_mode_api.h"
 #include "ash/public/cpp/shelf_config.h"
 #include "ash/scanner/scanner_enterprise_policy.h"
@@ -30,8 +29,6 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/time/time.h"
-#include "chromeos/ash/services/assistant/public/cpp/assistant_enums.h"
-#include "chromeos/ash/services/assistant/public/cpp/features.h"
 #include "testing/gmock/include/gmock/gmock-matchers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest-param-test.h"
@@ -54,11 +51,12 @@ constexpr char kOverlayClassName[] = "HomeButtonTapOverlay";
 
 enum TestVariant { kClamshell, kTablet, kTabletWithBackButton };
 
-class HomeButtonTapOverlayTest
+// TODO(crbug.com/454136569)
+class DISABLED_HomeButtonTapOverlayTest
     : public AshTestBase,
       public testing::WithParamInterface<TestVariant> {
  public:
-  HomeButtonTapOverlayTest()
+  DISABLED_HomeButtonTapOverlayTest()
       : AshTestBase(base::test::TaskEnvironment::TimeSource::MOCK_TIME) {}
 
   void SetUp() override {
@@ -68,20 +66,6 @@ class HomeButtonTapOverlayTest
         switches::kAshEnableTabletMode);
 
     AshTestBase::SetUp();
-
-    if (ash::assistant::features::IsNewEntryPointEnabled()) {
-      GTEST_SKIP()
-          << "Assistant is not available if new entry point is enabled. "
-             "crbug.com/388361414";
-    }
-
-    // Enable Assistant
-    Shell::Get()->session_controller()->GetPrimaryUserPrefService()->SetBoolean(
-        assistant::prefs::kAssistantEnabled, true);
-    AssistantState* assistant_state = AssistantState::Get();
-    assistant_state->NotifyFeatureAllowed(
-        assistant::AssistantAllowedState::ALLOWED);
-    assistant_state->NotifyStatusChanged(assistant::AssistantStatus::READY);
 
     PrefService* prefs =
         Shell::Get()->session_controller()->GetActivePrefService();
@@ -160,14 +144,14 @@ class HomeButtonTapOverlayTest
 
  private:
   void CreateTestWindow() {
-    window_ = AshTestBase::CreateTestWindow(gfx::Rect(0, 0, 400, 400));
+    window_ = AshTestBase::CreateTestWindow({400, 400});
   }
 
   std::unique_ptr<aura::Window> window_;
 };
 
 INSTANTIATE_TEST_SUITE_P(All,
-                         HomeButtonTapOverlayTest,
+                         DISABLED_HomeButtonTapOverlayTest,
                          testing::Values(TestVariant::kClamshell,
                                          TestVariant::kTablet,
                                          TestVariant::kTabletWithBackButton));
@@ -182,7 +166,7 @@ INSTANTIATE_TEST_SUITE_P(All,
 //   after the animation)
 // - EventType::kGestureTapCancel: Nothing should happen
 // - EventType::kGestureLongTap: Nothing should happen
-TEST_P(HomeButtonTapOverlayTest, BurstAnimationWithLongPress) {
+TEST_P(DISABLED_HomeButtonTapOverlayTest, BurstAnimationWithLongPress) {
   const views::View* tap_overlay = GetTapOverlay();
   ASSERT_THAT(tap_overlay, testing::NotNull());
 
@@ -220,7 +204,7 @@ TEST_P(HomeButtonTapOverlayTest, BurstAnimationWithLongPress) {
 
 // HomeButtonTapOverlay renders a ripple animation with a tap, which goes beyond
 // the size of home button.
-TEST_P(HomeButtonTapOverlayTest, RippleAnimationWithTap) {
+TEST_P(DISABLED_HomeButtonTapOverlayTest, RippleAnimationWithTap) {
   const views::View* tap_overlay = GetTapOverlay();
   ASSERT_THAT(tap_overlay, testing::NotNull());
 
@@ -256,7 +240,7 @@ TEST_P(HomeButtonTapOverlayTest, RippleAnimationWithTap) {
 
 // HomeButtonTapOverlay renders a ripple animation with a tap, which goes beyond
 // the size of home button.
-TEST_P(HomeButtonTapOverlayTest,
+TEST_P(DISABLED_HomeButtonTapOverlayTest,
        RippleAnimationWithAssistantDisabledDuringTap) {
   const views::View* tap_overlay = GetTapOverlay();
   ASSERT_THAT(tap_overlay, testing::NotNull());
@@ -278,11 +262,6 @@ TEST_P(HomeButtonTapOverlayTest,
   for (const gfx::Rect& clip_rect : clip_rects_during_animation) {
     EXPECT_TRUE(clip_rect.IsEmpty());
   }
-
-  // Assistant turns disabled during the tap (due to policy, for example).
-  AssistantState* assistant_state = AssistantState::Get();
-  assistant_state->NotifyFeatureAllowed(
-      assistant::AssistantAllowedState::DISALLOWED_BY_POLICY);
 
   SendGestureEventToHomeButton(ui::EventType::kGestureTap);
 

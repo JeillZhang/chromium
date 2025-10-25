@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/content_suggestions/ui_bundled/magic_stack/magic_stack_context_menu_interaction_handler.h"
 
+#import "base/containers/contains.h"
 #import "base/notreached.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/commerce/core/commerce_feature_list.h"
@@ -31,21 +32,19 @@ BOOL AllowsLongPressForModuleType(ContentSuggestionsModuleType type) {
   switch (type) {
     case ContentSuggestionsModuleType::kTabResumption:
     case ContentSuggestionsModuleType::kSafetyCheck:
-    case ContentSuggestionsModuleType::kSetUpListSync:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
     case ContentSuggestionsModuleType::kSetUpListNotifications:
     case ContentSuggestionsModuleType::kCompactedSetUpList:
-    case ContentSuggestionsModuleType::kParcelTracking:
     case ContentSuggestionsModuleType::kPriceTrackingPromo:
     case ContentSuggestionsModuleType::kSendTabPromo:
     case ContentSuggestionsModuleType::kTipsWithProductImage:
     case ContentSuggestionsModuleType::kTips:
     case ContentSuggestionsModuleType::kMostVisited:
-      return YES;
     case ContentSuggestionsModuleType::kShopCard:
-      return commerce::kShopCardVariation.Get() == commerce::kShopCardArm1 ||
-             commerce::kShopCardVariation.Get() == commerce::kShopCardArm2;
+    case ContentSuggestionsModuleType::kAppBundlePromo:
+    case ContentSuggestionsModuleType::kDefaultBrowser:
+      return YES;
     default:
       return NO;
   }
@@ -58,7 +57,8 @@ NSString* GetContextMenuTitleForType(ContentSuggestionsModuleType type,
     case ContentSuggestionsModuleType::kTabResumption: {
       TabResumptionItem* tabResumptionItemConfig =
           static_cast<TabResumptionItem*>(config);
-      if ((commerce::kShopCardVariation.Get() == commerce::kShopCardArm3 ||
+      if ((base::Contains(commerce::kShopCardVariation.Get(),
+                          commerce::kShopCardArm3) ||
            commerce::kShopCardVariation.Get() == commerce::kShopCardArm4) &&
           tabResumptionItemConfig.shopCardData) {
         if (tabResumptionItemConfig.shopCardData.shopCardItemType ==
@@ -76,36 +76,25 @@ NSString* GetContextMenuTitleForType(ContentSuggestionsModuleType type,
     }
     case ContentSuggestionsModuleType::kSafetyCheck:
       return l10n_util::GetNSString(IDS_IOS_SAFETY_CHECK_CONTEXT_MENU_TITLE);
-    case ContentSuggestionsModuleType::kSetUpListSync:
+    case ContentSuggestionsModuleType::kPriceTrackingPromo:
+    case ContentSuggestionsModuleType::kSendTabPromo:
+      return @"";
+    case ContentSuggestionsModuleType::kTipsWithProductImage:
+    case ContentSuggestionsModuleType::kTips:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
     case ContentSuggestionsModuleType::kCompactedSetUpList:
     case ContentSuggestionsModuleType::kSetUpListNotifications:
-      return l10n_util::GetNSString(
-          IDS_IOS_SET_UP_LIST_HIDE_MODULE_CONTEXT_MENU_TITLE);
-    case ContentSuggestionsModuleType::kParcelTracking:
-      return l10n_util::GetNSString(IDS_IOS_PARCEL_TRACKING_CONTEXT_MENU_TITLE);
-    case ContentSuggestionsModuleType::kPriceTrackingPromo:
-    case ContentSuggestionsModuleType::kSendTabPromo:
-
-      return @"";
-    case ContentSuggestionsModuleType::kTipsWithProductImage:
-    case ContentSuggestionsModuleType::kTips:
+    case ContentSuggestionsModuleType::kAppBundlePromo:
+    case ContentSuggestionsModuleType::kDefaultBrowser:
       return l10n_util::GetNSString(
           IDS_IOS_MAGIC_STACK_TIP_CONTEXT_MENU_DESCRIPTION);
     case ContentSuggestionsModuleType::kMostVisited:
       return l10n_util::GetNSString(
           IDS_IOS_CONTENT_SUGGESTIONS_MOST_VISITED_MODULE_CONTEXT_MENU_DESCRIPTION);
     case ContentSuggestionsModuleType::kShopCard:
-      if (commerce::kShopCardVariation.Get() == commerce::kShopCardArm1) {
-        return l10n_util::GetNSString(
-            IDS_IOS_CONTENT_SUGGESTIONS_SHOPCARD_PRICE_TRACKING_CONTEXT_MENU_TITLE);
-      } else if (commerce::kShopCardVariation.Get() ==
-                 commerce::kShopCardArm2) {
-        return l10n_util::GetNSString(
-            IDS_IOS_CONTENT_SUGGESTIONS_SHOPCARD_REVIEWS_CONTEXT_MENU_TITLE);
-      }
-      return @"";
+      return l10n_util::GetNSString(
+          IDS_IOS_CONTENT_SUGGESTIONS_SHOPCARD_PRICE_TRACKING_CONTEXT_MENU_TITLE);
     default:
       NOTREACHED();
   }
@@ -131,20 +120,13 @@ NSString* GetContextMenuHideDescriptionForType(
     case ContentSuggestionsModuleType::kSafetyCheck:
       return l10n_util::GetNSString(
           IDS_IOS_SAFETY_CHECK_CONTEXT_MENU_DESCRIPTION);
-    case ContentSuggestionsModuleType::kSetUpListSync:
     case ContentSuggestionsModuleType::kSetUpListDefaultBrowser:
     case ContentSuggestionsModuleType::kSetUpListAutofill:
     case ContentSuggestionsModuleType::kSetUpListNotifications:
     case ContentSuggestionsModuleType::kCompactedSetUpList:
       return l10n_util::GetNSStringF(
           IDS_IOS_SET_UP_LIST_HIDE_MODULE_CONTEXT_MENU_DESCRIPTION,
-          l10n_util::GetStringUTF16(
-              content_suggestions::SetUpListTitleStringID()));
-    case ContentSuggestionsModuleType::kParcelTracking:
-      return l10n_util::GetNSStringF(
-          IDS_IOS_PARCEL_TRACKING_CONTEXT_MENU_DESCRIPTION,
-          base::SysNSStringToUTF16(l10n_util::GetNSString(
-              IDS_IOS_CONTENT_SUGGESTIONS_PARCEL_TRACKING_MODULE_TITLE)));
+          l10n_util::GetStringUTF16(IDS_IOS_MAGIC_STACK_TIP_TITLE));
     case ContentSuggestionsModuleType::kPriceTrackingPromo:
       return l10n_util::GetNSString(
           IDS_IOS_CONTENT_SUGGESTIONS_PRICE_TRACKING_PROMO_HIDE_CARD);
@@ -155,6 +137,8 @@ NSString* GetContextMenuHideDescriptionForType(
               l10n_util::GetNSString(IDS_IOS_SEND_TAB_PROMO_TITLE)));
     case ContentSuggestionsModuleType::kTipsWithProductImage:
     case ContentSuggestionsModuleType::kTips:
+    case ContentSuggestionsModuleType::kAppBundlePromo:
+    case ContentSuggestionsModuleType::kDefaultBrowser:
       return l10n_util::GetNSStringF(
           IDS_IOS_MAGIC_STACK_TIP_CONTEXT_MENU_HIDE_CHROME_TIPS,
           base::SysNSStringToUTF16(
@@ -163,15 +147,8 @@ NSString* GetContextMenuHideDescriptionForType(
       return l10n_util::GetNSString(
           IDS_IOS_CONTENT_SUGGESTIONS_MOST_VISITED_MODULE_HIDE_CARD);
     case ContentSuggestionsModuleType::kShopCard:
-      if (commerce::kShopCardVariation.Get() == commerce::kShopCardArm1) {
-        return l10n_util::GetNSString(
-            IDS_IOS_CONTENT_SUGGESTIONS_SHOPCARD_PRICE_TRACKING_HIDE);
-      } else if (commerce::kShopCardVariation.Get() ==
-                 commerce::kShopCardArm2) {
-        return l10n_util::GetNSString(
-            IDS_IOS_CONTENT_SUGGESTIONS_SHOPCARD_REVIEWS_HIDE_ALT);
-      }
-      return @"";
+      return l10n_util::GetNSString(
+          IDS_IOS_CONTENT_SUGGESTIONS_SHOPCARD_PRICE_TRACKING_HIDE);
     default:
       NOTREACHED();
   }
@@ -195,14 +172,6 @@ NSString* GetContextMenuHideDescriptionForType(
 
 @implementation MagicStackContextMenuInteractionHandler
 
-- (instancetype)initWithType:(ContentSuggestionsModuleType)type {
-  self = [super init];
-  if (self) {
-    _shouldHide = NO;
-  }
-  return self;
-}
-
 - (void)configureWithType:(ContentSuggestionsModuleType)type
                    config:(MagicStackModule*)config {
   self.type = type;
@@ -217,8 +186,7 @@ NSString* GetContextMenuHideDescriptionForType(
 - (NSArray<UIMenuElement*>*)menuElements {
   NSMutableArray<UIAction*>* actions = [[NSMutableArray alloc] init];
 
-  BOOL canShowTipsNotificationsOptIn =
-      (IsSetUpListModuleType(self.type) || IsTipsModuleType(self.type));
+  BOOL canShowTipsNotificationsOptIn = IsTipsModuleType(self.type);
 
   BOOL canShowSafetyCheckNotificationsOptIn =
       self.type == ContentSuggestionsModuleType::kSafetyCheck &&
@@ -233,16 +201,6 @@ NSString* GetContextMenuHideDescriptionForType(
   [actions addObject:[self customizeCardAction]];
 
   return actions;
-}
-
-- (void)notifyContextMenuInteractionEndWithAnimator:
-    (id<UIContextMenuInteractionAnimating>)animator {
-  if (self.shouldHide) {
-    __weak __typeof(self) weakSelf = self;
-    [animator addCompletion:^{
-      [weakSelf.delegate neverShowModuleType:weakSelf.type];
-    }];
-  }
 }
 
 #pragma mark - UIContextMenuInteractionDelegate
@@ -269,8 +227,11 @@ NSString* GetContextMenuHideDescriptionForType(
 - (void)contextMenuInteraction:(UIContextMenuInteraction*)interaction
        willEndForConfiguration:(UIContextMenuConfiguration*)configuration
                       animator:(id<UIContextMenuInteractionAnimating>)animator {
-  if (configuration) {
-    [self notifyContextMenuInteractionEndWithAnimator:animator];
+  if (configuration && self.shouldHide) {
+    __weak __typeof(self) weakSelf = self;
+    [animator addCompletion:^{
+      [weakSelf.delegate neverShowModuleType:weakSelf.type];
+    }];
   }
 }
 
@@ -280,11 +241,12 @@ NSString* GetContextMenuHideDescriptionForType(
 - (UIAction*)hideAction {
   __weak __typeof(self) weakSelf = self;
 
+  NSString* title =
+      GetContextMenuHideDescriptionForType(self.type, self.config);
   UIAction* hideAction = [UIAction
-      actionWithTitle:GetContextMenuHideDescriptionForType(self.type,
-                                                           self.config)
+      actionWithTitle:title
                 image:DefaultSymbolWithPointSize(kHideActionSymbol, 18)
-           identifier:nil
+           identifier:title
               handler:^(UIAction* action) {
                 weakSelf.shouldHide = YES;
               }];
@@ -356,15 +318,15 @@ NSString* GetContextMenuHideDescriptionForType(
 /// and Safety Check modules.
 - (PushNotificationClientId)pushNotificationClientId:
     (ContentSuggestionsModuleType)type {
-  /// This is only supported for Set Up List and Safety Check modules.
-  CHECK(IsSetUpListModuleType(type) || IsTipsModuleType(type) ||
+  /// This is only supported for Tips and Safety Check modules.
+  CHECK(IsTipsModuleType(type) ||
         type == ContentSuggestionsModuleType::kSafetyCheck);
 
   if (type == ContentSuggestionsModuleType::kSafetyCheck) {
     return PushNotificationClientId::kSafetyCheck;
   }
 
-  if (IsSetUpListModuleType(type) || IsTipsModuleType(type)) {
+  if (IsTipsModuleType(type)) {
     return PushNotificationClientId::kTips;
   }
 
@@ -376,16 +338,12 @@ NSString* GetContextMenuHideDescriptionForType(
 /// notifications are exclusively supported by the Set Up List and Safety Check
 /// modules.
 - (int)pushNotificationTitleMessageId:(ContentSuggestionsModuleType)type {
-  /// This is only supported for Set Up List and Safety Check modules.
-  CHECK(IsSetUpListModuleType(type) || IsTipsModuleType(type) ||
+  /// This is only supported for Tips and Safety Check modules.
+  CHECK(IsTipsModuleType(type) ||
         type == ContentSuggestionsModuleType::kSafetyCheck);
 
   if (type == ContentSuggestionsModuleType::kSafetyCheck) {
     return IDS_IOS_SAFETY_CHECK_TITLE;
-  }
-
-  if (IsSetUpListModuleType(type)) {
-    return content_suggestions::SetUpListTitleStringID();
   }
 
   if (IsTipsModuleType(type)) {

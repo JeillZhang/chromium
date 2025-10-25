@@ -300,7 +300,7 @@ void TranslateBridge::PrependToAcceptLanguagesIfNecessary(
       output_list.push_back(language_code + "-" + country_code);
   }
 
-  std::reverse(output_list.begin(), output_list.end());
+  std::ranges::reverse(output_list);
   *accept_languages = base::JoinString(output_list, ",");
 }
 
@@ -350,15 +350,9 @@ JNI_TranslateBridge_GetUserAcceptLanguages(
 static void JNI_TranslateBridge_SetLanguageOrder(
     JNIEnv* env,
     const JavaParamRef<jobject>& j_profile,
-    const JavaParamRef<jobjectArray>& j_order) {
+    std::vector<std::string>& order) {
   std::unique_ptr<translate::TranslatePrefs> translate_prefs =
       ChromeTranslateClient::CreateTranslatePrefs(GetPrefService(j_profile));
-  std::vector<std::string> order;
-  const int num_langs = (*env).GetArrayLength(j_order);
-  for (int i = 0; i < num_langs; i++) {
-    jstring string = (jstring)(*env).GetObjectArrayElement(j_order, i);
-    order.push_back((*env).GetStringUTFChars(string, nullptr));
-  }
   translate_prefs->SetLanguageOrder(order);
 }
 

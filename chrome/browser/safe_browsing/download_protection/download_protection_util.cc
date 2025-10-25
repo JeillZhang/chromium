@@ -4,18 +4,23 @@
 
 #include "chrome/browser/safe_browsing/download_protection/download_protection_util.h"
 
+#include "base/functional/callback_helpers.h"
 #include "base/hash/sha1.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/download/download_item_warning_data.h"
+#include "chrome/browser/enterprise/connectors/referrer_cache_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/download_protection/download_item_metadata.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager_factory.h"
 #include "components/download/public/common/download_danger_type.h"
+#include "components/enterprise/connectors/core/reporting_utils.h"
 #include "components/safe_browsing/buildflags.h"
 #include "components/safe_browsing/content/common/file_type_policies.h"
+#include "components/safe_browsing/core/browser/referrer_chain_provider.h"
+#include "components/safe_browsing/core/common/proto/csd.pb.h"
 #include "components/safe_browsing/core/common/safe_browsing_prefs.h"
 #include "components/sessions/content/session_tab_helper.h"
 #include "content/public/browser/download_item_utils.h"
@@ -158,6 +163,8 @@ bool IsDownloadReportGatedByExtendedReporting(
         DANGEROUS_DOWNLOAD_AUTO_DELETED:
     case safe_browsing::ClientSafeBrowsingReportRequest::
         DANGEROUS_DOWNLOAD_PROFILE_CLOSED:
+    case safe_browsing::ClientSafeBrowsingReportRequest::
+        DANGEROUS_DOWNLOAD_WARNING_ANDROID:
       return true;
     default:
       NOTREACHED();
@@ -166,6 +173,10 @@ bool IsDownloadReportGatedByExtendedReporting(
 #endif
 
 }  // namespace
+
+ClientDownloadRequestModification NoModificationToRequestProto() {
+  return base::DoNothing();
+}
 
 void GetCertificateAllowlistStrings(
     const net::X509Certificate& certificate,
@@ -430,6 +441,36 @@ std::unique_ptr<ReferrerChainData> IdentifyReferrerChain(
   return std::make_unique<ReferrerChainData>(result, std::move(referrer_chain),
                                              referrer_chain_length,
                                              recent_navigations_to_collect);
+}
+
+ReferrerChain GetOrIdentifyReferrerChainForEnterprise(
+    download::DownloadItem& item) {
+  ReferrerChain referrer_chain =
+      enterprise_connectors::GetCachedReferrerChain(item);
+  if (!referrer_chain.empty()) {
+    return referrer_chain;
+  }
+
+  std::unique_ptr<safe_browsing::ReferrerChainData> new_referrer_chain_data =
+      safe_browsing::IdentifyReferrerChain(
+          item, enterprise_connectors::kReferrerUserGestureLimit);
+
+  // If the chain can't be obtained from `safe_browsing::IdentifyReferrerChain`
+  // or if the returned data only contains the download URL, fall back to
+  // enterprise-specific logic to cache a value.
+  if (!new_referrer_chain_data ||
+      !new_referrer_chain_data->GetReferrerChain() ||
+      new_referrer_chain_data->GetReferrerChain()->size() <= 1) {
+    referrer_chain = enterprise_connectors::GetOrCreateReferrerChain(item);
+  } else {
+    referrer_chain = *new_referrer_chain_data->GetReferrerChain();
+  }
+
+  if (!referrer_chain.empty()) {
+    enterprise_connectors::SetReferrerChain(referrer_chain, item);
+  }
+
+  return referrer_chain;
 }
 
 #if BUILDFLAG(SAFE_BROWSING_DOWNLOAD_PROTECTION)

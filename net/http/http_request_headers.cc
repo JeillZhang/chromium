@@ -21,6 +21,8 @@
 #include "net/http/http_util.h"
 #include "net/log/net_log_capture_mode.h"
 #include "net/log/net_log_values.h"
+#include "third_party/abseil-cpp/absl/container/inlined_vector.h"
+#include "url/gurl.h"
 
 namespace net {
 
@@ -112,11 +114,21 @@ HttpRequestHeaders& HttpRequestHeaders::operator=(
 HttpRequestHeaders& HttpRequestHeaders::operator=(HttpRequestHeaders&& other) =
     default;
 
+std::optional<std::string_view> HttpRequestHeaders::GetHeaderView(
+    std::string_view key) const {
+  auto it = FindHeader(key);
+  if (it == headers_.end()) {
+    return std::nullopt;
+  }
+  return std::string_view(it->value);
+}
+
 std::optional<std::string> HttpRequestHeaders::GetHeader(
     std::string_view key) const {
   auto it = FindHeader(key);
-  if (it == headers_.end())
+  if (it == headers_.end()) {
     return std::nullopt;
+  }
   return it->value;
 }
 
@@ -213,13 +225,22 @@ void HttpRequestHeaders::MergeFrom(const HttpRequestHeaders& other) {
 }
 
 std::string HttpRequestHeaders::ToString() const {
-  std::string output;
+  static constexpr std::string_view kColon = ": ";
+  static constexpr std::string_view kCrNl = "\r\n";
+
+  // As of January 2024, 99% of of HttpRequestHeaders objects had 27 headers or
+  // less. Allow space for 128 string pieces without heap allocation as it is a
+  // nice round number.
+  absl::InlinedVector<std::string_view, 128> pieces;
+  const size_t expected_size = headers_.size() * 4 + 1;
+
+  pieces.reserve(expected_size);
   for (const auto& header : headers_) {
-    base::StringAppendF(&output, "%s: %s\r\n", header.key.c_str(),
-                        header.value.c_str());
+    pieces.insert(pieces.end(), {header.key, kColon, header.value, kCrNl});
   }
-  output.append("\r\n");
-  return output;
+  pieces.push_back(kCrNl);
+  CHECK_EQ(pieces.size(), expected_size);
+  return base::StrCat(pieces);
 }
 
 base::Value::Dict HttpRequestHeaders::NetLogParams(

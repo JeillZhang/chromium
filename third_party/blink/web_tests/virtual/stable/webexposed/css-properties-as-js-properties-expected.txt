@@ -116,6 +116,7 @@ breakBefore
 breakInside
 bufferedRendering
 captionSide
+caretAnimation
 caretColor
 clear
 clip
@@ -147,6 +148,23 @@ containerName
 containerType
 content
 contentVisibility
+cornerBlockEndShape
+cornerBlockStartShape
+cornerBottomLeftShape
+cornerBottomRightShape
+cornerBottomShape
+cornerEndEndShape
+cornerEndStartShape
+cornerInlineEndShape
+cornerInlineStartShape
+cornerLeftShape
+cornerRightShape
+cornerShape
+cornerStartEndShape
+cornerStartStartShape
+cornerTopLeftShape
+cornerTopRightShape
+cornerTopShape
 counterIncrement
 counterReset
 counterSet
@@ -183,6 +201,7 @@ fontDisplay
 fontFamily
 fontFeatureSettings
 fontKerning
+fontLanguageOverride
 fontOpticalSizing
 fontPalette
 fontSize
@@ -243,6 +262,9 @@ insetInline
 insetInlineEnd
 insetInlineStart
 interactivity
+interestDelay
+interestDelayEnd
+interestDelayStart
 interpolateSize
 isolation
 item
@@ -409,6 +431,7 @@ scrollPaddingTop
 scrollSnapAlign
 scrollSnapStop
 scrollSnapType
+scrollTargetGroup
 scrollTimeline
 scrollTimelineAxis
 scrollTimelineName
@@ -444,6 +467,7 @@ tableLayout
 textAlign
 textAlignLast
 textAnchor
+textAutospace
 textBox
 textBoxEdge
 textBoxTrim
@@ -496,6 +520,7 @@ viewTimelineAxis
 viewTimelineInset
 viewTimelineName
 viewTransitionClass
+viewTransitionGroup
 viewTransitionName
 visibility
 webkitAlignContent

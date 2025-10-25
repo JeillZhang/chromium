@@ -95,10 +95,17 @@ void WebGPUSwapBufferProvider::ReleaseWGPUTextureAccessIfNeeded() {
 }
 
 void WebGPUSwapBufferProvider::DiscardCurrentSwapBuffer() {
+  // We're discarding the current texture without sending it to the compositor.
   if (current_swap_buffer_ && current_swap_buffer_->mailbox_texture) {
     current_swap_buffer_->mailbox_texture->SetNeedsPresent(false);
+
+    // Release the texture access and put it back in the pool to be recycled.
+    // Otherwise, we'll destroy the shared image associated with the texture
+    // instead of reusing it like if the texture was composited.
+    ReleaseWGPUTextureAccessIfNeeded();
+
+    swap_buffer_pool_->ReleaseImage(std::move(current_swap_buffer_));
   }
-  ReleaseWGPUTextureAccessIfNeeded();
   current_swap_buffer_ = nullptr;
 }
 
@@ -112,7 +119,16 @@ void WebGPUSwapBufferProvider::Neuter() {
     layer_ = nullptr;
   }
 
+  // Clear the pool after discarding the current swap buffer since the current
+  // swap buffer could be recycled into the pool.
   DiscardCurrentSwapBuffer();
+
+  // Check that the pool is present before clearing it - the pool is created
+  // in the first GetNewTexture() call.
+  if (swap_buffer_pool_) {
+    swap_buffer_pool_->Clear();
+  }
+
   client_ = nullptr;
   neutered_ = true;
 }
@@ -157,12 +173,13 @@ scoped_refptr<WebGPUMailboxTexture> WebGPUSwapBufferProvider::GetNewTexture(
   }
 
   // These SharedImages are read and written by WebGPU clients and can then be
-  // sent off to the display compositor.
+  // sent off to the display compositor. They can also be read over raster
+  // interface as part of video frame.
   gpu::SharedImageUsageSet usage =
       gpu::SHARED_IMAGE_USAGE_WEBGPU_READ |
       gpu::SHARED_IMAGE_USAGE_WEBGPU_WRITE |
       gpu::SHARED_IMAGE_USAGE_WEBGPU_SWAP_CHAIN_TEXTURE |
-      GetSharedImageUsagesForDisplay();
+      gpu::SHARED_IMAGE_USAGE_RASTER_READ | GetSharedImageUsagesForDisplay();
   if (usage_ & wgpu::TextureUsage::StorageBinding) {
     usage |= gpu::SHARED_IMAGE_USAGE_WEBGPU_STORAGE_TEXTURE;
   }
@@ -170,10 +187,9 @@ scoped_refptr<WebGPUMailboxTexture> WebGPUSwapBufferProvider::GetNewTexture(
   wgpu::AdapterInfo adapter_info;
   device_.GetAdapter().GetInfo(&adapter_info);
   if (adapter_info.adapterType == wgpu::AdapterType::CPU) {
-    // When using the fallback adapter, service-side reads and writes of the
+    // When using the fallback adapter, service-side writes of the
     // SharedImage occur via Skia with copies from/to Dawn textures.
-    usage |= gpu::SHARED_IMAGE_USAGE_RASTER_READ |
-             gpu::SHARED_IMAGE_USAGE_RASTER_WRITE;
+    usage |= gpu::SHARED_IMAGE_USAGE_RASTER_WRITE;
   }
 
   gpu::ImageInfo info = {size,
@@ -191,7 +207,7 @@ scoped_refptr<WebGPUMailboxTexture> WebGPUSwapBufferProvider::GetNewTexture(
   if (!swap_buffer_pool_) {
     swap_buffer_pool_ = gpu::SharedImagePool<SwapBuffer>::Create(
         info, context_provider->ContextProvider().SharedImageInterface(),
-        /*max_pool_size=*/4);
+        "WebGPUSwapBufferProvider", /*max_pool_size=*/4);
   } else if (swap_buffer_pool_->GetImageInfo() != info) {
     swap_buffer_pool_->Reconfigure(info);
   }
@@ -278,7 +294,7 @@ WebGPUSwapBufferProvider::ExportCurrentSharedImage(
   // any thread in case this thread was terminated. Ref to SwapBuffers is enough
   // to keep underlying resources alive, so we don't need to hold ref to
   // WebGPUSwapBufferProvider itself.
-  *out_release_callback = WTF::BindOnce(
+  *out_release_callback = blink::BindOnce(
       &WebGPUSwapBufferProvider::MailboxReleased,
       weak_ptr_factory_.GetWeakPtr(), base::PlatformThread::CurrentRef(),
       std::move(current_swap_buffer_));
@@ -372,7 +388,7 @@ void WebGPUSwapBufferProvider::MailboxReleased(
   // thread).
   CHECK_EQ(thread_ref, base::PlatformThread::CurrentRef());
 
-  if (provider) {
+  if (provider && !provider->neutered_) {
     provider->swap_buffer_pool_->ReleaseImage(std::move(swap_buffer));
   }
 }
@@ -386,7 +402,6 @@ WebGPUSwapBufferProvider::SwapBuffer::~SwapBuffer() = default;
 #if BUILDFLAG(IS_CHROMEOS)
 // This feature is only used as a possible killswitch.
 BASE_FEATURE(kWebGPUSwapBufferProviderAllowScanout,
-             "WebGPUSwapBufferProviderAllowScanout",
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
 

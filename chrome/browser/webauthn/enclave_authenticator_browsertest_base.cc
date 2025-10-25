@@ -94,7 +94,7 @@ EnclaveAuthenticatorTestBase::EnclaveAuthenticatorTestBase()
 #endif
       recovery_key_store_(FakeRecoveryKeyStore::New()),
       fake_hw_provider_(
-          std::make_unique<crypto::ScopedFakeUnexportableKeyProvider>()) {
+          std::make_unique<WebAuthnScopedFakeUnexportableKeyProvider>()) {
 #if BUILDFLAG(IS_WIN)
   fake_webauthn_dll_->set_available(false);
   biometrics_override_ =
@@ -108,8 +108,9 @@ EnclaveAuthenticatorTestBase::EnclaveAuthenticatorTestBase()
   scoped_icloud_drive_override_ = OverrideICloudDriveEnabled(false);
 #endif
   scoped_feature_list_.InitWithFeatures(
-      /*enabled_features=*/{device::kWebAuthnNoAccountTimeout,
-                            device::kWebAuthnSignalApiHidePasskeys},
+      /*enabled_features=*/{device::kWebAuthnLargeBlobForGPM,
+                            device::kWebAuthnSignalApiHidePasskeys,
+                            device::kWebAuthnWrapCohortData},
       /*disabled_features=*/{});
   OSCryptMocker::SetUp();
   scoped_vmodule_.InitWithSwitches("device_event_log_impl=2");
@@ -320,4 +321,47 @@ void EnclaveAuthenticatorTestBase::SetTrustedVaultSlowAndCacheCallback() {
           ->GetActiveWebContents()
           ->GetPrimaryMainFrame(),
       std::move(connection));
+}
+
+void EnclaveAuthenticatorTestBase::SimulateSuccessfulGpmPinCreation(
+    const std::string& pin_value) {
+  WaitForEnclaveLoaded();
+
+  EnclaveManager* enclave_manager =
+      EnclaveManagerFactory::GetAsEnclaveManagerForProfile(
+          browser()->profile());
+  ASSERT_TRUE(enclave_manager);
+
+  {
+    auto store_keys_lock = enclave_manager->GetStoreKeysLock();
+    enclave_manager->StoreKeys(
+        kSyncGaiaId,
+        {std::vector<uint8_t>(std::begin(kSecurityDomainSecret),
+                              std::end(kSecurityDomainSecret))},
+        /*last_key_version=*/0);
+  }
+
+  base::test::TestFuture<bool> add_device_future;
+  enclave_manager->AddDeviceAndPINToAccount(
+      "123456",
+      /*previous_pin_public_key=*/std::nullopt,
+      add_device_future.GetCallback());
+  ASSERT_TRUE(add_device_future.Wait()) << "AddDeviceAndPINToAccount timed out";
+  ASSERT_TRUE(add_device_future.Get()) << "AddDeviceAndPINToAccount failed";
+
+  ASSERT_TRUE(enclave_manager->is_ready());
+  ASSERT_TRUE(enclave_manager->has_wrapped_pin());
+}
+
+void EnclaveAuthenticatorTestBase::WaitForEnclaveLoaded() {
+  EnclaveManager* enclave_manager =
+      EnclaveManagerFactory::GetAsEnclaveManagerForProfile(
+          browser()->profile());
+  ASSERT_TRUE(enclave_manager);
+
+  if (!enclave_manager->is_loaded()) {
+    base::test::TestFuture<void> load_future;
+    enclave_manager->Load(load_future.GetCallback());
+    ASSERT_TRUE(load_future.Wait());
+  }
 }

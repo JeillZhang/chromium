@@ -13,7 +13,6 @@
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/extension_action_runner.h"
 #include "chrome/browser/extensions/extension_context_menu_model.h"
-#include "chrome/browser/extensions/install_verifier.h"
 #include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -28,7 +27,6 @@
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_interactive_uitest.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/hover_button_controller.h"
-#include "chrome/browser/ui/views/toolbar/toolbar_actions_bar_bubble_views.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
@@ -623,10 +621,8 @@ IN_PROC_BROWSER_TEST_F(ExtensionsMenuViewInteractiveUITest,
   {
     // Since we are revoking permissions, automatically accept the reload page
     // bubble to update the permissions.
-    content::WebContents* web_contents =
-        browser()->tab_strip_model()->GetActiveWebContents();
-    extensions::ExtensionActionRunner::GetForWebContents(web_contents)
-        ->accept_bubble_for_testing(true);
+    auto reload_page_dialog_reset =
+        extensions::ReloadPageDialogController::AcceptDialogForTesting(true);
     extensions::PermissionsManagerWaiter waiter(
         extensions::PermissionsManager::Get(profile()));
     context_menu->ExecuteCommand(

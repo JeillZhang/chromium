@@ -32,8 +32,18 @@ export function getHtml(this: OnDeviceInternalsModelStatusElement) {
             <span class="value">${baseInfo.version}</value>
           </div>
           <div>
+            Backend Type: <span class="value">${baseInfo.backendType}</value>
+          </div>
+          <div>
             File path:
             <span class="value">${baseInfo.filePath}</value>
+          </div>
+          <div>
+            Folder size:
+            <span class="value">
+              ${(Number(baseInfo.fileSize) / 1024 / 1024).
+                toLocaleString('en-US', {maximumFractionDigits : 2})} MiB
+            </value>
           </div>
         </div>` : html``}
       </div>
@@ -98,6 +108,7 @@ export function getHtml(this: OnDeviceInternalsModelStatusElement) {
           <th>Name</th>
           <th>Version</th>
           <th>Recently Used</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -106,6 +117,14 @@ export function getHtml(this: OnDeviceInternalsModelStatusElement) {
             <td>${adaptation.featureName}</td>
             <td>${adaptation.version}</td>
             <td>${adaptation.isRecentlyUsed}</td>
+            <td>
+              <button @click=${() =>
+                this.onFeatureUsageSetterClick_(adaptation.featureKey, true)
+              }>set to true</button>
+              <button @click=${() =>
+                this.onFeatureUsageSetterClick_(adaptation.featureKey, false)
+              }>set to false</button>
+            </td>
           </tr>`)}
       </tbody>
     </table>

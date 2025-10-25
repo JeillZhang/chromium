@@ -53,14 +53,10 @@ views::FocusManager* ExtensionsMenuButton::GetFocusManagerForAccelerator() {
   return GetFocusManager();
 }
 
-views::Button* ExtensionsMenuButton::GetReferenceButtonForPopup() {
+views::BubbleAnchor ExtensionsMenuButton::GetReferenceButtonForPopup() {
   return BrowserView::GetBrowserViewForBrowser(browser_)
       ->toolbar()
       ->GetExtensionsButton();
-}
-
-content::WebContents* ExtensionsMenuButton::GetCurrentWebContents() const {
-  return browser_->tab_strip_model()->GetActiveWebContents();
 }
 
 void ExtensionsMenuButton::UpdateState() {
@@ -91,11 +87,8 @@ void ExtensionsMenuButton::UpdateState() {
   }
 }
 
-void ExtensionsMenuButton::ShowContextMenuAsFallback() {
-  // The items in the extensions menu are disabled and unclickable if the
-  // primary action cannot be taken; ShowContextMenuAsFallback() should never
-  // be called directly.
-  NOTREACHED();
+content::WebContents* ExtensionsMenuButton::GetCurrentWebContents() const {
+  return browser_->tab_strip_model()->GetActiveWebContents();
 }
 
 void ExtensionsMenuButton::ButtonPressed() {

@@ -4,6 +4,7 @@
 
 #include "ui/gl/presenter.h"
 
+#include "base/notimplemented.h"
 #include "ui/gfx/gpu_fence.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -39,10 +40,14 @@ bool Presenter::ScheduleOverlayPlane(
   return false;
 }
 
-bool Presenter::ScheduleCALayer(const ui::CARendererLayerParams& params) {
+#if BUILDFLAG(IS_APPLE)
+bool Presenter::ScheduleCALayer(
+    const ui::CARendererLayerParams& params,
+    std::vector<gfx::MTLSharedEventFence> backpressure_fences) {
   NOTIMPLEMENTED();
   return false;
 }
+#endif
 
 #if BUILDFLAG(IS_WIN)
 void Presenter::ScheduleDCLayers(std::vector<DCLayerOverlayParams> overlays) {

@@ -29,6 +29,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/web_contents.h"
 #include "third_party/re2/src/re2/re2.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/mojom/ui_base_types.mojom-shared.h"
@@ -190,8 +191,8 @@ void HatsDialog::Show(const std::string& trigger_id,
 
 void HatsDialog::OnLoadingStateChanged(WebContents* source) {
   // Only trigger actions when the URL changes
-  if (action_ != source->GetURL().ref()) {
-    action_ = source->GetURL().ref();
+  if (action_ != source->GetURL().GetRef()) {
+    action_ = source->GetURL().GetRef();
     if (HandleClientTriggeredAction(action_, histogram_name_)) {
       source->ClosePage();
     }

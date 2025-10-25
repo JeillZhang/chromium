@@ -24,7 +24,8 @@
 #include "chromeos/ash/experiences/arc/test/fake_policy_instance.h"
 #include "components/policy/core/common/remote_commands/remote_commands_queue.h"
 #include "content/public/test/browser_task_environment.h"
-#include "crypto/rsa_private_key.h"
+#include "crypto/keypair.h"
+#include "crypto/test_support.h"
 #include "net/cert/scoped_nss_types.h"
 #include "net/cert/x509_util.h"
 #include "net/cert/x509_util_nss.h"
@@ -34,7 +35,6 @@
 namespace arc {
 
 using testing::_;
-using testing::Invoke;
 using testing::StrictMock;
 using testing::WithArg;
 
@@ -77,16 +77,15 @@ class MockPolicyInstance : public FakePolicyInstance {
 void AddCert(const std::string& cn, std::vector<CertDescription>* certs) {
   std::string der_cert;
   net::ScopedCERTCertificate cert;
-  std::unique_ptr<crypto::RSAPrivateKey> key(
-      crypto::RSAPrivateKey::Create(1024));
+  auto key = crypto::test::FixedRsa2048PrivateKeyForTesting();
 
   ASSERT_TRUE(net::x509_util::CreateSelfSignedCert(
-      key->key(), net::x509_util::DIGEST_SHA256, cn, 1, base::Time::UnixEpoch(),
+      key.key(), net::x509_util::DIGEST_SHA256, cn, 1, base::Time::UnixEpoch(),
       base::Time::UnixEpoch(), {}, &der_cert));
   cert = net::x509_util::CreateCERTCertificateFromBytes(
       base::as_byte_span(der_cert));
   ASSERT_TRUE(cert);
-  certs->emplace_back(key.release(), cert.release(),
+  certs->emplace_back(key, cert.release(),
                       keymanagement::mojom::ChapsSlot::kUser, kLabel, kId);
 }
 
@@ -134,11 +133,11 @@ class ArcCertInstallerTest : public testing::Test {
                                mojom::CommandResultType status) {
     EXPECT_CALL(*policy_instance_.get(),
                 OnCommandReceived(IsCommandPayloadForName(name), _))
-        .WillOnce(WithArg<1>(Invoke(
+        .WillOnce(WithArg<1>(
             [status](FakePolicyInstance::OnCommandReceivedCallback callback) {
               base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
                   FROM_HERE, base::BindOnce(std::move(callback), status));
-            })));
+            }));
   }
 
   Profile* profile() { return profile_.get(); }

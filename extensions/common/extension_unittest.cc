@@ -36,7 +36,7 @@ testing::AssertionResult RunManifestVersionSuccess(
     std::string_view expected_warning = "",
     Extension::InitFromValueFlags custom_flag = Extension::NO_FLAGS,
     ManifestLocation manifest_location = ManifestLocation::kInternal) {
-  std::string error;
+  std::u16string error;
   scoped_refptr<const Extension> extension = Extension::Create(
       base::FilePath(), manifest_location, manifest, custom_flag, &error);
   if (!extension) {
@@ -74,7 +74,7 @@ testing::AssertionResult RunManifestVersionSuccess(
 testing::AssertionResult RunManifestVersionFailure(
     base::Value::Dict manifest,
     Extension::InitFromValueFlags custom_flag = Extension::NO_FLAGS) {
-  std::string error;
+  std::u16string error;
   scoped_refptr<const Extension> extension =
       Extension::Create(base::FilePath(), ManifestLocation::kInternal, manifest,
                         custom_flag, &error);
@@ -89,7 +89,7 @@ testing::AssertionResult RunCreationWithFlags(
     mojom::ManifestLocation location,
     Manifest::Type expected_type,
     Extension::InitFromValueFlags custom_flag = Extension::NO_FLAGS) {
-  std::string error;
+  std::u16string error;
   scoped_refptr<const Extension> extension = Extension::Create(
       base::FilePath(), location, manifest, custom_flag, &error);
   if (!extension) {
@@ -265,27 +265,5 @@ TEST(ExtensionTest, LoginScreenFlag) {
                                    Manifest::TYPE_LOGIN_SCREEN_EXTENSION,
                                    Extension::FOR_LOGIN_SCREEN));
 }
-
-#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
-TEST(ExtensionTest, BlockInstallingExtensionsOnDesktopAndroid) {
-  auto manifest = base::Value::Dict()
-                      .Set("name", "My Extension")
-                      .Set("version", "0.1")
-                      .Set("description", "An awesome extension")
-                      .Set("manifest_version", 3);
-
-  std::string error;
-  EXPECT_TRUE(Extension::Create(base::FilePath(), ManifestLocation::kInternal,
-                                manifest.Clone(), Extension::NO_FLAGS, &error));
-
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      extensions_features::kBlockInstallingExtensionsOnDesktopAndroid);
-
-  EXPECT_FALSE(Extension::Create(base::FilePath(), ManifestLocation::kInternal,
-                                 manifest.Clone(), Extension::NO_FLAGS,
-                                 &error));
-}
-#endif  // BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
 
 }  // namespace extensions

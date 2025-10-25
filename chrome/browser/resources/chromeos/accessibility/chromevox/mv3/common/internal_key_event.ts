@@ -7,8 +7,11 @@
  * KeyboardEvent data. Also matches EventLikeObject.
  */
 export class InternalKeyEvent {
+  // `id` is used by the browser to identify this key event.
+  id: number;
   type: string;
   keyCode: number;
+  key: string;
 
   altKey?: boolean;
   ctrlKey?: boolean;
@@ -21,11 +24,13 @@ export class InternalKeyEvent {
   // Match key_sequence.ts EventLikeObject type
   keyPrefix?: boolean;
   prefixKey?: boolean;
-  [key: string]: string|number|boolean|undefined;
+  [k: string]: string|number|boolean|undefined;
 
   constructor(evt: any) {
+    this.id = evt.id;
     this.type = evt.type;
     this.keyCode = evt.keyCode;
+    this.key = evt.key;
     this.altKey = evt.altKey;
     this.ctrlKey = evt.ctrlKey;
     this.metaKey = evt.metaKey;

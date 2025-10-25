@@ -5,40 +5,33 @@
 package org.chromium.chrome.test.transit.tabmodel;
 
 import org.chromium.base.Token;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.transit.ConditionStatus;
 import org.chromium.base.test.transit.UiThreadCondition;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
-import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /** Check that this list of tab group matches the expected list of tab groups. */
 public class TabGroupsExistCondition extends UiThreadCondition {
 
-    private final boolean mIncognito;
     private final List<Token> mExpectedTabGroups;
-    private final Supplier<TabModelSelector> mTabModelSelectorSupplier;
+    private final Supplier<TabGroupModelFilter> mTabGroupModelFilterProvider;
 
     public TabGroupsExistCondition(
-            boolean incognito,
             List<Token> expectedTabGroups,
-            Supplier<TabModelSelector> tabModelSelectorSupplier) {
-        mIncognito = incognito;
+            Supplier<TabGroupModelFilter> tabGroupModelFilterProvider) {
         mExpectedTabGroups = expectedTabGroups;
-        mTabModelSelectorSupplier = dependOnSupplier(tabModelSelectorSupplier, "TabModelSelector");
+        mTabGroupModelFilterProvider =
+                dependOnSupplier(tabGroupModelFilterProvider, "TabGroupModelFilter");
     }
 
     @Override
     protected ConditionStatus checkWithSuppliers() {
-        TabGroupModelFilter groupFilter =
-                mTabModelSelectorSupplier
-                        .get()
-                        .getTabGroupModelFilterProvider()
-                        .getTabGroupModelFilter(mIncognito);
+        TabGroupModelFilter groupFilter = mTabGroupModelFilterProvider.get();
         Set<Token> allTabGroupIds = groupFilter.getAllTabGroupIds();
         if (!matchExpectedTabGroups(allTabGroupIds, mExpectedTabGroups)) {
             return notFulfilled(
@@ -60,8 +53,7 @@ public class TabGroupsExistCondition extends UiThreadCondition {
     @Override
     public String buildDescription() {
         return String.format(
-                "Checking whether expected %s tab groups match actual: %s",
-                mIncognito ? "Incognito" : "Regular",
+                "Checking whether expected tab groups match actual: %s",
                 tabGroupIdCollectionToString(mExpectedTabGroups));
     }
 

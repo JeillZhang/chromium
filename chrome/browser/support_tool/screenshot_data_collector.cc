@@ -2,18 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chrome/browser/support_tool/screenshot_data_collector.h"
 
+#include <cstdint>
 #include <vector>
 
 #include "base/base64.h"
+#include "base/compiler_specific.h"
+#include "base/containers/auto_spanification_helper.h"
+#include "base/containers/span.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
 #include "base/task/bind_post_task.h"
@@ -25,6 +25,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -33,7 +34,7 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/codec/jpeg_codec.h"
 #include "ui/gfx/image/image.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #include "ui/snapshot/snapshot.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -95,11 +96,13 @@ void ScreenshotDataCollector::SetPickerFactoryForTesting(
 void ScreenshotDataCollector::ConvertDesktopFrameToBase64JPEG(
     std::unique_ptr<webrtc::DesktopFrame> frame,
     std::string& image_base64) {
+  // TODO(crbug.com/352187279): Support other pixel formats.
+  CHECK_EQ(frame->pixel_format(), webrtc::FOURCC_ARGB);
+
   // First converts `frame` to SkBitmap.
   SkBitmap bitmap;
   bitmap.allocN32Pixels(frame->size().width(), frame->size().height(), true);
-  // Data in `frame` begin at `data()` but are not necessarily consecutive.
-  uint32_t* bitmap_buffer = bitmap.getAddr32(0, 0);
+
   const uint8_t* frame_buffer = frame->data();
   // There are `frame_bytes` bytes of real data per row in `frame`. This is not
   // necessarily the same as `stride()`, which is where the next row of data
@@ -108,11 +111,13 @@ void ScreenshotDataCollector::ConvertDesktopFrameToBase64JPEG(
       frame->size().width() * webrtc::DesktopFrame::kBytesPerPixel;
   // Next we need to copy the data row by row.
   for (int i = 0; i < frame->size().height(); ++i) {
+    // Data in `frame` begin at `data()` but are not necessarily consecutive.
+    base::span<uint32_t> bitmap_buffer =
+        UNSAFE_SKBITMAP_GETADDR32(bitmap, 0, i);
     // Again, `frame_bytes` is the actual size of the data in a row.
-    memcpy(bitmap_buffer, frame_buffer, frame_bytes);
+    UNSAFE_TODO(memcpy(bitmap_buffer.data(), frame_buffer, frame_bytes));
     // Moves to where the next row's data begins.
-    bitmap_buffer += bitmap.rowBytesAsPixels();
-    frame_buffer += frame->stride();
+    UNSAFE_TODO(frame_buffer += frame->stride());
   }
   bitmap.setImmutable();
 
@@ -284,8 +289,10 @@ void ScreenshotDataCollector::OnScreenshotTaken(
   std::move(data_collector_done_callback_).Run(error);
 }
 #else
-void ScreenshotDataCollector::OnTabCaptured(const SkBitmap& bitmap) {
+void ScreenshotDataCollector::OnTabCaptured(
+    const viz::CopyOutputBitmapWithMetadata& result) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  const SkBitmap& bitmap = result.bitmap;
   std::optional<std::vector<uint8_t>> jpeg_encoded_data;
   if (bitmap.drawsNothing() ||
       !(jpeg_encoded_data = gfx::JPEGCodec::Encode(bitmap, kDefaultQuality))) {

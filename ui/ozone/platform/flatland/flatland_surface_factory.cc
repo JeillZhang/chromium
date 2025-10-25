@@ -30,6 +30,7 @@
 #include "ui/ozone/platform/flatland/flatland_window.h"
 #include "ui/ozone/platform/flatland/flatland_window_manager.h"
 #include "ui/ozone/platform/flatland/vulkan_implementation_flatland.h"
+#include "ui/ozone/public/native_pixmap_usage_utils.h"
 #include "ui/ozone/public/surface_ozone_canvas.h"
 
 namespace ui {
@@ -174,26 +175,17 @@ scoped_refptr<gfx::NativePixmap> FlatlandSurfaceFactory::CreateNativePixmap(
   DCHECK(!framebuffer_size || framebuffer_size == size);
 
   VkDevice vk_device = device_queue->GetVulkanDevice();
-  return flatland_sysmem_buffer_manager_.CreateNativePixmap(vk_device, size,
-                                                            format, usage);
-}
-
-void FlatlandSurfaceFactory::CreateNativePixmapAsync(
-    gfx::AcceleratedWidget widget,
-    gpu::VulkanDeviceQueue* device_queue,
-    gfx::Size size,
-    gfx::BufferFormat format,
-    gfx::BufferUsage usage,
-    NativePixmapCallback callback) {
-  std::move(callback).Run(
-      CreateNativePixmap(widget, device_queue, size, format, usage));
+  NativePixmapUsageSet native_pixmap_usage =
+      BufferUsageToNativePixmapUsage(usage);
+  return flatland_sysmem_buffer_manager_.CreateNativePixmap(
+      vk_device, size, format, native_pixmap_usage);
 }
 
 scoped_refptr<gfx::NativePixmap>
 FlatlandSurfaceFactory::CreateNativePixmapFromHandle(
     gfx::AcceleratedWidget widget,
     gfx::Size size,
-    gfx::BufferFormat format,
+    viz::SharedImageFormat format,
     gfx::NativePixmapHandle handle) {
   auto collection = flatland_sysmem_buffer_manager_.GetCollectionByHandle(
       handle.buffer_collection_handle);

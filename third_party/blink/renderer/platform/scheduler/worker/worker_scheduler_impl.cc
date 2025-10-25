@@ -49,8 +49,10 @@ WorkerSchedulerImpl::WorkerSchedulerImpl(
       unpausable_task_queue_(worker_thread_scheduler->CreateTaskQueue(
           base::sequence_manager::QueueName::WORKER_UNPAUSABLE_TQ)),
       thread_scheduler_(worker_thread_scheduler),
-      back_forward_cache_disabling_feature_tracker_(&tracing_controller_,
-                                                    thread_scheduler_) {
+      back_forward_cache_disabling_feature_tracker_(
+          &tracing_controller_,
+          perfetto::NamedTrack::ThreadScoped("WorkerThread", this),
+          thread_scheduler_) {
   task_runners_.emplace(throttleable_task_queue_,
                         throttleable_task_queue_->CreateQueueEnabledVoter());
   task_runners_.emplace(pausable_task_queue_,
@@ -156,6 +158,7 @@ scoped_refptr<base::SingleThreadTaskRunner> WorkerSchedulerImpl::GetTaskRunner(
     case TaskType::kJavascriptTimerDelayedLowNesting:
     case TaskType::kJavascriptTimerDelayedHighNesting:
     case TaskType::kPostedMessage:
+    case TaskType::kBackForwardCachePostedMessage:
     case TaskType::kWorkerAnimation:
       return throttleable_task_queue_->CreateTaskRunner(type);
     case TaskType::kNetworking:

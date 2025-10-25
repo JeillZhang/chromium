@@ -5,19 +5,22 @@
 #ifndef CHROME_BROWSER_ACTOR_TOOLS_HISTORY_TOOL_H_
 #define CHROME_BROWSER_ACTOR_TOOLS_HISTORY_TOOL_H_
 
+#include <memory>
 #include <optional>
 #include <vector>
 
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/actor/tools/history_tool_request.h"
 #include "chrome/browser/actor/tools/tool.h"
+#include "chrome/browser/actor/tools/tool_request.h"
 #include "chrome/common/actor.mojom-forward.h"
+#include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "third_party/abseil-cpp/absl/container/flat_hash_set.h"
 
 namespace content {
 class NavigationHandle;
-class WebContents;
 }  // namespace content
 
 namespace actor {
@@ -25,19 +28,26 @@ namespace actor {
 // Performs a history navigation in a WebContents.
 class HistoryTool : public Tool, content::WebContentsObserver {
  public:
-  enum Direction {
-    kBack,
-    kForward,
-  };
-
-  HistoryTool(content::WebContents& web_contents, Direction direction);
+  HistoryTool(TaskId task_id,
+              ToolDelegate& tool_delegate,
+              tabs::TabInterface& tab,
+              HistoryToolRequest::Direction direction);
   ~HistoryTool() override;
 
   // actor::Tool
   void Validate(ValidateCallback callback) override;
+  mojom::ActionResultPtr TimeOfUseValidation(
+      const optimization_guide::proto::AnnotatedPageContent* last_observation)
+      override;
   void Invoke(InvokeCallback callback) override;
   std::string DebugString() const override;
   std::string JournalEvent() const override;
+  std::unique_ptr<ObservationDelayController> GetObservationDelayer(
+      std::optional<ObservationDelayController::PageStabilityConfig>
+          page_stability_config) override;
+  void UpdateTaskBeforeInvoke(ActorTask& task,
+                              InvokeCallback callback) const override;
+  tabs::TabHandle GetTargetTab() const override;
 
   // content::WebContentsObserver
   void DidStartNavigation(
@@ -53,7 +63,7 @@ class HistoryTool : public Tool, content::WebContentsObserver {
   bool IsInvokeInProgress() const;
 
   // Whether the navigation is backwards or forwards in session history.
-  Direction direction_;
+  HistoryToolRequest::Direction direction_;
 
   // This class tracks all navigation handles created as a result of the history
   // traversal in `pending_navigations_`. However, these navigations may or may
@@ -67,6 +77,11 @@ class HistoryTool : public Tool, content::WebContentsObserver {
 
   // Holds the callback to the Invoke method. Null before invoke is called.
   InvokeCallback invoke_callback_;
+
+  // The unique ID of the navigation entry at the time of validation.
+  int validated_entry_id_ = 0;
+
+  tabs::TabHandle tab_handle_;
 
   base::WeakPtrFactory<HistoryTool> weak_ptr_factory_{this};
 };

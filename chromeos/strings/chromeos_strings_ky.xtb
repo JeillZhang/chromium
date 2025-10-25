@@ -188,7 +188,7 @@
 <translation id="1706391837335750954">DNS которгучун текшерүү</translation>
 <translation id="1708602061922134366">Көк (Google)</translation>
 <translation id="1710499924611012470">Атайын мүмкүнчүлүктөрдө өтүү</translation>
-<translation id="1715359911173058521">Сканерге туташа албай койду. Тармакка же USB туташууңузду текшерип, кайталап көрүңүз.</translation>
+<translation id="1715359911173058521">Сканерге туташа албай койду. Интернетти же USB аркылуу байланышты текшерип, кайталап көрүңүз.</translation>
 <translation id="1717874160321062422"><ph name="FIRST_MANAGER" /> менен <ph name="SECOND_MANAGER" /> башкарат</translation>
 <translation id="1718553040985966377">көл</translation>
 <translation id="1720424726586960395">жаркырак токой</translation>
@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Азырынча адамдар бар сүрөттөр түзүлбөйт. Башка кеңешти колдонуп көрүңүз.</translation>
 <translation id="1815850098929213707">Тандалган баскыч: <ph name="KEYS" />. Башкарууну түзөтүү үчүн баскычты басыңыз</translation>
 <translation id="1818174214124933000">Жөнөтүүнү чечсеңиз, пикириңиз жана контентиңиз (төмөндө көрсөтүлгөн) Google'га жөнөтүлүп, адамдар тарабынан текшерилип, <ph name="LINK_POLICY_BEGIN" />Купуялык эрежелерине<ph name="LINK_POLICY_END" /> жана <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Google'дун Тейлөө шарттарына<ph name="LINK_TERMS_OF_SERVICE_END" /> ылайык кызматтарыбызды үйрөтүү жана жакшыртуу үчүн колдонулат.</translation>
-<translation id="1821075635029692203">Мугалим колдоого алынбаган булакты жөнөттү. Ага кабарлап коюңуз.</translation>
 <translation id="1823120442877418684">Символдор</translation>
 <translation id="1827738518074806965">Көркөм галерея</translation>
 <translation id="183287940576828840">Адепсиз/кооптуу</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Баскычтоптун калыбын которгуч</translation>
 <translation id="224421911978987610">узак экспозиция</translation>
 <translation id="2244834438220057800">жашыл</translation>
+<translation id="2248689665683494517">кара фондо айнек вазада турган кызгалдактардын минималисттик натюрморту</translation>
 <translation id="225692081236532131">Жандыруу абалы</translation>
 <translation id="2267285889943769271">Скриншот кошуу</translation>
 <translation id="2268044343513325586">Мыктылоо</translation>
@@ -756,8 +756,10 @@
 <translation id="4300073214558989"><ph name="IMAGE_COUNT" /> сүрөт</translation>
 <translation id="4300272766492248925">Колдонмону ачуу</translation>
 <translation id="430786093962686457">шифон</translation>
+<translation id="4309762678330556039">Транскрипцияларды автоматтык түрдө түзүп, аудиону издеңиз. Жаздырууларды офлайн режиминде да түзө аласыз.</translation>
 <translation id="4310735698903592804">Google сунуштаган ЖИ технологиялары менен түзүлгөн соңку тушкагаздар</translation>
 <translation id="4320904097188876154">кызгылтым неон</translation>
+<translation id="432961742358282111">Аныктамаларды, котормолорду жана бирдиктерди которуу үчүн оң баскычын чыкылдатып же коё бербей басып туруңуз. Бул функцияны Солго же Оңго жебе баскычы менен башкарасыз.</translation>
 <translation id="4333390807948134856"><ph name="KEY_NAME" /> баскычы басылды</translation>
 <translation id="4334293042716981313"><ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />өзүңүздүн сурамыңызды жазыңыз<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">баскыч</translation>
@@ -1437,7 +1439,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Chromebook'тун Жардам форумундагы адистерден сураңыз</translation>
-<translation id="7309823890857024809">кара фондо айнек вазадагы бир нече мака нанду сабагынын минималдуу натюрморту</translation>
 <translation id="7311368985037279727">баскычтоптун түсү</translation>
 <translation id="7317831949569936035">Окуу жайын каттоо</translation>
 <translation id="7319430975418800333">A3</translation>
@@ -1472,6 +1473,7 @@
 <translation id="7425832472614771259"><ph name="LANGUAGE_NAME" /> транскрипция үлгүсүнүн <ph name="PROGRESS_PERCENTAGE" />% жүктөлүп алынды</translation>
 <translation id="7427315641433634153">MSCHAP</translation>
 <translation id="7438298994385592770">Бул APN'ди өчүрүү же алып салуу мүмкүн эмес. Иштетилген <ph name="ATTACH" /> APN'дер өчүрүлүп же алып салынганын текшериңиз.</translation>
+<translation id="7458359366992324037">Алыскы дисплей</translation>
 <translation id="7458970041932198923">Аватарларды көрүү жана коюу үчүн тармакка туташып, баракты кайра жүктөңүз.</translation>
 <translation id="7469648432129124067">Портал аныкталды</translation>
 <translation id="7481312909269577407">Багыттоо</translation>
@@ -1874,7 +1876,7 @@
 <translation id="952992212772159698">Жандырылган эмес</translation>
 <translation id="95718197892796296">чопо</translation>
 <translation id="959792926760890141">Коопсуздукту баштапкы абалга келтирүү Chrome серепчисинин кеңейтүүлөрүн өчүрүп, тармакты жана башка параметрлерди баштапкы абалга келтирет.
-          Демейки издөө куралы баштапкы абалга келтирилет, бирок өтмөктөр, файлдар, cookie файлдары жана таржымал өзгөрбөйт.</translation>
+          Демейки издөө куралы кайра коюлат, бирок өтмөктөр, файлдар, cookie файлдары жана таржымал өзгөрбөйт.</translation>
 <translation id="960719561871045870">Оператордун коду</translation>
 <translation id="965918541715156800">сары жана көгүш жашыл</translation>
 <translation id="966787709310836684">меню</translation>

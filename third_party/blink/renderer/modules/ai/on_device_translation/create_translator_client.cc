@@ -42,6 +42,9 @@ String ConvertCreateTranslatorErrorToDebugString(CreateTranslatorError error) {
       return "Too many Translator API requests are queued.";
     case CreateTranslatorError::kInvalidVersion:
       return "The translation library version is invalid.";
+    case CreateTranslatorError::kInvalidStoragePartition:
+      return "The Translator API is only accessible from a valid storage "
+             "partition.";
   }
 }
 
@@ -67,6 +70,9 @@ String ConvertCanCreateTranslatorResultToDebugString(
     case CanCreateTranslatorResult::kNoExceedsServiceCountLimitation:
       equivalent_error = CreateTranslatorError::kExceedsServiceCountLimitation;
       break;
+    case CanCreateTranslatorResult::kNoInvalidStoragePartition:
+      equivalent_error = CreateTranslatorError::kInvalidStoragePartition;
+      break;
   }
   return ConvertCreateTranslatorErrorToDebugString(equivalent_error);
 }
@@ -85,6 +91,7 @@ bool RequiresUserActivation(CanCreateTranslatorResult result) {
     case CanCreateTranslatorResult::kNoServiceCrashed:
     case CanCreateTranslatorResult::kNoDisallowedByPolicy:
     case CanCreateTranslatorResult::kNoExceedsServiceCountLimitation:
+    case CanCreateTranslatorResult::kNoInvalidStoragePartition:
       return false;
   }
 }
@@ -102,6 +109,7 @@ bool TranslatorIsUnavailable(CanCreateTranslatorResult result) {
     case CanCreateTranslatorResult::kNoServiceCrashed:
     case CanCreateTranslatorResult::kNoDisallowedByPolicy:
     case CanCreateTranslatorResult::kNoExceedsServiceCountLimitation:
+    case CanCreateTranslatorResult::kNoInvalidStoragePartition:
       return true;
   }
 }
@@ -122,8 +130,8 @@ CreateTranslatorClient::CreateTranslatorClient(
       receiver_(this, GetExecutionContext()),
       task_runner_(AIInterfaceProxy::GetTaskRunner(GetExecutionContext())) {
   if (options->hasMonitor()) {
-    monitor_ = MakeGarbageCollected<CreateMonitor>(GetExecutionContext(),
-                                                   task_runner_);
+    monitor_ = MakeGarbageCollected<CreateMonitor>(
+        GetExecutionContext(), options->getSignalOr(nullptr), task_runner_);
 
     // If an exception is thrown, don't initiate language detection model
     // download. `AICreateMonitorCallback`'s `Invoke` will automatically
@@ -137,8 +145,8 @@ CreateTranslatorClient::CreateTranslatorClient(
       ->TranslationAvailable(
           mojom::blink::TranslatorLanguageCode::New(options->sourceLanguage()),
           mojom::blink::TranslatorLanguageCode::New(options->targetLanguage()),
-          WTF::BindOnce(&CreateTranslatorClient::OnGotAvailability,
-                        WrapPersistent(this)));
+          BindOnce(&CreateTranslatorClient::OnGotAvailability,
+                   WrapPersistent(this)));
 }
 CreateTranslatorClient::~CreateTranslatorClient() = default;
 
@@ -154,8 +162,8 @@ void CreateTranslatorClient::OnResult(
     mojom::blink::TranslatorLanguageCodePtr source_language,
     mojom::blink::TranslatorLanguageCodePtr target_language) {
   // Call `Cleanup` when this function returns.
-  RunOnDestruction run_on_destruction(WTF::BindOnce(
-      &CreateTranslatorClient::Cleanup, WrapWeakPersistent(this)));
+  RunOnDestruction run_on_destruction(
+      BindOnce(&CreateTranslatorClient::Cleanup, WrapWeakPersistent(this)));
 
   if (!GetResolver()) {
     // The request was aborted. Note: Currently abort signal is not supported.

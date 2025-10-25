@@ -70,12 +70,6 @@ class It2MeHost : public base::RefCountedThreadSafe<It2MeHost>,
     // Only set when FTL signaling is being used.
     std::string ftl_device_id;
 
-    // Use corp SessionAuthz auth instead of shared secret auth.
-    // DEPRECATED: use `is_corp_user` instead.
-    // TODO: crbug.com/417567187 - remove once corp IT2ME directory API is
-    // rolled out.
-    bool use_corp_session_authz = false;
-
     // Indicates whether the user is a corp user and corp flows need to be used
     // instead of the external ones.
     bool is_corp_user = false;
@@ -117,6 +111,13 @@ class It2MeHost : public base::RefCountedThreadSafe<It2MeHost>,
   // for a managed Chrome OS device.
   bool is_enterprise_session() const {
     return chrome_os_enterprise_params_.has_value();
+  }
+  // Indicates whether this support session was initiated by Class tools
+  // for a managed Chrome OS device.
+  bool is_class_management_session() const {
+    return chrome_os_enterprise_params_.has_value() &&
+           chrome_os_enterprise_params_->request_origin ==
+               remoting::ChromeOsEnterpriseRequestOrigin::kClassManagement;
   }
 
   // If set, only |authorized_helper| will be allowed to connect to this host.

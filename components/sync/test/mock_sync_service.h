@@ -62,7 +62,6 @@ class MockSyncService : public SyncService {
               HasCachedPersistentAuthErrorForMetrics,
               (),
               (const override));
-  MOCK_METHOD(bool, RequiresClientUpgrade, (), (const override));
   MOCK_METHOD(std::unique_ptr<SyncSetupInProgressHandle>,
               GetSetupInProgressHandle,
               (),
@@ -79,7 +78,10 @@ class MockSyncService : public SyncService {
               (),
               (const override));
   MOCK_METHOD(void, OnDataTypeRequestsSyncStartup, (DataType type), (override));
-  MOCK_METHOD(void, TriggerRefresh, (const DataTypeSet& types), (override));
+  MOCK_METHOD(void,
+              TriggerRefresh,
+              (TriggerRefreshSource source, const DataTypeSet& types),
+              (override));
   MOCK_METHOD(void,
               DataTypePreconditionChanged,
               (syncer::DataType type),

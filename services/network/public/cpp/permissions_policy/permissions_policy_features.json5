@@ -102,6 +102,12 @@
       depends_on: ["SensorExtraClasses"],
     },
     {
+      name: "AriaNotify",
+      permissions_policy_name: "aria-notify",
+      feature_default: "EnableForAll",
+      depends_on: ["AriaNotify"],
+    },
+    {
       name: "AttributionReporting",
       permissions_policy_name: "attribution-reporting",
       feature_default: "EnableForAll",
@@ -285,6 +291,11 @@
       depends_on: ["DeviceAttributes"],
     },
     {
+      name: "DigitalCredentialsCreate",
+      permissions_policy_name: "digital-credentials-create",
+      depends_on: ["WebIdentityDigitalCredentialsCreation"],
+    },
+    {
       name: "DigitalCredentialsGet",
       permissions_policy_name: "digital-credentials-get",
       depends_on: ["WebIdentityDigitalCredentials"],
@@ -386,7 +397,12 @@
     {
       name: "LanguageDetector",
       permissions_policy_name: "language-detector",
-      depends_on: ["LanguageDetectionAPI", "BuiltInAIAPI"],
+      depends_on: ["LanguageDetectionAPI"],
+    },
+    {
+      name: "LanguageModel",
+      permissions_policy_name: "language-model",
+      depends_on: ["AIPromptAPI"],
     },
     {
       name: "LocalFonts",
@@ -418,6 +434,12 @@
       permissions_policy_name: "midi",
     },
     {
+      name: "MulticastInDirectSockets",
+      permissions_policy_name: "direct-sockets-multicast",
+      depends_on: ["MulticastInDirectSockets"],
+      visibility: "IsolatedContext",
+    },
+    {
       name: "OnDeviceSpeechRecognition",
       permissions_policy_name: "on-device-speech-recognition",
       depends_on: ["OnDeviceWebSpeechAvailable"],
@@ -436,7 +458,6 @@
     {
       name: "Payment",
       permissions_policy_name: "payment",
-      depends_on: ["PaymentRequest"],
     },
     {
       name: "PictureInPicture",
@@ -472,7 +493,7 @@
     {
       name: "Rewriter",
       permissions_policy_name: "rewriter",
-      depends_on: ["AIRewriterAPI", "BuiltInAIAPI"],
+      depends_on: ["AIRewriterAPI"],
     },
     {
       name: "RunAdAuction",
@@ -536,7 +557,7 @@
     {
       name: "Summarizer",
       permissions_policy_name: "summarizer",
-      depends_on: ["AISummarizationAPI", "BuiltInAIAPI"],
+      depends_on: ["AISummarizationAPI"],
     },
     {
       name: "SyncXHR",
@@ -546,7 +567,7 @@
     {
       name: "Translator",
       permissions_policy_name: "translator",
-      depends_on: ["TranslationAPI", "BuiltInAIAPI"],
+      depends_on: ["TranslationAPI"],
     },
     {
       name: "TrustTokenRedemption",
@@ -607,8 +628,8 @@
     {
       name: "Writer",
       permissions_policy_name: "writer",
-      depends_on: ["AIWriterAPI", "BuiltInAIAPI"],
+      depends_on: ["AIWriterAPI"],
     },
   ],
-  // LINT.ThenChange(//third_party/blink/public/devtools_protocol/browser_protocol.pdl:PermissionsPolicyFeature)
+  // LINT.ThenChange(//third_party/blink/public/devtools_protocol/domains/Page.pdl:PermissionsPolicyFeature)
 }

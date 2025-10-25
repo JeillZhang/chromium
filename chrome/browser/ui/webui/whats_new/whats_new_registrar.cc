@@ -24,6 +24,16 @@ namespace features {
 
 void RegisterWhatsNewModules(whats_new::WhatsNewRegistry* registry) {
   // Register modules here.
+  // M142
+#if BUILDFLAG(ENABLE_GLIC)
+  registry->RegisterModule(WhatsNewModule(::features::kGlicIntro,
+                                          "birnie@google.com",
+                                          BrowserCommand::kOpenGlic));
+  // M142
+  registry->RegisterModule(WhatsNewModule(::features::kGlicLearnMore,
+                                          "birnie@google.com",
+                                          BrowserCommand::kOpenGlicSettings));
+#endif  // BUILDFLAG(ENABLE_GLIC)
   // 129
   registry->RegisterModule(
       WhatsNewModule("Googlepayreauth", "vinnypersky@google.com",
@@ -35,6 +45,11 @@ void RegisterWhatsNewModules(whats_new::WhatsNewRegistry* registry) {
   // M138
   registry->RegisterModule(
       WhatsNewModule("TabGroupsSync", "dpenning@google.com"));
+
+  // M142
+  registry->RegisterModule(WhatsNewModule(::features::kSideBySide,
+                                          "agale@google.com",
+                                          BrowserCommand::kOpenSplitView));
 }
 
 void RegisterWhatsNewEditions(whats_new::WhatsNewRegistry* registry) {
@@ -43,7 +58,8 @@ void RegisterWhatsNewEditions(whats_new::WhatsNewRegistry* registry) {
   registry->RegisterEdition(WhatsNewEdition(
       ::features::kGlicRollout, "tommasin@chromium.org",
       std::vector<BrowserCommand>{BrowserCommand::kOpenGlic,
-                                  BrowserCommand::kOpenGlicSettings}));
+                                  BrowserCommand::kOpenGlicSettings,
+                                  BrowserCommand::kPrewarmGlicFre}));
 #endif  // BUILDFLAG(ENABLE_GLIC)
 }
 

@@ -277,7 +277,7 @@ public class ShareHelper {
         }
 
         @Override
-        public void onIntentCompleted(int resultCode, Intent data) {
+        public void onIntentCompleted(int resultCode, @Nullable Intent data) {
             // NOTE: The validity of the returned |resultCode| is somewhat unexpected. For
             // background, a sharing flow starts with a "Chooser" activity that enables the user
             // to select the app to share to, and then when the user selects that application,
@@ -361,6 +361,7 @@ public class ShareHelper {
                         | Intent.FLAG_ACTIVITY_FORWARD_RESULT
                         | Intent.FLAG_ACTIVITY_PREVIOUS_IS_TOP
                         | Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.putExtra(ShareParams.EXTRA_SHARE_ORIGIN, params.getOrigin());
         intent.putExtra(
                 EXTRA_TASK_ID, assumeNonNull(params.getWindow().getActivity().get()).getTaskId());
 

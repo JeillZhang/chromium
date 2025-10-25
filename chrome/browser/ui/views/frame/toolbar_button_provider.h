@@ -14,19 +14,17 @@ class AppMenuButton;
 class AvatarToolbarButton;
 class PinnedToolbarActionsContainer;
 class ExtensionsToolbarContainer;
+class IconLabelBubbleView;
 class IntentChipButton;
 class PageActionIconView;
 class ReloadButton;
+class ReloadControl;
 class ToolbarButton;
 
 namespace gfx {
 class Rect;
 class Size;
 }  // namespace gfx
-
-namespace page_actions {
-class PageActionView;
-}  // namespace page_actions
 
 namespace views {
 class AccessiblePaneView;
@@ -50,14 +48,15 @@ class ToolbarButtonProvider {
   // ToolbarActionView is not visible or available.
   virtual views::View* GetDefaultExtensionDialogAnchorView() = 0;
 
-  // Gets the specified page action icon.
+  // Gets the specified page action icon. This function should only be used
+  // if you need functionality for the legacy page action icon view. This
+  // method will be removed after the migration is complete.
   virtual PageActionIconView* GetPageActionIconView(
       PageActionIconType type) = 0;
 
-  // Page actions are currently undergoing a migration. The following method
-  // should be used for the new path, and will eventually replace
-  // `GetPageActionIconView`.
-  virtual page_actions::PageActionView* GetPageActionView(
+  // Gets the specified page action icon. This function can be used to retrieve
+  // either the legacy page action icon view or the migrated page action view.
+  virtual IconLabelBubbleView* GetPageActionView(
       actions::ActionId action_id) = 0;
 
   // Gets the app menu button.
@@ -86,8 +85,9 @@ class ToolbarButtonProvider {
   // Returns the back button.
   virtual ToolbarButton* GetBackButton() = 0;
 
-  // Returns the reload button.
-  virtual ReloadButton* GetReloadButton() = 0;
+  // Returns the reload button delegate, it can be either `ReloadButton` or
+  // `ReloadButtonWebView` depending on the enabled features.
+  virtual ReloadControl* GetReloadButton() = 0;
 
   // Returns the intent chip button, if present.
   virtual IntentChipButton* GetIntentChipButton() = 0;

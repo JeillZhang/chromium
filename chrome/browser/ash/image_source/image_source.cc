@@ -80,7 +80,8 @@ void ImageSource::StartDataRequestAfterPathExists(
     bool path_exists) {
   if (path_exists) {
     user_image_loader::StartWithFilePath(
-        task_runner_, image_path, ImageDecoder::DEFAULT_CODEC,
+        task_runner_, image_path,
+        user_manager::UserImage::ImageFormat::FORMAT_UNKNOWN,
         0,  // Do not crop.
         base::BindOnce(&ImageLoaded, std::move(got_data_callback)));
   } else {
@@ -90,8 +91,7 @@ void ImageSource::StartDataRequestAfterPathExists(
 
 std::string ImageSource::GetMimeType(const GURL& url) {
   std::string mime_type;
-  net::GetWellKnownMimeTypeFromFile(base::FilePath(url.path_piece()),
-                                    &mime_type);
+  net::GetWellKnownMimeTypeFromFile(base::FilePath(url.path()), &mime_type);
   return mime_type;
 }
 

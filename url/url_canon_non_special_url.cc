@@ -73,8 +73,10 @@ bool DoCanonicalizeNonSpecialURL(const URLComponentSource<CHAR>& source,
 
     // Host
     if (parsed.host.is_valid()) {
-      success &= CanonicalizeNonSpecialHost(source.host, parsed.host, output,
-                                            new_parsed.host);
+      success &= CanonicalizeNonSpecialHost(
+          std::basic_string_view<CHAR>(
+              source.host, parsed.host.is_valid() ? parsed.host.end() : 0),
+          parsed.host, output, new_parsed.host);
     } else {
       new_parsed.host.reset();
       // URL is invalid if `have_authority` is true, but `parsed.host` is
@@ -88,8 +90,9 @@ bool DoCanonicalizeNonSpecialURL(const URLComponentSource<CHAR>& source,
     // - https://url.spec.whatwg.org/#cannot-have-a-username-password-port
     // - https://url.spec.whatwg.org/#dom-url-port
     if (parsed.host.is_nonempty()) {
-      success &= CanonicalizePort(source.port, parsed.port, PORT_UNSPECIFIED,
-                                  &output, &new_parsed.port);
+      success &=
+          CanonicalizePort(parsed.port.maybe_as_string_view_on(source.port),
+                           PORT_UNSPECIFIED, &output, &new_parsed.port);
     } else {
       new_parsed.port.reset();
     }
@@ -126,9 +129,9 @@ bool DoCanonicalizeNonSpecialURL(const URLComponentSource<CHAR>& source,
       output.push_back('/');
       new_parsed.path.len = output.length() - new_parsed.path.begin;
     } else {
-      success &=
-          CanonicalizePath(source.path, parsed.path, CanonMode::kNonSpecialURL,
-                           &output, &new_parsed.path);
+      success &= CanonicalizePath(parsed.path.as_string_view_on(source.path),
+                                  CanonMode::kNonSpecialURL, &output,
+                                  &new_parsed.path);
       if (!parsed.host.is_valid() && new_parsed.path.is_valid() &&
           new_parsed.path.as_string_view_on(output.view().data())
               .starts_with("//")) {

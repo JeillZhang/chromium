@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 
+#include "base/functional/callback_forward.h"
 #include "base/observer_list.h"
 #include "base/types/pass_key.h"
 #include "ui/base/models/image_model.h"
@@ -39,8 +40,8 @@ class PageActionModelInterface {
       const actions::ActionItem* action_item) = 0;
   virtual void SetShowRequested(base::PassKey<PageActionController>,
                                 bool requested) = 0;
-  virtual void SetShowSuggestionChip(base::PassKey<PageActionController>,
-                                     bool show) = 0;
+  virtual void SetShouldShowSuggestionChip(base::PassKey<PageActionController>,
+                                           bool show) = 0;
   virtual void SetSuggestionChipConfig(base::PassKey<PageActionController>,
                                        const SuggestionChipConfig& config) = 0;
   virtual void SetTabActive(base::PassKey<PageActionController>,
@@ -59,11 +60,19 @@ class PageActionModelInterface {
   virtual void SetOverrideTooltip(
       base::PassKey<PageActionController>,
       const std::optional<std::u16string>& override_tooltip) = 0;
-  virtual void SetShouldHidePageAction(base::PassKey<PageActionController>,
-                                       bool should_hide) = 0;
+  virtual void SetActionActive(base::PassKey<PageActionController>,
+                               bool is_active) = 0;
+  virtual void SetIsSuppressedByOmnibox(base::PassKey<PageActionController>,
+                                        bool is_suppressed) = 0;
+  virtual void SetExemptFromOmniboxSuppression(
+      base::PassKey<PageActionController>,
+      bool is_exempt) = 0;
+  virtual void SetIsChipShowing(base::PassKey<PageActionController>,
+                                bool is_chip_showing) = 0;
 
   virtual bool GetVisible() const = 0;
-  virtual bool GetShowSuggestionChip() const = 0;
+  virtual bool IsChipShowing() const = 0;
+  virtual bool ShouldShowSuggestionChip() const = 0;
   virtual bool GetShouldAnimateChip() const = 0;
   virtual bool GetShouldAnnounceChip() const = 0;
   virtual const ui::ImageModel& GetImage() const = 0;
@@ -71,6 +80,7 @@ class PageActionModelInterface {
   virtual const std::u16string& GetTooltipText() const = 0;
   virtual const std::u16string& GetAccessibleName() const = 0;
   virtual bool GetActionItemIsShowingBubble() const = 0;
+  virtual bool GetActionActive() const = 0;
 
   virtual bool IsEphemeral() const = 0;
 };
@@ -92,8 +102,8 @@ class PageActionModel : public PageActionModelInterface {
                                const actions::ActionItem* action_item) override;
   void SetShowRequested(base::PassKey<PageActionController>,
                         bool requested) override;
-  void SetShowSuggestionChip(base::PassKey<PageActionController>,
-                             bool show) override;
+  void SetShouldShowSuggestionChip(base::PassKey<PageActionController>,
+                                   bool show) override;
   void SetSuggestionChipConfig(base::PassKey<PageActionController>,
                                const SuggestionChipConfig& config) override;
   void SetTabActive(base::PassKey<PageActionController>,
@@ -117,12 +127,22 @@ class PageActionModel : public PageActionModelInterface {
       base::PassKey<PageActionController>,
       const std::optional<std::u16string>& override_tooltip) override;
 
-  void SetShouldHidePageAction(base::PassKey<PageActionController>,
-                               bool should_hide) override;
+  void SetActionActive(base::PassKey<PageActionController>,
+                       bool is_active) override;
+
+  void SetIsSuppressedByOmnibox(base::PassKey<PageActionController>,
+                                bool is_suppressed) override;
+
+  void SetExemptFromOmniboxSuppression(base::PassKey<PageActionController>,
+                                       bool is_exempt) override;
+
+  void SetIsChipShowing(base::PassKey<PageActionController>,
+                        bool is_chip_showing) override;
 
   // The model distills all visibility properties into a single result.
   bool GetVisible() const override;
-  bool GetShowSuggestionChip() const override;
+  bool IsChipShowing() const override;
+  bool ShouldShowSuggestionChip() const override;
   bool GetShouldAnimateChip() const override;
   bool GetShouldAnnounceChip() const override;
 
@@ -131,6 +151,7 @@ class PageActionModel : public PageActionModelInterface {
   const std::u16string& GetAccessibleName() const override;
   const std::u16string& GetTooltipText() const override;
   bool GetActionItemIsShowingBubble() const override;
+  bool GetActionActive() const override;
 
   bool IsEphemeral() const override;
 
@@ -153,10 +174,14 @@ class PageActionModel : public PageActionModelInterface {
 
   // Represents whether the page action associated with this model should show
   // as suggestion chip.
-  bool show_suggestion_chip_ = false;
+  bool should_show_suggestion_chip_ = false;
 
   // Represents whether suggestion chips should animate in/out.
   bool should_animate_ = true;
+
+  // Represents whether the suggestion chip is fully expanded or not (in/out
+  // animation is completed). Therefore, it should not be animating.
+  bool is_chip_showing_ = false;
 
   // Represents whether suggestion chips should be announced by a screen
   // reader.
@@ -181,9 +206,16 @@ class PageActionModel : public PageActionModelInterface {
   // `text_` will be used.
   std::optional<std::u16string> override_accessible_name_;
 
-  // Tracks whether we should forcibly hide the page action (e.g., Omnibox is
-  // getting updated).
-  bool should_hide_ = false;
+  // Represents whether the action is currently active (e.g. showing dialog).
+  bool action_active_ = false;
+
+  // Indicates that the omnibox wants the page action hidden (e.g., Omnibox is
+  // getting updated, or omnibox popup is open).
+  bool is_suppressed_by_omnibox_ = false;
+
+  // Represents whether this page action should ignore visibility override set
+  // by `is_suppressed_by_omnibox_` variable (eg. AI mode page action).
+  bool is_exempt_from_omnibox_suppression_ = false;
 
   // Flag used to disallow reentrant behaviour.
   bool is_notifying_observers_ = false;

@@ -14,9 +14,10 @@ BASE_DECLARE_FEATURE(kEnablePixPaymentsInLandscapeMode);
 #if BUILDFLAG(IS_ANDROID)
 BASE_DECLARE_FEATURE(kDisableFacilitatedPaymentsMerchantAllowlist);
 BASE_DECLARE_FEATURE(kEnablePixAccountLinking);
+BASE_DECLARE_FEATURE(kEnableStaticQrCodeForPix);
 BASE_DECLARE_FEATURE(kEwalletPayments);
+BASE_DECLARE_FEATURE(kFacilitatedPaymentsEnableA2APayment);
 #endif  // BUILDFLAG(IS_ANDROID)
-BASE_DECLARE_FEATURE(kSupportMultipleServerRequestsForPixPayments);
 
 }  // namespace payments::facilitated
 

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "base/check.h"
+#include "base/json/json_reader.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/strcat.h"
 #include "base/strings/string_number_conversions.h"
@@ -19,6 +20,8 @@
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/unguessable_token.h"
+#include "components/metrics/dwa/dwa_builders.h"
+#include "components/metrics/dwa/dwa_recorder.h"
 #include "components/services/storage/shared_storage/shared_storage_manager.h"
 #include "content/browser/attribution_reporting/attribution_manager.h"
 #include "content/browser/code_cache/generated_code_cache_context.h"
@@ -28,6 +31,7 @@
 #include "content/browser/interest_group/interest_group_manager_impl.h"
 #include "content/browser/private_aggregation/private_aggregation_caller_api.h"
 #include "content/browser/private_aggregation/private_aggregation_manager.h"
+#include "content/browser/renderer_host/frame_tree_node.h"
 #include "content/browser/renderer_host/page_impl.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/shared_storage/shared_storage_code_cache_host_proxy.h"
@@ -41,7 +45,6 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/global_routing_id.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
-#include "services/data_decoder/public/cpp/data_decoder.h"
 #include "services/metrics/public/cpp/metrics_utils.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
@@ -49,6 +52,7 @@
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/shared_storage.mojom.h"
 #include "storage/browser/blob/blob_url_loader_factory.h"
+#include "storage/browser/blob/blob_url_registry.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/mime_util/mime_util.h"
 #include "third_party/blink/public/common/shared_storage/shared_storage_utils.h"
@@ -1425,9 +1429,19 @@ void SharedStorageWorkletHost::OnRunOperationOnWorkletFinished(
       GetWorkletDevToolsToken(), GetMainFrameIdIfAvailable(),
       shared_storage_origin_.Serialize());
 
+  base::TimeDelta time_in_worklet =
+      base::TimeTicks::Now() - execution_start_time;
+
   base::UmaHistogramLongTimes(
       "Storage.SharedStorage.Document.Timing.Run.ExecutedInWorklet",
-      base::TimeTicks::Now() - execution_start_time);
+      time_in_worklet);
+
+  dwa::builders::SharedStorage_RunFinishedInWorklet()
+      .SetContent(shared_storage_origin_.Serialize())
+      .SetTimeInWorklet(ukm::GetExponentialBucketMinForUserTiming(
+          time_in_worklet.InMilliseconds()))
+      .Record(metrics::dwa::DwaRecorder::Get());
+
   DecrementPendingOperationsCount();
 }
 
@@ -1559,9 +1573,19 @@ void SharedStorageWorkletHost::OnRunURLSelectionOperationOnWorkletFinished(
       operation_id, GetWorkletDevToolsToken(), GetMainFrameIdIfAvailable(),
       shared_storage_origin_.Serialize());
 
+  base::TimeDelta time_in_worklet =
+      base::TimeTicks::Now() - execution_start_time;
+
   base::UmaHistogramLongTimes(
       "Storage.SharedStorage.Document.Timing.SelectURL.ExecutedInWorklet",
-      base::TimeTicks::Now() - execution_start_time);
+      time_in_worklet);
+
+  dwa::builders::SharedStorage_SelectUrlFinishedInWorklet()
+      .SetContent(shared_storage_origin_.Serialize())
+      .SetTimeInWorklet(ukm::GetExponentialBucketMinForUserTiming(
+          time_in_worklet.InMilliseconds()))
+      .Record(metrics::dwa::DwaRecorder::Get());
+
   DecrementPendingOperationsCount();
 }
 
@@ -1815,15 +1839,15 @@ void SharedStorageWorkletHost::OnOptInRequestComplete(
   // `data_origin_opt_in_url_loader_` is no longer needed after this point.
   data_origin_opt_in_url_loader_.reset();
 
-  data_decoder::DataDecoder::ParseJsonIsolated(
-      *response_body, base::BindOnce(&SharedStorageWorkletHost::OnJsonParsed,
-                                     weak_ptr_factory_.GetWeakPtr()));
+  std::optional<base::Value::List> parsed =
+      base::JSONReader::ReadList(*response_body, base::JSON_PARSE_RFC);
+  OnJsonParsed(std::move(parsed));
 }
 
 void SharedStorageWorkletHost::OnJsonParsed(
-    data_decoder::DataDecoder::ValueOrError result) {
+    std::optional<base::Value::List> result) {
   std::string shared_storage_origin_str = shared_storage_origin_.Serialize();
-  if (!result.has_value() || !result->is_list()) {
+  if (!result.has_value()) {
     SetDataOriginOptInResultAndMaybeFinish(
         /*opted_in=*/false, /*data_origin_opt_in_error_message=*/base::StrCat(
             {"Unable to parse the /.well-known/shared-storage/trusted-origins "
@@ -1834,7 +1858,7 @@ void SharedStorageWorkletHost::OnJsonParsed(
     return;
   }
 
-  if (result->GetList().empty()) {
+  if (result->empty()) {
     SetDataOriginOptInResultAndMaybeFinish(
         /*opted_in=*/false, /*data_origin_opt_in_error_message=*/base::StrCat(
             {"The /.well-known/shared-storage/trusted-origins file for ",
@@ -1845,7 +1869,7 @@ void SharedStorageWorkletHost::OnJsonParsed(
   bool script_origin_match = false;
   bool context_origin_match = false;
   url::Origin worklet_script_origin = url::Origin::Create(script_source_url_);
-  for (const base::Value& item_value : result->GetList()) {
+  for (const base::Value& item_value : result.value()) {
     if (!item_value.is_dict()) {
       SetDataOriginOptInResultAndMaybeFinish(
           /*opted_in=*/false, /*data_origin_opt_in_error_message=*/base::StrCat(

@@ -25,7 +25,6 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_CSS_RESOLVER_MATCH_RESULT_H_
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/cascade_layer_map.h"
 #include "third_party/blink/renderer/core/css/css_selector.h"
@@ -33,6 +32,7 @@
 #include "third_party/blink/renderer/core/css/resolver/match_flags.h"
 #include "third_party/blink/renderer/core/css/rule_set.h"
 #include "third_party/blink/renderer/core/dom/tree_scope.h"
+#include "third_party/blink/renderer/core/style/computed_style_constants.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_vector.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
@@ -77,22 +77,25 @@ struct CORE_EXPORT MatchedProperties {
     bool operator==(const Data& other) const {
       return UNSAFE_TODO(memcmp(this, &other, sizeof(*this))) == 0;
     }
-    bool operator!=(const Data& other) const {
-      return UNSAFE_TODO(memcmp(this, &other, sizeof(*this))) != 0;
-    }
   };
 
-  MatchedProperties(CSSPropertyValueSet* properties_arg, const Data& data_arg)
-      : properties(properties_arg), data_(data_arg) {}
+  MatchedProperties(CSSPropertyValueSet* properties_arg,
+                    const MixinParameterBindings* mixin_parameter_bindings_arg,
+                    const Data& data_arg)
+      : properties(properties_arg),
+        mixin_parameter_bindings(mixin_parameter_bindings_arg),
+        data_(data_arg) {}
 
   void Trace(Visitor*) const;
 
   Member<CSSPropertyValueSet> properties;
+  Member<const MixinParameterBindings> mixin_parameter_bindings;
   Data data_;
 };
 
 struct SameSizeAsMatchedProperties {
   Member<void*> properties;
+  Member<void*> mixin_parameter_bindings;
   uint8_t data_[8];
 };
 
@@ -126,8 +129,10 @@ class CORE_EXPORT MatchResult {
   MatchResult(const MatchResult&) = delete;
   MatchResult& operator=(const MatchResult&) = delete;
 
-  void AddMatchedProperties(const CSSPropertyValueSet* properties,
-                            MatchedProperties::Data types);
+  void AddMatchedProperties(
+      const CSSPropertyValueSet* properties,
+      const MixinParameterBindings* mixin_parameter_bindings,
+      MatchedProperties::Data types);
   bool HasMatchedProperties() const { return matched_properties_.size(); }
 
   void BeginAddingAuthorRulesForTreeScope(const TreeScope&);
@@ -222,9 +227,9 @@ class CORE_EXPORT MatchResult {
   void SetHasPseudoElementStyle(PseudoId pseudo) {
     DCHECK(pseudo >= kFirstPublicPseudoId);
     DCHECK(pseudo <= kLastTrackedPublicPseudoId);
-    pseudo_element_styles_ |= 1 << (pseudo - kFirstPublicPseudoId);
+    pseudo_element_styles_.Set(pseudo);
   }
-  unsigned PseudoElementStyles() const { return pseudo_element_styles_; }
+  PseudoIdFlags PseudoElementStyles() const { return pseudo_element_styles_; }
 
   const MatchedPropertiesVector& GetMatchedProperties() const {
     return matched_properties_;
@@ -274,16 +279,12 @@ class CORE_EXPORT MatchResult {
   CascadeOrigin last_origin_{CascadeOrigin::kNone};
 #endif
   uint16_t current_tree_order_{0};
-  uint32_t pseudo_element_styles_{kPseudoIdNone};
+  PseudoIdFlags pseudo_element_styles_;
 };
 
 inline bool operator==(const MatchedProperties& a, const MatchedProperties& b) {
   return a.properties == b.properties &&
          a.data_.link_match_type == b.data_.link_match_type;
-}
-
-inline bool operator!=(const MatchedProperties& a, const MatchedProperties& b) {
-  return !(a == b);
 }
 
 }  // namespace blink

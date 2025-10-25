@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #include "media/gpu/v4l2/v4l2_video_decoder_delegate_av1.h"
 
 #include <linux/v4l2-controls.h>
@@ -817,7 +822,6 @@ DecodeStatus V4L2VideoDecoderDelegateAV1::SubmitDecode(
   auto dec_surface = v4l2_pic->dec_surface();
   dec_surface->PrepareSetCtrls(&ext_ctrls);
   if (device_->Ioctl(VIDIOC_S_EXT_CTRLS, &ext_ctrls) != 0) {
-    RecordVidiocIoctlErrorUMA(VidiocIoctlRequests::kVidiocSExtCtrls);
     VPLOGF(1) << "ioctl() failed: VIDIOC_S_EXT_CTRLS";
     return DecodeStatus::kFail;
   }

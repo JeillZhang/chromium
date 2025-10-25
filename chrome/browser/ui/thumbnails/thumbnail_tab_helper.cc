@@ -21,12 +21,16 @@
 #include "chrome/browser/ui/thumbnails/thumbnail_readiness_tracker.h"
 #include "chrome/browser/ui/thumbnails/thumbnail_scheduler.h"
 #include "chrome/browser/ui/thumbnails/thumbnail_scheduler_impl.h"
+#include "components/tabs/public/tab_interface.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_user_data.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/geometry/skia_conversions.h"
 #include "ui/native_theme/native_theme.h"
@@ -152,6 +156,11 @@ class ThumbnailTabHelper::TabStateTracker
     }
   }
 
+  // content::WebContentsObserver:
+  void AboutToBeDiscarded(content::WebContents* new_contents) override {
+    Observe(new_contents);
+  }
+
   bool is_ready() const {
     return page_readiness_ != CaptureReadiness::kNotReady;
   }
@@ -269,19 +278,29 @@ void ThumbnailTabHelper::CaptureThumbnailOnTabBackgrounded() {
                      time_of_call));
 }
 
-ThumbnailTabHelper::ThumbnailTabHelper(content::WebContents* contents)
-    : content::WebContentsUserData<ThumbnailTabHelper>(*contents),
-      content::WebContentsObserver(contents),
-      state_(std::make_unique<TabStateTracker>(this, contents)),
+DEFINE_USER_DATA(ThumbnailTabHelper);
+
+// static:
+ThumbnailTabHelper* ThumbnailTabHelper::From(
+    tabs::TabInterface* tab_interface) {
+  return Get(tab_interface->GetUnownedUserDataHost());
+}
+
+ThumbnailTabHelper::ThumbnailTabHelper(tabs::TabInterface& tab_interface)
+    : tabs::ContentsObservingTabFeature(tab_interface),
+      state_(
+          std::make_unique<TabStateTracker>(this, tab_interface.GetContents())),
       background_capturer_(std::make_unique<BackgroundThumbnailVideoCapturer>(
-          contents,
+          tab_interface.GetContents(),
           base::BindRepeating(
               &ThumbnailTabHelper::StoreThumbnailForBackgroundCapture,
               base::Unretained(this)))),
       thumbnail_(base::MakeRefCounted<ThumbnailImage>(
           state_.get(),
-          DiscardedTabThumbnailData::TakeThumbnailDataIfAvailable(contents))) {
-  is_tab_discarded_ = contents->WasDiscarded();
+          DiscardedTabThumbnailData::TakeThumbnailDataIfAvailable(
+              tab_interface.GetContents()))),
+      scoped_unowned_user_data_(tab_interface.GetUnownedUserDataHost(), *this) {
+  is_tab_discarded_ = tab_interface.GetContents()->WasDiscarded();
 }
 
 ThumbnailTabHelper::~ThumbnailTabHelper() {
@@ -294,8 +313,10 @@ ThumbnailScheduler& ThumbnailTabHelper::GetScheduler() {
   return *instance.get();
 }
 
-void ThumbnailTabHelper::StoreThumbnailForTabSwitch(base::TimeTicks start_time,
-                                                    const SkBitmap& bitmap) {
+void ThumbnailTabHelper::StoreThumbnailForTabSwitch(
+    base::TimeTicks start_time,
+    const viz::CopyOutputBitmapWithMetadata& result) {
+  const SkBitmap& bitmap = result.bitmap;
   UMA_HISTOGRAM_CUSTOM_TIMES("Tab.Preview.TimeToStoreAfterTabSwitch",
                              base::TimeTicks::Now() - start_time,
                              base::Milliseconds(1), base::Seconds(1), 50);
@@ -428,6 +449,7 @@ ThumbnailCaptureInfo ThumbnailTabHelper::GetInitialCaptureInfo(
 
 void ThumbnailTabHelper::AboutToBeDiscarded(
     content::WebContents* new_contents) {
+  StopVideoCapture();
   DiscardedTabThumbnailData::CreateForWebContents(new_contents,
                                                   thumbnail_->data());
 }
@@ -436,5 +458,3 @@ void ThumbnailTabHelper::DidStartNavigation(
     content::NavigationHandle* navigation_handle) {
   is_tab_discarded_ = false;
 }
-
-WEB_CONTENTS_USER_DATA_KEY_IMPL(ThumbnailTabHelper);

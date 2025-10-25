@@ -37,13 +37,16 @@ std::optional<memory_pressure::ReclaimTarget> GetReclaimTarget() {
 
 }  // namespace
 
-UrgentPageDiscardingPolicy::UrgentPageDiscardingPolicy() = default;
+UrgentPageDiscardingPolicy::UrgentPageDiscardingPolicy()
+    : memory_pressure_listener_registration_(
+          FROM_HERE,
+          base::MemoryPressureListenerTag::kUrgentPageDiscardingPolicy,
+          this) {}
 UrgentPageDiscardingPolicy::~UrgentPageDiscardingPolicy() = default;
 
 void UrgentPageDiscardingPolicy::OnPassedToGraph(Graph* graph) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!handling_memory_pressure_notification_);
-  graph->AddSystemNodeObserver(this);
   DCHECK(PageDiscardingHelper::GetFromGraph(graph))
       << "A PageDiscardingHelper instance should be registered against the "
          "graph in order to use this policy.";
@@ -51,7 +54,6 @@ void UrgentPageDiscardingPolicy::OnPassedToGraph(Graph* graph) {
 
 void UrgentPageDiscardingPolicy::OnTakenFromGraph(Graph* graph) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  graph->RemoveSystemNodeObserver(this);
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -90,7 +92,7 @@ void UrgentPageDiscardingPolicy::DisableForTesting() {
 }
 
 void UrgentPageDiscardingPolicy::OnMemoryPressure(
-    base::MemoryPressureListener::MemoryPressureLevel new_level) {
+    base::MemoryPressureLevel new_level) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   if (g_disabled_for_testing) {
@@ -101,8 +103,7 @@ void UrgentPageDiscardingPolicy::OnMemoryPressure(
   // |handling_memory_pressure_notification_| prevents this class from trying to
   // reply to multiple notifications at the same time.
   if (handling_memory_pressure_notification_ ||
-      new_level != base::MemoryPressureListener::MemoryPressureLevel::
-                       MEMORY_PRESSURE_LEVEL_CRITICAL) {
+      new_level != base::MEMORY_PRESSURE_LEVEL_CRITICAL) {
     return;
   }
 
@@ -121,10 +122,7 @@ void UrgentPageDiscardingPolicy::OnMemoryPressure(
   // Chrome OS memory pressure evaluator provides the memory reclaim target to
   // leave critical memory pressure. When Chrome OS is under heavy memory
   // pressure, discards multiple tabs to meet the memory reclaim target.
-  content::GetUIThreadTaskRunner({})->PostTaskAndReplyWithResult(
-      FROM_HERE, base::BindOnce(GetReclaimTarget),
-      base::BindOnce(&UrgentPageDiscardingPolicy::OnReclaimTarget,
-                     base::Unretained(this), on_memory_pressure_at));
+  OnReclaimTarget(on_memory_pressure_at, GetReclaimTarget());
 #else
   PageDiscardingHelper::GetFromGraph(GetOwningGraph())
       ->DiscardAPage(DiscardEligibilityPolicy::DiscardReason::URGENT);

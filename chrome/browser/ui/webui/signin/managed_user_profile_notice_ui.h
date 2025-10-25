@@ -48,7 +48,8 @@ class ManagedUserProfileNoticeUI : public content::WebUIController {
     kEntepriseAccountSyncDisabled,
     kConsumerAccountSyncDisabled,
     kEnterpriseAccountCreation,
-    kEnterpriseOIDC
+    kEnterpriseOIDC,
+    kProfilePicker
   };
 
   explicit ManagedUserProfileNoticeUI(content::WebUI* web_ui);
@@ -78,7 +79,8 @@ class ManagedUserProfileNoticeUI : public content::WebUIController {
   ManagedUserProfileNoticeHandler* GetHandlerForTesting();
 
  private:
-  void UpdateBrowsingDataStringWithCounts(profiles::ProfileCategoryStats stats);
+  void UpdateBrowsingDataStringWithCounts(std::u16string domain,
+                                          profiles::ProfileCategoryStats stats);
 
   // Stored for tests.
   raw_ptr<ManagedUserProfileNoticeHandler> handler_ = nullptr;

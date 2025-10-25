@@ -4,10 +4,17 @@
 
 package org.chromium.chrome.browser.composeplate;
 
+import android.content.res.ColorStateList;
 import android.view.View;
 import android.view.ViewGroup;
 
+import androidx.annotation.StyleRes;
+
 import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.incognito.IncognitoUtils;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.util.BrowserUiUtils.ModuleTypeOnStartAndNtp;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
@@ -16,16 +23,47 @@ import org.chromium.ui.modelutil.PropertyModelChangeProcessor;
 @NullMarked
 public class ComposeplateCoordinator {
     private final PropertyModel mModel;
+    private final boolean mHideIncognitoButton;
 
     /**
      * Constructs a new ComposeplateCoordinator.
      *
      * @param parentView The parent {@link ViewGroup} for the composeplate.
+     * @param profile The current user profile.
+     * @param colorStateList The colorStateList to apply on the icons.
+     * @param textStyleResId The resource id of the text appearance style.
      */
-    public ComposeplateCoordinator(ViewGroup parentView) {
+    public ComposeplateCoordinator(
+            ViewGroup parentView,
+            Profile profile,
+            @Nullable ColorStateList colorStateList,
+            @StyleRes int textStyleResId) {
         mModel = new PropertyModel(ComposeplateProperties.ALL_KEYS);
-        View view = parentView.findViewById(R.id.composeplate_view);
+        ComposeplateView view = parentView.findViewById(R.id.composeplate_view);
         PropertyModelChangeProcessor.create(mModel, view, ComposeplateViewBinder::bind);
+        mHideIncognitoButton =
+                ChromeFeatureList.sAndroidComposeplateHideIncognitoButton.getValue()
+                        || !IncognitoUtils.isIncognitoModeEnabled(profile);
+
+        mModel.set(ComposeplateProperties.COLOR_STATE_LIST, colorStateList);
+        mModel.set(ComposeplateProperties.TEXT_STYLE_RES_ID, textStyleResId);
+    }
+
+    /**
+     * Sets the visibility of the composeplate for V1 variations.
+     *
+     * @param visible Whether the composeplate should be visible.
+     * @param isCurrentPage whether the New Tab Page is the current page displayed to the user.
+     */
+    public void setVisibilityV1(boolean visible, boolean isCurrentPage) {
+        if (isCurrentPage && visible != mModel.get(ComposeplateProperties.IS_VISIBLE)) {
+            ComposeplateMetricsUtils.recordComposeplateImpression(visible);
+        }
+
+        mModel.set(ComposeplateProperties.IS_VISIBLE, visible);
+        mModel.set(
+                ComposeplateProperties.IS_INCOGNITO_BUTTON_VISIBLE,
+                visible && !mHideIncognitoButton);
     }
 
     /**
@@ -81,6 +119,20 @@ public class ComposeplateCoordinator {
     }
 
     /**
+     * Sets the click listener for the composeplate button.
+     *
+     * @param composeplateButtonClickListener The click listener for the composeplate button.
+     */
+    public void setComposeplateButtonClickListener(
+            View.OnClickListener composeplateButtonClickListener) {
+        mModel.set(
+                ComposeplateProperties.COMPOSEPLATE_BUTTON_CLICK_LISTENER,
+                createEnhancedClickListener(
+                        composeplateButtonClickListener,
+                        ModuleTypeOnStartAndNtp.COMPOSEPLATE_BUTTON));
+    }
+
+    /**
      * Wraps the given {@link View.OnClickListener} to record the click metric before invoking the
      * original listener.
      *
@@ -95,5 +147,20 @@ public class ComposeplateCoordinator {
             }
             ComposeplateMetricsUtils.recordComposeplateClick(sectionType);
         };
+    }
+
+    public void destroy() {
+        mModel.set(ComposeplateProperties.VOICE_SEARCH_CLICK_LISTENER, null);
+        mModel.set(ComposeplateProperties.LENS_CLICK_LISTENER, null);
+        mModel.set(ComposeplateProperties.INCOGNITO_CLICK_LISTENER, null);
+        mModel.set(ComposeplateProperties.COMPOSEPLATE_BUTTON_CLICK_LISTENER, null);
+    }
+
+    public void applyWhiteBackgroundWithShadow(boolean apply) {
+        mModel.set(ComposeplateProperties.APPLY_WHITE_BACKGROUND_WITH_SHADOW, apply);
+    }
+
+    public PropertyModel getModelForTesting() {
+        return mModel;
     }
 }

@@ -4,6 +4,8 @@
 
 package org.chromium.chrome.browser.bookmarks;
 
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.app.Activity;
 import android.content.Context;
 import android.view.LayoutInflater;
@@ -12,19 +14,19 @@ import android.view.View.OnAttachStateChangeListener;
 import android.view.ViewGroup;
 
 import androidx.annotation.LayoutRes;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.lifecycle.LifecycleOwner;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.recyclerview.widget.RecyclerView.ItemAnimator;
 import androidx.recyclerview.widget.RecyclerView.OnScrollListener;
-import androidx.recyclerview.widget.RecyclerView.ViewHolder;
 
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
+import org.chromium.chrome.browser.back_press.BackPressManager;
 import org.chromium.chrome.browser.bookmarks.BookmarkListEntry.ViewType;
 import org.chromium.chrome.browser.bookmarks.BookmarkUiPrefs.BookmarkRowDisplayPref;
 import org.chromium.chrome.browser.commerce.ShoppingServiceFactory;
@@ -40,6 +42,7 @@ import org.chromium.chrome.browser.ui.native_page.BasicNativePage;
 import org.chromium.chrome.browser.ui.signin.signin_promo.BookmarkSigninPromoDelegate;
 import org.chromium.chrome.browser.ui.signin.signin_promo.SigninPromoCoordinator;
 import org.chromium.components.bookmarks.BookmarkId;
+import org.chromium.components.bookmarks.BookmarkItem;
 import org.chromium.components.browser_ui.modaldialog.AppModalPresenter;
 import org.chromium.components.browser_ui.util.GlobalDiscardableReferencePool;
 import org.chromium.components.browser_ui.widget.dragreorder.DragReorderableRecyclerViewAdapter;
@@ -53,27 +56,31 @@ import org.chromium.components.image_fetcher.ImageFetcher;
 import org.chromium.components.image_fetcher.ImageFetcherConfig;
 import org.chromium.components.image_fetcher.ImageFetcherFactory;
 import org.chromium.ui.KeyboardVisibilityDelegate;
+import org.chromium.ui.edge_to_edge.EdgeToEdgePadAdjuster;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
 import org.chromium.ui.modelutil.MVCListAdapter.ListItem;
 import org.chromium.ui.modelutil.MVCListAdapter.ModelList;
+import org.chromium.ui.modelutil.SimpleRecyclerViewAdapter;
 
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /** Responsible for setting up sub-components and routing incoming/outgoing signals */
 // TODO(crbug.com/40268641): Add a new coordinator so this class doesn't own everything.
+@NullMarked
 public class BookmarkManagerCoordinator
         implements SearchDelegate, BackPressHandler, OnAttachStateChangeListener {
 
     private final SelectionDelegate<BookmarkId> mSelectionDelegate =
             new SelectionDelegate<>() {
                 @Override
-                public boolean toggleSelectionForItem(BookmarkId bookmark) {
-                    if (mBookmarkModel.getBookmarkById(bookmark) != null
-                            && !mBookmarkModel.getBookmarkById(bookmark).isEditable()) {
+                public boolean toggleSelectionForItem(BookmarkId bookmarkId) {
+                    BookmarkItem bookmarkItem = mBookmarkModel.getBookmarkById(bookmarkId);
+                    if (bookmarkItem != null && !bookmarkItem.isEditable()) {
                         return false;
                     }
-                    return super.toggleSelectionForItem(bookmark);
+                    return super.toggleSelectionForItem(bookmarkId);
                 }
             };
 
@@ -83,7 +90,7 @@ public class BookmarkManagerCoordinator
         }
 
         @Override
-        public boolean onFailedToRecycleView(@NonNull ViewHolder holder) {
+        public boolean onFailedToRecycleView(SimpleRecyclerViewAdapter.ViewHolder holder) {
             // The view has transient state, which is probably because there's an outstanding
             // fade animation. Theoretically we could clear it and let the RecyclerView continue
             // normally, but it seems sometimes this is called after bind, and the transient
@@ -95,7 +102,7 @@ public class BookmarkManagerCoordinator
         }
 
         @Override
-        public void onViewRecycled(ViewHolder holder) {
+        public void onViewRecycled(SimpleRecyclerViewAdapter.ViewHolder holder) {
             if (holder.itemView instanceof CancelableAnimator cancelable) {
                 // Try to eagerly clean up any in progress animations if there are anything. This
                 // should reduce the amount of transient state the view has, which could get in the
@@ -118,13 +125,14 @@ public class BookmarkManagerCoordinator
     private final BookmarkManagerMediator mMediator;
     private final ImageFetcher mImageFetcher;
     private final SnackbarManager mSnackbarManager;
-    private final SigninPromoCoordinator mSigninPromoCoordinator;
-    private final BookmarkPromoHeader mPromoHeaderManager;
+    private final @Nullable SigninPromoCoordinator mSigninPromoCoordinator;
+    private final @Nullable BookmarkPromoHeader mPromoHeaderManager;
     private final BookmarkModel mBookmarkModel;
     private final Profile mProfile;
     private final BookmarkUiPrefs mBookmarkUiPrefs;
     private final ModalDialogManager mModalDialogManager;
     private final ModelList mModelList;
+    private final @Nullable BackPressManager mBackPressManager;
 
     /**
      * Creates an instance of {@link BookmarkManagerCoordinator}. It also initializes resources,
@@ -138,16 +146,20 @@ public class BookmarkManagerCoordinator
      * @param bookmarkOpener Helper class to open bookmarks.
      * @param bookmarkManagerOpener Helper class to open bookmark activities.
      * @param priceDropNotificationManager Manages price drop notifications.
+     * @param edgeToEdgePadAdjusterGenerator Generator for the edge to edge pad adjuster.
+     * @param backPressManager BackPressManager for processing back press events.
      */
     public BookmarkManagerCoordinator(
-            @NonNull Context context,
+            Context context,
             boolean isDialogUi,
-            @NonNull SnackbarManager snackbarManager,
-            @NonNull Profile profile,
-            @NonNull BookmarkUiPrefs bookmarkUiPrefs,
-            @NonNull BookmarkOpener bookmarkOpener,
-            @NonNull BookmarkManagerOpener bookmarkManagerOpener,
-            @NonNull PriceDropNotificationManager priceDropNotificationManager) {
+            SnackbarManager snackbarManager,
+            Profile profile,
+            BookmarkUiPrefs bookmarkUiPrefs,
+            BookmarkOpener bookmarkOpener,
+            BookmarkManagerOpener bookmarkManagerOpener,
+            PriceDropNotificationManager priceDropNotificationManager,
+            @Nullable Function<View, EdgeToEdgePadAdjuster> edgeToEdgePadAdjusterGenerator,
+            @Nullable BackPressManager backPressManager) {
         mContext = context;
         mProfile = profile;
         mImageFetcher =
@@ -175,12 +187,15 @@ public class BookmarkManagerCoordinator
         DragReorderableRecyclerViewAdapter dragReorderableRecyclerViewAdapter =
                 new DragAndCancelAdapter(context, mModelList);
         mRecyclerView =
-                mSelectableListLayout.initializeRecyclerView(dragReorderableRecyclerViewAdapter);
+                mSelectableListLayout.initializeRecyclerView(
+                        dragReorderableRecyclerViewAdapter,
+                        /* recyclerView= */ null,
+                        edgeToEdgePadAdjusterGenerator);
 
         // Disable everything except move animations. Switching between folders should be as
         // seamless as possible without flickering caused by these animations. While dragging
         // should still pick up the slide animation from moves.
-        ItemAnimator itemAnimator = mRecyclerView.getItemAnimator();
+        ItemAnimator itemAnimator = assumeNonNull(mRecyclerView.getItemAnimator());
         itemAnimator.setChangeDuration(0);
         itemAnimator.setAddDuration(0);
         itemAnimator.setRemoveDuration(0);
@@ -318,6 +333,13 @@ public class BookmarkManagerCoordinator
         if (!isDialogUi) {
             RecordUserAction.record("MobileBookmarkManagerPageOpen");
         }
+
+        if (ChromeFeatureList.isEnabled(
+                ChromeFeatureList.ENABLE_ESCAPE_HANDLING_FOR_SECONDARY_ACTIVITIES)) {
+            mBackPressManager = backPressManager;
+        } else {
+            mBackPressManager = null;
+        }
     }
 
     // Public API implementation.
@@ -366,12 +388,12 @@ public class BookmarkManagerCoordinator
     // OnAttachStateChangeListener implementation.
 
     @Override
-    public void onViewAttachedToWindow(@NonNull View view) {
+    public void onViewAttachedToWindow(View view) {
         mMediator.onAttachedToWindow();
     }
 
     @Override
-    public void onViewDetachedFromWindow(@NonNull View view) {
+    public void onViewDetachedFromWindow(View view) {
         mMediator.onDetachedFromWindow();
     }
 
@@ -380,6 +402,21 @@ public class BookmarkManagerCoordinator
     @Override
     public @BackPressResult int handleBackPress() {
         return onBackPressed() ? BackPressResult.SUCCESS : BackPressResult.FAILURE;
+    }
+
+    @Override
+    public Boolean handleEscPress() {
+        // Delegate the escape key press event to the mediator, which contains the actual logic.
+        // The mediator's onEscapePressed() will return true if it cleared the search bar,
+        // and false otherwise.
+        return mMediator.onEscapePressed();
+    }
+
+    @Override
+    public boolean invokeBackActionOnEscape() {
+        // Back action should NOT be invoked on escape for tablets.
+        return !ChromeFeatureList.isEnabled(
+                ChromeFeatureList.ENABLE_ESCAPE_HANDLING_FOR_SECONDARY_ACTIVITIES);
     }
 
     @Override
@@ -411,12 +448,8 @@ public class BookmarkManagerCoordinator
 
     @VisibleForTesting
     View buildPersonalizedPromoView(ViewGroup parent) {
+        assumeNonNull(mPromoHeaderManager);
         return mPromoHeaderManager.createPersonalizedSigninAndSyncPromoHolder(parent);
-    }
-
-    @VisibleForTesting
-    View buildLegacyPromoView(ViewGroup parent) {
-        return mPromoHeaderManager.createSyncPromoHolder(parent);
     }
 
     @VisibleForTesting
@@ -509,22 +542,23 @@ public class BookmarkManagerCoordinator
     public BookmarkManagerTestingDelegate getTestingDelegate() {
         return new BookmarkManagerTestingDelegate() {
             @Override
-            public BookmarkId getBookmarkIdByPositionForTesting(int position) {
+            public @Nullable BookmarkId getBookmarkIdByPositionForTesting(int position) {
                 return mMediator.getIdByPositionForTesting(position);
             }
 
             @Override
-            public ImprovedBookmarkRow getBookmarkRowByPosition(int position) {
-                return (ImprovedBookmarkRow) getBookmarkViewHolderByPosition(position).itemView;
+            public @Nullable ImprovedBookmarkRow getBookmarkRowByPosition(int position) {
+                RecyclerView.ViewHolder viewHolder = getBookmarkViewHolderByPosition(position);
+                return viewHolder == null ? null : (ImprovedBookmarkRow) viewHolder.itemView;
             }
 
             @Override
-            public ViewHolder getBookmarkViewHolderByPosition(int position) {
+            public RecyclerView.@Nullable ViewHolder getBookmarkViewHolderByPosition(int position) {
                 return getViewHolderByPosition(getBookmarkStartIndex() + position);
             }
 
             @Override
-            public ViewHolder getViewHolderByPosition(int position) {
+            public RecyclerView.@Nullable ViewHolder getViewHolderByPosition(int position) {
                 return mRecyclerView.findViewHolderForAdapterPosition(position);
             }
 
@@ -577,5 +611,9 @@ public class BookmarkManagerCoordinator
                         mContext,
                         ManageSyncSettings.class,
                         ManageSyncSettings.createArguments(false));
+    }
+
+    @Nullable BackPressManager getBackPressManagerForTesting() {
+        return mBackPressManager;
     }
 }

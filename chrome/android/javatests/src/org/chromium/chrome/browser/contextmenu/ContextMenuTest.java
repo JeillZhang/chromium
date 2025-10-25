@@ -14,7 +14,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import static org.chromium.chrome.browser.contextmenu.ContextMenuCoordinator.ListItemType.CONTEXT_MENU_ITEM;
 import static org.chromium.ui.listmenu.ListMenuItemProperties.MENU_ITEM_ID;
 import static org.chromium.ui.listmenu.ListMenuItemProperties.TITLE;
 
@@ -55,6 +54,7 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Criteria;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.DisableIf;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
@@ -62,6 +62,8 @@ import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.Manual;
 import org.chromium.base.test.util.RequiresRestart;
 import org.chromium.base.test.util.Restriction;
+import org.chromium.blink_public.common.ContextMenuDataMediaFlags;
+import org.chromium.blink_public.common.ContextMenuDataMediaType;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManagerImpl;
 import org.chromium.chrome.browser.download.DownloadTestRule;
 import org.chromium.chrome.browser.download.DownloadTestRule.CustomMainActivityStart;
@@ -104,6 +106,8 @@ import org.chromium.ui.base.Clipboard;
 import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.DeviceInput;
 import org.chromium.ui.base.UiAndroidFeatures;
+import org.chromium.ui.listmenu.MenuModelBridge;
+import org.chromium.ui.modelutil.MVCListAdapter;
 import org.chromium.ui.mojom.MenuSourceType;
 import org.chromium.url.GURL;
 
@@ -127,6 +131,7 @@ public class ContextMenuTest {
     @Mock private ShareDelegate mShareDelegate;
     @Mock private PrintingController mPrintingController;
     @Mock private DataProtectionBridge.Natives mDataProtectionBridgeMock;
+    @Mock private MenuModelBridge mMenuModelBridge;
 
     @ClassRule
     public static DownloadTestRule sDownloadTestRule =
@@ -146,6 +151,13 @@ public class ContextMenuTest {
 
     private static final String TEST_PATH =
             "/chrome/test/data/android/contextmenu/context_menu_test.html";
+    // LINT.IfChange(PageScaleFactor)
+    // The initial-scale defined in the test html file meta. The setUp function
+    // will check that the page scale factor has been updated to this value.
+    // This ensures the long press/ right click is simulated at the correct
+    // coordinates of the specified element. See crbug.com/432281754.
+    private static final float PAGE_SCALE_FACTOR = 1.0f;
+    // LINT.ThenChange(//chrome/test/data/android/contextmenu/context_menu_test.html:PageScaleFactor)
 
     private EmbeddedTestServer mTestServer;
     private String mTestUrl;
@@ -216,11 +228,14 @@ public class ContextMenuTest {
         mTestUrl = mTestServer.getURL(TEST_PATH);
         deleteTestFiles();
         sDownloadTestRule.loadUrl(mTestUrl);
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         CriteriaHelper.pollUiThread(() -> tab.isUserInteractable() && !tab.isLoading());
+        sDownloadTestRule.assertWaitForPageScaleFactorMatch(PAGE_SCALE_FACTOR);
+
         setupLensChipDelegate();
         DownloadUtils.setIsDownloadRestrictedByPolicyForTesting(false);
         DataProtectionBridgeJni.setInstanceForTesting(mDataProtectionBridgeMock);
+        when(mMenuModelBridge.populateModelList()).thenReturn(new MVCListAdapter.ModelList());
     }
 
     @After
@@ -246,7 +261,7 @@ public class ContextMenuTest {
         // Clear the clipboard.
         Clipboard.getInstance().setText("");
 
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         // Allow DiskWrites temporarily in main thread to avoid
         // violation during copying under emulator environment.
         try (CloseableOnMainThread ignored = CloseableOnMainThread.StrictMode.allowDiskWrites()) {
@@ -273,7 +288,7 @@ public class ContextMenuTest {
         // Clear the clipboard.
         Clipboard.getInstance().setText("");
 
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         // Allow DiskWrites temporarily in main thread to avoid
         // violation during copying under emulator environment.
         try (CloseableOnMainThread ignored = CloseableOnMainThread.StrictMode.allowDiskWrites()) {
@@ -292,7 +307,7 @@ public class ContextMenuTest {
     @MediumTest
     @Feature({"Browser"})
     public void testCopyImageLinkCopiesLinkURL() throws Throwable {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         // Allow DiskWrites temporarily in main thread to avoid
         // violation during copying under emulator environment.
         try (CloseableOnMainThread ignored = CloseableOnMainThread.StrictMode.allowDiskWrites()) {
@@ -312,6 +327,9 @@ public class ContextMenuTest {
     @Feature({"Browser"})
     @RequiresRestart
     public void testLongPressOnImage() throws TimeoutException {
+        doAnswer(sCopyIsAllowedByPolicy)
+                .when(mDataProtectionBridgeMock)
+                .verifyGenericCopyImageActionIsAllowedByPolicy(anyString(), any(), any());
         checkOpenImageInNewTab("testImage", "/chrome/test/data/android/contextmenu/test_image.png");
     }
 
@@ -342,7 +360,7 @@ public class ContextMenuTest {
         ContextMenuUtils.selectContextMenuItem(
                 InstrumentationRegistry.getInstrumentation(),
                 sDownloadTestRule.getActivity(),
-                sDownloadTestRule.getActivity().getActivityTab(),
+                sDownloadTestRule.getActivityTab(),
                 "testImage",
                 R.id.contextmenu_open_image_in_new_tab);
 
@@ -377,7 +395,7 @@ public class ContextMenuTest {
         ContextMenuUtils.selectContextMenuItem(
                 InstrumentationRegistry.getInstrumentation(),
                 sDownloadTestRule.getActivity(),
-                sDownloadTestRule.getActivity().getActivityTab(),
+                sDownloadTestRule.getActivityTab(),
                 "testImage",
                 R.id.contextmenu_open_image_in_ephemeral_tab);
 
@@ -390,13 +408,16 @@ public class ContextMenuTest {
     @MediumTest
     @Feature({"Browser"})
     public void testLongPressOnImageLink() throws TimeoutException {
+        doAnswer(sCopyIsAllowedByPolicy)
+                .when(mDataProtectionBridgeMock)
+                .verifyGenericCopyImageActionIsAllowedByPolicy(anyString(), any(), any());
         checkOpenImageInNewTab(
                 "testImageLink", "/chrome/test/data/android/contextmenu/test_image.png");
     }
 
     private void checkOpenImageInNewTab(String domId, final String expectedPath)
             throws TimeoutException {
-        final Tab activityTab = sDownloadTestRule.getActivity().getActivityTab();
+        final Tab activityTab = sDownloadTestRule.getActivityTab();
 
         final CallbackHelper newTabCallback = new CallbackHelper();
         final AtomicReference<Tab> newTab = new AtomicReference<>();
@@ -451,7 +472,7 @@ public class ContextMenuTest {
     @Test
     @MediumTest
     public void testDismissContextMenuOnBack() throws TimeoutException {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
         Assert.assertNotNull("Context menu was not properly created", mMenuCoordinator);
         CriteriaHelper.pollUiThread(
@@ -474,7 +495,7 @@ public class ContextMenuTest {
     @EnableFeatures({ChromeFeatureList.CONTEXT_MENU_TRANSLATE_WITH_GOOGLE_LENS})
     @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
     public void testLensTranslateChipNotShowingIfNotEnabled() throws Throwable {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         hardcodeTestImageForSharing(TEST_JPG_IMAGE_FILE_EXTENSION);
 
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
@@ -492,7 +513,7 @@ public class ContextMenuTest {
     @Feature({"Browser"})
     @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
     public void testSelectLensTranslateChip() throws Throwable {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         hardcodeTestImageForSharing(TEST_JPG_IMAGE_FILE_EXTENSION);
 
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
@@ -516,8 +537,9 @@ public class ContextMenuTest {
     @Feature({"Browser"})
     @EnableFeatures({ChromeFeatureList.CONTEXT_MENU_TRANSLATE_WITH_GOOGLE_LENS})
     @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    @DisabledTest(message = "https://crbug.com/430777988")
     public void testLensChipNotShowingAfterMenuDismissed() throws Throwable {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         hardcodeTestImageForSharing(TEST_JPG_IMAGE_FILE_EXTENSION);
 
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
@@ -548,8 +570,9 @@ public class ContextMenuTest {
     @MediumTest
     @EnableFeatures({ChromeFeatureList.CONTEXT_MENU_TRANSLATE_WITH_GOOGLE_LENS})
     @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    @DisabledTest(message = "https://crbug.com/430777988")
     public void testDismissContextMenuOnClickLensTranslateChipEnabled() throws TimeoutException {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
         // Needs to run on UI thread so creation happens on same thread as dismissal.
         ThreadUtils.runOnUiThreadBlocking(
@@ -579,7 +602,7 @@ public class ContextMenuTest {
     @Feature({"Browser"})
     @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
     public void testSelectLensShoppingChip() throws Throwable {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         hardcodeTestImageForSharing(TEST_JPG_IMAGE_FILE_EXTENSION);
 
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
@@ -603,8 +626,9 @@ public class ContextMenuTest {
     @Test
     @MediumTest
     @DisableFeatures({ContentFeatures.TOUCH_DRAG_AND_CONTEXT_MENU})
+    @DisabledTest(message = "https://crbug.com/430777988")
     public void testDismissContextMenuOnClickShoppingLensChipEnabled() throws TimeoutException {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
         // Needs to run on UI thread so creation happens on same thread as dismissal.
         ThreadUtils.runOnUiThreadBlocking(
@@ -631,8 +655,9 @@ public class ContextMenuTest {
 
     @Test
     @MediumTest
+    @DisabledTest(message = "https://crbug.com/430777988")
     public void testDismissContextMenuOnClick() throws TimeoutException {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
         Assert.assertNotNull("Context menu was not properly created", mMenuCoordinator);
         CriteriaHelper.pollUiThread(
@@ -657,7 +682,10 @@ public class ContextMenuTest {
     @Test
     @MediumTest
     public void testCopyEmailAddress() throws Throwable {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        doAnswer(sCopyIsAllowedByPolicy)
+                .when(mDataProtectionBridgeMock)
+                .verifyCopyTextIsAllowedByPolicy(anyString(), any(), any());
+        Tab tab = sDownloadTestRule.getActivityTab();
         // Allow all thread policies temporarily in main thread to avoid
         // DiskWrite and UnBufferedIo violations during copying under
         // emulator environment.
@@ -680,7 +708,10 @@ public class ContextMenuTest {
     @Test
     @MediumTest
     public void testCopyTelNumber() throws Throwable {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        doAnswer(sCopyIsAllowedByPolicy)
+                .when(mDataProtectionBridgeMock)
+                .verifyCopyTextIsAllowedByPolicy(anyString(), any(), any());
+        Tab tab = sDownloadTestRule.getActivityTab();
         // Allow DiskWrites temporarily in main thread to avoid
         // violation during copying under emulator environment.
         try (CloseableOnMainThread ignored = CloseableOnMainThread.StrictMode.allowDiskWrites()) {
@@ -697,12 +728,33 @@ public class ContextMenuTest {
 
     @Test
     @LargeTest
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
+    @EnableFeatures({ChromeFeatureList.CONTEXT_MENU_EMPTY_SPACE})
+    @DisableFeatures({UiAndroidFeatures.ANDROID_WINDOW_OCCLUSION})
+    public void testSavePageLongPress() throws TimeoutException {
+        DeviceInput.setSupportsPrecisionPointerForTesting(true);
+        Tab tab = sDownloadTestRule.getActivityTab();
+        int callCount = sDownloadTestRule.getChromeDownloadCallCount();
+        ContextMenuUtils.selectContextMenuItem(
+                InstrumentationRegistry.getInstrumentation(),
+                sDownloadTestRule.getActivity(),
+                tab,
+                "testEmptySpace",
+                R.id.contextmenu_save_page);
+
+        // Wait for the download to complete and see if we got the right file
+        Assert.assertTrue(sDownloadTestRule.waitForChromeDownloadToFinish(callCount));
+        Assert.assertTrue(sDownloadTestRule.hasDownloadedRegex(".*context_menu_test.html.*"));
+    }
+
+    @Test
+    @LargeTest
     @Restriction(DeviceFormFactor.DESKTOP)
     @EnableFeatures({ChromeFeatureList.CONTEXT_MENU_EMPTY_SPACE})
     @DisableFeatures({UiAndroidFeatures.ANDROID_WINDOW_OCCLUSION})
-    public void testSavePage() throws TimeoutException {
+    public void testSavePageRightClick() throws TimeoutException {
         DeviceInput.setSupportsPrecisionPointerForTesting(true);
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         int callCount = sDownloadTestRule.getChromeDownloadCallCount();
         ContextMenuUtils.selectContextMenuItemFromRightClick(
                 InstrumentationRegistry.getInstrumentation(),
@@ -713,9 +765,7 @@ public class ContextMenuTest {
 
         // Wait for the download to complete and see if we got the right file
         Assert.assertTrue(sDownloadTestRule.waitForChromeDownloadToFinish(callCount));
-        Assert.assertTrue(
-                sDownloadTestRule.hasDownloadedRegex(
-                        ".*chrome_test_data_android_contextmenu_context_menu_test.html"));
+        Assert.assertTrue(sDownloadTestRule.hasDownloadedRegex(".*context_menu_test.html.*"));
     }
 
     @Test
@@ -742,7 +792,7 @@ public class ContextMenuTest {
             throws TimeoutException, SecurityException, IOException {
         DownloadUtils.setIsDownloadRestrictedByPolicyForTesting(true);
         int downloadCount = sDownloadTestRule.getAllDownloads().size();
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
 
         // Click should not trigger any download
@@ -755,7 +805,7 @@ public class ContextMenuTest {
         Assert.assertEquals(downloadCount, newCount);
 
         // The context menu should still show.
-        Assert.assertTrue(mMenuCoordinator.getDialogForTest().isShowing());
+        Assert.assertTrue(mMenuCoordinator.getDialogsForTest().get(0).popupWindow.isShowing());
     }
 
     /**
@@ -769,8 +819,8 @@ public class ContextMenuTest {
     @LargeTest
     public void testOpenLinksInNewTabsAndVerifyTabIndexOrdering() throws TimeoutException {
         TabModel tabModel = sDownloadTestRule.getActivity().getCurrentTabModel();
-        int numOpenedTabs = tabModel.getCount();
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        int numOpenedTabs = ThreadUtils.runOnUiThreadBlocking(() -> tabModel.getCount());
+        Tab tab = sDownloadTestRule.getActivityTab();
         ContextMenuUtils.selectContextMenuItem(
                 InstrumentationRegistry.getInstrumentation(),
                 sDownloadTestRule.getActivity(),
@@ -820,29 +870,28 @@ public class ContextMenuTest {
         // Verify the Url is still the same of Parent page.
         Assert.assertEquals(
                 mTestUrl,
-                ChromeTabUtils.getUrlStringOnUiThread(
-                        sDownloadTestRule.getActivity().getActivityTab()));
+                ChromeTabUtils.getUrlStringOnUiThread(sDownloadTestRule.getActivityTab()));
 
         // Verify that the background tabs were opened in the expected order.
         String newTabUrl =
                 mTestServer.getURL("/chrome/test/data/android/contextmenu/test_link.html");
-        Assert.assertEquals(
-                newTabUrl,
-                ChromeTabUtils.getUrlStringOnUiThread(tabModel.getTabAt(indexOfLinkPage)));
+        Tab tab1 = ThreadUtils.runOnUiThreadBlocking(() -> tabModel.getTabAt(indexOfLinkPage));
+        Assert.assertEquals(newTabUrl, ChromeTabUtils.getUrlStringOnUiThread(tab1));
 
         String imageUrl =
                 mTestServer.getURL("/chrome/test/data/android/contextmenu/test_link2.html");
-        Assert.assertEquals(
-                imageUrl,
-                ChromeTabUtils.getUrlStringOnUiThread(tabModel.getTabAt(indexOfLinkPage2)));
+        Tab tab2 = ThreadUtils.runOnUiThreadBlocking(() -> tabModel.getTabAt(indexOfLinkPage2));
+        Assert.assertEquals(imageUrl, ChromeTabUtils.getUrlStringOnUiThread(tab2));
     }
 
     @Test
     @SmallTest
-    @DisableIf.Device(DeviceFormFactor.TABLET) // https://crbug.com/338969612
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // https://crbug.com/338969612
     @Feature({"Browser", "ContextMenu"})
+    // TODO(crbug.com/439491767): Fix broken tests caused by desktop-like incognito window.
+    @DisableFeatures(ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW)
     public void testContextMenuRetrievesLinkOptions() throws TimeoutException {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testLink");
 
         Integer[] expectedItems = {
@@ -870,7 +919,7 @@ public class ContextMenuTest {
     public void testContextMenuRetrievesImageOptions() throws TimeoutException {
         LensUtils.setFakePassableLensEnvironmentForTesting(true);
 
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
 
         Integer[] expectedItems = {
@@ -892,7 +941,7 @@ public class ContextMenuTest {
     @Policies.Add({@Policies.Item(key = "DefaultSearchProviderEnabled", string = "false")})
     public void testContextMenuRetrievesImageOptions_NoDefaultSearchEngine()
             throws TimeoutException {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
 
         Integer[] expectedItems = {
@@ -915,7 +964,7 @@ public class ContextMenuTest {
             throws TimeoutException {
         LensUtils.setFakePassableLensEnvironmentForTesting(true);
 
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImage");
 
         // Search with Google Lens is only supported when Google is the default search provider.
@@ -933,12 +982,14 @@ public class ContextMenuTest {
 
     @Test
     @SmallTest
-    @DisableIf.Device(DeviceFormFactor.TABLET) // https://crbug.com/338969612
+    @DisableIf.Device(DeviceFormFactor.ONLY_TABLET) // https://crbug.com/338969612
     @Feature({"Browser", "ContextMenu"})
+    // TODO(crbug.com/439491767): Fix broken tests caused by desktop-like incognito window.
+    @DisableFeatures(ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW)
     public void testContextMenuRetrievesImageLinkOptions() throws TimeoutException {
         LensUtils.setFakePassableLensEnvironmentForTesting(true);
 
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "testImageLink");
 
         Integer[] expectedItems = {
@@ -966,9 +1017,8 @@ public class ContextMenuTest {
     @SmallTest
     @Feature({"Browser", "ContextMenu"})
     public void testContextMenuRetrievesVideoOptions() throws TimeoutException {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
-        DOMUtils.clickNode(
-                sDownloadTestRule.getActivity().getCurrentWebContents(), "videoDOMElement");
+        Tab tab = sDownloadTestRule.getActivityTab();
+        DOMUtils.clickNode(sDownloadTestRule.getWebContents(), "videoDOMElement");
         mMenuCoordinator = ContextMenuUtils.openContextMenu(tab, "videoDOMElement");
 
         Integer[] expectedItems = {R.id.contextmenu_save_video};
@@ -979,7 +1029,7 @@ public class ContextMenuTest {
     @SmallTest
     @Feature({"Browser", "ContextMenu"})
     public void testSearchImageWithGoogleLensMenuItemName() throws Throwable {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
 
         LensUtils.setFakePassableLensEnvironmentForTesting(true);
         hardcodeTestImageForSharing(TEST_JPG_IMAGE_FILE_EXTENSION);
@@ -1017,7 +1067,7 @@ public class ContextMenuTest {
         Clipboard.getInstance().setText("");
 
         hardcodeTestImageForSharing(TEST_GIF_IMAGE_FILE_EXTENSION);
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         // Allow all thread policies temporarily in main thread to avoid
         // DiskWrite and UnBufferedIo violations during copying under
         // emulator environment.
@@ -1064,7 +1114,7 @@ public class ContextMenuTest {
         Clipboard.getInstance().setText("");
 
         hardcodeTestImageForSharing(TEST_GIF_IMAGE_FILE_EXTENSION);
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         // Allow all thread policies temporarily in main thread to avoid
         // DiskWrite and UnBufferedIo violations during copying under
         // emulator environment.
@@ -1090,13 +1140,15 @@ public class ContextMenuTest {
         when(mItemDelegate.isIncognito()).thenReturn(false);
         when(mItemDelegate.getPageTitle()).thenReturn("");
 
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         ContextMenuHelper contextMenuHelper =
                 ContextMenuHelper.createForTesting(0, tab.getWebContents());
         ContextMenuParams params =
                 new ContextMenuParams(
                         0,
-                        0,
+                        mMenuModelBridge,
+                        ContextMenuDataMediaType.NONE,
+                        ContextMenuDataMediaFlags.MEDIA_NONE,
                         new GURL("http://example.com/"),
                         GURL.emptyGURL(),
                         "",
@@ -1109,14 +1161,15 @@ public class ContextMenuTest {
                         0,
                         MenuSourceType.TOUCH,
                         /* openedFromHighlight= */ true,
-                        /* openedFromInterestTarget= */ false,
-                        /* interestTargetNodeID= */ 0,
+                        /* openedFromInterestFor= */ false,
+                        /* interestForNodeID= */ 0,
                         /* additionalNavigationParams= */ null);
         ContextMenuPopulatorFactory populatorFactory =
                 new ChromeContextMenuPopulatorFactory(
                         mItemDelegate,
                         () -> mShareDelegate,
-                        ChromeContextMenuPopulator.ContextMenuMode.NORMAL);
+                        ChromeContextMenuPopulator.ContextMenuMode.NORMAL,
+                        /* customContentActions= */ List.of());
         Integer[] expectedItems = {
             R.id.contextmenu_share_highlight,
             R.id.contextmenu_remove_highlight,
@@ -1147,7 +1200,7 @@ public class ContextMenuTest {
     public void testShareImage() throws Exception {
         hardcodeTestImageForSharing(TEST_JPG_IMAGE_FILE_EXTENSION);
 
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         // Set share delegate before triggering context menu, so the mocked share delegate is used.
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -1192,7 +1245,7 @@ public class ContextMenuTest {
     @Test
     @SmallTest
     public void testShareLink() throws Exception {
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
 
         // Set share delegate before triggering context menu, so the mocked share delegate is used.
         ThreadUtils.runOnUiThreadBlocking(
@@ -1207,7 +1260,7 @@ public class ContextMenuTest {
                 InstrumentationRegistry.getInstrumentation(),
                 sDownloadTestRule.getActivity(),
                 tab,
-                "testImage",
+                "testLink",
                 R.id.contextmenu_share_link);
 
         verify(mShareDelegate).share(any(), any(), eq(ShareOrigin.CONTEXT_MENU));
@@ -1231,12 +1284,59 @@ public class ContextMenuTest {
 
     @Test
     @SmallTest
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
+    @EnableFeatures({ChromeFeatureList.CONTEXT_MENU_EMPTY_SPACE})
+    @DisableFeatures({UiAndroidFeatures.ANDROID_WINDOW_OCCLUSION})
+    public void testSharePageLongPress() throws Exception {
+        DeviceInput.setSupportsPrecisionPointerForTesting(true);
+        Tab tab = sDownloadTestRule.getActivityTab();
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    // Set share delegate before triggering context menu, so the mocked share
+                    // delegate is used.
+                    var supplier =
+                            (ShareDelegateSupplier)
+                                    ShareDelegateSupplier.from(
+                                            sDownloadTestRule.getActivity().getWindowAndroid());
+                    supplier.set(mShareDelegate);
+                });
+
+        ContextMenuUtils.selectContextMenuItem(
+                InstrumentationRegistry.getInstrumentation(),
+                sDownloadTestRule.getActivity(),
+                tab,
+                "testEmptySpace",
+                R.id.contextmenu_share_page);
+
+        ArgumentCaptor<ShareParams> shareParamsCaptor = ArgumentCaptor.forClass(ShareParams.class);
+        ArgumentCaptor<ChromeShareExtras> chromeExtrasCaptor =
+                ArgumentCaptor.forClass(ChromeShareExtras.class);
+        verify(mShareDelegate)
+                .share(
+                        shareParamsCaptor.capture(),
+                        chromeExtrasCaptor.capture(),
+                        eq(ShareOrigin.CONTEXT_MENU));
+
+        Assert.assertFalse(
+                "Link being shared is empty.",
+                TextUtils.isEmpty(shareParamsCaptor.getValue().getUrl()));
+        Assert.assertEquals(
+                "Link being shared is not the test page url.",
+                mTestUrl,
+                shareParamsCaptor.getValue().getUrl());
+        Assert.assertTrue(
+                "Share with share sheet expect to record the last used.",
+                chromeExtrasCaptor.getValue().saveLastUsed());
+    }
+
+    @Test
+    @SmallTest
     @Restriction(DeviceFormFactor.DESKTOP)
     @EnableFeatures({ChromeFeatureList.CONTEXT_MENU_EMPTY_SPACE})
     @DisableFeatures({UiAndroidFeatures.ANDROID_WINDOW_OCCLUSION})
-    public void testSharePage() throws Exception {
+    public void testSharePageRightClick() throws Exception {
         DeviceInput.setSupportsPrecisionPointerForTesting(true);
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     // Set share delegate before triggering context menu, so the mocked share
@@ -1278,12 +1378,39 @@ public class ContextMenuTest {
 
     @Test
     @MediumTest
+    @Restriction(DeviceFormFactor.TABLET_OR_DESKTOP)
+    @EnableFeatures({ChromeFeatureList.CONTEXT_MENU_EMPTY_SPACE})
+    @DisableFeatures({UiAndroidFeatures.ANDROID_WINDOW_OCCLUSION})
+    public void testPrintPageLongPress() throws Exception {
+        DeviceInput.setSupportsPrecisionPointerForTesting(true);
+        Tab tab = sDownloadTestRule.getActivityTab();
+        ThreadUtils.runOnUiThreadBlocking(
+                // Set printing controller to use the mock instance.
+                () -> {
+                    PrintingControllerImpl.setInstanceForTesting(mPrintingController);
+                });
+
+        ContextMenuUtils.selectContextMenuItem(
+                InstrumentationRegistry.getInstrumentation(),
+                sDownloadTestRule.getActivity(),
+                tab,
+                "testEmptySpace",
+                R.id.contextmenu_print_page);
+
+        // Check that the started print job has the same title as the current tab.
+        ArgumentCaptor<Printable> printableCaptor = ArgumentCaptor.forClass(Printable.class);
+        verify(mPrintingController).startPrint(printableCaptor.capture(), any());
+        Assert.assertEquals(tab.getTitle(), printableCaptor.getValue().getTitle());
+    }
+
+    @Test
+    @MediumTest
     @Restriction(DeviceFormFactor.DESKTOP)
     @EnableFeatures({ChromeFeatureList.CONTEXT_MENU_EMPTY_SPACE})
     @DisableFeatures({UiAndroidFeatures.ANDROID_WINDOW_OCCLUSION})
-    public void testPrintPage() throws Exception {
+    public void testPrintPageRightClick() throws Exception {
         DeviceInput.setSupportsPrecisionPointerForTesting(true);
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         ThreadUtils.runOnUiThreadBlocking(
                 // Set printing controller to use the mock instance.
                 () -> {
@@ -1315,7 +1442,7 @@ public class ContextMenuTest {
     private void assertMenuItemsAreEqual(ContextMenuCoordinator menu, Integer... expectedItems) {
         List<Integer> actualItems = new ArrayList<>();
         for (int i = 0; i < menu.getCount(); i++) {
-            if (menu.getItem(i).type >= CONTEXT_MENU_ITEM) {
+            if (menu.getItem(i).model.containsKey(MENU_ITEM_ID)) {
                 actualItems.add(menu.getItem(i).model.get(MENU_ITEM_ID));
             }
         }
@@ -1329,7 +1456,7 @@ public class ContextMenuTest {
     private String getMenuTitles(ContextMenuCoordinator menu) {
         StringBuilder items = new StringBuilder();
         for (int i = 0; i < menu.getCount(); i++) {
-            if (menu.getItem(i).type >= CONTEXT_MENU_ITEM) {
+            if (menu.getItem(i).model.containsKey(TITLE)) {
                 items.append("\n").append(menu.getItem(i).model.get(TITLE));
             }
         }
@@ -1339,7 +1466,7 @@ public class ContextMenuTest {
     private String getMenuTitleFromItem(ContextMenuCoordinator menu, int itemId) {
         StringBuilder itemName = new StringBuilder();
         for (int i = 0; i < menu.getCount(); i++) {
-            if (menu.getItem(i).type >= CONTEXT_MENU_ITEM) {
+            if (menu.getItem(i).model.containsKey(MENU_ITEM_ID)) {
                 if (menu.getItem(i).model.get(MENU_ITEM_ID) == itemId) {
                     itemName.append(menu.getItem(i).model.get(TITLE));
                     return itemName.toString();
@@ -1371,7 +1498,7 @@ public class ContextMenuTest {
             String mediaDOMElement, int saveMenuID, String expectedFilename)
             throws TimeoutException, SecurityException, IOException {
         // Select "save [image/video]" in that menu.
-        Tab tab = sDownloadTestRule.getActivity().getActivityTab();
+        Tab tab = sDownloadTestRule.getActivityTab();
         int callCount = sDownloadTestRule.getChromeDownloadCallCount();
         ContextMenuUtils.selectContextMenuItem(
                 InstrumentationRegistry.getInstrumentation(),

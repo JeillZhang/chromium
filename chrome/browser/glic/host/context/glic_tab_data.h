@@ -6,11 +6,17 @@
 #define CHROME_BROWSER_GLIC_HOST_CONTEXT_GLIC_TAB_DATA_H_
 
 #include <optional>
+#include <ostream>
 #include <variant>
 
+#include "base/callback_list.h"
+#include "base/containers/enum_set.h"
 #include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
+#include "base/timer/timer.h"
 #include "base/types/expected.h"
 #include "chrome/browser/glic/host/glic.mojom.h"
 #include "components/favicon/core/favicon_driver_observer.h"
@@ -18,7 +24,47 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 
+class SkBitmap;
+namespace base {
+class SequencedTaskRunner;
+}
 namespace glic {
+
+// Indicates what caused the tab data to change. This can be used for debugging,
+// and for deciding how to forward changes.
+enum class TabDataChangeCause : uint32_t {
+  kMinValue = 0,
+  // Tab / web contents properties that changed.
+  kFavicon = 0,
+  kTitle = 1,
+  kAudioState = 2,
+  kVisibility = 3,
+
+  // Events.
+  kSameDocNavigation = 4,
+  kCrossDocNavigation = 5,
+  // It's a different tab being returned.
+  kTabChanged = 6,
+
+  kMaxValue = kTabChanged,
+};
+using TabDataChangeCauseSet = base::EnumSet<TabDataChangeCause,
+                                            TabDataChangeCause::kMinValue,
+                                            TabDataChangeCause::kMaxValue>;
+
+std::ostream& operator<<(std::ostream& os, const TabDataChangeCause& cause);
+
+struct TabDataChange {
+  TabDataChange();
+  TabDataChange(TabDataChangeCauseSet causes, glic::mojom::TabDataPtr tab_data);
+  ~TabDataChange();
+  TabDataChange(TabDataChange&& src);
+  TabDataChange& operator=(TabDataChange&& src);
+
+  TabDataChangeCauseSet causes;
+  glic::mojom::TabDataPtr tab_data;
+};
+std::ostream& operator<<(std::ostream& os, const TabDataChange& change);
 
 // TODO: Detect changes to windowID.
 class TabDataObserver : public content::WebContentsObserver,
@@ -31,15 +77,19 @@ class TabDataObserver : public content::WebContentsObserver,
   // stop providing updates if the primary page changes.
   TabDataObserver(
       content::WebContents* web_contents,
-      bool observe_current_page_only,
-      base::RepeatingCallback<void(glic::mojom::TabDataPtr)> tab_data_changed);
+      base::RepeatingCallback<void(TabDataChange)> tab_data_changed);
+
+  TabDataObserver(
+      tabs::TabInterface* tab,
+      content::WebContents* web_contents,
+      base::RepeatingCallback<void(TabDataChange)> tab_data_changed);
+
   ~TabDataObserver() override;
   TabDataObserver(const TabDataObserver&) = delete;
   TabDataObserver& operator=(const TabDataObserver&) = delete;
 
   // Returns the web contents being observed. Returns null if the web contents
-  // was null originally, the web contents has been destroyed, or the primary
-  // page has changed, and observe_current_page_only is true.
+  // was null originally or the web contents has been destroyed.
   content::WebContents* web_contents() {
     // const_cast is safe because a non-const WebContents is passed in this
     // class's constructor.
@@ -48,7 +98,8 @@ class TabDataObserver : public content::WebContentsObserver,
   }
 
   // content::WebContentsObserver.
-  void PrimaryPageChanged(content::Page& page) override;
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override;
   void TitleWasSetForMainFrame(
       content::RenderFrameHost* render_frame_host) override;
 
@@ -59,20 +110,36 @@ class TabDataObserver : public content::WebContentsObserver,
                         bool icon_url_changed,
                         const gfx::Image& image) override;
 
+  void SetTaskRunnerForTesting(
+      scoped_refptr<base::SequencedTaskRunner> task_runner);
+
  private:
+  void ReportUpdatesPerNavigation();
+  void SendRateLimitedUpdate();
   void SendUpdate();
   void ClearObservation();
 
-  bool observe_current_page_only_ = false;
-  base::RepeatingCallback<void(glic::mojom::TabDataPtr)> tab_data_changed_;
+  // Handler for TabInterface callback subscription.
+  void OnTabWillDetach(tabs::TabInterface* tab,
+                       tabs::TabInterface::DetachReason reason);
+  base::OneShotTimer deferred_update_;
+  size_t updates_since_navigation_ = 0;
+  TabDataChangeCauseSet change_causes_;
+  base::RepeatingCallback<void(TabDataChange)> tab_data_changed_;
+
+  // Subscription to TabInterface detach callback.
+  base::CallbackListSubscription tab_detach_subscription_;
 };
 
 // Either a focused tab, or an error string.
 class FocusedTabData {
  public:
+  // Creates FocusedTabData for a tab that can be focused.
   explicit FocusedTabData(tabs::TabInterface* tab);
-  // `unfocused_tab` can be nullptr. If it is not nullptr, it is the tab that
-  // would be focused but for some reason cannot be.
+  // Creates FocusedTabData when a tab cannot be focused. If `unfocused_tab` is
+  // provided, it represents the tab that would be focused but for some reason
+  // cannot be. If `unfocused_tab` is null there is no tab that could be
+  // focused.
   FocusedTabData(const std::string& error, tabs::TabInterface* unfocused_tab);
   ~FocusedTabData();
   FocusedTabData(const FocusedTabData& src) = delete;
@@ -111,6 +178,14 @@ glic::mojom::TabDataPtr CreateTabData(content::WebContents* web_contents);
 // Populates and returns a FocusedTabDataPtr from a given FocusedTabData.
 glic::mojom::FocusedTabDataPtr CreateFocusedTabData(
     const FocusedTabData& focused_tab_data);
+
+// Checks if two SkBitmap images -- used for favicons -- are visually the same.
+// This is not a highly optimized comparison but should be good enough for
+// comparing (small) favicon images.
+bool FaviconEquals(const ::SkBitmap& a, const ::SkBitmap& b);
+
+std::string TabDataDebugString(const mojom::TabData& tab_data);
+
 }  // namespace glic
 
 #endif  // CHROME_BROWSER_GLIC_HOST_CONTEXT_GLIC_TAB_DATA_H_

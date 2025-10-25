@@ -39,8 +39,10 @@ class ChromeContextMenuItem {
         Item.OPEN_IN_BROWSER_ID,
         Item.OPEN_IN_NEW_TAB,
         Item.OPEN_IN_INCOGNITO_TAB,
+        Item.OPEN_IN_INCOGNITO_WINDOW,
         Item.OPEN_IN_OTHER_WINDOW,
         Item.OPEN_IN_NEW_WINDOW,
+        Item.SHOW_INTEREST_IN_ELEMENT,
         Item.OPEN_IN_EPHEMERAL_TAB,
         Item.COPY_LINK_ADDRESS,
         Item.COPY_LINK_TEXT,
@@ -48,7 +50,6 @@ class ChromeContextMenuItem {
         Item.SHARE_LINK,
         Item.DIRECT_SHARE_LINK,
         Item.READ_LATER,
-        Item.SHOW_INTEREST_IN_ELEMENT,
         Item.LOAD_ORIGINAL_IMAGE,
         Item.SAVE_IMAGE,
         Item.OPEN_IMAGE,
@@ -65,6 +66,7 @@ class ChromeContextMenuItem {
         Item.ADD_TO_CONTACTS,
         Item.COPY,
         Item.SAVE_VIDEO,
+        Item.PICTURE_IN_PICTURE,
         Item.OPEN_IN_CHROME,
         Item.OPEN_IN_NEW_TAB_IN_GROUP,
         Item.SHARE_HIGHLIGHT,
@@ -73,6 +75,7 @@ class ChromeContextMenuItem {
         Item.SAVE_PAGE,
         Item.SHARE_PAGE,
         Item.PRINT_PAGE,
+        Item.VIEW_PAGE_SOURCE,
         Item.INSPECT_ELEMENT,
     })
     @Retention(RetentionPolicy.SOURCE)
@@ -87,49 +90,52 @@ class ChromeContextMenuItem {
         int OPEN_IN_NEW_TAB = 3;
         int OPEN_IN_NEW_TAB_IN_GROUP = 4;
         int OPEN_IN_INCOGNITO_TAB = 5;
-        int OPEN_IN_OTHER_WINDOW = 6;
-        int OPEN_IN_NEW_WINDOW = 7;
-        int OPEN_IN_EPHEMERAL_TAB = 8;
-        int COPY_LINK_ADDRESS = 9;
-        int COPY_LINK_TEXT = 10;
-        int SAVE_LINK_AS = 11;
-        int SHARE_LINK = 12;
-        int DIRECT_SHARE_LINK = 13;
-        int READ_LATER = 14;
-        int SHOW_INTEREST_IN_ELEMENT = 15;
+        int OPEN_IN_INCOGNITO_WINDOW = 6;
+        int OPEN_IN_OTHER_WINDOW = 7;
+        int OPEN_IN_NEW_WINDOW = 8;
+        int SHOW_INTEREST_IN_ELEMENT = 9;
+        int OPEN_IN_EPHEMERAL_TAB = 10;
+        int COPY_LINK_ADDRESS = 11;
+        int COPY_LINK_TEXT = 12;
+        int SAVE_LINK_AS = 13;
+        int SHARE_LINK = 14;
+        int DIRECT_SHARE_LINK = 15;
+        int READ_LATER = 16;
         // Image Group
-        int LOAD_ORIGINAL_IMAGE = 16;
-        int SAVE_IMAGE = 17;
-        int OPEN_IMAGE = 18;
-        int OPEN_IMAGE_IN_NEW_TAB = 19;
-        int OPEN_IMAGE_IN_EPHEMERAL_TAB = 20;
-        int COPY_IMAGE = 21;
-        int SEARCH_BY_IMAGE = 22;
-        int SEARCH_WITH_GOOGLE_LENS = 23;
-        int SHOP_IMAGE_WITH_GOOGLE_LENS = 24;
-        int SHARE_IMAGE = 25;
-        int DIRECT_SHARE_IMAGE = 26;
+        int LOAD_ORIGINAL_IMAGE = 17;
+        int SAVE_IMAGE = 18;
+        int OPEN_IMAGE = 19;
+        int OPEN_IMAGE_IN_NEW_TAB = 20;
+        int OPEN_IMAGE_IN_EPHEMERAL_TAB = 21;
+        int COPY_IMAGE = 22;
+        int SEARCH_BY_IMAGE = 23;
+        int SEARCH_WITH_GOOGLE_LENS = 24;
+        int SHOP_IMAGE_WITH_GOOGLE_LENS = 25;
+        int SHARE_IMAGE = 26;
+        int DIRECT_SHARE_IMAGE = 27;
         // Message Group
-        int CALL = 27;
-        int SEND_MESSAGE = 28;
-        int ADD_TO_CONTACTS = 29;
-        int COPY = 30;
+        int CALL = 28;
+        int SEND_MESSAGE = 29;
+        int ADD_TO_CONTACTS = 30;
+        int COPY = 31;
         // Video Group
-        int SAVE_VIDEO = 31;
+        int SAVE_VIDEO = 32;
+        int PICTURE_IN_PICTURE = 33;
         // Other
-        int OPEN_IN_CHROME = 32;
+        int OPEN_IN_CHROME = 34;
         // Shared Highlighting options
-        int SHARE_HIGHLIGHT = 33;
-        int REMOVE_HIGHLIGHT = 34;
-        int LEARN_MORE = 35;
+        int SHARE_HIGHLIGHT = 35;
+        int REMOVE_HIGHLIGHT = 36;
+        int LEARN_MORE = 37;
         // Page Group
-        int SAVE_PAGE = 36;
-        int SHARE_PAGE = 37;
-        int PRINT_PAGE = 38;
+        int SAVE_PAGE = 38;
+        int SHARE_PAGE = 39;
+        int PRINT_PAGE = 40;
         // Developer Group
-        int INSPECT_ELEMENT = 39;
+        int VIEW_PAGE_SOURCE = 41;
+        int INSPECT_ELEMENT = 42;
         // ALWAYS UPDATE!
-        int NUM_ENTRIES = 40;
+        int NUM_ENTRIES = 43;
     }
 
     /** Mapping from {@link Item} to the ID found in the ids.xml. */
@@ -140,8 +146,10 @@ class ChromeContextMenuItem {
         R.id.contextmenu_open_in_new_tab, // Item.OPEN_IN_NEW_TAB
         R.id.contextmenu_open_in_new_tab_in_group, // Item.OPEN_IN_NEW_TAB_IN_GROUP
         R.id.contextmenu_open_in_incognito_tab, // Item.OPEN_IN_INCOGNITO_TAB
+        R.id.contextmenu_open_in_incognito_window, // Item.OPEN_IN_INCOGNITO_WINDOW
         R.id.contextmenu_open_in_other_window, // Item.OPEN_IN_OTHER_WINDOW
         R.id.contextmenu_open_in_new_window, // Item.OPEN_IN_NEW_WINDOW
+        R.id.contextmenu_show_interest_in_element, // Item.SHOW_INTEREST_IN_ELEMENT
         R.id.contextmenu_open_in_ephemeral_tab, // Item.OPEN_IN_EPHEMERAL_TAB
         R.id.contextmenu_copy_link_address, // Item.COPY_LINK_ADDRESS
         R.id.contextmenu_copy_link_text, // Item.COPY_LINK_TEXT
@@ -149,7 +157,6 @@ class ChromeContextMenuItem {
         R.id.contextmenu_share_link, // Item.SHARE_LINK
         R.id.contextmenu_direct_share_link, // Item.DIRECT_SHARE_LINK
         R.id.contextmenu_read_later, // Item.READ_LATER
-        R.id.contextmenu_show_interest_in_element, // Item.SHOW_INTEREST_IN_ELEMENT
         R.id.contextmenu_load_original_image, // Item.LOAD_ORIGINAL_IMAGE
         R.id.contextmenu_save_image, // Item.SAVE_IMAGE
         R.id.contextmenu_open_image, // Item.OPEN_IMAGE
@@ -166,6 +173,7 @@ class ChromeContextMenuItem {
         R.id.contextmenu_add_to_contacts, // Item.ADD_TO_CONTACTS
         R.id.contextmenu_copy, // Item.COPY
         R.id.contextmenu_save_video, // Item.SAVE_VIDEO
+        R.id.contextmenu_picture_in_picture, // Item.PICTURE_IN_PICTURE
         R.id.contextmenu_open_in_chrome, // Item.OPEN_IN_CHROME
         R.id.contextmenu_share_highlight, // Item.SHARE_HIGHLIGHT
         R.id.contextmenu_remove_highlight, // Item.REMOVE_HIGHLIGHT
@@ -173,6 +181,7 @@ class ChromeContextMenuItem {
         R.id.contextmenu_save_page, // Item.SAVE_PAGE
         R.id.contextmenu_share_page, // Item.SHARE_PAGE
         R.id.contextmenu_print_page, // Item.PRINT_PAGE
+        R.id.contextmenu_view_page_source, // Item.VIEW_PAGE_SOURCE
         R.id.contextmenu_inspect_element, // Item.INSPECT_ELEMENT
     };
 
@@ -184,8 +193,10 @@ class ChromeContextMenuItem {
         R.string.contextmenu_open_in_new_tab, // Item.OPEN_IN_NEW_TAB:
         R.string.contextmenu_open_in_new_tab_group, // Item.OPEN_IN_NEW_TAB_IN_GROUP
         R.string.contextmenu_open_in_incognito_tab, // Item.OPEN_IN_INCOGNITO_TAB:
+        R.string.contextmenu_open_in_incognito_window, // Item.OPEN_IN_INCOGNITO_WINDOW:
         R.string.contextmenu_open_in_other_window, // Item.OPEN_IN_OTHER_WINDOW:
         R.string.contextmenu_open_in_new_window, // Item.OPEN_IN_NEW_WINDOW:
+        R.string.contextmenu_show_interest_in_element, // Item.SHOW_INTEREST_IN_ELEMENT
         R.string.contextmenu_open_in_ephemeral_tab, // Item.OPEN_IN_EPHEMERAL_TAB:
         R.string.contextmenu_copy_link_address, // Item.COPY_LINK_ADDRESS:
         R.string.contextmenu_copy_link_text, // Item.COPY_LINK_TEXT:
@@ -193,7 +204,6 @@ class ChromeContextMenuItem {
         R.string.contextmenu_share_link, // Item.SHARE_LINK
         0, // Item.DIRECT_SHARE_LINK is not handled by this mapping.
         R.string.contextmenu_read_later, // Item.READ_LATER
-        R.string.contextmenu_show_interest_in_element, // Item.SHOW_INTEREST_IN_ELEMENT
         R.string.contextmenu_load_original_image, // Item.LOAD_ORIGINAL_IMAGE:
         R.string.contextmenu_save_image, // Item.SAVE_IMAGE:
         R.string.contextmenu_open_image, // Item.OPEN_IMAGE:
@@ -210,6 +220,7 @@ class ChromeContextMenuItem {
         R.string.contextmenu_add_to_contacts, // Item.ADD_TO_CONTACTS:
         R.string.contextmenu_copy, // Item.COPY:
         R.string.contextmenu_save_video, // Item.SAVE_VIDEO:
+        0, // Item.PICTURE_IN_PICTURE is not handled by this mapping.
         R.string.menu_open_in_chrome, // Item.OPEN_IN_CHROME:
         R.string.contextmenu_share_highlight, // Item.SHARE_HIGHLIGHT
         R.string.contextmenu_remove_highlight, // Item.REMOVE_HIGHLIGHT
@@ -217,6 +228,7 @@ class ChromeContextMenuItem {
         R.string.contextmenu_save_page, // Item.SAVE_PAGE
         R.string.contextmenu_share_page, // Item.SHARE_PAGE
         R.string.contextmenu_print_page, // Item.PRINT_PAGE
+        R.string.contextmenu_view_page_source, // Item.VIEW_PAGE_SOURCE
         R.string.contextmenu_inspect_element, // Item.INSPECT_ELEMENT
     };
 

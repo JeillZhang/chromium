@@ -72,11 +72,20 @@ class MockAutofillManagerObserver : public AutofillManager::Observer {
               (override));
 
   MOCK_METHOD(void,
-              OnBeforeDidFillAutofillFormData,
+              OnBeforeSelectFieldOptionsDidChange,
               (AutofillManager&, FormGlobalId),
               (override));
   MOCK_METHOD(void,
-              OnAfterDidFillAutofillFormData,
+              OnAfterSelectFieldOptionsDidChange,
+              (AutofillManager&, FormGlobalId),
+              (override));
+
+  MOCK_METHOD(void,
+              OnBeforeDidAutofillForm,
+              (AutofillManager&, FormGlobalId),
+              (override));
+  MOCK_METHOD(void,
+              OnAfterDidAutofillForm,
               (AutofillManager&, FormGlobalId),
               (override));
 
@@ -122,16 +131,20 @@ class MockAutofillManagerObserver : public AutofillManager::Observer {
               (override));
 
   MOCK_METHOD(void,
-              OnFillOrPreviewDataModelForm,
+              OnFillOrPreviewForm,
               (AutofillManager&,
                FormGlobalId,
-               mojom::ActionPersistence action_persistence,
-               (base::span<const FormFieldData* const>),
-               (const FillingPayload& filling_payload)),
+               mojom::ActionPersistence,
+               (const base::flat_set<FieldGlobalId>&),
+               (const FillingPayload&)),
               (override));
 
   MOCK_METHOD(void,
-              OnFormSubmitted,
+              OnBeforeFormSubmitted,
+              (AutofillManager&, const FormData&),
+              (override));
+  MOCK_METHOD(void,
+              OnAfterFormSubmitted,
               (AutofillManager&, const FormData&),
               (override));
 };

@@ -1002,12 +1002,6 @@ inline constexpr char kDesksNamesList[] = "ash.desks.desks_names_list";
 // for the primary user on first sign-in. The guids are stored as lowercase
 // strings.
 inline constexpr char kDesksGuidsList[] = "ash.desks.desks_guids_list";
-// A list containing the lacros profile ID associations for desks in the same
-// order of the desks in the overview desks bar. This is used so that desk <->
-// profile associations can be restored. The profile IDs are logically unsigned
-// integers, but stored as strings since they can (and will) be 64-bits large.
-inline constexpr char kDesksLacrosProfileIdList[] =
-    "ash.desks.desks_lacros_profile_id_list";
 // This list stores the metrics of virtual desks. Like |kDesksNamesList|, this
 // list stores entries in the same order of the desks in the overview desks bar.
 // Values are stored as dictionaries.
@@ -1353,6 +1347,10 @@ inline constexpr char kPowerChargeLimitEnabled[] = "power.charge_limit_enabled";
 // user.
 inline constexpr char kPowerAdaptiveChargingNudgeShown[] =
     "power.adaptive_charging_nudge_shown";
+// Enum (integer) pref which records the user's selected charging strategy
+// (adaptive charging vs. battery charge limit).
+inline constexpr char kPowerOptimizedChargingStrategy[] =
+    "power.optimized_charging_strategy";
 
 // Boolean pref for if ChromeOS battery saver is active.
 inline constexpr char kPowerBatterySaver[] = "power.cros_battery_saver_active";
@@ -1576,6 +1574,10 @@ inline constexpr char kWallpaperTimeOfDayStatus[] =
     "ash.wallpaper_time_of_day.status";
 inline constexpr char kWallpaperTimeOfDayScheduleType[] =
     "ash.wallpaper_time_of_day.schedule_type";
+
+// A string pref storing the path of device wallpaper image file.
+inline constexpr char kDeviceWallpaperImageFilePath[] =
+    "policy.device_wallpaper_image_file_path";
 
 // Boolean pref indicating whether a user has enabled the bluetooth adapter.
 inline constexpr char kUserBluetoothAdapterEnabled[] =
@@ -1994,10 +1996,6 @@ inline constexpr char kFilesAppTrashEnabled[] = "ash.filesapp.trash_enabled";
 // Boolean value for the DeviceLoginScreenWebUILazyLoading device policy.
 inline constexpr char kLoginScreenWebUILazyLoading[] =
     "ash.login.LoginScreenWebUILazyLoading";
-
-// Boolean value for the FloatingWorkspaceV2Enabled policy
-inline constexpr char kFloatingWorkspaceV2Enabled[] =
-    "ash.floating_workspace_v2_enabled";
 
 // Boolean value indicating that post reboot notification should be shown to the
 // user.
@@ -2656,6 +2654,10 @@ inline constexpr char kClassManagementToolsViewScreenEligibilitySetting[] =
 // tools OOBE page.
 inline constexpr char kClassManagementToolsOOBEAccessCountSetting[] =
     "ash.class_management_tools.oobe_access_count_setting";
+
+// A list pref containing Class Tools kiosk receiver codes.
+inline constexpr char kClassManagementToolsKioskReceiverCodes[] =
+    "ash.class_management_tools.kiosk_receiver_codes";
 
 // A boolean pref indicating whether age requirement met for GenAI access for
 // Coral.

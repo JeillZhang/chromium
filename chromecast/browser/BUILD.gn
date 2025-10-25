@@ -233,7 +233,6 @@ cast_source_set("browser") {
     "//chromecast/media/audio:audio_io_thread",
     "//chromecast/media/audio/audio_output_service:constants",
     "//chromecast/media/base:media_codec_support",
-    "//chromecast/media/base:video_plane_controller",
     "//chromecast/media/cdm:cdm_origin_provider",
     "//chromecast/media/common:media_pipeline_backend_manager",
     "//chromecast/media/service",
@@ -265,6 +264,7 @@ cast_source_set("browser") {
     "//components/metrics:ui",
     "//components/network_hints/browser",
     "//components/network_session_configurator/common",
+    "//components/os_crypt/async/browser",
     "//components/policy/core/browser",
     "//components/prefs",
     "//components/proxy_config",
@@ -281,7 +281,6 @@ cast_source_set("browser") {
     "//content/public/browser",
     "//content/public/common",
     "//device/bluetooth",
-    "//gpu",
     "//ipc",
     "//media",
     "//media/gpu:buildflags",
@@ -350,7 +349,7 @@ cast_source_set("browser") {
 
     deps += [
       "//ui/aura",
-      "//ui/views:views",
+      "//ui/views",
     ]
 
     if (!is_fuchsia) {
@@ -541,7 +540,7 @@ cast_source_set("browsertests") {
     "//chromecast/base",
     "//chromecast/base:chromecast_switches",
     "//chromecast/base/metrics",
-    "//chromecast/graphics:graphics",
+    "//chromecast/graphics",
     "//chromecast/mojo",
     "//components/keyed_service/content",
     "//components/prefs",
@@ -598,7 +597,7 @@ cast_source_set("unittests") {
     "//third_party/blink/public/common",
     "//ui/base",
     "//ui/base:test_support",
-    "//ui/events/devices:devices",
+    "//ui/events/devices",
     "//ui/gl:test_support",
   ]
 

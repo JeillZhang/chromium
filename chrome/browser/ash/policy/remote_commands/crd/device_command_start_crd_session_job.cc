@@ -21,6 +21,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/notreached.h"
+#include "base/syslog_logging.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -34,7 +35,7 @@
 #include "chrome/browser/device_identity/device_oauth2_token_service_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/pref_names.h"
-#include "components/policy/policy_constants.h"
+#include "components/crash/core/common/crash_key.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "components/prefs/pref_service.h"
 #include "remoting/host/chromeos/features.h"
@@ -185,6 +186,16 @@ bool IsKioskSession(UserSessionType session_type) {
          session_type == UserSessionType::MANUALLY_LAUNCHED_KIOSK_SESSION;
 }
 
+std::unique_ptr<crash_reporter::ScopedCrashKeyString> CreateCrdCrashKey(
+    CrdSessionType crd_session_type,
+    UserSessionType user_session_type) {
+  static crash_reporter::CrashKeyString<72> enterprise_crd_crash_key(
+      kCrdCrashKeyName);
+  return std::make_unique<crash_reporter::ScopedCrashKeyString>(
+      &enterprise_crd_crash_key,
+      GetCrdCrashKeyValue(crd_session_type, user_session_type));
+}
+
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -212,8 +223,8 @@ DeviceCommandStartCrdSessionJob::GetType() const {
 
 bool DeviceCommandStartCrdSessionJob::ParseCommandPayload(
     const std::string& command_payload) {
-  std::optional<base::Value::Dict> root =
-      base::JSONReader::ReadDict(command_payload);
+  std::optional<base::Value::Dict> root = base::JSONReader::ReadDict(
+      command_payload, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   if (!root) {
     LOG(WARNING) << "Rejecting remote command with invalid payload: "
                  << std::quoted(command_payload);
@@ -244,7 +255,7 @@ bool DeviceCommandStartCrdSessionJob::ParseCommandPayload(
 
 void DeviceCommandStartCrdSessionJob::RunImpl(
     CallbackWithResult result_callback) {
-  CRD_LOG(INFO) << "Running start CRD session command";
+  SYSLOG(INFO) << "Running start CRD session command";
 
   if (delegate_->HasActiveSession()) {
     CRD_VLOG(1) << "Terminating active session";
@@ -271,6 +282,9 @@ void DeviceCommandStartCrdSessionJob::RunImpl(
     FinishWithNotIdleError();
     return;
   }
+
+  crd_crash_key_ =
+      CreateCrdCrashKey(GetCrdSessionType(), GetCurrentUserSessionType());
 
   // First perform managed network check,
   CheckManagedNetworkASync(
@@ -332,7 +346,7 @@ void DeviceCommandStartCrdSessionJob::StartCrdHostAndGetCode(
 
 void DeviceCommandStartCrdSessionJob::FinishWithSuccess(
     const std::string& access_code) {
-  CRD_LOG(INFO) << "Successfully received CRD access code";
+  SYSLOG(INFO) << "Successfully received CRD access code";
   if (!result_callback_) {
     return;  // Task was terminated.
   }
@@ -349,9 +363,9 @@ void DeviceCommandStartCrdSessionJob::FinishWithError(
     const ExtendedStartCrdSessionResultCode result_code,
     const std::string& message) {
   CHECK_NE(result_code, ExtendedStartCrdSessionResultCode::kSuccess);
-  CRD_LOG(INFO) << "Not starting CRD session because of error (code "
-                << static_cast<int>(result_code) << ", message '" << message
-                << "')";
+  SYSLOG(INFO) << "Not starting CRD session because of error (code "
+               << static_cast<int>(result_code) << ", message '" << message
+               << "')";
   if (!result_callback_) {
     return;  // Task was terminated.
   }
@@ -491,8 +505,20 @@ bool DeviceCommandStartCrdSessionJob::ShouldAutoAcceptSession(
     return false;
   }
 
-  return is_in_managed_environment && ShouldShowConfirmationDialog() &&
-         GetDeviceIdleTime() <= kAutoApproveDeviceIdlenessCutoff;
+  if (!is_in_managed_environment || !ShouldShowConfirmationDialog()) {
+    return false;
+  }
+
+  // This enables shared unattended Chrome Remote Desktop (CRD) sessions to
+  // auto-launched managed guest sessions. Specifically, this is for scenarios
+  // where there is an active managed guest session, and the device has been
+  // idle since the last reboot.
+  if (GetCurrentUserSessionType() == UserSessionType::MANAGED_GUEST_SESSION &&
+      IsDeviceIdleSinceReboot()) {
+    return true;
+  }
+
+  return GetDeviceIdleTime() <= kAutoApproveDeviceIdlenessCutoff;
 }
 
 ErrorCallback DeviceCommandStartCrdSessionJob::GetErrorCallback() {

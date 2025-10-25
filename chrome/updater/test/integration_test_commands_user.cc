@@ -15,6 +15,7 @@
 #include "base/values.h"
 #include "base/version.h"
 #include "build/build_config.h"
+#include "chrome/updater/external_constants.h"
 #include "chrome/updater/test/integration_test_commands.h"
 #include "chrome/updater/test/integration_tests_impl.h"
 #include "chrome/updater/test/server.h"
@@ -86,12 +87,16 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
   void EnterTestMode(const GURL& update_url,
                      const GURL& crash_upload_url,
                      const GURL& app_logo_url,
+                     const GURL& event_logging_url,
                      base::TimeDelta idle_timeout,
                      base::TimeDelta server_keep_alive_time,
-                     base::TimeDelta ceca_connection_timeout) const override {
-    updater::test::EnterTestMode(update_url, crash_upload_url, app_logo_url,
-                                 idle_timeout, server_keep_alive_time,
-                                 ceca_connection_timeout);
+                     base::TimeDelta ceca_connection_timeout,
+                     std::optional<EventLoggingPermissionProvider>
+                         event_logging_permission_provider) const override {
+    updater::test::EnterTestMode(
+        update_url, crash_upload_url, app_logo_url, event_logging_url,
+        idle_timeout, server_keep_alive_time, ceca_connection_timeout,
+        std::move(event_logging_permission_provider));
   }
 
   void ExitTestMode() const override {
@@ -160,11 +165,12 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
                             bool do_fault_injection,
                             bool skip_download,
                             const base::Version& updater_version,
-                            const std::string& event_regex) const override {
+                            const std::string& event_regex,
+                            bool use_xz) const override {
     updater::test::ExpectUpdateSequence(
         updater_scope_, test_server, app_id, install_data_index, priority,
         from_version, to_version, do_fault_injection, skip_download,
-        updater_version);
+        updater_version, event_regex, use_xz);
   }
 
   void ExpectUpdateSequenceBadHash(
@@ -291,6 +297,11 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
     updater::test::RunServer(updater_scope_, exit_code, internal);
   }
 
+  void RunUpdateApps(int exit_code,
+                     const base::Version& version) const override {
+    updater::test::RunUpdateApps(updater_scope_, exit_code, version);
+  }
+
   void RegisterApp(const RegistrationRequest& registration) const override {
     updater::test::RegisterApp(updater_scope_, registration);
   }
@@ -384,6 +395,22 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
 
   void RunHandoff(const std::string& app_id) const override {
     updater::test::RunHandoff(updater_scope_, app_id);
+  }
+
+  void InstallScheduledTask(bool run_elevated,
+                            const std::string& task_name,
+                            bool use_task_subfolders) const override {
+    ADD_FAILURE() << "This test function is only called for the system scope";
+  }
+  void IsScheduledTaskRegistered(bool run_elevated,
+                                 const std::string& task_name,
+                                 bool use_task_subfolders) const override {
+    ADD_FAILURE() << "This test function is only called for the system scope";
+  }
+  void DeleteScheduledTask(bool run_elevated,
+                           const std::string& task_name,
+                           bool use_task_subfolders) const override {
+    ADD_FAILURE() << "This test function is only called for the system scope";
   }
 #endif  // BUILDFLAG(IS_WIN)
 
@@ -504,17 +531,19 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
 
   void RunMockOfflineMetaInstall(const std::string& app_id,
                                  const base::Version& version,
+                                 const std::string& tag,
                                  const base::FilePath& installer_path,
                                  const std::string& arguments,
                                  bool is_silent_install,
                                  const std::string& platform,
-                                 int string_resource_id_to_find,
-                                 const std::string& language,
+                                 const std::string& installer_text,
+                                 const bool always_launch_cmd,
+                                 const int expected_exit_code,
                                  bool expect_success) override {
     updater::test::RunMockOfflineMetaInstall(
-        updater_scope_, app_id, version, installer_path, arguments,
-        is_silent_install, platform, string_resource_id_to_find, language,
-        expect_success);
+        updater_scope_, app_id, version, tag, installer_path, arguments,
+        is_silent_install, platform, installer_text, always_launch_cmd,
+        expected_exit_code, expect_success);
   }
 
   void DMPushEnrollmentToken(const std::string& enrollment_token) override {
@@ -531,14 +560,6 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
     updater::test::InstallEnterpriseCompanionApp();
   }
 
-  void InstallBrokenEnterpriseCompanionApp() override {
-    updater::test::InstallBrokenEnterpriseCompanionApp();
-  }
-
-  void UninstallBrokenEnterpriseCompanionApp() override {
-    updater::test::UninstallBrokenEnterpriseCompanionApp();
-  }
-
   void InstallEnterpriseCompanionAppOverrides(
       const base::Value::Dict& external_overrides) override {
     updater::test::InstallEnterpriseCompanionAppOverrides(external_overrides);
@@ -550,6 +571,16 @@ class IntegrationTestCommandsUser : public IntegrationTestCommands {
 
   void UninstallEnterpriseCompanionApp() override {
     updater::test::UninstallEnterpriseCompanionApp();
+  }
+
+  void SetAppAllowsUsageStats(const std::string& identifier,
+                              bool allowed) override {
+    updater::test::SetAppAllowsUsageStats(UpdaterScope::kUser, identifier,
+                                          allowed);
+  }
+
+  void ClearAppAllowsUsageStats(const std::string& identifier) override {
+    updater::test::ClearAppAllowsUsageStats(UpdaterScope::kUser, identifier);
   }
 
  private:

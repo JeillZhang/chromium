@@ -18,6 +18,7 @@
 #include "base/unguessable_token.h"
 #include "content/browser/browser_interface_broker_impl.h"
 #include "content/browser/buckets/bucket_context.h"
+#include "content/browser/renderer_host/back_forward_cache_metrics.h"
 #include "content/browser/renderer_host/code_cache_host_impl.h"
 #include "content/browser/renderer_host/policy_container_host.h"
 #include "content/common/content_export.h"
@@ -41,6 +42,7 @@
 #include "third_party/blink/public/mojom/broadcastchannel/broadcast_channel.mojom.h"
 #include "third_party/blink/public/mojom/buckets/bucket_manager_host.mojom.h"
 #include "third_party/blink/public/mojom/devtools/devtools_agent.mojom.h"
+#include "third_party/blink/public/mojom/fingerprinting_protection/canvas_interventions.mojom.h"
 #include "third_party/blink/public/mojom/loader/code_cache.mojom.h"
 #include "third_party/blink/public/mojom/loader/fetch_client_settings_object.mojom-forward.h"
 #include "third_party/blink/public/mojom/payments/payment_app.mojom-forward.h"
@@ -126,6 +128,8 @@ class CONTENT_EXPORT SharedWorkerHost : public blink::mojom::SharedWorkerHost,
 
   void CreateWebTransportConnector(
       mojo::PendingReceiver<blink::mojom::WebTransportConnector> receiver);
+  void CreateWebSocketConnector(
+      mojo::PendingReceiver<blink::mojom::WebSocketConnector> receiver);
   void BindCacheStorage(
       mojo::PendingReceiver<blink::mojom::CacheStorage> receiver);
   void CreateBroadcastChannelProvider(
@@ -160,6 +164,13 @@ class CONTENT_EXPORT SharedWorkerHost : public blink::mojom::SharedWorkerHost,
 
   // Returns true if this worker is connected to at least one client.
   bool HasClients() const;
+
+  // Returns true if the worker has a client with `render_frame_host`.
+  bool ContainsClient(const RenderFrameHostImpl* render_frame_host) const;
+
+  // Evicts other BFCached clients and returns true if `render_frame_host` is
+  // the last active client.
+  bool EvictBFCachedClientsIfLastActive(RenderFrameHostImpl* render_frame_host);
 
   // Returns the frame ids of this worker's clients.
   std::vector<GlobalRenderFrameHostId> GetRenderFrameIDsForWorker();
@@ -243,6 +254,14 @@ class CONTENT_EXPORT SharedWorkerHost : public blink::mojom::SharedWorkerHost,
       blink::mojom::BucketHost::GetDirectoryCallback callback) override;
   storage::BucketClientInfo GetBucketClientInfo() const override;
 
+  // Canvas noise tokens can be updated through user bypass or removing browsing
+  // data. A new token value will be regenerated. This function ensures this new
+  // token is updated on the renderer.
+  void UpdateCanvasNoiseToken();
+
+  // Helper to get or create a new canvas noise token for this worker.
+  std::optional<blink::NoiseToken> GetOrCreateCanvasNoiseToken();
+
  private:
   friend class SharedWorkerHostTest;
 
@@ -275,6 +294,8 @@ class CONTENT_EXPORT SharedWorkerHost : public blink::mojom::SharedWorkerHost,
       mojo::PendingRemote<blink::mojom::DevToolsAgent>,
       mojo::PendingReceiver<blink::mojom::DevToolsAgentHost>) override;
   void OnScriptLoadFailed(const std::string& error_message) override;
+  void OnReportException(
+      blink::mojom::SharedWorkerExceptionDetailsPtr details) override;
   void OnFeatureUsed(blink::mojom::WebFeature feature) override;
 
   // RenderProcessHostObserver methods:
@@ -369,6 +390,12 @@ class CONTENT_EXPORT SharedWorkerHost : public blink::mojom::SharedWorkerHost,
   std::unique_ptr<CrossOriginEmbedderPolicyReporter> coep_reporter_;
 
   std::unique_ptr<DocumentIsolationPolicyReporter> dip_reporter_;
+
+  // Remote to handle updates of the canvas noise token to its respective
+  // shared worker. This is bounded when the SharedWorker is started, and
+  // unbound when this class is destroyed.
+  mojo::Remote<blink::mojom::CanvasNoiseTokenUpdater>
+      canvas_noise_token_updater_;
 
   base::WeakPtrFactory<SharedWorkerHost> weak_factory_{this};
 };

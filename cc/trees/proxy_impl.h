@@ -25,7 +25,7 @@
 class GURL;
 
 namespace viz {
-struct FrameTimingDetails;
+class FrameTimingDetails;
 class LocalSurfaceId;
 }
 
@@ -94,18 +94,13 @@ class CC_EXPORT ProxyImpl : public LayerTreeHostImplClient,
                                  std::unique_ptr<CommitState> commit_state,
                                  const ThreadUnsafeCommitState* unsafe_state,
                                  base::TimeTicks main_thread_start_time,
-                                 const viz::BeginFrameArgs& commit_args,
                                  bool scroll_and_viewport_changes_synced,
                                  CommitTimestamps* commit_timestamps,
                                  bool commit_timeout = false);
   void QueueImageDecodeOnImpl(int request_id,
                               std::unique_ptr<DrawImage> image,
                               bool speculative);
-  bool SpeculativeDecodeRequestInFlight() const;
-  void SetSpeculativeDecodeRequestInFlight(bool value);
   void SetSourceURL(ukm::SourceId source_id, const GURL& url);
-  void SetUkmSmoothnessDestination(
-      base::WritableSharedMemoryMapping ukm_smoothness_data);
   void SetUkmDroppedFramesDestination(
       base::WritableSharedMemoryMapping ukm_dropped_frames_data);
   void SetRenderFrameObserver(
@@ -247,9 +242,6 @@ class CC_EXPORT ProxyImpl : public LayerTreeHostImplClient,
   bool next_frame_is_newly_committed_frame_;
 
   bool inside_draw_;
-
-  // Only one speculative decode request may be in flight at a time.
-  std::atomic<bool> speculative_decode_request_in_flight_{false};
 
   raw_ptr<TaskRunnerProvider> task_runner_provider_;
 

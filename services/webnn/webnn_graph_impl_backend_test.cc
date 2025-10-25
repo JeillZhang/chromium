@@ -2,17 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include <stdint.h>
 
 #include <cmath>
 #include <concepts>
 #include <type_traits>
 
+#include "base/compiler_specific.h"
 #include "base/containers/fixed_flat_set.h"
 #include "base/containers/flat_map.h"
 #include "base/notreached.h"
@@ -36,6 +32,7 @@
 #include "services/webnn/public/mojom/webnn_tensor.mojom.h"
 #include "services/webnn/webnn_context_impl.h"
 #include "services/webnn/webnn_context_provider_impl.h"
+#include "services/webnn/webnn_test_environment.h"
 #include "services/webnn/webnn_test_utils.h"
 #include "services/webnn/webnn_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -110,7 +107,7 @@ TensorRemoteAndHandle CreateTensorWithValues(
 template <typename T>
 std::vector<T> BigBufferToVector(const mojo_base::BigBuffer& big_buffer) {
   std::vector<T> data(big_buffer.size() / sizeof(T));
-  memcpy(data.data(), big_buffer.data(), big_buffer.size());
+  UNSAFE_TODO(memcpy(data.data(), big_buffer.data(), big_buffer.size()));
   return data;
 }
 
@@ -310,6 +307,7 @@ class WebNNGraphImplBackendTest : public dml::TestBase {
   base::test::ScopedFeatureList scoped_feature_list_;
   scoped_refptr<dml::Adapter> adapter_;
 
+  WebNNTestEnvironment webnn_test_environment_;
   mojo::Remote<mojom::WebNNContextProvider> provider_remote_;
   mojo::Remote<mojom::WebNNContext> webnn_context_;
 };
@@ -363,13 +361,13 @@ void WebNNGraphImplBackendTest::SetUp() {
        {"BuildGemmWithReshapedConstantOperand", DML_FEATURE_LEVEL_4_0},
        // DML_GEMM_OPERATOR_DESC support for 2 dimensions was introduced in
        // DML_FEATURE_LEVEL_4_0.
-       {"BuildMaxPooingAsThirdOperator", DML_FEATURE_LEVEL_4_0},
+       {"BuildMaxPoolingAsThirdOperator", DML_FEATURE_LEVEL_4_0},
        // DML_GEMM_OPERATOR_DESC support for 2 dimensions was introduced in
        // DML_FEATURE_LEVEL_4_0.
-       {"BuildMaxPooingAsSecondOperator", DML_FEATURE_LEVEL_4_0},
+       {"BuildMaxPoolingAsSecondOperator", DML_FEATURE_LEVEL_4_0},
        // DML_GEMM_OPERATOR_DESC support for 2 dimensions was introduced in
        // DML_FEATURE_LEVEL_4_0.
-       {"BuildMaxPooingAsFirstOperator", DML_FEATURE_LEVEL_4_0}});
+       {"BuildMaxPoolingAsFirstOperator", DML_FEATURE_LEVEL_4_0}});
   auto it = kRequiredFeatureLevels.find(
       ::testing::UnitTest::GetInstance()->current_test_info()->name());
   if (it != kRequiredFeatureLevels.end()) {
@@ -400,6 +398,7 @@ class WebNNGraphImplBackendTest : public testing::Test {
   base::test::ScopedFeatureList scoped_feature_list_;
   base::test::TaskEnvironment task_environment_;
 
+  WebNNTestEnvironment webnn_test_environment_;
   mojo::Remote<mojom::WebNNContextProvider> provider_remote_;
   mojo::Remote<mojom::WebNNContext> webnn_context_;
 };
@@ -447,6 +446,7 @@ class WebNNGraphImplBackendTest : public testing::Test {
   base::test::ScopedFeatureList scoped_feature_list_;
   base::test::TaskEnvironment task_environment_;
 
+  WebNNTestEnvironment webnn_test_environment_;
   mojo::Remote<mojom::WebNNContextProvider> provider_remote_;
   mojo::Remote<mojom::WebNNContext> webnn_context_;
 };
@@ -454,12 +454,48 @@ class WebNNGraphImplBackendTest : public testing::Test {
 void WebNNGraphImplBackendTest::SetUp() {
   const std::string_view current_test_name =
       ::testing::UnitTest::GetInstance()->current_test_info()->name();
+  // TODO: https://crbug.com/394119734 - Enable the commented-out tests after
+  // fixing the bugs in the GPU delegate causing them to fail.
   static auto kSupportedTests = base::MakeFixedFlatSet<std::string_view>({
+      "BuildAddWithReshapedConstantOperand",
+      // "BuildAndComputeAddAndMulWithOnlyConstantInputs",
+      // "BuildAndComputeAddWithOnlyConstantInputs",
       "BuildAndComputeConcatWithConstants",
+      "BuildAndComputeGraphWithReshapeAsIntermediateNode",
+      "BuildAndComputeGraphWithReshapeAsLastNode",
+      "BuildAndComputeGraphWithSplitAndReshape",
+      "BuildAndComputeGraphWithTransposeAndRelu",
+      "BuildAndComputeGraphWithTransposeAndTwoOutputs",
+      "BuildAndComputeGraphWithTransposeAndTwoReshape",
+      "BuildAndComputeGraphWithTwoOutputs", "BuildAndComputeGraphWithTwoRelu",
+      "BuildAndComputeGraphWithTwoReshape",
+      "BuildAndComputeGraphWithTwoTranspose",
+      "BuildAndComputeMultipleOperatorGemm",
+      // "BuildAndComputeReluWithOnlyConstantInput",
+      "BuildAndComputeReshapeConcatAndClamp",
+      "BuildAndComputeSingleOperatorClamp",
       "BuildAndComputeSingleOperatorGruCell",
       "BuildAndComputeSingleOperatorGru",
-      "BuildAndComputeSingleOperatorLstmCell",
-      "BuildAndComputeSingleOperatorLstm",
+      "BuildAndComputeSingleOperatorHardSigmoid",
+      "BuildAndComputeSingleOperatorHardSwish",
+      // "BuildAndComputeSingleOperatorLstmCell",
+      // "BuildAndComputeSingleOperatorLstm",
+      // "BuildAndComputeSingleOperatorResample2d",
+      "BuildAndComputeSingleOperatorTanh",
+      "BuildGemmWithReshapedConstantOperand", "BuildMaxPoolingAsFirstOperator",
+      "BuildMaxPoolingAsSecondOperator", "BuildMaxPoolingAsThirdOperator",
+      "BuildMultipleConstantsAppendingInputs",
+      "BuildMultipleInputsAppendingConstants",
+      "BuildSingleOperatorLayerNormalization",
+      "BuildOneInputAndOneConstantOperand",
+      // "FuseStandaloneActivationIntoBatchNormalization",
+      // "FuseStandaloneActivationIntoConv2d",
+      "FuseStandaloneActivationIntoElementWiseBinaryAdd",
+      "FuseStandaloneActivationIntoGemm",
+      // "FuseStandaloneActivationIntoInstanceNormalization",
+      "FuseStandaloneActivationIntoLayerNormalization",
+      "FuseStandaloneOperationsIntoMatmul",
+      // "MultipleOutputsCanNotFuseStandaloneActivation",
   });
   if (!kSupportedTests.contains(current_test_name)) {
     GTEST_SKIP() << "Skipping test because the operator is not yet supported.";
@@ -470,7 +506,7 @@ void WebNNGraphImplBackendTest::SetUp() {
 #endif  // BUILDFLAG(WEBNN_USE_TFLITE) && !BUILDFLAG(IS_WIN)
 
 void WebNNGraphImplBackendTest::SetUpBase() {
-  WebNNContextProviderImpl::CreateForTesting(
+  webnn_test_environment_.BindWebNNContextProvider(
       provider_remote_.BindNewPipeAndPassReceiver());
 
   // Create the ContextImpl through context provider.
@@ -493,8 +529,9 @@ void WebNNGraphImplBackendTest::SetUpBase() {
 
 void WebNNGraphImplBackendTest::TearDown() {
   webnn_context_.reset();
-  provider_remote_.reset();
   EXPECT_TRUE(base::test::RunUntil([&]() { return true; }));
+  // Give WebNNContext a chance to run disconnect.
+  provider_remote_.reset();
 }
 
 mojo::AssociatedRemote<mojom::WebNNGraphBuilder>
@@ -3249,7 +3286,7 @@ struct Pool2dAttributes {
 //            relu
 //             |
 //          max pooling
-TEST_F(WebNNGraphImplBackendTest, BuildMaxPooingAsThirdOperator) {
+TEST_F(WebNNGraphImplBackendTest, BuildMaxPoolingAsThirdOperator) {
   // Build the mojom graph info.
   mojo::AssociatedRemote<mojom::WebNNGraphBuilder> remote =
       BindNewGraphBuilderRemote();
@@ -3297,7 +3334,7 @@ TEST_F(WebNNGraphImplBackendTest, BuildMaxPooingAsThirdOperator) {
 //          max pooling
 //             |
 //            relu
-TEST_F(WebNNGraphImplBackendTest, BuildMaxPooingAsSecondOperator) {
+TEST_F(WebNNGraphImplBackendTest, BuildMaxPoolingAsSecondOperator) {
   // Build the mojom graph info.
   mojo::AssociatedRemote<mojom::WebNNGraphBuilder> remote =
       BindNewGraphBuilderRemote();
@@ -3346,7 +3383,7 @@ TEST_F(WebNNGraphImplBackendTest, BuildMaxPooingAsSecondOperator) {
 //               add
 //                |
 //               relu
-TEST_F(WebNNGraphImplBackendTest, BuildMaxPooingAsFirstOperator) {
+TEST_F(WebNNGraphImplBackendTest, BuildMaxPoolingAsFirstOperator) {
   // Build the mojom graph info.
   mojo::AssociatedRemote<mojom::WebNNGraphBuilder> remote =
       BindNewGraphBuilderRemote();

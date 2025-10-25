@@ -14,7 +14,6 @@
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/gfx/color_palette.h"
-#include "ui/gfx/image/image_skia.h"
 #include "ui/views/animation/ink_drop_host.h"
 #include "ui/views/controls/image_view.h"
 
@@ -50,6 +49,10 @@ enum class PageActionPageEvent {
   kMaxValue = kMultipleActionsShown,
 };
 
+// WARNING WARNING WARNING WARNING
+// This class is deprecated in favor of `PageActionView`. Please see
+// the `README.md` for details on integrating with the new page actions
+// framework. Reach out to alsan@ for help.
 // Represents an inbuilt (as opposed to an extension) page action icon that
 // shows a bubble when clicked.
 class PageActionIconView : public IconLabelBubbleView {

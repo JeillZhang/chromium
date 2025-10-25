@@ -12,6 +12,7 @@ import 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
 import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 import 'chrome://resources/cr_elements/cr_shared_style.css.js';
 import 'chrome://resources/cr_elements/cr_shared_vars.css.js';
+import '../settings_page/settings_subpage.js';
 import '../settings_shared.css.js';
 import '../controls/settings_toggle_button.js';
 import './credit_card_edit_dialog.js';
@@ -20,6 +21,7 @@ import '../simple_confirmation_dialog.js';
 import './passwords_shared.css.js';
 import './payments_list.js';
 import './virtual_card_unenroll_dialog.js';
+import './your_saved_info_shared.css.js';
 
 import type {CrActionMenuElement} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
 import {AnchorAlignment} from 'chrome://resources/cr_elements/cr_action_menu/cr_action_menu.js';
@@ -33,6 +35,7 @@ import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bu
 import type {SettingsToggleButtonElement} from '../controls/settings_toggle_button.js';
 import {loadTimeData} from '../i18n_setup.js';
 import {CvcDeletionUserAction, MetricsBrowserProxyImpl, PrivacyElementInteractions} from '../metrics_browser_proxy.js';
+import {SettingsViewMixin} from '../settings_page/settings_view_mixin.js';
 import type {SettingsSimpleConfirmationDialogElement} from '../simple_confirmation_dialog.js';
 
 import type {PersonalDataChangedListener} from './autofill_manager_proxy.js';
@@ -59,12 +62,17 @@ declare global {
   }
 }
 
+// TODO(crbug.com/447113309): This file along with all of its dependencies
+// should be moved to .../settings/your_saved_info_page directory after
+// full release of the `Your Saved Info` page.
+
 export interface SettingsPaymentsSectionElement {
   $: {
     autofillCreditCardToggle: SettingsToggleButtonElement,
     canMakePaymentToggle: SettingsToggleButtonElement,
     creditCardSharedMenu: CrActionMenuElement,
     ibanSharedActionMenu: CrLazyRenderElement<CrActionMenuElement>,
+    manageLink: HTMLElement,
     mandatoryAuthToggle: SettingsToggleButtonElement,
     menuEditCreditCard: HTMLElement,
     menuRemoveCreditCard: HTMLElement,
@@ -74,7 +82,8 @@ export interface SettingsPaymentsSectionElement {
   };
 }
 
-const SettingsPaymentsSectionElementBase = I18nMixin(PolymerElement);
+const SettingsPaymentsSectionElementBase =
+    SettingsViewMixin(I18nMixin(PolymerElement));
 
 export class SettingsPaymentsSectionElement extends
     SettingsPaymentsSectionElementBase {
@@ -206,6 +215,16 @@ export class SettingsPaymentsSectionElement extends
           return loadTimeData.getString('autofillPayOverTimeSettingsSublabel');
         },
       },
+
+      /**
+       * Indicates if this element is used as a Your saved info subpage. Causes
+       * slight adjustments like different title, no page shadow, cards being
+       * visible.
+       */
+      isYourSavedInfoSubpage_: {
+        type: Boolean,
+        value: () => loadTimeData.getBoolean('enableYourSavedInfoSettingsPage'),
+      },
     };
   }
 
@@ -234,6 +253,7 @@ export class SettingsPaymentsSectionElement extends
   declare private cardBenefitsSublabel_: string;
   declare private shouldShowPayOverTimeSettings_: boolean;
   declare private payOverTimeSublabel_: string;
+  declare private isYourSavedInfoSubpage_: boolean;
 
   override connectedCallback() {
     super.connectedCallback();
@@ -241,12 +261,12 @@ export class SettingsPaymentsSectionElement extends
     // Create listener function.
     const setCreditCardsListener =
         (cardList: chrome.autofillPrivate.CreditCardEntry[]) => {
-          this.creditCards = cardList;
+          this.setCreditCards_(cardList);
         };
 
     const setPersonalDataListener: PersonalDataChangedListener =
         (_addressList, cardList, ibanList, payOverTimeIssuerList) => {
-          this.creditCards = cardList;
+          this.setCreditCards_(cardList);
           this.ibans = ibanList;
           if (this.shouldShowPayOverTimeSettings_) {
             this.payOverTimeIssuers = payOverTimeIssuerList;
@@ -281,6 +301,15 @@ export class SettingsPaymentsSectionElement extends
 
     // Record that the user opened the payments settings.
     chrome.metricsPrivate.recordUserAction('AutofillCreditCardsViewed');
+
+    // Measure clicks on the 'Google Account' link for managing payment methods.
+    const manageAccountAnchor = this.$.manageLink.querySelector('a');
+    if (manageAccountAnchor !== null) {
+      manageAccountAnchor.addEventListener('click', () => {
+        MetricsBrowserProxyImpl.getInstance().recordAction(
+            'Autofill.PaymentMethodsSettingsPage.ManagePaymentMethodsLinkClicked');
+      });
+    }
   }
 
   override disconnectedCallback() {
@@ -290,6 +319,28 @@ export class SettingsPaymentsSectionElement extends
     this.paymentsManager_.removePersonalDataManagerListener(
         this.setPersonalDataListener_);
     this.setPersonalDataListener_ = null;
+  }
+
+  private getMultiCardClass_(): string {
+    return this.isYourSavedInfoSubpage_ ? 'multi-card' : '';
+  }
+
+  private getPageTitleLabel_(): string {
+    return this.i18n(
+      this.isYourSavedInfoSubpage_ ? 'paymentsTitle' : 'creditCards');
+  }
+
+  private setCreditCards_(cardList: chrome.autofillPrivate.CreditCardEntry[]) {
+    this.creditCards = cardList;
+
+    // To align with Android, only record this histogram when the pref is
+    // enabled.
+    const autofillEnabledPref = this.get('prefs.autofill.credit_card_enabled');
+    if (!!autofillEnabledPref && autofillEnabledPref.value) {
+      MetricsBrowserProxyImpl.getInstance().recordBooleanHistogram(
+          'Autofill.PaymentMethodsSettingsPage.CardsViewedWithoutExistingCards',
+          this.creditCards.length === 0);
+    }
   }
 
   /**
@@ -342,6 +393,13 @@ export class SettingsPaymentsSectionElement extends
    */
   private onAddCreditCardClick_(e: Event) {
     e.preventDefault();
+
+    MetricsBrowserProxyImpl.getInstance().recordBooleanHistogram(
+        'Autofill.PaymentMethodsSettingsPage.AddCardClicked2', true);
+    MetricsBrowserProxyImpl.getInstance().recordBooleanHistogram(
+        'Autofill.PaymentMethodsSettingsPage.AddCardClickedWithoutExistingCards2',
+        this.creditCards.length === 0);
+
     const date = new Date();  // Default to current month/year.
     const expirationMonth = date.getMonth() + 1;  // Months are 0 based.
     this.activeCreditCard_ = {
@@ -676,6 +734,11 @@ export class SettingsPaymentsSectionElement extends
   private onPayOverTimeSublabelLinkClick_() {
     OpenWindowProxyImpl.getInstance().openUrl(
         loadTimeData.getString('autofillPayOverTimeSettingsLearnMoreUrl'));
+  }
+
+  // SettingsViewMixin implementation.
+  override focusBackButton() {
+    this.shadowRoot!.querySelector('settings-subpage')!.focusBackButton();
   }
 }
 

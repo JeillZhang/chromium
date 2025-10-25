@@ -96,7 +96,13 @@ bool IsValidRangeAndMarkable(const RangeInFlatTree* range) {
   Node* common_node = ephemeral_range.CommonAncestorContainer();
 
   LayoutObject* object = common_node->GetLayoutObject();
-  CHECK(object);
+  while (!object) {
+    common_node = FlatTreeTraversal::Parent(*common_node);
+    // We should exit this loop before this is false (i.e. there must be at
+    // least one ancestor node with a LayoutObject).
+    CHECK(common_node);
+    object = common_node->GetLayoutObject();
+  }
 
   PhysicalRect absolute_bounding_box =
       object->AbsoluteBoundingBoxRectForScrollIntoView();
@@ -123,13 +129,14 @@ bool IsValidRangeAndMarkable(const RangeInFlatTree* range) {
     // FindBuffer does find this text (as typically overflow: hidden can still
     // be programmatically scrolled).
     if (box->HasNonVisibleOverflow()) {
+      PhysicalSize size = box->StitchedSize();
       if (box->StyleRef().OverflowX() != EOverflow::kVisible &&
-          box->Size().width.RawValue() <= 0) {
+          size.width.RawValue() <= 0) {
         return false;
       }
 
       if (box->StyleRef().OverflowY() != EOverflow::kVisible &&
-          box->Size().height.RawValue() <= 0) {
+          size.height.RawValue() <= 0) {
         return false;
       }
     }
@@ -270,7 +277,7 @@ void AnnotationAgentImpl::Bind(
 
   // Breaking the mojo connection will cause this agent to remove itself from
   // the container.
-  receiver_.set_disconnect_handler(WTF::BindOnce(
+  receiver_.set_disconnect_handler(BindOnce(
       [](WeakPersistent<AnnotationAgentImpl> agent) {
         if (!agent || !agent->OwningContainer()) {
           return;
@@ -315,8 +322,8 @@ void AnnotationAgentImpl::Attach(AnnotationAgentContainerImpl::PassKey) {
 
   needs_attachment_ = false;
   selector_->FindRange(*search_range, AnnotationSelector::kSynchronous,
-                       WTF::BindOnce(&AnnotationAgentImpl::DidFinishFindRange,
-                                     WrapWeakPersistent(this)));
+                       BindOnce(&AnnotationAgentImpl::DidFinishFindRange,
+                                WrapWeakPersistent(this)));
 }
 
 bool AnnotationAgentImpl::IsAttached() const {
@@ -382,13 +389,20 @@ void AnnotationAgentImpl::ScrollIntoView(bool applies_focus) const {
   document.EnsurePaintLocationDataValidForNode(
       &first_node, DocumentUpdateReason::kFindInPage);
 
+  Node* first_node_with_layout_object = nullptr;
+  for (Node& node : range.Nodes()) {
+    if (node.GetLayoutObject()) {
+      first_node_with_layout_object = &node;
+    }
+  }
+
   // TODO(bokan): Text can be attached without having a LayoutObject since it
   // may be inside an unexpanded <details> element or inside a
   // `content-visibility: auto` subtree. In those cases we should make sure we
   // expand/make-visible the node. This is implemented in TextFragmentAnchor
   // but that doesn't cover all cases we can get here so we should migrate that
   // code here.
-  if (!first_node.GetLayoutObject()) {
+  if (!first_node_with_layout_object) {
     return;
   }
 
@@ -409,7 +423,7 @@ void AnnotationAgentImpl::ScrollIntoView(bool applies_focus) const {
     // relying on keyboard navigation. If the node is not focusable, clear focus
     // so the next "Tab" press will start the search to find the next focusable
     // element from this element.
-    auto* element = first_node.parentElement();
+    auto* element = first_node_with_layout_object->parentElement();
     if (element && element->IsFocusable()) {
       document.SetFocusedElement(
           element, FocusParams(SelectionBehaviorOnFocus::kNone,
@@ -422,11 +436,13 @@ void AnnotationAgentImpl::ScrollIntoView(bool applies_focus) const {
   // Set the sequential focus navigation to the start of selection.
   // Even if this element isn't focusable, "Tab" press will
   // start the search to find the next focusable element from this element.
-  document.SetSequentialFocusNavigationStartingPoint(&first_node);
+  document.SetSequentialFocusNavigationStartingPoint(
+      first_node_with_layout_object);
 
   if (type_ == mojom::blink::AnnotationType::kGlic) {
     float max_distance_px = CalculateMaxScrollOffsetPx(
-        first_node.GetLayoutObject()->GetFrameView(), bounding_box, *params);
+        first_node_with_layout_object->GetLayoutObject()->GetFrameView(),
+        bounding_box, *params);
     if (max_distance_px <= 1.f) {
       document.Markers().StartGlicMarkerAnimationIfNeeded();
     } else {
@@ -441,8 +457,9 @@ void AnnotationAgentImpl::ScrollIntoView(bool applies_focus) const {
     }
   }
 
-  scroll_into_view_util::ScrollRectToVisible(*first_node.GetLayoutObject(),
-                                             bounding_box, std::move(params));
+  scroll_into_view_util::ScrollRectToVisible(
+      *first_node_with_layout_object->GetLayoutObject(), bounding_box,
+      std::move(params));
 }
 
 std::optional<mojom::blink::AnnotationType>
@@ -488,8 +505,8 @@ void AnnotationAgentImpl::DidFinishFindRange(const RangeInFlatTree* range) {
     // throttled iframe.
     Document& document = *owning_container_->GetSupplementable();
     document.EnqueueAnimationFrameTask(
-        WTF::BindOnce(&AnnotationAgentImpl::PerformPreAttachDOMMutation,
-                      WrapPersistent(this)));
+        BindOnce(&AnnotationAgentImpl::PerformPreAttachDOMMutation,
+                 WrapPersistent(this)));
   }
 }
 
@@ -527,17 +544,15 @@ void AnnotationAgentImpl::PerformPreAttachDOMMutation() {
     DisplayLockUtilities::ActivateFindInPageMatchRangeIfNeeded(
         pending_range_->ToEphemeralRange());
 
-    // If the active match is hidden inside a <details> element, then we should
-    // expand it so we can scroll to it.
-    if (HTMLDetailsElement::ExpandDetailsAncestors(first_node)) {
+    // If the active match is hidden inside a <details> element or a
+    // hidden=until-found element, then we should expand it so we can scroll to
+    // it.
+    if (DisplayLockUtilities::RevealAutoExpandableAncestors(first_node)
+            .revealed_details) {
       UseCounter::Count(
           first_node.GetDocument(),
           WebFeature::kAutoExpandedDetailsForScrollToTextFragment);
     }
-
-    // If the active match is hidden inside a hidden=until-found element, then
-    // we should reveal it so we can scroll to it.
-    DisplayLockUtilities::RevealHiddenUntilFoundAncestors(first_node);
 
     // Ensure we leave clean layout since we'll be applying markers after this.
     first_node.GetDocument().UpdateStyleAndLayout(

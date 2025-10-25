@@ -19,6 +19,7 @@
 
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_container.h"
 
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_info.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_resources.h"
 #include "third_party/blink/renderer/core/style/reference_clip_path_operation.h"
@@ -195,9 +196,11 @@ void LayoutSVGResourceContainer::WillBeDestroyed() {
 
 void LayoutSVGResourceContainer::StyleDidChange(
     StyleDifference diff,
-    const ComputedStyle* old_style) {
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutSVGHiddenContainer::StyleDidChange(diff, old_style);
+  LayoutSVGHiddenContainer::StyleDidChange(diff, old_style,
+                                           style_change_context);
   if (old_style)
     return;
   // The resource has been attached.

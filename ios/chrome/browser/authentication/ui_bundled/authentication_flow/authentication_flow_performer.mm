@@ -4,8 +4,6 @@
 
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow_performer.h"
 
-#import <MaterialComponents/MaterialSnackbar.h>
-
 #import <memory>
 #import <optional>
 
@@ -55,10 +53,8 @@
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/show_signin_command.h"
-#import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/shared/public/features/system_flags.h"
-#import "ios/chrome/browser/shared/ui/util/snackbar_util.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/signin/model/account_profile_mapper.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
@@ -174,6 +170,8 @@ policy::ProfileSeparationPolicies GetFakePolicyResponseForTesting() {
                                                          (UIView*)anchorView
                                                      anchorRect:
                                                          (CGRect)anchorRect {
+  // Sign-in related work should be done on regular browser.
+  CHECK_EQ(browser->type(), Browser::Type::kRegular, base::NotFatalUntil::M145);
   __weak __typeof(self) weakSelf = self;
   _leavingPrimaryAccountConfirmationDialogCoordinator =
       GetLeavingPrimaryAccountConfirmationDialog(
@@ -186,6 +184,7 @@ policy::ProfileSeparationPolicies GetFakePolicyResponseForTesting() {
 
 - (void)fetchManagedStatus:(ProfileIOS*)profile
                forIdentity:(id<SystemIdentity>)identity {
+  CHECK(identity, base::NotFatalUntil::M147);
   SystemIdentityManager* systemIdentityManager =
       GetApplicationContext()->GetSystemIdentityManager();
   if (NSString* hostedDomain =
@@ -211,11 +210,11 @@ policy::ProfileSeparationPolicies GetFakePolicyResponseForTesting() {
           GetApplicationContext()->GetSharedURLLoaderFactory());
 
   __weak __typeof(self) weakSelf = self;
-  base::OnceCallback<void(const policy::ProfileSeparationPolicies&)> callback =
+  base::OnceCallback<void(policy::ProfileSeparationPolicies)> callback =
       base::BindOnce(
           [](__typeof(self) strongSelf,
-             const policy::ProfileSeparationPolicies& policies) {
-            [strongSelf didFetchProfileSeparationPolicies:policies];
+             policy::ProfileSeparationPolicies policies) {
+            [strongSelf didFetchProfileSeparationPolicies:std::move(policies)];
           },
           weakSelf);
 
@@ -231,8 +230,7 @@ policy::ProfileSeparationPolicies GetFakePolicyResponseForTesting() {
       ->GetManagedAccountsSigninRestriction(
           identity_manager,
           identity_manager->PickAccountIdForAccount(
-              GaiaId(identity.gaiaID),
-              base::SysNSStringToUTF8(identity.userEmail)),
+              identity.gaiaId, base::SysNSStringToUTF8(identity.userEmail)),
           std::move(callback));
 }
 
@@ -243,15 +241,10 @@ policy::ProfileSeparationPolicies GetFakePolicyResponseForTesting() {
                   postSignInActions:(PostSignInActionSet)postSignInActions
                         accessPoint:(signin_metrics::AccessPoint)accessPoint {
   CHECK(AreSeparateProfilesForManagedAccountsEnabled());
-  // The continuation specific to the place where the authentication was
-  // launched.
-  ChangeProfileContinuation continuation =
-      [delegate authenticationFlowWillChangeProfile];
-
   std::optional<std::string> profileName =
       GetApplicationContext()
           ->GetAccountProfileMapper()
-          ->FindProfileNameForGaiaID(GaiaId(identity.gaiaID));
+          ->FindProfileNameForGaiaID(identity.gaiaId);
   if (!profileName.has_value()) {
     __weak __typeof(_delegate) weakDelegate = _delegate;
     base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
@@ -263,19 +256,31 @@ policy::ProfileSeparationPolicies GetFakePolicyResponseForTesting() {
     return;
   }
 
-  [self switchToProfileWithName:*profileName
-                     sceneState:sceneState
-                         reason:reason
-      changeProfileContinuation:std::move(continuation)
-              postSignInActions:postSignInActions
-                   withIdentity:identity
-                    accessPoint:accessPoint];
+  __weak __typeof(self) weakSelf = self;
+  auto profileSwitchReadyCompletion = base::BindOnce(
+      [](__typeof(self) strongSelf, std::string profile_name,
+         SceneState* scene_state, ChangeProfileReason reason,
+         PostSignInActionSet post_sign_in_actions, id<SystemIdentity> identity,
+         signin_metrics::AccessPoint access_point,
+         ChangeProfileContinuation continuation) {
+        [strongSelf switchToProfileWithName:profile_name
+                                 sceneState:scene_state
+                                     reason:reason
+                  changeProfileContinuation:std::move(continuation)
+                          postSignInActions:post_sign_in_actions
+                               withIdentity:identity
+                                accessPoint:access_point];
+      },
+      weakSelf, *profileName, sceneState, reason, postSignInActions, identity,
+      accessPoint);
+  [delegate authenticationFlowWillSwitchProfileWithReadyCompletion:
+                std::move(profileSwitchReadyCompletion)];
 }
 
 - (void)makePersonalProfileManagedWithIdentity:(id<SystemIdentity>)identity {
   GetApplicationContext()
       ->GetAccountProfileMapper()
-      ->MakePersonalProfileManagedWithGaiaID(GaiaId(identity.gaiaID));
+      ->MakePersonalProfileManagedWithGaiaID(identity.gaiaId);
   [_delegate didMakePersonalProfileManaged];
 }
 
@@ -287,6 +292,8 @@ policy::ProfileSeparationPolicies GetFakePolicyResponseForTesting() {
                     mergeBrowsingDataByDefault:(BOOL)mergeBrowsingDataByDefault
          browsingDataMigrationDisabledByPolicy:
              (BOOL)browsingDataMigrationDisabledByPolicy {
+  // Sign-in related work should be done on regular browser.
+  CHECK_EQ(browser->type(), Browser::Type::kRegular, base::NotFatalUntil::M145);
   [self checkNoDialog];
 
   base::RecordAction(
@@ -303,7 +310,8 @@ policy::ProfileSeparationPolicies GetFakePolicyResponseForTesting() {
                         skipBrowsingDataMigration:skipBrowsingDataMigration
                        mergeBrowsingDataByDefault:mergeBrowsingDataByDefault
             browsingDataMigrationDisabledByPolicy:
-                browsingDataMigrationDisabledByPolicy];
+                browsingDataMigrationDisabledByPolicy
+                       multiProfileForceMigration:NO];
     _managedConfirmationScreenCoordinator.delegate = self;
     [_managedConfirmationScreenCoordinator start];
     return;
@@ -396,7 +404,7 @@ policy::ProfileSeparationPolicies GetFakePolicyResponseForTesting() {
 
 // Called when separation policies have been fetched, and calls the delegate.
 - (void)didFetchProfileSeparationPolicies:
-    (const policy::ProfileSeparationPolicies&)policies {
+    (policy::ProfileSeparationPolicies)policies {
   CHECK(_accountLevelSigninRestrictionPolicyFetcher);
   _accountLevelSigninRestrictionPolicyFetcher.reset();
   auto profile_separation_data_migration_settings =

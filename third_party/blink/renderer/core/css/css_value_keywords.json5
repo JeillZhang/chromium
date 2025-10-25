@@ -485,6 +485,7 @@
     "right",
     "center",
     "justify",
+    "match-parent",
     "-webkit-left",
     "-webkit-right",
     "-webkit-center",
@@ -908,12 +909,11 @@
     // stretch
     // repeat
     "round",
-    // TODO(crbug.com/1511354): "base-select" is a temporary name for customizable
-    // <select>. It should be renamed when a standardized name is chosen.
+    "base",
     "base-select",
     "-internal-auto-base",
-    // Used to set the `content` property of the pseudo element "hint" given to
-    // elements with partial interest (via `interesttarget` keyboard activation).
+    // Used to set the `content` property of the pseudo-element "hint" given to
+    // elements with partial interest (via `interestfor` keyboard activation).
     "-internal-partial-interest-content",
 
     //
@@ -1253,11 +1253,6 @@
     // luminance
     "match-source",
 
-    // masonry-auto-tracks
-    // min-content
-    // max-content
-    // auto
-
     // masonry-direction
     // row
     // row-reverse
@@ -1296,7 +1291,7 @@
     "hanging",
     "mathematical",
 
-    // gap-rule-paint-order
+    // gap-rule-overlap
     "row-over-column",
     "column-over-row",
 
@@ -1309,6 +1304,12 @@
     // none
     // intersection
     // spanning-item
+
+    // column-rule-visibility-items
+    // none
+    // all
+    "around",
+    "between",
 
     // dominant-baseline
     // auto
@@ -1380,6 +1381,7 @@
     // inherit
     "revert",
     "revert-layer",
+    "revert-rule",
     "unset",
 
     // background-image, etc.
@@ -1492,8 +1494,10 @@
     // "rec2020", included in color-gamut
     "srgb-linear",
     "display-p3",
+    "display-p3-linear",
     "a98-rgb",
     "prophoto-rgb",
+    "rec2100-linear",
     "xyz",
     "xyz-d50",
     "xyz-d65",
@@ -1562,6 +1566,10 @@
 
     // coord-box
     "stroke-box",
+
+    // border-shape specific geometry box
+    // https://drafts.csswg.org/css-borders-4/#border-shape
+    "half-border-box",
 
     // math functions
     // https://drafts.csswg.org/css-values-4/#math
@@ -1897,6 +1905,10 @@
     "x-self-end",
     "span-x-self-start",
     "span-x-self-end",
+    "self-x-start",
+    "self-x-end",
+    "span-self-x-start",
+    "span-self-x-end",
     "span-all",
     // top,
     // bottom,
@@ -1910,6 +1922,10 @@
     "y-self-end",
     "span-y-self-start",
     "span-y-self-end",
+    "self-y-start",
+    "self-y-end",
+    "span-self-y-start",
+    "span-self-y-end",
     // block-start,
     // block-end,
     "span-block-start",
@@ -2027,9 +2043,31 @@
     "else",
     "media",
 
+    // scroll-marker-group navigation/a11y modes
+    "tabs",
+    "links",
+
     // caret-shape
     // block is elsewhere
     "bar",
     "underscore",
+
+    // continue
+    "-webkit-legacy",
+
+    // block-ellipsis
+    "no-ellipsis",
+
+    // animation-trigger
+    "play",
+    "pause",
+    // "reset",
+    "play-once",
+    "play-alternate",
+    "play-forwards",
+    "play-backwards",
+    "play-pause",
+    "replay",
+    // "none",
   ],
 }

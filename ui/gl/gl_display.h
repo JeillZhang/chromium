@@ -11,8 +11,9 @@
 #include <memory>
 #include <vector>
 
+#include "build/build_config.h"
 #include "ui/gl/gl_export.h"
-#include "ui/gl/gpu_switching_manager.h"
+#include "ui/gl/gpu_switching_observer.h"
 
 #if BUILDFLAG(IS_APPLE)
 #if __OBJC__
@@ -164,7 +165,7 @@ class GL_EXPORT GLDisplayEGL : public GLDisplay {
    public:
     explicit EGLGpuSwitchingObserver(EGLDisplay display);
     ~EGLGpuSwitchingObserver() override = default;
-    void OnGpuSwitched(GpuPreference active_gpu_heuristic) override;
+    void OnGpuSwitched() override;
 
    private:
     EGLDisplay display_ = EGL_NO_DISPLAY;

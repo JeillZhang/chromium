@@ -19,7 +19,6 @@ BASE_DECLARE_FEATURE(kOmniboxRemoveSuggestionsFromClipboard);
 // Features that affect the "twiddle" step of AutocompleteController, e.g.,
 // deduping or `SortAndCull()`.
 BASE_DECLARE_FEATURE(kGroupingFrameworkForNonZPS);
-BASE_DECLARE_FEATURE(kOmniboxDemoteByType);
 
 // Features below this line should be sorted alphabetically by their comments.
 
@@ -32,9 +31,6 @@ BASE_DECLARE_FEATURE(kUIExperimentMaxAutocompleteMatches);
 extern const bool kOmniboxMaxURLMatchesEnabledByDefault;
 BASE_DECLARE_FEATURE(kOmniboxMaxURLMatches);
 BASE_DECLARE_FEATURE(kDynamicMaxAutocomplete);
-
-// Entity suggestion disambiguation.
-BASE_DECLARE_FEATURE(kDisambiguateTabMatchingForEntitySuggestions);
 
 // Local history zero-prefix (aka zero-suggest) and prefix suggestions.
 BASE_DECLARE_FEATURE(kFocusTriggersWebAndSRPZeroSuggest);
@@ -50,14 +46,8 @@ BASE_DECLARE_FEATURE(kZeroSuggestPrefetchingOnWeb);
 // On Device Suggest.
 BASE_DECLARE_FEATURE(kOnDeviceHeadProviderIncognito);
 BASE_DECLARE_FEATURE(kOnDeviceHeadProviderNonIncognito);
-BASE_DECLARE_FEATURE(kOnDeviceHeadProviderKorean);
 BASE_DECLARE_FEATURE(kOnDeviceTailModel);
 BASE_DECLARE_FEATURE(kOnDeviceTailEnableEnglishModel);
-
-// Provider-specific - These features change the behavior of specific providers.
-// TODO(crbug.com/40179316): Clean up feature flag used in staged roll-out of
-// various CLs related to the contents/description clean-up work.
-BASE_DECLARE_FEATURE(kStoreTitleInContentsAndUrlInDescription);
 
 // Document provider and domain suggestions
 BASE_DECLARE_FEATURE(kDocumentProvider);
@@ -65,17 +55,25 @@ BASE_DECLARE_FEATURE(kDocumentProviderPrimaryAccountRequirement);
 BASE_DECLARE_FEATURE(kDocumentProviderEnterpriseEligibility);
 BASE_DECLARE_FEATURE(kDocumentProviderEnterpriseEligibilityWhenUnknown);
 BASE_DECLARE_FEATURE(kDocumentProviderNoSyncRequirement);
-BASE_DECLARE_FEATURE(kDomainSuggestions);
 
 // Suggestions UI - these affect the UI or function of the suggestions popup.
 BASE_DECLARE_FEATURE(kShowPopupOnMouseReleased);
 BASE_DECLARE_FEATURE(kMostVisitedTilesHorizontalRenderGroup);
 BASE_DECLARE_FEATURE(kRichAutocompletion);
+BASE_DECLARE_FEATURE(kWebUIOmniboxAimPopup);
+BASE_DECLARE_FEATURE(kWebUIOmniboxFullPopup);
 BASE_DECLARE_FEATURE(kWebUIOmniboxPopup);
+BASE_DECLARE_FEATURE(kWebUIOmniboxPopupDebug);
+extern const base::FeatureParam<bool> kWebUIOmniboxPopupDebugSxSParam;
 
 // Omnibox UI - these affect the UI or function of the location bar (not the
 // popup).
+BASE_DECLARE_FEATURE(kAiModeOmniboxEntryPoint);
+BASE_DECLARE_FEATURE(kAiModeOmniboxEntryPointEnUs);
+BASE_DECLARE_FEATURE(kHideAimEntrypointOnUserInput);
 BASE_DECLARE_FEATURE(kOmniboxAssistantVoiceSearch);
+BASE_DECLARE_FEATURE(kOmniboxMultimodalInput);
+BASE_DECLARE_FEATURE(kRemoveSearchReadyOmnibox);
 
 // Navigation experiments.
 BASE_DECLARE_FEATURE(kDefaultTypedNavigationsToHttps);
@@ -99,21 +97,16 @@ BASE_DECLARE_FEATURE(kUrlScoringModel);
 // Animate appearance of suggestions list.
 BASE_DECLARE_FEATURE(kAnimateSuggestionsListAppearance);
 
-// Action Chips for Answer Suggestions.
-BASE_DECLARE_FEATURE(kOmniboxAnswerActions);
-
-// Adds support for categorical suggestion type.
-BASE_DECLARE_FEATURE(kCategoricalSuggestions);
-BASE_DECLARE_FEATURE(kMergeSubtypes);
-
 // Allows for touch down events to send a signal to |SearchPrefetchService| to
 // start prefetching the suggestion. The feature only applies to search
 // suggestions and only controls whether the signal is sent.
 BASE_DECLARE_FEATURE(kOmniboxTouchDownTriggerForPrefetch);
 
 // Site search/Keyword mode related features.
+BASE_DECLARE_FEATURE(kOmniboxSiteSearch);
 BASE_DECLARE_FEATURE(kStarterPackExpansion);
 BASE_DECLARE_FEATURE(kStarterPackIPH);
+BASE_DECLARE_FEATURE(kAiModeStartPack);
 
 // Search and Suggest requests and params.
 BASE_DECLARE_FEATURE(kAblateSearchProviderWarmup);
@@ -123,6 +116,10 @@ BASE_DECLARE_FEATURE(kOmniboxAsyncViewInflation);
 BASE_DECLARE_FEATURE(kUseFusedLocationProvider);
 
 BASE_DECLARE_FEATURE(kOmniboxMobileParityUpdate);
+BASE_DECLARE_FEATURE(kOmniboxMobileParityUpdateV2);
+#if BUILDFLAG(IS_IOS)
+BASE_DECLARE_FEATURE(kOmniboxMobileParityUpdateV3);
+#endif  // BUILDFLAG(IS_IOS)
 
 // Omnibox suggestions tuning
 BASE_DECLARE_FEATURE(kNumNtpZpsRecentSearches);
@@ -133,24 +130,13 @@ BASE_DECLARE_FEATURE(kNumWebZpsMostVisitedUrls);
 BASE_DECLARE_FEATURE(kNumSrpZpsRecentSearches);
 BASE_DECLARE_FEATURE(kNumSrpZpsRelatedSearches);
 
-#if BUILDFLAG(IS_ANDROID)
-BASE_DECLARE_FEATURE(kDiagnostics);
-BASE_DECLARE_FEATURE(kRetainOmniboxOnFocus);
-BASE_DECLARE_FEATURE(kJumpStartOmnibox);
-BASE_DECLARE_FEATURE(kSuppressIntermediateACUpdatesOnLowEndDevices);
-// Delay focusTab to prioritize navigation (https://crbug.com/374852568).
-BASE_DECLARE_FEATURE(kPostDelayedTaskFocusTab);
-BASE_DECLARE_FEATURE(kAndroidHubSearchTabGroups);
-#endif  // BUILDFLAG(IS_ANDROID)
 
 // `ShortcutsProvider` features.
 BASE_DECLARE_FEATURE(kOmniboxShortcutsAndroid);
 
 // Enterprise search aggregators features.
 BASE_DECLARE_FEATURE(kEnableSearchAggregatorPolicy);
-
-// Ipad ZPS matches limit increase.
-BASE_DECLARE_FEATURE(kIpadZeroSuggestMatches);
+BASE_DECLARE_FEATURE(kUseAgentspace25Logo);
 
 // Site search allow user override feature.
 BASE_DECLARE_FEATURE(kEnableSiteSearchAllowUserOverridePolicy);
@@ -158,6 +144,34 @@ BASE_DECLARE_FEATURE(kEnableSiteSearchAllowUserOverridePolicy);
 // Preconnect/prerender behavior for suggestions
 BASE_DECLARE_FEATURE(kPreconnectNonSearchOmniboxSuggestions);
 
+// Adds an aim shortcut shortcut in the typed state.
+BASE_DECLARE_FEATURE(kOmniboxAimShortcutTypedState);
+
+// When enabled, unblocks omnibox height on small form factor devices, allowing
+// users to type in multiline / longer text.
+BASE_DECLARE_FEATURE(kMultilineEditField);
+
+#if BUILDFLAG(IS_IOS)
+// Enables the Gemini Prototype Omnibox Provider.
+BASE_DECLARE_FEATURE(kGeminiPrototypeOmniboxProvider);
+
+// Returns whether the Gemini Prototype provider is enabled.
+bool IsGeminiPrototypeProviderEnabled();
+#endif
+
+// Whether the composebox should use the new `chrome-compose` client.
+BASE_DECLARE_FEATURE(kComposeboxUsesChromeComposeClient);
+
+#if BUILDFLAG(IS_ANDROID)
+BASE_DECLARE_FEATURE(kDiagnostics);
+BASE_DECLARE_FEATURE(kJumpStartOmnibox);
+BASE_DECLARE_FEATURE(kSuppressIntermediateACUpdatesOnLowEndDevices);
+// Delay focusTab to prioritize navigation (https://crbug.com/374852568).
+BASE_DECLARE_FEATURE(kPostDelayedTaskFocusTab);
+BASE_DECLARE_FEATURE(kAndroidHubSearchTabGroups);
+BASE_DECLARE_FEATURE(kOmniboxImprovementForLFF);
+#endif  // BUILDFLAG(IS_ANDROID)
+// Note: no new flags beyond this point.
 }  // namespace omnibox
 
 #endif  // COMPONENTS_OMNIBOX_COMMON_OMNIBOX_FEATURES_H_

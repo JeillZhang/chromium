@@ -16,7 +16,6 @@
 #include "chrome/browser/extensions/api/autofill_private/autofill_private_event_router.h"
 #include "chrome/browser/extensions/api/autofill_private/autofill_private_event_router_factory.h"
 #include "chrome/browser/extensions/extension_apitest.h"
-#include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/browser/ui/browser.h"
 #include "components/autofill/content/browser/test_autofill_client_injector.h"
 #include "components/autofill/content/browser/test_content_autofill_client.h"
@@ -28,9 +27,11 @@
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/payments/payments_request_details.h"
 #include "components/autofill/core/browser/payments/test_payments_network_interface.h"
+#include "components/autofill/core/browser/payments/virtual_card_enrollment_flow.h"
 #include "components/autofill/core/browser/permissions/autofill_ai/autofill_ai_permission_utils.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
+#include "components/autofill/core/common/autofill_payments_features.h"
 #include "components/autofill/core/common/autofill_prefs.h"
 #include "components/device_reauth/mock_device_authenticator.h"
 #include "components/prefs/pref_service.h"
@@ -93,8 +94,7 @@ class MandatoryReauthSettingsPageMetricsTest
   }
 
   autofill::TestContentAutofillClient* autofill_client() {
-    return test_autofill_client_injector_
-        [browser()->tab_strip_model()->GetActiveWebContents()];
+    return test_autofill_client_injector_[GetActiveWebContents()];
   }
   autofill::TestPersonalDataManager& personal_data_manager() {
     return autofill_client()->GetPersonalDataManager();
@@ -102,10 +102,7 @@ class MandatoryReauthSettingsPageMetricsTest
 
  private:
   content::BrowserContext* browser_context() {
-    return browser()
-        ->tab_strip_model()
-        ->GetActiveWebContents()
-        ->GetBrowserContext();
+    return GetActiveWebContents()->GetBrowserContext();
   }
 
   autofill::TestAutofillClientInjector<autofill::TestContentAutofillClient>
@@ -188,7 +185,17 @@ INSTANTIATE_TEST_SUITE_P(,
 
 class AutofillPrivateApiUnitTest : public extensions::ExtensionApiTest {
  public:
-  AutofillPrivateApiUnitTest() = default;
+  AutofillPrivateApiUnitTest() {
+    feature_list_.InitWithFeatures(
+        /*enabled_features=*/
+        {
+            autofill::features::kAutofillAiWithDataSchema,
+            autofill::features::kAutofillAiWalletFlightReservation,
+            autofill::features::kAutofillAiWalletVehicleRegistration,
+        },
+        /*disabled_features=*/
+        {autofill::features::kAutofillAiIgnoreLocale});
+  }
   AutofillPrivateApiUnitTest(const AutofillPrivateApiUnitTest&) = delete;
   AutofillPrivateApiUnitTest& operator=(const AutofillPrivateApiUnitTest&) =
       delete;
@@ -207,8 +214,7 @@ class AutofillPrivateApiUnitTest : public extensions::ExtensionApiTest {
     return personal_data_manager().test_address_data_manager();
   }
   autofill::TestContentAutofillClient* autofill_client() {
-    return test_autofill_client_injector_
-        [browser()->tab_strip_model()->GetActiveWebContents()];
+    return test_autofill_client_injector_[GetActiveWebContents()];
   }
   autofill::TestPaymentsDataManager& payments_data_manager() {
     return personal_data_manager().test_payments_data_manager();
@@ -228,8 +234,7 @@ class AutofillPrivateApiUnitTest : public extensions::ExtensionApiTest {
  private:
   autofill::TestAutofillClientInjector<autofill::TestContentAutofillClient>
       test_autofill_client_injector_;
-  base::test::ScopedFeatureList feature_list_{
-      autofill::features::kAutofillAiWithDataSchema};
+  base::test::ScopedFeatureList feature_list_;
 };
 
 // Test to verify all the CVCs(server and local) are bulk deleted when the API
@@ -283,15 +288,62 @@ IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest, LogServerCardLinkClicked) {
       autofill::AutofillMetrics::PaymentsSigninState::kSignedOut, 1);
 }
 
-IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest, RemoveVirtualCard) {
+class VirtualCardMultipleRequestPrivateApiUnittest
+    : public AutofillPrivateApiUnitTest,
+      public ::testing::WithParamInterface<bool> {
+ public:
+  VirtualCardMultipleRequestPrivateApiUnittest() {
+    feature_list_.InitWithFeatureState(
+        autofill::features::
+            kAutofillEnableMultipleRequestInVirtualCardDownstreamEnrollment,
+        MultipleRequestInVcnDownstreamEnrollmentEnabled());
+  }
+
+  ~VirtualCardMultipleRequestPrivateApiUnittest() override = default;
+
+  bool MultipleRequestInVcnDownstreamEnrollmentEnabled() const {
+    return GetParam();
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(AutofillPrivateApiUnitTest,
+                         VirtualCardMultipleRequestPrivateApiUnittest,
+                         ::testing::Bool());
+
+IN_PROC_BROWSER_TEST_P(VirtualCardMultipleRequestPrivateApiUnittest,
+                       RemoveVirtualCard) {
   using autofill::payments::TestPaymentsNetworkInterface;
-  autofill_client()
-      ->GetPaymentsAutofillClient()
-      ->set_payments_network_interface(
-          std::make_unique<TestPaymentsNetworkInterface>(
-              autofill_client()->GetURLLoaderFactory(),
-              autofill_client()->GetIdentityManager(),
-              &personal_data_manager()));
+  autofill::payments::MockMultipleRequestPaymentsNetworkInterface*
+      mock_multiple_request_payments_network_interface_;
+  autofill::payments::UpdateVirtualCardEnrollmentRequestDetails details;
+  if (MultipleRequestInVcnDownstreamEnrollmentEnabled()) {
+    auto mock_multiple_request_payments_network_interface = std::make_unique<
+        autofill::payments::MockMultipleRequestPaymentsNetworkInterface>(
+        autofill_client()->GetURLLoaderFactory(),
+        *autofill_client()->GetIdentityManager());
+    mock_multiple_request_payments_network_interface_ =
+        mock_multiple_request_payments_network_interface.get();
+    autofill_client()
+        ->GetPaymentsAutofillClient()
+        ->set_multiple_request_payments_network_interface(
+            std::move(mock_multiple_request_payments_network_interface));
+    EXPECT_CALL(*mock_multiple_request_payments_network_interface_,
+                UpdateVirtualCardEnrollment(testing::_, testing::_))
+        .WillOnce(testing::DoAll(
+            testing::SaveArg<0>(&details),
+            testing::Return(autofill::payments::RequestId("11223344"))));
+  } else {
+    autofill_client()
+        ->GetPaymentsAutofillClient()
+        ->set_payments_network_interface(
+            std::make_unique<TestPaymentsNetworkInterface>(
+                autofill_client()->GetURLLoaderFactory(),
+                autofill_client()->GetIdentityManager(),
+                &personal_data_manager()));
+  }
   // Required for adding the server card.
   payments_data_manager().SetSyncingForTest(
       /*is_syncing_for_test=*/true);
@@ -299,22 +351,29 @@ IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest, RemoveVirtualCard) {
   virtual_card.set_server_id("a123");
   virtual_card.set_instrument_id(123);
   payments_data_manager().AddServerCreditCard(virtual_card);
+
   EXPECT_TRUE(RunAutofillSubtest("removeVirtualCard"));
-  EXPECT_THAT(
-      static_cast<TestPaymentsNetworkInterface*>(
-          autofill_client()
-              ->GetPaymentsAutofillClient()
-              ->GetPaymentsNetworkInterface())
-          ->update_virtual_card_enrollment_request_details(),
-      ::testing::AllOf(
-          ::testing::Field(
-              &autofill::payments::UpdateVirtualCardEnrollmentRequestDetails::
-                  instrument_id,
-              123),
-          ::testing::Field(
-              &autofill::payments::UpdateVirtualCardEnrollmentRequestDetails::
-                  virtual_card_enrollment_request_type,
-              autofill::VirtualCardEnrollmentRequestType::kUnenroll)));
+
+  if (MultipleRequestInVcnDownstreamEnrollmentEnabled()) {
+    EXPECT_EQ(details.virtual_card_enrollment_request_type,
+              autofill::VirtualCardEnrollmentRequestType::kUnenroll);
+  } else {
+    EXPECT_THAT(
+        static_cast<TestPaymentsNetworkInterface*>(
+            autofill_client()
+                ->GetPaymentsAutofillClient()
+                ->GetPaymentsNetworkInterface())
+            ->update_virtual_card_enrollment_request_details(),
+        ::testing::AllOf(
+            ::testing::Field(
+                &autofill::payments::UpdateVirtualCardEnrollmentRequestDetails::
+                    instrument_id,
+                123),
+            ::testing::Field(
+                &autofill::payments::UpdateVirtualCardEnrollmentRequestDetails::
+                    virtual_card_enrollment_request_type,
+                autofill::VirtualCardEnrollmentRequestType::kUnenroll)));
+  }
 }
 
 IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest,
@@ -349,8 +408,12 @@ IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest, MAYBE_EntityInstances) {
   ASSERT_TRUE(RunAutofillSubtest("loadEmptyEntityInstancesList"));
   ASSERT_TRUE(RunAutofillSubtest("testExpectedLabelsAreGenerated"));
   //  Test that retrieving general entity type information works.
-  ASSERT_TRUE(RunAutofillSubtest("getAllEntityTypes"));
+  ASSERT_TRUE(RunAutofillSubtest("getWritableEntityTypes"));
   ASSERT_TRUE(RunAutofillSubtest("getAllAttributeTypesForEntityTypeName"));
+}
+
+IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest, TypedEntityInstances) {
+  ASSERT_TRUE(RunAutofillSubtest("testEntityTypeInEntityInstanceWithLabels"));
 }
 
 IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest,
@@ -362,7 +425,8 @@ IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest, SetAutofillAiOptIn) {
   autofill_client()->set_entity_data_manager(
       autofill::AutofillEntityDataManagerFactory::GetForProfile(profile()));
   autofill_client()->SetUpPrefsAndIdentityForAutofillAi();
-  EXPECT_TRUE(autofill::SetAutofillAiOptInStatus(*autofill_client(), false));
+  EXPECT_TRUE(autofill::SetAutofillAiOptInStatus(
+      *autofill_client(), autofill::AutofillAiOptInStatus::kOptedOut));
   EXPECT_FALSE(autofill::GetAutofillAiOptInStatus(*autofill_client()));
   EXPECT_TRUE(RunAutofillSubtest("verifyUserOptedOutOfAutofillAi"));
 
@@ -392,7 +456,8 @@ IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest,
 
   ASSERT_TRUE(autofill::MayPerformAutofillAiAction(
       *autofill_client(), autofill::AutofillAiAction::kOptIn));
-  EXPECT_TRUE(autofill::SetAutofillAiOptInStatus(*autofill_client(), true));
+  EXPECT_TRUE(autofill::SetAutofillAiOptInStatus(
+      *autofill_client(), autofill::AutofillAiOptInStatus::kOptedIn));
 
   // Verify that we can opt out of Autofill AI while eligible.
   ASSERT_TRUE(RunAutofillSubtest("optOutOfAutofillAi"));
@@ -406,6 +471,35 @@ IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest,
   // Verify that we cannot opt into Autofill AI anymore.
   ASSERT_TRUE(RunAutofillSubtest("optIntoAutofillAi"));
   EXPECT_TRUE(RunAutofillSubtest("verifyUserOptedOutOfAutofillAi"));
+}
+
+IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest,
+                       GetAllWritableEntityTypes_DoesNotIncludeReadOnlyTypes) {
+  ASSERT_TRUE(RunAutofillSubtest("getWritableEntityTypes"));
+}
+
+// Tests that entity types which are stored in Wallet are returned
+// when user is signed in and has opted in.
+IN_PROC_BROWSER_TEST_F(AutofillPrivateApiUnitTest,
+                       GetAllWritableEntityTypes_ReturnsWalletEntityTypes) {
+  autofill_client()->set_entity_data_manager(
+      autofill::AutofillEntityDataManagerFactory::GetForProfile(profile()));
+  autofill_client()->SetUpPrefsAndIdentityForAutofillAi();
+  syncer::TestSyncService test_sync_service;
+  autofill_client()->set_sync_service(&test_sync_service);
+  test_sync_service.GetUserSettings()->SetSelectedType(
+      syncer::UserSelectableType::kAutofill, true);
+  ASSERT_TRUE(autofill::MayPerformAutofillAiAction(
+      *autofill_client(),
+      autofill::AutofillAiAction::kAddServerEntityInstanceInSettings,
+      autofill::EntityType(autofill::EntityTypeName::kFlightReservation)));
+  ASSERT_TRUE(autofill::MayPerformAutofillAiAction(
+      *autofill_client(),
+      autofill::AutofillAiAction::kAddServerEntityInstanceInSettings,
+      autofill::EntityType(autofill::EntityTypeName::kVehicle)));
+
+  ASSERT_TRUE(RunAutofillSubtest(
+      "verifyWritableEntityTypesWithSyncOnReturnsWalletEntityTypes"));
 }
 
 }  // namespace

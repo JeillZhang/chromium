@@ -18,7 +18,6 @@
 #include "base/threading/thread_checker.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/ozone/platform/wayland/test/global_object.h"
-#include "ui/ozone/platform/wayland/test/mock_wayland_zcr_color_manager.h"
 #include "ui/ozone/platform/wayland/test/mock_wp_presentation.h"
 #include "ui/ozone/platform/wayland/test/mock_xdg_activation_v1.h"
 #include "ui/ozone/platform/wayland/test/mock_xdg_shell.h"
@@ -35,7 +34,6 @@
 #include "ui/ozone/platform/wayland/test/test_viewporter.h"
 #include "ui/ozone/platform/wayland/test/test_wp_linux_drm_syncobj.h"
 #include "ui/ozone/platform/wayland/test/test_wp_pointer_gestures.h"
-#include "ui/ozone/platform/wayland/test/test_zwp_linux_explicit_synchronization.h"
 #include "ui/ozone/platform/wayland/test/test_zwp_text_input_manager.h"
 #include "ui/ozone/platform/wayland/test/test_zxdg_output_manager.h"
 
@@ -52,7 +50,6 @@ struct DisplayDeleter {
 
 // Server configuration related enums and structs.
 enum class PrimarySelectionProtocol { kNone, kGtk, kZwp };
-enum class ShouldUseExplicitSynchronizationProtocol { kNone, kUse };
 enum class ShouldUseLinuxDrmSyncobjProtocol { kNone, kUse };
 // Text input protocol type.
 enum class ZwpTextInputType { kV1, kV3 };
@@ -62,8 +59,6 @@ struct ServerConfig {
   TestCompositor::Version compositor_version = TestCompositor::Version::kV4;
   PrimarySelectionProtocol primary_selection_protocol =
       PrimarySelectionProtocol::kNone;
-  ShouldUseExplicitSynchronizationProtocol use_explicit_synchronization =
-      ShouldUseExplicitSynchronizationProtocol::kUse;
   ShouldUseLinuxDrmSyncobjProtocol use_linux_drm_syncobj =
       ShouldUseLinuxDrmSyncobjProtocol::kNone;
   bool supports_viewporter_surface_scaling = false;
@@ -142,10 +137,7 @@ class TestWaylandServerThread : public base::Thread,
   TestZwpTextInputManagerV3* text_input_manager_v3() {
     return &zwp_text_input_manager_v3_;
   }
-  TestZwpLinuxExplicitSynchronizationV1*
-  zwp_linux_explicit_synchronization_v1() {
-    return &zwp_linux_explicit_synchronization_v1_;
-  }
+
   TestWpLinuxDrmSyncobjManagerV1* wp_linux_drm_syncobj_manager_v1() {
     return &wp_linux_drm_syncobj_manager_v1_;
   }
@@ -158,10 +150,6 @@ class TestWaylandServerThread : public base::Thread,
   }
 
   TestWpPointerGestures& wp_pointer_gestures() { return wp_pointer_gestures_; }
-
-  MockZcrColorManagerV1* zcr_color_manager_v1() {
-    return &zcr_color_manager_v1_;
-  }
 
   MockXdgActivationV1* xdg_activation_v1() { return &xdg_activation_v1_; }
 
@@ -181,8 +169,6 @@ class TestWaylandServerThread : public base::Thread,
 
  private:
   bool SetupPrimarySelectionManager(PrimarySelectionProtocol protocol);
-  bool SetupExplicitSynchronizationProtocol(
-      ShouldUseExplicitSynchronizationProtocol usage);
   bool SetupLinuxDrmSyncobjProtocol(ShouldUseLinuxDrmSyncobjProtocol usage);
 
   std::unique_ptr<base::MessagePump> CreateMessagePump(
@@ -209,7 +195,7 @@ class TestWaylandServerThread : public base::Thread,
   TestServerListener client_destroy_listener_;
   raw_ptr<wl_client> client_ = nullptr;
   raw_ptr<wl_event_loop> event_loop_ = nullptr;
-  raw_ptr<wl_protocol_logger, DanglingUntriaged> protocol_logger_ = nullptr;
+  raw_ptr<wl_protocol_logger> protocol_logger_ = nullptr;
 
   ServerConfig config_;
 
@@ -226,10 +212,8 @@ class TestWaylandServerThread : public base::Thread,
   TestSeat seat_;
   TestZXdgOutputManager zxdg_output_manager_;
   MockXdgShell xdg_shell_;
-  ::testing::NiceMock<MockZcrColorManagerV1> zcr_color_manager_v1_;
   TestZwpTextInputManagerV1 zwp_text_input_manager_v1_;
   TestZwpTextInputManagerV3 zwp_text_input_manager_v3_;
-  TestZwpLinuxExplicitSynchronizationV1 zwp_linux_explicit_synchronization_v1_;
   TestWpLinuxDrmSyncobjManagerV1 wp_linux_drm_syncobj_manager_v1_;
   MockZwpLinuxDmabufV1 zwp_linux_dmabuf_v1_;
   MockWpPresentation wp_presentation_;

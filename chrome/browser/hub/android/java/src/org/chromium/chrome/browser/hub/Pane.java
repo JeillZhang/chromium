@@ -57,7 +57,7 @@ public interface Pane extends BackPressHandler {
     ObservableSupplier<FullButtonData> getActionButtonDataSupplier();
 
     /** Returns the visuals for creating a button to navigate to this pane. */
-    ObservableSupplier<DisplayButtonData> getReferenceButtonDataSupplier();
+    ObservableSupplier<@Nullable DisplayButtonData> getReferenceButtonDataSupplier();
 
     /** Returns whether to show the hairline for the pane. */
     ObservableSupplier<Boolean> getHairlineVisibilitySupplier();
@@ -88,4 +88,7 @@ public interface Pane extends BackPressHandler {
 
     /** Returns whether to enable the state of hub search. */
     ObservableSupplier<Boolean> getHubSearchEnabledStateSupplier();
+
+    /** Returns whether the hub search box should be visible. */
+    ObservableSupplier<Boolean> getHubSearchBoxVisibilitySupplier();
 }

@@ -10,8 +10,6 @@
 
 #include "base/check.h"
 #include "base/check_deref.h"
-#include "base/check_op.h"
-#include "base/containers/to_vector.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/power_monitor/power_monitor.h"
@@ -29,17 +27,16 @@
 #include "chrome/browser/smart_card/smart_card_histograms.h"
 #include "chrome/browser/smart_card/smart_card_reader_tracker.h"
 #include "chrome/browser/smart_card/smart_card_reader_tracker_factory.h"
-#include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/permissions/permission_context_base.h"
+#include "components/permissions/permission_decision.h"
 #include "components/permissions/permission_decision_auto_blocker.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
-#include "third_party/blink/public/common/features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 #include "url/origin.h"
@@ -366,14 +363,15 @@ void SmartCardPermissionContext::RevokeEphemeralPermissionsForReader(
   }
 }
 
-void SmartCardPermissionContext::RevokeEphemeralPermissionsForOrigin(
+bool SmartCardPermissionContext::RevokeEphemeralPermissionsForOrigin(
     const url::Origin& origin) {
-  ephemeral_grants_with_expiry_.erase(origin);
+  const auto count_removed = ephemeral_grants_with_expiry_.erase(origin);
 
   if (ephemeral_grants_with_expiry_.empty()) {
     StopObserving();
   }
   NotifyPermissionRevoked(origin);
+  return !!count_removed;
 }
 
 void SmartCardPermissionContext::RevokeEphemeralPermissions() {
@@ -400,6 +398,14 @@ void SmartCardPermissionContext::RevokeAllPermissions() {
   RevokeEphemeralPermissions();
 }
 
+bool SmartCardPermissionContext::RevokeObjectPermissions(
+    const url::Origin& origin) {
+  bool ephemeral_removed = RevokeEphemeralPermissionsForOrigin(origin);
+  bool persistent_removed =
+      permissions::ObjectPermissionContextBase::RevokeObjectPermissions(origin);
+  return ephemeral_removed || persistent_removed;
+}
+
 void SmartCardPermissionContext::OnTrackingStarted(
     std::optional<std::vector<SmartCardReaderTracker::ReaderInfo>> info_list) {
   if (!info_list) {
@@ -424,17 +430,18 @@ void SmartCardPermissionContext::OnPermissionRequestDecided(
     const url::Origin& origin,
     const std::string& reader_name,
     RequestReaderPermissionCallback callback,
-    SmartCardPermissionRequest::Result result) {
-  switch (result) {
-    case SmartCardPermissionRequest::Result::kAllowOnce:
+    PermissionDecision decision) {
+  switch (decision) {
+    case PermissionDecision::kAllowThisTime:
       GrantEphemeralReaderPermission(origin, reader_name);
       std::move(callback).Run(true);
       break;
-    case SmartCardPermissionRequest::Result::kAllowAlways:
+    case PermissionDecision::kAllow:
       GrantPersistentReaderPermission(origin, reader_name);
       std::move(callback).Run(true);
       break;
-    case SmartCardPermissionRequest::Result::kDontAllow:
+    case PermissionDecision::kDeny:
+    case PermissionDecision::kNone:
       std::move(callback).Run(false);
       break;
   }
@@ -499,13 +506,33 @@ void SmartCardPermissionContext::RevokeEphemeralPermissionIfLongTimeoutOccured(
 std::vector<std::unique_ptr<SmartCardPermissionContext::Object>>
 SmartCardPermissionContext::GetAllGrantedObjects() {
   auto objects = ObjectPermissionContextBase::GetAllGrantedObjects();
-  const auto& allowlisted_origins = profile_->GetPrefs()->GetList(
-      prefs::kManagedSmartCardConnectAllowedForUrls);
-  for (const auto& allowlisted_origin : allowlisted_origins) {
-    CHECK(allowlisted_origin.is_string());
-    GURL url = GURL(allowlisted_origin.GetString());
-    CHECK(url.is_valid());
 
+  std::set<GURL> allowlisted_origins_set;
+  std::ranges::transform(
+      profile_->GetPrefs()->GetList(
+          prefs::kManagedSmartCardConnectAllowedForUrls),
+      std::inserter(allowlisted_origins_set, allowlisted_origins_set.begin()),
+      [](const base::Value& value) {
+        CHECK(value.is_string());
+        GURL url(value.GetString());
+        CHECK(url.is_valid());
+        return url;
+      });
+
+  // No need to check for blocklisted if there is nothing to filter.
+  if (allowlisted_origins_set.empty()) {
+    return objects;
+  }
+
+  // Block takes precedence, so displaying grants for origins that are both
+  // allow- and blocklisted is misleading.
+  for (const auto& blocklisted_origin : profile_->GetPrefs()->GetList(
+           prefs::kManagedSmartCardConnectBlockedForUrls)) {
+    CHECK(blocklisted_origin.is_string());
+    allowlisted_origins_set.erase(GURL(blocklisted_origin.GetString()));
+  }
+
+  for (const auto& url : allowlisted_origins_set) {
     objects.push_back(std::make_unique<Object>(
         url::Origin::Create(url),
         ReaderNameToValue(l10n_util::GetStringUTF16(

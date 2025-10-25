@@ -8,7 +8,6 @@
 #import <UIKit/UIKit.h>
 
 #import "ios/chrome/browser/browser_container/ui_bundled/browser_container_consumer.h"
-#import "ios/chrome/browser/follow/model/follow_action_state.h"
 #import "ios/chrome/browser/popup_menu/ui_bundled/overflow_menu/overflow_menu_action_provider.h"
 #import "ios/chrome/browser/popup_menu/ui_bundled/overflow_menu/overflow_menu_swift.h"
 
@@ -32,7 +31,6 @@ class AuthenticationService;
 @protocol BrowserCoordinatorCommands;
 class BrowserPolicyConnectorIOS;
 @protocol FindInPageCommands;
-class FollowBrowserAgent;
 @protocol HelpCommands;
 @protocol ReaderModeCommands;
 @protocol LensOverlayCommands;
@@ -55,7 +53,8 @@ class TemplateURLService;
 class WebNavigationBrowserAgent;
 class WebStateList;
 @protocol WhatsNewCommands;
-@protocol PageActionMenuCommands;
+@protocol BWGCommands;
+@protocol TabGroupsCommands;
 
 // Mediator for the overflow menu. This object is in charge of creating and
 // updating the items of the overflow menu.
@@ -91,7 +90,8 @@ class WebStateList;
 @property(nonatomic, weak) id<QuickDeleteCommands> quickDeleteHandler;
 @property(nonatomic, weak) id<WhatsNewCommands> whatsNewHandler;
 @property(nonatomic, weak) id<ReaderModeCommands> readerModeHandler;
-@property(nonatomic, weak) id<PageActionMenuCommands> pageActionMenuHandler;
+@property(nonatomic, weak) id<BWGCommands> BWGHandler;
+@property(nonatomic, weak) id<TabGroupsCommands> tabGroupsHandler;
 
 // Navigation agent for reloading pages.
 @property(nonatomic, assign) WebNavigationBrowserAgent* navigationAgent;
@@ -129,9 +129,6 @@ class WebStateList;
 
 // The current browser policy connector.
 @property(nonatomic, assign) BrowserPolicyConnectorIOS* browserPolicyConnector;
-
-// The FollowBrowserAgent used to manage web channels subscriptions.
-@property(nonatomic, assign) FollowBrowserAgent* followBrowserAgent;
 
 // The Sync Service that provides the status of Sync.
 @property(nonatomic, assign) syncer::SyncService* syncService;

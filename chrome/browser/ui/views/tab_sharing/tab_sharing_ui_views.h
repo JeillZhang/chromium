@@ -18,6 +18,7 @@
 #include "chrome/browser/ui/tab_sharing/tab_sharing_ui.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
+#include "chrome/browser/ui/views/screen_sharing_util.h"
 #include "chrome/browser/ui/views/tab_sharing/tab_capture_contents_border_helper.h"
 #include "components/infobars/core/infobar_manager.h"
 #include "components/url_formatter/elide_url.h"
@@ -73,6 +74,12 @@ class TabSharingUIViews : public TabSharingUI,
   // Runs |stop_callback_| to stop sharing |shared_tab_|. Removes infobars on
   // all tabs.
   void StopSharing() override;
+
+  // TabSharingUI:
+  // Returns the object that coordinates UMA logging from multiple infobars,
+  // so that if the user interacts with one infobar, this would suppress
+  // recording "no-interaction" by the others.
+  ScreensharingControlsHistogramLogger& GetUmaLogger() override;
 
   // BrowserListObserver:
   void OnBrowserAdded(Browser* browser) override;
@@ -195,7 +202,6 @@ class TabSharingUIViews : public TabSharingUI,
   const std::u16string capturer_name_;
 
   raw_ptr<content::WebContents, DanglingUntriaged> shared_tab_;
-  std::unique_ptr<SameOriginObserver> shared_tab_origin_observer_;
   const url_formatter::SchemeDisplay shared_tab_scheme_display_;
   std::u16string shared_tab_name_;
   std::unique_ptr<content::MediaStreamUI> tab_capture_indicator_ui_;
@@ -210,6 +216,8 @@ class TabSharingUIViews : public TabSharingUI,
 
   bool captured_surface_control_active_ = false;
   std::unique_ptr<CapturedSurfaceControlObserver> csc_observer_;
+
+  ScreensharingControlsHistogramLogger uma_logger_;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TAB_SHARING_TAB_SHARING_UI_VIEWS_H_

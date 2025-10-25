@@ -60,6 +60,10 @@ class SSLPrivateKey;
 class X509Certificate;
 }  // namespace net
 
+namespace os_crypt_async {
+class OSCryptAsync;
+}
+
 namespace chromecast {
 class CastService;
 class CastSystemMemoryPressureEvaluatorAdjuster;
@@ -77,7 +81,6 @@ class CmaBackendFactory;
 class MediaPipelineBackendManager;
 class MediaResourceTracker;
 class VideoGeometrySetterService;
-class VideoPlaneController;
 class VideoModeSwitcher;
 class VideoResolutionPolicy;
 }  // namespace media
@@ -116,7 +119,6 @@ class CastContentBrowserClient
       CastSystemMemoryPressureEvaluatorAdjuster*
           cast_system_memory_pressure_evaluator_adjuster,
       PrefService* pref_service,
-      media::VideoPlaneController* video_plane_controller,
       CastWindowManager* window_manager,
       CastWebService* web_service,
       DisplaySettingsManager* display_settings_manager);
@@ -290,9 +292,6 @@ class CastContentBrowserClient
     return cast_browser_main_parts_;
   }
 
-  void BindMediaRenderer(
-      mojo::PendingReceiver<::media::mojom::Renderer> receiver);
-
   void GetApplicationMediaInfo(std::string* application_session_id,
                                bool* mixer_audio_enabled,
                                content::RenderFrameHost* render_frame_host);
@@ -362,6 +361,7 @@ class CastContentBrowserClient
 
   // Created by CastContentBrowserClient but owned by BrowserMainLoop.
   CastBrowserMainParts* cast_browser_main_parts_;
+  std::unique_ptr<os_crypt_async::OSCryptAsync> os_crypt_async_;
   std::unique_ptr<CastNetworkContexts> cast_network_contexts_;
   std::unique_ptr<media::CmaBackendFactory> cma_backend_factory_;
   std::unique_ptr<GeneralAudienceBrowsingService>

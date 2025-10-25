@@ -21,7 +21,6 @@
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/commerce/shopping_service_factory.h"
 #include "chrome/browser/compose/compose_enabling.h"
-#include "chrome/browser/download/bubble/download_bubble_prefs.h"
 #include "chrome/browser/history_embeddings/history_embeddings_utils.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
@@ -35,7 +34,9 @@
 #include "chrome/browser/privacy_sandbox/tracking_protection_onboarding_factory.h"
 #include "chrome/browser/privacy_sandbox/tracking_protection_settings_factory.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/regional_capabilities/regional_capabilities_service_factory.h"
+#include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ssl/https_upgrades_util.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
@@ -72,6 +73,7 @@
 #include "chrome/browser/ui/webui/settings/protocol_handlers_handler.h"
 #include "chrome/browser/ui/webui/settings/reset_settings_handler.h"
 #include "chrome/browser/ui/webui/settings/safety_hub_handler.h"
+#include "chrome/browser/ui/webui/settings/saved_info_handler.h"
 #include "chrome/browser/ui/webui/settings/search_engines_handler.h"
 #include "chrome/browser/ui/webui/settings/settings_clear_browsing_data_handler.h"
 #include "chrome/browser/ui/webui/settings/settings_localized_strings_provider.h"
@@ -97,6 +99,7 @@
 #include "components/autofill/core/browser/payments/payments_autofill_client.h"
 #include "components/autofill/core/browser/permissions/autofill_ai/autofill_ai_permission_utils.h"
 #include "components/autofill/core/common/autofill_features.h"
+#include "components/browsing_data/core/features.h"
 #include "components/commerce/core/commerce_feature_list.h"
 #include "components/commerce/core/feature_utils.h"
 #include "components/commerce/core/shopping_service.h"
@@ -114,6 +117,7 @@
 #include "components/regional_capabilities/regional_capabilities_service.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/safe_browsing/core/common/hashprefix_realtime/hash_realtime_utils.h"
+#include "components/search_engines/template_url_service.h"
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/sync/base/features.h"
@@ -161,7 +165,6 @@
 #include "chromeos/ash/experiences/arc/arc_util.h"
 #include "chromeos/constants/chromeos_features.h"
 #include "components/account_manager_core/chromeos/account_manager.h"
-#include "components/account_manager_core/chromeos/account_manager_facade_factory.h"
 #include "components/user_manager/user.h"
 #include "ui/base/ui_base_features.h"
 #else  // !BUILDFLAG(IS_CHROMEOS)
@@ -184,8 +187,8 @@
 #endif
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_enabling.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
 #include "chrome/browser/ui/webui/settings/glic_handler.h"
 #endif
 
@@ -256,8 +259,8 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
   AddSettingsPageUIHandler(std::make_unique<SecurityKeysCredentialHandler>());
   AddSettingsPageUIHandler(
       std::make_unique<SecurityKeysBioEnrollmentHandler>());
-  AddSettingsPageUIHandler(std::make_unique<SecurityKeysPhonesHandler>());
   AddSettingsPageUIHandler(std::make_unique<PasswordManagerHandler>());
+  AddSettingsPageUIHandler(std::make_unique<SavedInfoHandler>(profile));
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
   AddSettingsPageUIHandler(std::make_unique<PasskeysHandler>());
 #endif
@@ -300,6 +303,12 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
         ->FetchPriceEmailPref();
   }
 
+  TemplateURLService* template_url_service =
+      TemplateURLServiceFactory::GetForProfile(profile);
+  html_source->AddBoolean(
+      "showSearchAggregatorSuggest",
+      template_url_service->GetEnterpriseSearchAggregatorEngine());
+
   regional_capabilities::RegionalCapabilitiesService* regional_capabilties =
       regional_capabilities::RegionalCapabilitiesServiceFactory::GetForProfile(
           profile);
@@ -323,6 +332,10 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
       (!ShouldDisplayManagedUi(profile) && !profile->IsChild());
   html_source->AddBoolean("showPrivacyGuide", show_privacy_guide);
 
+  html_source->AddBoolean(
+      "showResetProfileBannerV2",
+      base::FeatureList::IsEnabled(features::kShowResetProfileBannerV2));
+
   html_source->AddBoolean("enableHandTrackingContentSetting",
 #if BUILDFLAG(ENABLE_VR)
                           device::features::IsHandTrackingEnabled());
@@ -341,10 +354,6 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
       "enableKeyboardLockPrompt",
       base::FeatureList::IsEnabled(permissions::features::kKeyboardLockPrompt));
 
-  html_source->AddBoolean(
-      "enableLinkedServicesSetting",
-      base::FeatureList::IsEnabled(features::kLinkedServicesSetting));
-
 #if BUILDFLAG(ENABLE_COMPOSE)
   const bool compose_enabled = ComposeEnabling::IsEnabledForProfile(profile);
   const bool compose_visible = ComposeEnabling::IsSettingVisible(profile);
@@ -361,10 +370,19 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
       compose_enabled && base::FeatureList::IsEnabled(
                              compose::features::kEnableComposeProactiveNudge));
 
+#if BUILDFLAG(ENABLE_GLIC)
   html_source->AddBoolean(
-      "downloadBubblePartialViewControlledByPref",
-      download::IsDownloadBubbleEnabled() &&
-          download::IsDownloadBubblePartialViewControlledByPref());
+      "showGeminiPersonalContextLink",
+      base::FeatureList::IsEnabled(features::kGlicPersonalContext));
+#endif  //  BUILDFLAG(ENABLE_GLIC)
+
+#if BUILDFLAG(IS_CHROMEOS)
+  const bool download_bubble_controlled_by_pref = false;
+#else
+  const bool download_bubble_controlled_by_pref = true;
+#endif
+  html_source->AddBoolean("downloadBubblePartialViewControlledByPref",
+                          download_bubble_controlled_by_pref);
 
   html_source->AddBoolean(
       "extendedReportingRemovePrefDependency",
@@ -382,6 +400,20 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
           ->GetPaymentsAutofillClient()
           ->GetPaymentsDataManager()
           .ShouldShowBnplSettings());
+
+  html_source->AddBoolean("enableBlockV8OptimizerOnUnfamiliarSites",
+                          base::FeatureList::IsEnabled(
+                              content_settings::features::
+                                  kBlockV8OptimizerOnUnfamiliarSitesSetting));
+
+  html_source->AddBoolean("enableYourSavedInfoSettingsPage",
+                          base::FeatureList::IsEnabled(
+                              autofill::features::kYourSavedInfoSettingsPage));
+
+  html_source->AddBoolean(
+      "enableYourSavedInfoBranding",
+      base::FeatureList::IsEnabled(
+          autofill::features::kYourSavedInfoBrandingInSettings));
 
   AddSettingsPageUIHandler(std::make_unique<AboutHandler>(profile));
   AddSettingsPageUIHandler(std::make_unique<ResetSettingsHandler>(profile));
@@ -458,27 +490,16 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
   html_source->AddBoolean("isPrivacySandboxRestrictedNoticeEnabled",
                           is_restricted_notice_enabled);
 
-  html_source->AddBoolean(
-      "isRelatedWebsiteSetsV2UiEnabled",
-      base::FeatureList::IsEnabled(
-          privacy_sandbox::kPrivacySandboxRelatedWebsiteSetsUi));
-
   // Mode B UX
   html_source->AddBoolean(
       "is3pcdCookieSettingsRedesignEnabled",
       TrackingProtectionSettingsFactory::GetForProfile(profile)
           ->IsTrackingProtection3pcdEnabled());
 
-  html_source->AddBoolean(
-      "isAlwaysBlock3pcsIncognitoEnabled",
-      base::FeatureList::IsEnabled(privacy_sandbox::kAlwaysBlock3pcsIncognito));
-
   // ACT UX
-  bool is_canary = chrome::GetChannel() == version_info::Channel::CANARY;
-  bool ipp_ux = is_canary &&
-                base::FeatureList::IsEnabled(privacy_sandbox::kIpProtectionUx);
-  bool fpp_ux = is_canary && base::FeatureList::IsEnabled(
-                                 privacy_sandbox::kFingerprintingProtectionUx);
+  bool ipp_ux = base::FeatureList::IsEnabled(privacy_sandbox::kIpProtectionUx);
+  bool fpp_ux = base::FeatureList::IsEnabled(
+      privacy_sandbox::kFingerprintingProtectionUx);
   html_source->AddBoolean("isIpProtectionUxEnabled", ipp_ux);
   html_source->AddBoolean("isFingerprintingProtectionUxEnabled", fpp_ux);
   html_source->AddBoolean("enableIncognitoTrackingProtections",
@@ -495,17 +516,13 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
       performance_manager::user_tuning::IsBatterySaverModeManagedByOS());
 
   html_source->AddBoolean(
-      "autoPictureInPictureEnabled",
+      "enableAutoPictureInPicture",
       base::FeatureList::IsEnabled(
           blink::features::kMediaSessionEnterPictureInPicture));
 
-  html_source->AddBoolean("capturedSurfaceControlEnabled",
+  html_source->AddBoolean("enableCapturedSurfaceControl",
                           base::FeatureList::IsEnabled(
                               features::kCapturedSurfaceControlKillswitch));
-
-  html_source->AddBoolean("enableAutomaticFullscreenContentSetting",
-                          base::FeatureList::IsEnabled(
-                              features::kAutomaticFullscreenContentSetting));
 
   html_source->AddBoolean(
       "enablePermissionSiteSettingsRadioButton",
@@ -537,13 +554,12 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
 
   // AI
   bool show_glic_section = false;
+  bool glic_disallowed_by_admin = false;
 
 #if BUILDFLAG(ENABLE_GLIC)
   auto glic_enablement = glic::GlicEnabling::EnablementForProfile(profile);
   show_glic_section = glic_enablement.ShouldShowSettingsPage();
-  html_source->AddBoolean("showGlicSettings", show_glic_section);
-  html_source->AddBoolean("glicDisallowedByAdmin",
-                          glic_enablement.DisallowedByAdmin());
+  glic_disallowed_by_admin = glic_enablement.DisallowedByAdmin();
 
   if (glic_enablement.IsProfileEligible()) {
     AddSettingsPageUIHandler(std::make_unique<GlicHandler>());
@@ -560,42 +576,29 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
   }
 #endif
 
-  const bool use_is_setting_visible = base::FeatureList::IsEnabled(
-      optimization_guide::features::kAiSettingsPageEnterpriseDisabledUi);
+  html_source->AddBoolean("showGlicSettings", show_glic_section);
+  html_source->AddBoolean("glicDisallowedByAdmin", glic_disallowed_by_admin);
 
   const auto& autofill_client =
       *autofill::ContentAutofillClient::FromWebContents(
           web_ui->GetWebContents());
-
+  html_source->AddBoolean(
+      "showAutofillAiControl",
+      autofill::MayPerformAutofillAiAction(
+          autofill_client,
+          autofill::AutofillAiAction::kListEntityInstancesInSettings));
   std::pair<const std::string_view, bool> optimization_guide_features[] = {
       {"showTabOrganizationControl",
-       use_is_setting_visible
-           ? TabOrganizationUtils::GetInstance()->IsSettingVisible(profile)
-           : TabOrganizationUtils::GetInstance()->IsEnabled(profile)},
-      {"showComposeControl",
-       use_is_setting_visible ? compose_visible : compose_enabled},
+       TabOrganizationUtils::GetInstance()->IsSettingVisible(profile)},
+      {"showComposeControl", compose_visible},
       {"showHistorySearchControl",
        history_embeddings::IsHistoryEmbeddingsSettingVisible(profile)},
-      {"showCompareControl",
-       use_is_setting_visible ? commerce::IsProductSpecificationsSettingVisible(
-                                    shopping_service->GetAccountChecker())
-                              : commerce::CanFetchProductSpecificationsData(
-                                    shopping_service->GetAccountChecker())},
+      {"showCompareControl", commerce::IsProductSpecificationsSettingVisible(
+                                 shopping_service->GetAccountChecker())},
       {"showPasswordChangeControl",
-       // TODO(crbug.com/391131625): Update accordingly to enterprise
-       // requirements.
        PasswordChangeServiceFactory::GetForProfile(profile) &&
            PasswordChangeServiceFactory::GetForProfile(profile)
-               ->IsPasswordChangeAvailable()},
-      // The code checks only once, when setting is loaded, whether the
-      // Autofill Ai section should be shown.
-      // The code cannot dynamically check whether the Autofill Ai section
-      // should be shown, because otherwise the user could reach weird states,
-      // such as navigating to the Ai Page when the Ai Page has 0 entries.
-      {"showAutofillAiControl",
-       autofill::MayPerformAutofillAiAction(
-           autofill_client,
-           autofill::AutofillAiAction::kListEntityInstancesInSettings)},
+               ->UserIsActivePasswordChangeUser()},
   };
 
   const bool show_ai_settings_for_testing = base::FeatureList::IsEnabled(
@@ -616,19 +619,24 @@ SettingsUI::SettingsUI(content::WebUI* web_ui)
                           show_glic_section || show_ai_features_section);
   html_source->AddBoolean("showAiPageAiFeatureSection",
                           show_ai_features_section);
-  html_source->AddBoolean(
-      "enableAiSettingsInPrivacyGuide",
-      optimization_guide::features::IsPrivacyGuideAiSettingsEnabled());
 
   // Delete Browsing Data
   html_source->AddBoolean(
       "enableDeleteBrowsingDataRevamp",
-      base::FeatureList::IsEnabled(features::kDbdRevampDesktop));
+      base::FeatureList::IsEnabled(browsing_data::features::kDbdRevampDesktop));
+  html_source->AddBoolean(
+      "enableBrowsingHistoryActorIntegrationM1",
+      base::FeatureList::IsEnabled(
+          browsing_data::features::kBrowsingHistoryActorIntegrationM1));
 
   html_source->AddBoolean(
       "enableSupportForHomeAndWork",
       base::FeatureList::IsEnabled(
           autofill::features::kAutofillEnableSupportForHomeAndWork));
+
+  html_source->AddBoolean(
+      "replaceSyncPromosWithSignInPromos",
+      base::FeatureList::IsEnabled(syncer::kReplaceSyncPromosWithSignInPromos));
 
   TryShowHatsSurveyWithTimeout();
 }
@@ -648,7 +656,8 @@ void SettingsUI::InitBrowserSettingsWebUIHandlers() {
         factory->GetAccountManager(profile->GetPath().value());
     DCHECK(account_manager);
     auto* account_manager_facade =
-        ::GetAccountManagerFacade(profile->GetPath().value());
+        ash::AccountManagerFactory::Get()->GetAccountManagerFacade(
+            profile->GetPath().value());
     DCHECK(account_manager_facade);
 
     web_ui()->AddMessageHandler(

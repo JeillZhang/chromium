@@ -15,6 +15,7 @@
 #include <compare>
 #include <limits>
 #include <type_traits>
+#include <utility>
 #include <variant>
 
 #include "base/types/variant_util.h"
@@ -40,7 +41,7 @@ namespace blink {
 // void TeleportGoat(const GoatToken&);
 //
 // void TeleportUngulate(const UngulateToken& token) {
-//   token.Visit(base::Overloaded(
+//   token.Visit(absl::Overload(
 //         [](const CowToken& cow_token) { TeleportCow(cow_token); },
 //         [](const GoatToken& goat_token) { TeleportGoat(goat_token); }));
 // }
@@ -133,7 +134,7 @@ class MultiToken {
     return lhs == MultiToken(rhs);
   }
 
-  // Hash functor for use in unordered containers.
+  // Hash functors for use in unordered containers.
   struct Hasher {
     using argument_type = MultiToken;
     using result_type = size_t;
@@ -141,6 +142,11 @@ class MultiToken {
       return base::UnguessableTokenHash()(token.value());
     }
   };
+
+  template <typename H>
+  friend H AbslHashValue(H h, const MultiToken& token) {
+    return H::combine(std::move(h), token.value());
+  }
 
   // Prefer the above helpers where possible. These methods are primarily useful
   // for serialization/deserialization.

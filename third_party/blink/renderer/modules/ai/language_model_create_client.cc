@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/modules/ai/language_model_create_client.h"
 
+#include "base/feature_list.h"
 #include "base/task/sequenced_task_runner.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_create_monitor_callback.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_language_model_message.h"
@@ -15,6 +16,8 @@
 #include "third_party/blink/renderer/core/dom/quota_exceeded_error.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context_lifecycle_observer.h"
+#include "third_party/blink/renderer/core/frame/local_dom_window.h"
+#include "third_party/blink/renderer/modules/ai/ai_features.h"
 #include "third_party/blink/renderer/modules/ai/ai_interface_proxy.h"
 #include "third_party/blink/renderer/modules/ai/ai_utils.h"
 #include "third_party/blink/renderer/modules/ai/language_model_prompt_builder.h"
@@ -23,7 +26,8 @@ namespace blink {
 
 LanguageModelCreateClient::LanguageModelCreateClient(
     ScriptPromiseResolver<LanguageModel>* resolver,
-    LanguageModelCreateOptions* options)
+    LanguageModelCreateOptions* options,
+    mojom::blink::AILanguageModelSamplingParamsPtr resolved_sampling_params)
     : ExecutionContextClient(
           ExecutionContext::From(resolver->GetScriptState())),
       AIContextObserver(resolver->GetScriptState(),
@@ -32,16 +36,27 @@ LanguageModelCreateClient::LanguageModelCreateClient(
                         options->getSignalOr(nullptr)),
       receiver_(this, GetExecutionContext()),
       options_(options),
+      resolved_sampling_params_(std::move(resolved_sampling_params)),
       task_runner_(
           GetExecutionContext()->GetTaskRunner(TaskType::kInternalDefault)) {
+  HeapMojoRemote<mojom::blink::AIManager>& ai_manager_remote =
+      AIInterfaceProxy::GetAIManagerRemote(GetExecutionContext());
+
   if (options->hasMonitor()) {
-    monitor_ = MakeGarbageCollected<CreateMonitor>(GetExecutionContext(),
-                                                   task_runner_);
-    std::ignore = options->monitor()->Invoke(nullptr, monitor_);
-    HeapMojoRemote<mojom::blink::AIManager>& ai_manager_remote =
-        AIInterfaceProxy::GetAIManagerRemote(GetExecutionContext());
+    monitor_ = MakeGarbageCollected<CreateMonitor>(
+        GetExecutionContext(), options->getSignalOr(nullptr), task_runner_);
+    // If an exception is thrown, don't initiate the model download.
+    // `AICreateMonitorCallback`'s `Invoke` will automatically reject the
+    // promise with the thrown exception.
+    if (options->monitor()->Invoke(nullptr, monitor_).IsNothing()) {
+      return;
+    }
     ai_manager_remote->AddModelDownloadProgressObserver(monitor_->BindRemote());
   }
+
+  LanguageModel::ExecuteAvailability(
+      ai_manager_remote, options, resolved_sampling_params_.Clone(),
+      BindOnce(&LanguageModelCreateClient::Create, WrapPersistent(this)));
 }
 
 LanguageModelCreateClient::~LanguageModelCreateClient() = default;
@@ -54,29 +69,36 @@ void LanguageModelCreateClient::Trace(Visitor* visitor) const {
   visitor->Trace(monitor_);
 }
 
-void LanguageModelCreateClient::Create() {
-  mojom::blink::AILanguageModelSamplingParamsPtr sampling_params;
-  auto sampling_params_or_exception = ResolveSamplingParamsOption(options_);
-  if (!sampling_params_or_exception.has_value()) {
-    switch (sampling_params_or_exception.error()) {
-      case SamplingParamsOptionError::kOnlyOneOfTopKAndTemperatureIsProvided:
-        GetResolver()->Reject(DOMException::Create(
-            kExceptionMessageInvalidTemperatureAndTopKFormat,
-            DOMException::GetErrorName(DOMExceptionCode::kNotSupportedError)));
-        break;
-      case SamplingParamsOptionError::kInvalidTopK:
-        GetResolver()->RejectWithRangeError(kExceptionMessageInvalidTopK);
-        break;
-      case SamplingParamsOptionError::kInvalidTemperature:
-        GetResolver()->RejectWithRangeError(
-            kExceptionMessageInvalidTemperature);
-        break;
-    }
+void LanguageModelCreateClient::Create(
+    mojom::blink::ModelAvailabilityCheckResult result) {
+  // Abort may have been triggered by `OnDownloadProgressUpdate`.
+  if (!GetResolver()) {
     return;
   }
-  sampling_params = std::move(sampling_params_or_exception.value());
 
-  WTF::HashSet<mojom::blink::AILanguageModelPromptType> maybe_allowed_types;
+  Availability availability = ConvertModelAvailabilityCheckResult(result);
+  if (availability == Availability::kUnavailable) {
+    GetResolver()->RejectWithDOMException(
+        DOMExceptionCode::kNotAllowedError,
+        ConvertModelAvailabilityCheckResultToDebugString(result));
+    return;
+  }
+
+  ScriptState* script_state = GetScriptState();
+  LocalDOMWindow* window = LocalDOMWindow::From(script_state);
+
+  // Prompt APIs are only available within window and extension worker
+  // contexts by default. User activation is not consumed by workers,
+  // as they lack the ability to do so.
+  if (window && RequiresUserActivation(availability) &&
+      !MeetsUserActivationRequirements(window)) {
+    GetResolver()->RejectWithDOMException(
+        DOMExceptionCode::kNotAllowedError,
+        kExceptionMessageUserActivationRequired);
+    return;
+  }
+
+  HashSet<mojom::blink::AILanguageModelPromptType> maybe_allowed_types;
   maybe_allowed_types.insert(mojom::blink::AILanguageModelPromptType::kText);
   Vector<mojom::blink::AILanguageModelExpectedPtr> expected_in, expected_out;
   if (options_->hasExpectedInputs()) {
@@ -104,18 +126,9 @@ void LanguageModelCreateClient::Create() {
     }
   }
 
-  // TODO(crbug.com/381974893): Remove this warning after a couple milestones.
-  if (options_->hasSystemPrompt()) {
-    GetExecutionContext()->AddConsoleMessage(
-        mojom::blink::ConsoleMessageSource::kJavaScript,
-        mojom::blink::ConsoleMessageLevel::kWarning,
-        "`systemPrompt` is no longer supported. Use "
-        "`initialPrompts: [{role: 'system', content: ... }, ...]` instead.");
-  }
-
   if (!options_->hasInitialPrompts() || options_->initialPrompts().empty()) {
-    OnInitialPromptsResolved(std::move(sampling_params), std::move(expected_in),
-                             std::move(expected_out), /*initial_prompts=*/{});
+    OnInitialPromptsResolved(std::move(expected_in), std::move(expected_out),
+                             /*initial_prompts=*/{});
     return;
   }
 
@@ -125,7 +138,13 @@ void LanguageModelCreateClient::Create() {
         message != options_->initialPrompts().front()) {
       // Only the first prompt supports the `system` role.
       GetResolver()->RejectWithTypeError(
-          kExceptionMessageSystemPromptIsNotTheFirst);
+          kExceptionMessagePromptWithSystemRoleIsNotTheFirst);
+      return;
+    }
+    if (message->prefix()) {
+      GetResolver()->Reject(DOMException::Create(
+          "initialPrompts cannot specify an assistant response prefix.",
+          DOMException::GetErrorName(DOMExceptionCode::kSyntaxError)));
       return;
     }
   }
@@ -133,12 +152,12 @@ void LanguageModelCreateClient::Create() {
   ConvertPromptInputsToMojo(
       GetScriptState(), options_->getSignalOr(nullptr),
       MakeGarbageCollected<V8LanguageModelPrompt>(options_->initialPrompts()),
-      maybe_allowed_types,
-      WTF::BindOnce(&LanguageModelCreateClient::OnInitialPromptsResolved,
-                    WrapPersistent(this), std::move(sampling_params),
-                    std::move(expected_in), std::move(expected_out)),
-      WTF::BindOnce(&LanguageModelCreateClient::OnInitialPromptsRejected,
-                    WrapPersistent(this)));
+      maybe_allowed_types, /*json_schema=*/"",
+      BindOnce(&LanguageModelCreateClient::OnInitialPromptsResolved,
+               WrapPersistent(this), std::move(expected_in),
+               std::move(expected_out)),
+      BindOnce(&LanguageModelCreateClient::OnInitialPromptsRejected,
+               WrapPersistent(this)));
 }
 
 void LanguageModelCreateClient::OnResult(
@@ -219,7 +238,6 @@ void LanguageModelCreateClient::ResetReceiver() {
 }
 
 void LanguageModelCreateClient::OnInitialPromptsResolved(
-    mojom::blink::AILanguageModelSamplingParamsPtr sampling_params,
     Vector<mojom::blink::AILanguageModelExpectedPtr> expected_inputs,
     Vector<mojom::blink::AILanguageModelExpectedPtr> expected_outputs,
     Vector<mojom::blink::AILanguageModelPromptPtr> initial_prompts) {
@@ -234,7 +252,7 @@ void LanguageModelCreateClient::OnInitialPromptsResolved(
   ai_manager_remote->CreateLanguageModel(
       std::move(client_remote),
       mojom::blink::AILanguageModelCreateOptions::New(
-          std::move(sampling_params), std::move(initial_prompts),
+          resolved_sampling_params_.Clone(), std::move(initial_prompts),
           std::move(expected_inputs), std::move(expected_outputs)));
 }
 

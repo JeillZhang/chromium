@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/frame/system_menu_model_delegate.h"
 
+#include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/command_updater.h"
@@ -12,6 +13,7 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_service.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -22,13 +24,11 @@
 
 #if BUILDFLAG(IS_LINUX)
 #include "chrome/common/pref_names.h"
-#include "components/prefs/pref_service.h"
 #endif
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_enabling.h"
 #include "chrome/browser/glic/glic_pref_names.h"
-#include "chrome/browser/glic/resources/grit/glic_browser_resources.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
 #endif
 
 SystemMenuModelDelegate::SystemMenuModelDelegate(
@@ -137,5 +137,26 @@ std::u16string SystemMenuModelDelegate::GetLabelForCommandId(
 }
 
 void SystemMenuModelDelegate::ExecuteCommand(int command_id, int event_flags) {
+  switch (command_id) {
+    case IDC_BOOKMARK_ALL_TABS:
+      base::RecordAction(
+          base::UserMetricsAction("SystemContextMenu_BookmarkAllTabs"));
+      break;
+    case IDC_NEW_TAB:
+      base::RecordAction(base::UserMetricsAction("SystemContextMenu_NewTab"));
+      break;
+    case IDC_RESTORE_TAB:
+      base::RecordAction(
+          base::UserMetricsAction("SystemContextMenu_RestoreTab"));
+      break;
+    case IDC_GROUP_UNGROUPED_TABS:
+      base::RecordAction(
+          base::UserMetricsAction("SystemContextMenu_GroupAllTabs"));
+      break;
+    case IDC_NAME_WINDOW:
+      base::RecordAction(
+          base::UserMetricsAction("SystemContextMenu_NameWindow"));
+      break;
+  }
   chrome::ExecuteCommand(browser_, command_id);
 }

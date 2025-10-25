@@ -31,8 +31,8 @@
 #include "chrome/browser/ui/webui/ash/edu_coexistence/edu_coexistence_login_handler.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chromeos/ash/components/account_manager/account_manager_factory.h"
 #include "components/account_manager_core/account_manager_facade.h"
-#include "components/account_manager_core/chromeos/account_manager_facade_factory.h"
 #include "components/account_manager_core/mock_account_manager_facade.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
@@ -177,6 +177,7 @@ std::unique_ptr<InProcessBrowserTestMixin> CreateLoginMixin(
     case user_manager::UserType::kKioskChromeApp:
     case user_manager::UserType::kKioskWebApp:
     case user_manager::UserType::kKioskIWA:
+    case user_manager::UserType::kKioskArcvmApp:
       NOTREACHED();
   }
 }
@@ -228,21 +229,22 @@ class InlineLoginHandlerTest
 
     embedded_test_server_.StartAcceptingConnections();
 
+    identity_test_env_profile_adaptor_ =
+        std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile());
+    AccountInfo account_info =
+        identity_test_env_profile_adaptor_->identity_test_env()
+            ->MakePrimaryAccountAvailable(GetDeviceAccountInfo().email,
+                                          signin::ConsentLevel::kSignin);
+
     if (GetDeviceAccountInfo().user_type == user_manager::UserType::kChild) {
       profile()->GetPrefs()->SetString(prefs::kSupervisedUserId,
-                                       GetDeviceAccountInfo().id);
+                                       supervised_user::kChildAccountSUID);
       // This is required for Child users, otherwise an account cannot be added.
       edu_handler_ =
           std::make_unique<EduCoexistenceLoginHandler>(base::DoNothing());
       edu_handler_->set_web_ui_for_test(web_ui());
       edu_handler_->RegisterMessages();
     }
-
-    identity_test_env_profile_adaptor_ =
-        std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile());
-    identity_test_env_profile_adaptor_->identity_test_env()
-        ->MakePrimaryAccountAvailable(GetDeviceAccountInfo().email,
-                                      signin::ConsentLevel::kSignin);
 
     // Setup web ui with cookies.
     web_ui_.set_web_contents(web_contents());
@@ -262,7 +264,7 @@ class InlineLoginHandlerTest
 
     // Setup fake Gaia.
     FakeGaia::Configuration params;
-    params.email = kSecondaryAccount1Email;
+    params.emails = {kSecondaryAccount1Email};
     params.refresh_token = kSecondaryAccountRefreshToken;
     params.auth_code = kSecondaryAccountOAuthCode;
     fake_gaia_.UpdateConfiguration(params);
@@ -366,7 +368,8 @@ IN_PROC_BROWSER_TEST_P(InlineLoginHandlerTest, NewAccountAdditionSuccess) {
   base::ScopedObservation<account_manager::AccountManagerFacade,
                           account_manager::AccountManagerFacade::Observer>
       observation{&observer};
-  observation.Observe(::GetAccountManagerFacade(profile()->GetPath().value()));
+  observation.Observe(AccountManagerFactory::Get()->GetAccountManagerFacade(
+      profile()->GetPath().value()));
 
   // Call "completeLogin".
   base::Value::List args;
@@ -391,7 +394,8 @@ IN_PROC_BROWSER_TEST_P(InlineLoginHandlerTest, PrimaryReauthenticationSuccess) {
   base::ScopedObservation<account_manager::AccountManagerFacade,
                           account_manager::AccountManagerFacade::Observer>
       observation{&observer};
-  observation.Observe(::GetAccountManagerFacade(profile()->GetPath().value()));
+  observation.Observe(AccountManagerFactory::Get()->GetAccountManagerFacade(
+      profile()->GetPath().value()));
 
   // Call "completeLogin".
   base::Value::List args;

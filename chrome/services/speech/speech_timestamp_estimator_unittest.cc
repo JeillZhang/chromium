@@ -14,7 +14,7 @@ namespace {
 using SpeechTimestamp = SpeechTimestampEstimator::SpeechTimestamp;
 using PlaybackDuration = SpeechTimestampEstimator::PlaybackDuration;
 using MediaTimestamp = SpeechTimestampEstimator::MediaTimestamp;
-using MediaTimestampRange = SpeechTimestampEstimator::MediaTimestampRange;
+using MediaTimestampRange = media::MediaTimestampRange;
 using MediaRanges = SpeechTimestampEstimator::MediaRanges;
 
 using SpeechTimestampRange = std::pair<SpeechTimestamp, SpeechTimestamp>;
@@ -25,19 +25,17 @@ SpeechTimestampRange SpeechSecondsRange(int start, int end) {
 }
 
 MediaTimestampRange MediaSecondsRange(int start, int end) {
-  return {base::Seconds(start), base::Seconds(end)};
+  return {.start = base::Seconds(start), .end = base::Seconds(end)};
 }
 
-void VerifyRanges(const MediaRanges& actual, const MediaRanges& expected) {
-  EXPECT_EQ(actual.size(), expected.size());
-  for (auto [actual_range, expected_range] : base::zip(actual, expected)) {
-    auto [actual_start, actual_end] = actual_range;
-    auto [expected_start, expected_end] = expected_range;
+void VerifyRanges(const MediaRanges& actual_ranges,
+                  const MediaRanges& expected_ranges) {
+  EXPECT_EQ(actual_ranges.size(), expected_ranges.size());
+  for (auto [actual, expected] : base::zip(actual_ranges, expected_ranges)) {
+    EXPECT_EQ(actual.start, expected.start);
+    EXPECT_EQ(actual.end, expected.end);
 
-    EXPECT_EQ(actual_start, expected_start);
-    EXPECT_EQ(actual_end, expected_end);
-
-    EXPECT_LT(actual_start, actual_end);
+    EXPECT_LT(actual.start, actual.end);
   }
 }
 
@@ -46,13 +44,16 @@ class SpeechTimestampEstimatorTest : public testing::Test {
   SpeechTimestampEstimatorTest() = default;
   ~SpeechTimestampEstimatorTest() override = default;
 
-  // Helper functions to allow the direct use of `base::TimeDelta`;
+  // Helper functions for taking the timestamps.
   MediaRanges TakeRange(SpeechTimestampRange range) {
     return estimator_.TakeTimestampsInRange(range.first, range.second);
   }
   MediaRanges TakeAllRanges() {
     // Completely empties out `estimator_`.
     return TakeRange(SpeechSecondsRange(0, base::Days(1).InSeconds()));
+  }
+  MediaRanges PeekRange(SpeechTimestampRange range) {
+    return estimator_.PeekTimestampsInRange(range.first, range.second);
   }
 
   void AppendDuration(base::TimeDelta duration) {
@@ -436,6 +437,42 @@ TEST_F(SpeechTimestampEstimatorTest,
 
   VerifyRanges(TakeRange(SpeechSecondsRange(0, 20)),
                {MediaSecondsRange(100, 110), MediaSecondsRange(510, 520)});
+}
+
+TEST_F(SpeechTimestampEstimatorTest, PeekTimestampsInRange) {
+  // Add [100s, 110s). Speech time: [0, 10)
+  AddNewPlayback(base::Seconds(100));
+  AppendDuration(base::Seconds(10));
+
+  // Add [140s, 145s). Speech time: [10, 15)
+  AddNewPlayback(base::Seconds(140));
+  AppendDuration(base::Seconds(5));
+
+  // Add [100s, 110s). Speech time: [15, 25)
+  AddNewPlayback(base::Seconds(100));
+  AppendDuration(base::Seconds(10));
+
+  // 1. Peek into a range.
+  // Speech range [1, 21) should correspond to media ranges:
+  // [101, 110), [140, 145), [100, 106)
+  MediaRanges expected_ranges = {MediaSecondsRange(101, 110),
+                                 MediaSecondsRange(140, 145),
+                                 MediaSecondsRange(100, 106)};
+  VerifyRanges(PeekRange(SpeechSecondsRange(1, 21)), expected_ranges);
+
+  // 2. Verify that peeking again yields the exact same result.
+  // This is the key difference from TakeRange.
+  VerifyRanges(PeekRange(SpeechSecondsRange(1, 21)), expected_ranges);
+
+  // 3. Take the same range to prove the state was indeed unchanged.
+  // The result of taking should be identical to the result of peeking.
+  VerifyRanges(TakeRange(SpeechSecondsRange(1, 21)), expected_ranges);
+
+  // 4. Now that we've *taken* the range [1, 21), the estimator is modified.
+  // Peeking into the full range should now only return the final chunk.
+  // Speech range [21, 25) -> Media range [106, 110)
+  VerifyRanges(PeekRange(SpeechSecondsRange(0, 100)),
+               {MediaSecondsRange(106, 110)});
 }
 
 }  // namespace

@@ -15,6 +15,7 @@
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/strings/string_view_util.h"
 #include "base/time/time.h"
@@ -42,6 +43,7 @@
 #include "net/cert/signed_certificate_timestamp_and_status.h"
 #include "net/cert/test_root_certs.h"
 #include "net/cert/time_conversions.h"
+#include "net/cert/two_qwac.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_certificate_net_log_param.h"
 #include "net/cert/x509_util.h"
@@ -129,29 +131,29 @@ void HistogramVerify1QwacResult(Verify1QwacResult result) {
   base::UmaHistogramEnumeration("Net.CertVerifier.Qwac.1Qwac", result);
 }
 
-void HistogramVerify2QwacResult(Verify2QwacResult result) {
-  base::UmaHistogramEnumeration("Net.CertVerifier.Qwac.2Qwac", result);
+void HistogramVerify2QwacResult(Verify2QwacBindingResult result) {
+  base::UmaHistogramEnumeration("Net.CertVerifier.Qwac.2QwacBinding", result);
 }
 
-Verify2QwacResult MapErrorTo2QwacResult(int err) {
+Verify2QwacBindingResult MapErrorTo2QwacResult(int err) {
   switch (err) {
     case ERR_CERT_COMMON_NAME_INVALID:
-      return Verify2QwacResult::kNameInvalid;
+      return Verify2QwacBindingResult::kCertNameInvalid;
     case ERR_CERT_DATE_INVALID:
-      return Verify2QwacResult::kDateInvalid;
+      return Verify2QwacBindingResult::kCertDateInvalid;
     case ERR_CERT_AUTHORITY_INVALID:
-      return Verify2QwacResult::kAuthorityInvalid;
+      return Verify2QwacBindingResult::kCertAuthorityInvalid;
     case ERR_CERT_INVALID:
-      return Verify2QwacResult::kInvalid;
+      return Verify2QwacBindingResult::kCertInvalid;
     case ERR_CERT_WEAK_KEY:
-      return Verify2QwacResult::kWeakKey;
+      return Verify2QwacBindingResult::kCertWeakKey;
     case ERR_CERT_NAME_CONSTRAINT_VIOLATION:
-      return Verify2QwacResult::kNameConstraintViolation;
+      return Verify2QwacBindingResult::kCertNameConstraintViolation;
     default:
       if (IsCertificateError(err)) {
-        return Verify2QwacResult::kOtherCertError;
+        return Verify2QwacBindingResult::kCertOtherError;
       } else {
-        return Verify2QwacResult::kOtherError;
+        return Verify2QwacBindingResult::kOtherError;
       }
   }
 }
@@ -302,19 +304,13 @@ bool IsSelfSignedCertOnLocalNetwork(const X509Certificate* cert,
   return X509Certificate::IsSelfSigned(cert->cert_buffer());
 }
 
-// Appends the SHA256 hashes of |spki_bytes| to |*hashes|.
-void AppendPublicKeyHashes(const bssl::der::Input& spki_bytes,
-                           HashValueVector* hashes) {
-  hashes->emplace_back(crypto::hash::Sha256(spki_bytes));
-}
-
 // Appends the SubjectPublicKeyInfo hashes for all certificates in
 // |path| to |*hashes|.
 void AppendPublicKeyHashes(const bssl::CertPathBuilderResultPath& path,
-                           HashValueVector* hashes) {
+                           std::vector<SHA256HashValue>* hashes) {
   for (const std::shared_ptr<const bssl::ParsedCertificate>& cert :
        path.certs) {
-    AppendPublicKeyHashes(cert->tbs().spki_tlv, hashes);
+    hashes->emplace_back(crypto::hash::Sha256(cert->tbs().spki_tlv));
   }
 }
 
@@ -567,7 +563,7 @@ class PathBuilderDelegateImpl : public bssl::SimplePathBuilderDelegate {
     // TODO(crbug.com/41392053): The SPKI hashes are calculated here, during
     // CRLSet checks, and in AssignVerifyResult. Calculate once and cache in
     // delegate_data so that it can be reused.
-    HashValueVector public_key_hashes;
+    std::vector<SHA256HashValue> public_key_hashes;
     AppendPublicKeyHashes(*path, &public_key_hashes);
 
     bool is_issued_by_known_root = false;
@@ -984,6 +980,11 @@ class CertVerifyProcBuiltin : public CertVerifyProc {
                      const NetLogWithSource& net_log) override;
 
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
+  scoped_refptr<X509Certificate> Verify2QwacBinding(
+      std::string_view binding,
+      const std::string& hostname,
+      base::span<const uint8_t> tls_cert,
+      const NetLogWithSource& net_log) override;
   int Verify2Qwac(X509Certificate* input_cert,
                   const std::string& hostname,
                   CertVerifyResult* verify_result,
@@ -1664,6 +1665,80 @@ int CertVerifyProcBuiltin::VerifyInternal(X509Certificate* input_cert,
 }
 
 #if BUILDFLAG(CHROME_ROOT_STORE_SUPPORTED)
+namespace {
+void NetLog2QwacBindingError(const NetLogWithSource& net_log,
+                             std::string_view message,
+                             std::string_view details = {}) {
+  net_log.EndEvent(NetLogEventType::CERT_VERIFY_PROC_2QWAC_BINDING, [&] {
+    base::Value::Dict dict;
+    // Including a net_error will cause the netlog-viewer to display this event
+    // as an error.
+    dict.Set("net_error", ERR_FAILED);
+    if (details.empty()) {
+      dict.Set("error_description", message);
+    } else {
+      dict.Set("error_description", base::StrCat({message, ": ", details}));
+    }
+    return dict;
+  });
+}
+}  // namespace
+
+scoped_refptr<X509Certificate> CertVerifyProcBuiltin::Verify2QwacBinding(
+    std::string_view binding,
+    const std::string& hostname,
+    base::span<const uint8_t> tls_cert,
+    const NetLogWithSource& net_log) {
+  net_log.BeginEvent(NetLogEventType::CERT_VERIFY_PROC_2QWAC_BINDING, [&] {
+    base::Value::Dict dict;
+    dict.Set("binding", NetLogStringValue(binding));
+    dict.Set("host", NetLogStringValue(hostname));
+
+    std::string pem_encoded_tls_cert;
+    if (X509Certificate::GetPEMEncodedFromDER(base::as_string_view(tls_cert),
+                                              &pem_encoded_tls_cert)) {
+      dict.Set("tls_certificate", NetLogStringValue(pem_encoded_tls_cert));
+    }
+
+    return dict;
+  });
+
+  auto parsed_binding = TwoQwacCertBinding::Parse(binding);
+  if (!parsed_binding.has_value()) {
+    HistogramVerify2QwacResult(Verify2QwacBindingResult::kBindingParsingError);
+    NetLog2QwacBindingError(net_log, "binding parsing error",
+                            parsed_binding.error());
+    return nullptr;
+  }
+  if (!parsed_binding->VerifySignature()) {
+    HistogramVerify2QwacResult(
+        Verify2QwacBindingResult::kBindingSignatureInvalid);
+    NetLog2QwacBindingError(net_log, "binding signature invalid");
+    return nullptr;
+  }
+  CertVerifyResult verify_result;
+  int verify_rv = Verify2Qwac(parsed_binding->header().two_qwac_cert.get(),
+                              hostname, &verify_result, net_log);
+  if (verify_rv != OK) {
+    // Verify2Qwac internally records a histogram result on all failure cases,
+    // so no histogram result is recorded here.
+    NetLog2QwacBindingError(net_log, "2-QWAC cert verify failed");
+    return nullptr;
+  }
+  if (!parsed_binding->BindsTlsCert(tls_cert)) {
+    HistogramVerify2QwacResult(Verify2QwacBindingResult::kTlsCertNotBound);
+    NetLog2QwacBindingError(net_log, "TLS cert not bound");
+    return nullptr;
+  }
+  HistogramVerify2QwacResult(Verify2QwacBindingResult::kValid2QwacBinding);
+  net_log.EndEvent(NetLogEventType::CERT_VERIFY_PROC_2QWAC_BINDING, [&] {
+    base::Value::Dict dict;
+    dict.Set("is_valid_2qwac_binding", true);
+    return dict;
+  });
+  return std::move(verify_result.verified_cert);
+}
+
 int CertVerifyProcBuiltin::Verify2Qwac(X509Certificate* cert,
                                        const std::string& hostname,
                                        CertVerifyResult* verify_result,
@@ -1693,7 +1768,7 @@ int CertVerifyProcBuiltin::Verify2QwacInternal(
     const std::string& hostname,
     CertVerifyResult* verify_result,
     const NetLogWithSource& net_log) {
-  // TODO(crbug.com/392931070): EUTL anchor usage histograms
+  // TODO(crbug.com/436274250): EUTL anchor usage histograms
 
   LogChromeRootStoreVersion(net_log);
 
@@ -1707,7 +1782,8 @@ int CertVerifyProcBuiltin::Verify2QwacInternal(
       return NetLogCertParams(input_cert->cert_buffer(), parsing_errors);
     });
     if (!target) {
-      HistogramVerify2QwacResult(Verify2QwacResult::kLeafParsingError);
+      HistogramVerify2QwacResult(
+          Verify2QwacBindingResult::kCertLeafParsingError);
       verify_result->cert_status |= CERT_STATUS_INVALID;
       return ERR_CERT_INVALID;
     }
@@ -1738,9 +1814,10 @@ int CertVerifyProcBuiltin::Verify2QwacInternal(
     if (policy_status == QwacPoliciesStatus::kNotQwac &&
         qc_statement_status == QwacQcStatementsStatus::kNotQwac &&
         eku_status == QwacEkuStatus::kNotQwac) {
-      HistogramVerify2QwacResult(Verify2QwacResult::kNotQwac);
+      HistogramVerify2QwacResult(Verify2QwacBindingResult::kCertNotQwac);
     } else {
-      HistogramVerify2QwacResult(Verify2QwacResult::kInconsistentBits);
+      HistogramVerify2QwacResult(
+          Verify2QwacBindingResult::kCertInconsistentBits);
     }
     verify_result->cert_status |= CERT_STATUS_INVALID;
     return ERR_CERT_INVALID;
@@ -1763,15 +1840,15 @@ int CertVerifyProcBuiltin::Verify2QwacInternal(
 
   TwoQwacPathBuilderDelegateImpl path_builder_delegate(net_log);
 
-  // TODO(crbug.com/392931070): try with both system time and time_tracker_?
-  // It's less important here since the failure mode is just that it doesn't get
-  // marked as a qwac.
+  // QWAC verification is only attempted using system time. If the system time
+  // is off but time_tracker_ can provide the correct time, 2-QWAC verification
+  // may fail.
   bssl::der::GeneralizedTime der_verification_system_time;
   if (!EncodeTimeAsGeneralizedTime(base::Time::Now(),
                                    &der_verification_system_time)) {
     // This shouldn't be possible.
     // We don't really have a good error code for this type of error.
-    HistogramVerify2QwacResult(Verify2QwacResult::kOtherError);
+    HistogramVerify2QwacResult(Verify2QwacBindingResult::kOtherError);
     verify_result->cert_status |= CERT_STATUS_AUTHORITY_INVALID;
     return ERR_CERT_AUTHORITY_INVALID;
   }
@@ -1835,10 +1912,9 @@ int CertVerifyProcBuiltin::Verify2QwacInternal(
     return rv;
   }
 
-  // TODO(crbug.com/392931070): is there any point in setting this? This method
-  // only ever returns OK if it is a valid 2-qwac anyway.
-  verify_result->cert_status |= CERT_STATUS_IS_QWAC;
-  HistogramVerify2QwacResult(Verify2QwacResult::kValid2Qwac);
+  // No histogram result is recorded in the success case, as it is assumed
+  // Verify2Qwac is only called by Verify2QwacBinding, which will record the
+  // histogram result if Verify2Qwac succeeds.
   return OK;
 }
 

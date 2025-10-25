@@ -10,6 +10,7 @@
 #import "base/notreached.h"
 #import "base/task/thread_pool.h"
 #import "base/time/time.h"
+#import "ios/chrome/common/app_group/app_group_utils.h"
 #import "ios/chrome/common/constants.h"
 #import "ios/chrome/common/string_util.h"
 #import "ios/chrome/common/ui/colors/semantic_color_names.h"
@@ -76,7 +77,7 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
 @property(nonatomic, strong) UIImageView* headerImageView;
 @property(nonatomic, strong) UITextView* disclaimerView;
 // Primary action button for the view controller.
-@property(nonatomic, strong) HighlightButton* primaryActionButton;
+@property(nonatomic, strong) ChromeButton* primaryActionButton;
 // Activity indicator on top of `primaryActionButton`.
 @property(nonatomic, strong)
     UIActivityIndicatorView* primaryButtonActivityIndicatorView;
@@ -124,6 +125,9 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
   // Vertical constraints for buttons; used to reset top anchors when the number
   // of buttons changes on scroll.
   NSArray<NSLayoutConstraint*>* _buttonsVerticalAnchorConstraints;
+
+  // The width layout guide for promo content under the banner.
+  UILayoutGuide* _widthLayoutGuide;
 
   // Vertical constraints for banner; used to deactivate these constraints when
   // the banner is hidden.
@@ -257,9 +261,7 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
       (self.actionButtonsVisibility == ActionButtonsVisibility::kHidden);
   [view addSubview:_actionButtonsStackView];
 
-  // Create a layout guide to constrain the width of the content, while still
-  // allowing the scroll view to take the full screen width.
-  UILayoutGuide* widthLayoutGuide = AddPromoStyleWidthLayoutGuide(view);
+  [self updatePromoStyleWidth];
 
   if (disclaimerView) {
     [NSLayoutConstraint activateConstraints:@[
@@ -326,10 +328,6 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
     // the buttons.
     [_scrollContentView.topAnchor
         constraintEqualToAnchor:_scrollView.topAnchor],
-    [_scrollContentView.leadingAnchor
-        constraintEqualToAnchor:widthLayoutGuide.leadingAnchor],
-    [_scrollContentView.trailingAnchor
-        constraintEqualToAnchor:widthLayoutGuide.trailingAnchor],
     [_scrollContentView.bottomAnchor
         constraintEqualToAnchor:_scrollView.bottomAnchor],
     [_scrollContentView.heightAnchor
@@ -360,14 +358,6 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
         constraintEqualToAnchor:_scrollContentView.leadingAnchor],
     [specificContentView.trailingAnchor
         constraintEqualToAnchor:_scrollContentView.trailingAnchor],
-
-    // Action stack view constraints. Constrain the bottom of the action stack
-    // view to both the bottom of the screen and the bottom of the safe area, to
-    // give a nice result whether the device has a physical home button or not.
-    [_actionButtonsStackView.leadingAnchor
-        constraintEqualToAnchor:widthLayoutGuide.leadingAnchor],
-    [_actionButtonsStackView.trailingAnchor
-        constraintEqualToAnchor:widthLayoutGuide.trailingAnchor],
   ]];
 
   if (self.hideSpecificContentView) {
@@ -561,14 +551,12 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
     [self updateActionButtonsAndPushUpScrollViewIfMandatory];
   }
 
-  if (@available(iOS 17, *)) {
-    NSArray<UITrait>* traits = @[
-      UITraitVerticalSizeClass.class, UITraitHorizontalSizeClass.class,
-      UITraitPreferredContentSizeCategory.class
-    ];
-    [self registerForTraitChanges:traits
-                       withAction:@selector(updateUIOnTraitChange)];
-  }
+  NSArray<UITrait>* traits = @[
+    UITraitVerticalSizeClass.class, UITraitHorizontalSizeClass.class,
+    UITraitPreferredContentSizeCategory.class
+  ];
+  [self registerForTraitChanges:traits
+                     withAction:@selector(updateUIOnTraitChange)];
 }
 
 - (void)viewWillDisappear:(BOOL)animated {
@@ -670,16 +658,28 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
   // On unhiding, the primary action button will have updated style based
   // on actionButtonsVisibility.
   if (self.primaryActionString) {
-    [self setPrimaryActionButtonColor:self.primaryActionButton];
+    BOOL equallyWeightedButton =
+        (self.actionButtonsVisibility ==
+         ActionButtonsVisibility::kEquallyWeightedButtonShown);
+    if (equallyWeightedButton) {
+      UpdateButtonToMatchTertiaryAction(self.primaryActionButton);
+    } else {
+      UpdateButtonToMatchPrimaryAction(self.primaryActionButton);
+    }
   }
   // The secondary action button has button type based on
   // actionButtonsVisibility and should be recreated.
   if (_secondaryActionButton) {
+    UIView* parent = _secondaryActionButton.superview;
+    NSUInteger buttonIndex =
+        [parent.subviews indexOfObject:_secondaryActionButton];
+
     // Remove the current secondary button from view.
     [_secondaryActionButton removeFromSuperview];
     _secondaryActionButton = [self createSecondaryActionButton];
+
     [_actionButtonsStackView insertArrangedSubview:_secondaryActionButton
-                                           atIndex:1];
+                                           atIndex:buttonIndex];
     [self updateActionButtonsSpacing];
   }
 
@@ -743,19 +743,6 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
   }
 }
 
-#pragma mark - UITraitEnvironment
-
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (@available(iOS 17, *)) {
-    return;
-  }
-
-  [self updateUIOnTraitChange];
-}
-#endif
-
 #pragma mark - Accessors
 
 - (void)setShouldBannerFillTopSpace:(BOOL)shouldBannerFillTopSpace {
@@ -783,7 +770,6 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
     buttonConfiguration.attributedTitle = nil;
     buttonConfiguration.title = _primaryActionString;
     _primaryActionButton.configuration = buttonConfiguration;
-    [self setPrimaryActionButtonFont:_primaryActionButton];
   }
 }
 
@@ -862,29 +848,6 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
   return _specificContentView;
 }
 
-- (HighlightButton*)createHighlightButtonWithText:(NSString*)buttonText
-                          accessibilityIdentifier:
-                              (NSString*)accessibilityIdentifier {
-  UIButtonConfiguration* buttonConfiguration =
-      [UIButtonConfiguration plainButtonConfiguration];
-  buttonConfiguration.contentInsets = NSDirectionalEdgeInsetsMake(
-      kButtonVerticalInsets, 0, kButtonVerticalInsets, 0);
-  buttonConfiguration.titlePadding = kMoreArrowMargin;
-  buttonConfiguration.background.cornerRadius = kPrimaryButtonCornerRadius;
-  buttonConfiguration.title = buttonText;
-  buttonConfiguration.titleLineBreakMode = NSLineBreakByTruncatingTail;
-
-  HighlightButton* button = [[HighlightButton alloc] initWithFrame:CGRectZero];
-  button.configuration = buttonConfiguration;
-  [self setPrimaryActionButtonFont:button];
-  [self setPrimaryActionButtonColor:button];
-  button.translatesAutoresizingMaskIntoConstraints = NO;
-  button.pointerInteractionEnabled = YES;
-  button.pointerStyleProvider = CreateOpaqueButtonPointerStyleProvider();
-  button.accessibilityIdentifier = accessibilityIdentifier;
-  return button;
-}
-
 - (UIButton*)primaryActionButton {
   if (!_primaryActionButton) {
     // Use `primaryActionString` even if scrolling to the end is mandatory
@@ -892,14 +855,14 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
     // content height, so there is no way to know if scrolling is needed.
     // This label will be updated at the viewDidAppear stage if necessary.
     _primaryActionButton =
-        [self createHighlightButtonWithText:self.primaryActionString
-                    accessibilityIdentifier:
-                        kPromoStylePrimaryActionAccessibilityIdentifier];
+        [self createButtonForPrimary:YES
+                            withText:self.primaryActionString
+             accessibilityIdentifier:
+                 kPromoStylePrimaryActionAccessibilityIdentifier];
 
     [_primaryActionButton addTarget:self
                              action:@selector(didTapPrimaryActionButton)
                    forControlEvents:UIControlEventTouchUpInside];
-    _primaryActionButton.configurationUpdateHandler = self.updateHandler;
     _primaryActionButton.enabled = _primaryButtonEnabled;
     _primaryActionButton.hidden =
         (self.actionButtonsVisibility == ActionButtonsVisibility::kHidden);
@@ -1126,32 +1089,6 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
           self.bannerImageView));
 }
 
-- (void)setPrimaryActionButtonFont:(UIButton*)button {
-  DCHECK(button.configuration.title);
-  UIButtonConfiguration* buttonConfiguration = button.configuration;
-  UIFont* font = [UIFont preferredFontForTextStyle:UIFontTextStyleHeadline];
-  NSDictionary* attributes = @{NSFontAttributeName : font};
-  NSMutableAttributedString* string = [[NSMutableAttributedString alloc]
-      initWithString:button.configuration.title];
-  [string addAttributes:attributes range:NSMakeRange(0, string.length)];
-  buttonConfiguration.attributedTitle = string;
-  button.configuration = buttonConfiguration;
-}
-
-- (void)setPrimaryActionButtonColor:(UIButton*)button {
-  UIButtonConfiguration* buttonConfiguration = button.configuration;
-  BOOL useEquallyWeightedButtons =
-      (self.actionButtonsVisibility ==
-       ActionButtonsVisibility::kEquallyWeightedButtonShown);
-  buttonConfiguration.background.backgroundColor =
-      useEquallyWeightedButtons ? [UIColor colorNamed:kBlueHaloColor]
-                                : [UIColor colorNamed:kBlueColor];
-  buttonConfiguration.baseForegroundColor =
-      useEquallyWeightedButtons ? [UIColor colorNamed:kBlueColor]
-                                : [UIColor colorNamed:kSolidButtonTextColor];
-  button.configuration = buttonConfiguration;
-}
-
 // Sets or resets the "Read More" text label when the bottom hasn't been
 // reached yet and scrolling to the end is mandatory.
 - (void)setReadMoreText {
@@ -1213,36 +1150,6 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
   }];
 }
 
-- (UIButton*)createButtonWithText:(NSString*)buttonText
-          accessibilityIdentifier:(NSString*)accessibilityIdentifier {
-  UIButton* button = [UIButton buttonWithType:UIButtonTypeSystem];
-  UIButtonConfiguration* buttonConfiguration =
-      [UIButtonConfiguration plainButtonConfiguration];
-  buttonConfiguration.title = buttonText;
-  buttonConfiguration.background.backgroundColor = [UIColor clearColor];
-  buttonConfiguration.baseForegroundColor = [UIColor colorNamed:kBlueColor];
-  buttonConfiguration.contentInsets = NSDirectionalEdgeInsetsMake(
-      kButtonVerticalInsets, 0, kButtonVerticalInsets, 0);
-
-  UIFont* font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
-  NSDictionary* attributes = @{NSFontAttributeName : font};
-  NSMutableAttributedString* string =
-      [[NSMutableAttributedString alloc] initWithString:buttonText];
-  [string addAttributes:attributes range:NSMakeRange(0, string.length)];
-  buttonConfiguration.attributedTitle = string;
-  buttonConfiguration.titleLineBreakMode = NSLineBreakByTruncatingTail;
-  button.configuration = buttonConfiguration;
-
-  button.translatesAutoresizingMaskIntoConstraints = NO;
-  button.titleLabel.adjustsFontForContentSizeCategory = YES;
-  button.accessibilityIdentifier = accessibilityIdentifier;
-
-  button.pointerInteractionEnabled = YES;
-  button.pointerStyleProvider = CreateOpaqueButtonPointerStyleProvider();
-
-  return button;
-}
-
 // Add the scroll view delegate and setup the content views. Should be done only
 // once all the view layouts are fully done.
 - (void)setupScrollView {
@@ -1300,6 +1207,29 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
   }
 }
 
+// Update the width of the content area and action buttons. Should be invoked
+// on `-viewDidLoad` to setup the initial width, and also when the horizontal
+// size class changes.
+- (void)updatePromoStyleWidth {
+  if (_widthLayoutGuide) {
+    [self.view removeLayoutGuide:_widthLayoutGuide];
+  }
+  _widthLayoutGuide = AddPromoStyleWidthLayoutGuide(self.view);
+  [NSLayoutConstraint activateConstraints:@[
+    [_scrollContentView.leadingAnchor
+        constraintEqualToAnchor:_widthLayoutGuide.leadingAnchor],
+    [_scrollContentView.trailingAnchor
+        constraintEqualToAnchor:_widthLayoutGuide.trailingAnchor],
+    // Action stack view constraints. Constrain the bottom of the action stack
+    // view to both the bottom of the screen and the bottom of the safe area, to
+    // give a nice result whether the device has a physical home button or not.
+    [_actionButtonsStackView.leadingAnchor
+        constraintEqualToAnchor:_widthLayoutGuide.leadingAnchor],
+    [_actionButtonsStackView.trailingAnchor
+        constraintEqualToAnchor:_widthLayoutGuide.trailingAnchor],
+  ]];
+}
+
 // This method should be called right before the view is scrolled to the bottom.
 // It updates the primary button's label and adds secondary and/or tertiary
 // buttons, and as a result, pushing the scroll view up by updating the bottom
@@ -1311,7 +1241,7 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
     return;
   }
   _buttonUpdated = YES;
-  HighlightButton* primaryActionButton = self.primaryActionButton;
+  UIButton* primaryActionButton = self.primaryActionButton;
   UIButtonConfiguration* buttonConfiguration =
       primaryActionButton.configuration;
   buttonConfiguration.attributedTitle = nil;
@@ -1320,14 +1250,14 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
   primaryActionButton.accessibilityIdentifier =
       kPromoStylePrimaryActionAccessibilityIdentifier;
 
-  // Reset the font to make sure it is properly scaled.
-  [self setPrimaryActionButtonFont:primaryActionButton];
-
   // Add other buttons with the correct margins.
   if (self.secondaryActionString) {
     _secondaryActionButton = [self createSecondaryActionButton];
-    [_actionButtonsStackView insertArrangedSubview:_secondaryActionButton
-                                           atIndex:1];
+    [_actionButtonsStackView
+        insertArrangedSubview:_secondaryActionButton
+                      atIndex:app_group::IsConfirmationButtonSwapOrderEnabled()
+                                  ? 0
+                                  : 1];
     [self updateActionButtonsSpacing];
   }
   if (self.tertiaryActionString) {
@@ -1521,22 +1451,14 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
 
 - (UIButton*)createSecondaryActionButton {
   DCHECK(self.secondaryActionString);
-  UIButton* button;
-  if (self.actionButtonsVisibility ==
-      ActionButtonsVisibility::kEquallyWeightedButtonShown) {
-    // Create the secondaryActionButton matching the button type, colors, and
-    // text style of the primaryActionButton.
-    button = [self createHighlightButtonWithText:self.secondaryActionString
-                         accessibilityIdentifier:
-                             kPromoStyleSecondaryActionAccessibilityIdentifier];
-  } else {
-    button = [self createButtonWithText:self.secondaryActionString
-                accessibilityIdentifier:
-                    kPromoStyleSecondaryActionAccessibilityIdentifier];
-    UILabel* titleLabel = button.titleLabel;
-    titleLabel.adjustsFontSizeToFitWidth = YES;
-    titleLabel.minimumScaleFactor = 0.7;
-  }
+  UIButton* button =
+      [self createButtonForPrimary:NO
+                          withText:self.secondaryActionString
+           accessibilityIdentifier:
+               kPromoStyleSecondaryActionAccessibilityIdentifier];
+  UILabel* titleLabel = button.titleLabel;
+  titleLabel.adjustsFontSizeToFitWidth = YES;
+  titleLabel.minimumScaleFactor = 0.7;
 
   [button addTarget:self
                 action:@selector(didTapSecondaryActionButton)
@@ -1548,7 +1470,8 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
 - (UIButton*)createTertiaryActionButton {
   DCHECK(self.tertiaryActionString);
   UIButton* button = [self
-         createButtonWithText:self.tertiaryActionString
+       createButtonForPrimary:NO
+                     withText:self.tertiaryActionString
       accessibilityIdentifier:kPromoStyleTertiaryActionAccessibilityIdentifier];
   [button addTarget:self
                 action:@selector(didTapTertiaryActionButton)
@@ -1585,20 +1508,24 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
 }
 
 - (void)updateActionButtonsSpacing {
-  switch (self.actionButtonsVisibility) {
-    case ActionButtonsVisibility::kEquallyWeightedButtonShown:
-      // Spacing is needed when all buttons have filled background.
-      [_actionButtonsStackView
-          setCustomSpacing:kStackViewEquallyWeightedButtonSpacing
-                 afterView:_primaryActionButton];
-      break;
-    case ActionButtonsVisibility::kRegularButtonsShown:
-      [_actionButtonsStackView setCustomSpacing:kStackViewDefaultButtonSpacing
-                                      afterView:_primaryActionButton];
-      break;
-    default:
-      // Do not add button spacing by default or when buttons are hidden.
-      break;
+  if (@available(iOS 26, *)) {
+    _actionButtonsStackView.spacing = kStackViewEquallyWeightedButtonSpacing;
+  } else {
+    switch (self.actionButtonsVisibility) {
+      case ActionButtonsVisibility::kEquallyWeightedButtonShown:
+        // Spacing is needed when all buttons have filled background.
+        [_actionButtonsStackView
+            setCustomSpacing:kStackViewEquallyWeightedButtonSpacing
+                   afterView:_primaryActionButton];
+        break;
+      case ActionButtonsVisibility::kRegularButtonsShown:
+        [_actionButtonsStackView setCustomSpacing:kStackViewDefaultButtonSpacing
+                                        afterView:_primaryActionButton];
+        break;
+      default:
+        // Do not add button spacing by default or when buttons are hidden.
+        break;
+    }
   }
 }
 
@@ -1619,10 +1546,38 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
 
   // Update the primary button once the layout changes take effect to have the
   // right measurements to evaluate the scroll position.
+  __weak __typeof(self) weakSelf = self;
   dispatch_async(dispatch_get_main_queue(), ^{
-    [self updateViewsOnScrollViewUpdate];
-    [self hideHeaderOnTallContentIfNeeded];
+    __strong __typeof(weakSelf) strongSelf = weakSelf;
+    [strongSelf updateViewsOnScrollViewUpdate];
+    [strongSelf updatePromoStyleWidth];
+    [strongSelf hideHeaderOnTallContentIfNeeded];
   });
+}
+
+// Creates a button to be used for the button `primary` or not.
+- (ChromeButton*)createButtonForPrimary:(BOOL)primary
+                               withText:(NSString*)buttonText
+                accessibilityIdentifier:(NSString*)accessibilityIdentifier {
+  BOOL equallyWeightedButton =
+      (self.actionButtonsVisibility ==
+       ActionButtonsVisibility::kEquallyWeightedButtonShown);
+  ChromeButton* button;
+  if (equallyWeightedButton) {
+    button = TertiaryActionButton();
+  } else {
+    button = primary ? PrimaryActionButton() : SecondaryActionButton();
+  }
+  UIButtonConfiguration* buttonConfiguration = button.configuration;
+  buttonConfiguration.titlePadding = kMoreArrowMargin;
+  buttonConfiguration.title = buttonText;
+  buttonConfiguration.titleLineBreakMode = NSLineBreakByTruncatingTail;
+  button.configuration = buttonConfiguration;
+
+  button.titleLabel.adjustsFontForContentSizeCategory = YES;
+  button.accessibilityIdentifier = accessibilityIdentifier;
+
+  return button;
 }
 
 #pragma mark - UIScrollViewDelegate
@@ -1669,6 +1624,14 @@ const CGFloat kHeaderImageShadowShadowInset = 20;
   // NO, but that workaround only works on iOS 13.5+. This is the simplest
   // approach that works well on iOS 12, 13 & 14.
   textView.selectedTextRange = nil;
+}
+
+#pragma mark - UIResponder
+
+// To always be able to register key commands via -keyCommands, the VC must be
+// able to become first responder.
+- (BOOL)canBecomeFirstResponder {
+  return YES;
 }
 
 @end

@@ -7,9 +7,12 @@
 #include "base/metrics/field_trial_params.h"
 #include "third_party/blink/renderer/modules/modules_export.h"
 namespace blink {
-MODULES_EXPORT BASE_DECLARE_FEATURE(kWebRtcEncodedTransformDirectCallback);
+MODULES_EXPORT BASE_DECLARE_FEATURE(kWebRtcEncodedTransformRememberMetadata);
+MODULES_EXPORT BASE_DECLARE_FEATURE(
+    kWebRtcEncodedTransformRememberVideoFrameType);
 MODULES_EXPORT BASE_DECLARE_FEATURE(kWebRtcEncryptedRtpHeaderExtensions);
 MODULES_EXPORT BASE_DECLARE_FEATURE(
     kWebRtcRtpScriptTransformerFrameRestrictions);
+MODULES_EXPORT BASE_DECLARE_FEATURE(kWebRtcUnmuteTracksWhenPacketArrives);
 }  // namespace blink
 #endif  // THIRD_PARTY_BLINK_RENDERER_MODULES_PEERCONNECTION_PEER_CONNECTION_FEATURES_H_

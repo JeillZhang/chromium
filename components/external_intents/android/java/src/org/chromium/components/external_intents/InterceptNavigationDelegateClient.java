@@ -19,7 +19,7 @@ import org.chromium.content_public.browser.WebContents;
 public interface InterceptNavigationDelegateClient {
     /* Returns the WebContents in the context of which this InterceptNavigationDelegateImpl instance
      * is operating. */
-    WebContents getWebContents();
+    @Nullable WebContents getWebContents();
 
     /* Creates an ExternalNavigationHandler instance that is configured for this client. */
     @Nullable ExternalNavigationHandler createExternalNavigationHandler();
@@ -32,7 +32,7 @@ public interface InterceptNavigationDelegateClient {
     boolean isIncognito();
 
     /* Returns the Activity associated with this client. */
-    Activity getActivity();
+    @Nullable Activity getActivity();
 
     /* Returns true if the tab associated with this client was launched from an external app. */
     boolean wasTabLaunchedFromExternalApp();
@@ -43,6 +43,12 @@ public interface InterceptNavigationDelegateClient {
 
     /* Invoked when the tab associated with this client should be closed. */
     void closeTab();
+
+    /**
+     * Called when a tab should be closed and handles cases where a tab was launched from an
+     * external app.
+     */
+    void handleShouldCloseTab();
 
     /**
      * Loads a URL as specified by |loadUrlParams| if possible. May fail in exceptional conditions
@@ -58,12 +64,15 @@ public interface InterceptNavigationDelegateClient {
     /* Returns true if the client hosting this tab is a Browser. */
     boolean isTabInBrowser();
 
+    /* Returns true if the tab is currently detached because of an executing reparenting task. */
+    boolean isTabDetached();
+
     /** Returns whether this Activity is currently in Android desktop windowing mode. */
     boolean isInDesktopWindowingMode();
 
     /**
      * Starts the repareting process for this Tab. Reparenting is an async task that "moves" an
-     * existing tab into a separate Activity. Currently, only reparenting towards Chrome browser is
+     * existing tab into a separate Task. Currently, only reparenting towards Chrome browser is
      * supported.
      */
     void startReparentingTask();

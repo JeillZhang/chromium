@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/viz/service/frame_sinks/video_capture/frame_sink_video_capturer_impl.h"
 
 #include <map>
@@ -17,6 +12,7 @@
 #include <variant>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
@@ -24,6 +20,7 @@
 #include "base/notimplemented.h"
 #include "base/run_loop.h"
 #include "base/test/bind.h"
+#include "base/test/gtest_util.h"
 #include "base/test/test_mock_time_task_runner.h"
 #include "base/time/time.h"
 #include "base/token.h"
@@ -114,6 +111,8 @@ media::VideoPixelFormat CopyOutputRequestFormatToVideoPixelFormat(
       return media::PIXEL_FORMAT_NV12;
     case CopyOutputRequest::ResultFormat::RGBA:
       return media::PIXEL_FORMAT_ARGB;
+    case CopyOutputRequest::ResultFormat::RGBAF16:
+      return media::PIXEL_FORMAT_RGBAF16;
     default:
       NOTREACHED();
   }
@@ -126,6 +125,8 @@ gfx::ColorSpace GetColorSpaceForPixelFormat(media::VideoPixelFormat format) {
       return gfx::ColorSpace::CreateREC709();
     case media::PIXEL_FORMAT_ARGB:
       return gfx::ColorSpace::CreateSRGB();
+    case media::PIXEL_FORMAT_RGBAF16:
+      return gfx::ColorSpace::CreateSRGBLinear();
     default:
       NOTREACHED();
   }
@@ -137,6 +138,7 @@ gfx::Size GetBufferSizeInPixelsForVideoPixelFormat(
   switch (format) {
     case media::PIXEL_FORMAT_ABGR:
     case media::PIXEL_FORMAT_ARGB:
+    case media::PIXEL_FORMAT_RGBAF16:
       return coded_size;
     case media::PIXEL_FORMAT_NV12:
       return {cc::MathUtil::CheckedRoundUp(coded_size.width(), 2),
@@ -145,6 +147,8 @@ gfx::Size GetBufferSizeInPixelsForVideoPixelFormat(
       NOTREACHED();
   }
 }
+
+const uint32_t kSourceId = 8276;
 
 // Dummy frame sink ID.
 const VideoCaptureTarget kVideoCaptureTarget(FrameSinkId(1, 1));
@@ -217,7 +221,7 @@ class MockConsumer : public mojom::FrameSinkVideoConsumer {
       : test_sii_(base::MakeRefCounted<gpu::TestSharedImageInterface>()) {}
 
   MOCK_METHOD0(OnFrameCapturedMock, void());
-  MOCK_METHOD1(OnNewSubCaptureTargetVersion, void(uint32_t));
+  MOCK_METHOD1(OnNewCaptureVersion, void(const media::CaptureVersion&));
   MOCK_METHOD0(OnStopped, void());
   MOCK_METHOD1(OnLog, void(const std::string&));
 
@@ -273,8 +277,7 @@ class MockConsumer : public mojom::FrameSinkVideoConsumer {
       ASSERT_LE(required_bytes_to_hold_planes, mapping.size());
       frame = media::VideoFrame::WrapExternalData(
           info->pixel_format, info->coded_size, info->visible_rect,
-          info->visible_rect.size(), mapping.GetMemoryAs<const uint8_t>(),
-          mapping.size(), info->timestamp);
+          info->visible_rect.size(), mapping, info->timestamp);
       ASSERT_TRUE(frame);
       frame->AddDestructionObserver(
           base::BindOnce([](base::ReadOnlySharedMemoryMapping mapping) {},
@@ -327,24 +330,6 @@ class MockConsumer : public mojom::FrameSinkVideoConsumer {
   std::vector<scoped_refptr<VideoFrame>> frames_;
   std::vector<base::OnceClosure> done_callbacks_;
   scoped_refptr<gpu::TestSharedImageInterface> test_sii_;
-};
-
-class FakeGpuCopyResult : public CopyOutputResult {
- public:
-  FakeGpuCopyResult(Format format, const gfx::Rect rect)
-      : CopyOutputResult(format,
-                         CopyOutputResult::Destination::kNativeTextures,
-                         rect,
-                         false),
-        result_(TextureResult(
-            gpu::Mailbox{},
-            GetColorSpaceForPixelFormat(
-                CopyOutputRequestFormatToVideoPixelFormat(format)))) {}
-
-  const TextureResult* GetTextureResult() const final { return &result_; }
-
- private:
-  TextureResult result_;
 };
 
 class SolidColorRGBAResult : public CopyOutputResult {
@@ -513,10 +498,11 @@ class FakeCapturableFrameSink : public CapturableFrameSink {
         }
         break;
       }
-      case CopyOutputResult::Destination::kNativeTextures: {
+      case CopyOutputResult::Destination::kSharedImage: {
         // We don't need to provide a real GPU result.
-        result = std::make_unique<FakeGpuCopyResult>(
-            request->result_format(), request->result_selection());
+        result = std::make_unique<CopyOutputSharedImageResult>(
+            request->result_format(), request->result_selection(),
+            gpu::ClientSharedImage::CreateForTesting(), ReleaseCallback());
         break;
       }
       default: {
@@ -644,24 +630,26 @@ bool IsLetterboxedI420Plane(int plane,
         content_rect_copy.width() / 2, content_rect_copy.height() / 2);
   }
   for (int row = 0; row < frame.rows(plane); ++row) {
-    const uint8_t* p = frame.visible_data(plane) + row * frame.stride(plane);
+    const uint8_t* p =
+        UNSAFE_TODO(frame.visible_data(plane) + row * frame.stride(plane));
     for (int col = 0; col < frame.row_bytes(plane); ++col) {
       if (content_rect_copy.Contains(gfx::Point(col, row))) {
-        if (p[col] != component) {
+        if (UNSAFE_TODO(p[col]) != component) {
           *result_listener << " where pixel at (" << col << ", " << row
                            << ") should be inside content rectangle and the "
                               "component should match 0x"
                            << std::hex << static_cast<unsigned int>(component)
                            << " but is 0x" << std::hex
-                           << static_cast<unsigned int>(p[col]);
+                           << static_cast<unsigned int>(UNSAFE_TODO(p[col]));
           return false;
         }
       } else {  // Letterbox border around content.
-        if (plane == VideoFrame::Plane::kY && p[col] != 0x00) {
+        if (plane == VideoFrame::Plane::kY && UNSAFE_TODO(p[col]) != 0x00) {
           *result_listener << " where pixel at (" << col << ", " << row
                            << ") should be outside content rectangle and the "
                               "component should match 0x00 but is 0x"
-                           << std::hex << static_cast<unsigned int>(p[col]);
+                           << std::hex
+                           << static_cast<unsigned int>(UNSAFE_TODO(p[col]));
           return false;
         }
       }
@@ -836,7 +824,8 @@ class FrameSinkVideoCapturerTest
 
     capturer_ = std::make_unique<FrameSinkVideoCapturerImpl>(
         frame_sink_manager_, gmb_context_provider_.get(), mojo::NullReceiver(),
-        std::move(oracle), false);
+        std::move(oracle), /*log_to_webrtc=*/false,
+        /*capture_version_source=*/kSourceId);
   }
 
   void SetUp() override {
@@ -1766,7 +1755,8 @@ TEST_P(FrameSinkVideoCapturerTest, DeliversUpdateRectAndCaptureCounter) {
   expected_frame_update_rect.Offset(
       size_set().ExpectedContentRect(pixel_format_).OffsetFromOrigin());
   // Do not align when we are testing RGBA
-  if (pixel_format_ != media::PIXEL_FORMAT_ARGB) {
+  if (pixel_format_ != media::PIXEL_FORMAT_ARGB &&
+      pixel_format_ != media::PIXEL_FORMAT_RGBAF16) {
     EXPECT_FALSE(
         AlignsWithI420SubsamplingBoundaries(expected_frame_update_rect));
     expected_frame_update_rect =
@@ -1920,6 +1910,31 @@ TEST_P(FrameSinkVideoCapturerTest, ClientCaptureStartsAndStops) {
   // Stop capturing. frame_sink_ should now have no client capturing.
   StopCapture();
   EXPECT_EQ(frame_sink_.number_clients_capturing(), 0);
+}
+
+TEST_P(FrameSinkVideoCapturerTest, ChangeTargetIncreasesCaptureVersion) {
+  const auto kCropId = RegionCaptureCropId::CreateRandom();
+  VideoCaptureTarget target(kVideoCaptureTarget.frame_sink_id, kCropId);
+
+  EXPECT_CALL(frame_sink_manager_, FindCapturableFrameSink(target))
+      .WillRepeatedly(Return(&frame_sink_));
+
+  MockConsumer consumer;
+  EXPECT_CALL(consumer, OnNewCaptureVersion(media::CaptureVersion(
+                            /*source=*/kSourceId, /*sub_capture=*/0)))
+      .Times(1);
+  StartCapture(&consumer);
+
+  PropagateMojoTasks();
+  testing::Mock::VerifyAndClearExpectations(&consumer);
+
+  // The capture-version is increased from (kSourceId, 0) to a larger value.
+  const media::CaptureVersion capture_version(/*source=*/kSourceId,
+                                              /*sub_capture=*/222);
+  EXPECT_CALL(consumer, OnNewCaptureVersion(capture_version)).Times(1);
+  capturer_->ChangeTarget(target, capture_version.sub_capture);
+  PropagateMojoTasks();
+  testing::Mock::VerifyAndClearExpectations(&consumer);
 }
 
 TEST_P(FrameSinkVideoCapturerTest, RegionCaptureCropId) {
@@ -2242,6 +2257,28 @@ TEST_P(FrameSinkVideoCapturerTest, HandlesNullSubTargetPtrCorrectly) {
   EXPECT_EQ(RegionCaptureCropId(), frame_sink_.current_crop_id());
 }
 
+// Tests that buffer_format_preference is correctly passed to the
+// GpuVideoFramePool
+TEST_P(FrameSinkVideoCapturerTest, BufferFormatPreferencePassedToGpuFramePool) {
+  // GpuMemoryBuffer only kicks in for ARGB and NV12 pixel formats.
+  if (pixel_format_ != media::PIXEL_FORMAT_ARGB &&
+      pixel_format_ != media::PIXEL_FORMAT_NV12) {
+    return;
+  }
+
+  // GpuMemoryBuffer only kicks in for the kPreferGpuMemoryBuffer and
+  // kPreferSharedImageWithNativeHandle formats.
+  if (buffer_format_preference_ == mojom::BufferFormatPreference::kDefault) {
+    return;
+  }
+
+  NiceMock<MockConsumer> consumer;
+  StartCapture(&consumer);
+  EXPECT_EQ(capturer_->gpu_frame_pool_buffer_format_for_testing(),
+            buffer_format_preference_);
+  StopCapture();
+}
+
 INSTANTIATE_TEST_SUITE_P(
     All,
     FrameSinkVideoCapturerTest,
@@ -2253,6 +2290,8 @@ INSTANTIATE_TEST_SUITE_P(
         std::tuple(mojom::BufferFormatPreference::kPreferGpuMemoryBuffer,
                    media::PIXEL_FORMAT_NV12),
         std::tuple(mojom::BufferFormatPreference::kPreferGpuMemoryBuffer,
-                   media::PIXEL_FORMAT_ARGB)));
+                   media::PIXEL_FORMAT_ARGB),
+        std::tuple(mojom::BufferFormatPreference::kPreferGpuMemoryBuffer,
+                   media::PIXEL_FORMAT_RGBAF16)));
 
 }  // namespace viz

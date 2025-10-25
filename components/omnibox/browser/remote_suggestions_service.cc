@@ -19,11 +19,13 @@
 #include "components/omnibox/browser/base_search_provider.h"
 #include "components/omnibox/browser/document_suggestions_service.h"
 #include "components/omnibox/browser/enterprise_search_aggregator_suggestions_service.h"
+#include "components/omnibox/browser/page_classification_functions.h"
 #include "components/search/search.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/variations/net/variations_http_headers.h"
 #include "net/base/load_flags.h"
 #include "net/base/url_util.h"
+#include "net/http/http_response_headers.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -167,7 +169,10 @@ GURL AddLensOverlaySuggestInputsDataToEndpointUrl(
   bool send_vit = false;
 
   if (search_terms_args.page_classification ==
-      metrics::OmniboxEventProto::CONTEXTUAL_SEARCHBOX) {
+          metrics::OmniboxEventProto::CONTEXTUAL_SEARCHBOX ||
+      search_terms_args.page_classification ==
+          metrics::OmniboxEventProto::NTP_REALBOX ||
+      omnibox::IsComposebox(search_terms_args.page_classification)) {
     send_request_and_session_ids =
         lens_overlay_suggest_inputs
             ->send_gsession_vsrid_for_contextual_suggest();
@@ -214,6 +219,20 @@ GURL AddLensOverlaySuggestInputsDataToEndpointUrl(
           modified_url, "gsessionid",
           lens_overlay_suggest_inputs->search_session_id());
     }
+  }
+  return modified_url;
+}
+
+GURL AddAimToolModeToEndpointUrl(
+    TemplateURLRef::SearchTermsArgs search_terms_args,
+    const GURL& url_to_modify) {
+  GURL modified_url = GURL(url_to_modify);
+  if (search_terms_args.aim_tool_mode !=
+      omnibox::ChromeAimToolsAndModels::TOOL_MODE_UNSPECIFIED) {
+    modified_url = net::AppendOrReplaceQueryParameter(
+        url_to_modify, "azm",
+        base::NumberToString(
+            static_cast<int>(search_terms_args.aim_tool_mode)));
   }
   return modified_url;
 }
@@ -279,10 +298,19 @@ GURL RemoteSuggestionsService::EndpointUrl(
                                                "chrome-multimodal");
       break;
     }
+    case metrics::OmniboxEventProto::NTP_REALBOX:
+    case metrics::OmniboxEventProto::NTP_COMPOSEBOX:
+    case metrics::OmniboxEventProto::LENS_SIDE_PANEL_COMPOSEBOX:
+      if (search_terms_args.lens_overlay_suggest_inputs.has_value()) {
+        url = net::AppendOrReplaceQueryParameter(url, "client",
+                                                 "chrome-contextual");
+      }
+      break;
     default:
       break;
   }
   url = AddLensOverlaySuggestInputsDataToEndpointUrl(search_terms_args, url);
+  url = AddAimToolModeToEndpointUrl(search_terms_args, url);
 
   return url;
 }
@@ -482,9 +510,10 @@ void RemoteSuggestionsService::
         const std::u16string& query,
         const GURL& suggest_url,
         metrics::OmniboxEventProto::PageClassification page_classification,
+        std::vector<int> callback_indexes,
+        std::vector<std::vector<int>> suggestion_types,
         IndexedStartCallback start_callback,
-        IndexedCompletionCallback completion_callback,
-        std::vector<std::vector<int>> suggestion_types) {
+        IndexedCompletionCallback completion_callback) {
   if (!enterprise_search_aggregator_suggestions_service_) {
     return;
   }
@@ -494,7 +523,7 @@ void RemoteSuggestionsService::
 
   enterprise_search_aggregator_suggestions_service_
       ->CreateEnterpriseSearchAggregatorSuggestionsRequest(
-          query, suggest_url,
+          query, suggest_url, callback_indexes, suggestion_types,
           base::BindRepeating(&RemoteSuggestionsService::OnRequestCreated,
                               weak_ptr_factory_.GetWeakPtr(), request_id),
           base::BindRepeating(
@@ -509,8 +538,7 @@ void RemoteSuggestionsService::
               /*request_type=*/
               RemoteRequestType::kEnterpriseSearchAggregatorSuggest,
               metrics::OmniboxEventProto::INVALID_SPEC, base::TimeTicks::Now(),
-              std::move(completion_callback)),
-          suggestion_types);
+              std::move(completion_callback)));
 }
 
 void RemoteSuggestionsService::

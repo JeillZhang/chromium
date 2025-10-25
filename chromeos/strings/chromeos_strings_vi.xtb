@@ -146,7 +146,7 @@
           <ph name="LINE_BREAK" />
           <ph name="LINE_BREAK" />
           AI tạo sinh đang ở giai đoạn thử nghiệm và phát triển ban đầu nên phạm vi cung cấp hiện còn hạn chế.</translation>
-<translation id="1555130319947370107">Xanh lam</translation>
+<translation id="1555130319947370107">Xanh dương</translation>
 <translation id="155865706765934889">Ô di chuột</translation>
 <translation id="1561927818299383735">màu đèn nền</translation>
 <translation id="1564356849266217610">vải tơ sống</translation>
@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Hiện tại, các kết quả về con người sẽ không hiển thị. Hãy thử một câu lệnh khác.</translation>
 <translation id="1815850098929213707">Phím được chọn là <ph name="KEYS" />. Nhấn vào nút này để chỉnh sửa chế độ điều khiển</translation>
 <translation id="1818174214124933000">Khi bạn chọn "Gửi", nội dung và ý kiến phản hồi của bạn (như hiển thị bên dưới) sẽ được gửi đến Google, trải qua quy trình đánh giá do con người thực hiện, dùng để đào tạo hoặc cải thiện các sản phẩm cũng như dịch vụ của chúng tôi theo <ph name="LINK_POLICY_BEGIN" />Chính sách quyền riêng tư<ph name="LINK_POLICY_END" /> và <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Điều khoản dịch vụ của Google<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Giáo viên của bạn đã gửi một tài nguyên không được hỗ trợ. Hãy báo cho giáo viên.</translation>
 <translation id="1823120442877418684">Chủ đề</translation>
 <translation id="1827738518074806965">Phòng tranh</translation>
 <translation id="183287940576828840">Phản cảm/Không an toàn</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Chuyển bố cục</translation>
 <translation id="224421911978987610">phơi sáng lâu</translation>
 <translation id="2244834438220057800">xanh lục</translation>
+<translation id="2248689665683494517">tranh tĩnh vật tối giản vẽ một chiếc bình thuỷ tinh cắm vài bông hoa anh túc trên nền đen</translation>
 <translation id="225692081236532131">Trạng thái kích hoạt</translation>
 <translation id="2267285889943769271">Thêm ảnh chụp màn hình</translation>
 <translation id="2268044343513325586">Tinh chỉnh</translation>
@@ -684,7 +684,7 @@
 <translation id="405181879009056822">Chế độ cài đặt ChromeOS</translation>
 <translation id="4054683689023980771">Đang tải hình ảnh xuống</translation>
 <translation id="4059839844193047929">Nếu bạn rời khỏi trang này, bản ghi âm hiện tại sẽ kết thúc</translation>
-<translation id="4063039537646912479">xanh lam nhạt</translation>
+<translation id="4063039537646912479">xanh dương nhạt</translation>
 <translation id="4070799384363688067">anime</translation>
 <translation id="4086271957099059213">Tạo chế độ điều khiển khác</translation>
 <translation id="4091002263446255071">lãng mạn</translation>
@@ -756,8 +756,10 @@
 <translation id="4300073214558989"><ph name="IMAGE_COUNT" /> hình ảnh</translation>
 <translation id="4300272766492248925">Mở ứng dụng</translation>
 <translation id="430786093962686457">vải voan</translation>
+<translation id="4309762678330556039">Tự động tạo bản chép lời và tìm kiếm âm thanh. Bạn có thể tạo bản ghi ngay cả khi không kết nối với Internet.</translation>
 <translation id="4310735698903592804">Các hình nền mới dựa trên công nghệ AI của Google</translation>
 <translation id="4320904097188876154">hồng neon</translation>
+<translation id="432961742358282111">Nhấp chuột phải hoặc nhấn và giữ để xem định nghĩa, bản dịch hoặc chuyển đổi đơn vị. Dùng phím mũi tên Trái hoặc Phải để quản lý tính năng này.</translation>
 <translation id="4333390807948134856">Đã nhấn phím <ph name="KEY_NAME" /></translation>
 <translation id="4334293042716981313">Bạn cũng có thể <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />viết câu lệnh của riêng mình<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">phím</translation>
@@ -968,7 +970,7 @@
 <translation id="5234764350956374838">Bỏ qua</translation>
 <translation id="5236119614998611749">Không tạo được bản tóm tắt</translation>
 <translation id="5244638145904800454">{NUM_ROOL_APPS,plural,offset:1 =1{Quản trị viên của bạn đã thiết lập để "<ph name="APP_NAME" />" tự khởi động mỗi khi bạn đăng nhập.}=2{Quản trị viên của bạn đã thiết lập để "<ph name="APP_NAME" />" và 1 ứng dụng khác tự khởi động mỗi khi bạn đăng nhập.}other{Quản trị viên của bạn đã thiết lập để "<ph name="APP_NAME" />" và # ứng dụng khác tự khởi động mỗi khi bạn đăng nhập.}}</translation>
-<translation id="5248419081947706722">xanh lam</translation>
+<translation id="5248419081947706722">xanh dương</translation>
 <translation id="5252456968953390977">Đang chuyển vùng</translation>
 <translation id="5254600740122644523">Giá sách <ph name="SIMPLE_STYLE" /> trong căn phòng màu <ph name="SIMPLE_TONE" /></translation>
 <translation id="5257811368506016604">Bật chế độ màu sáng</translation>
@@ -1199,7 +1201,7 @@
 <translation id="6318437367327684789">vĩnh viễn</translation>
 <translation id="6319207335391420837">Cập nhật chương trình cơ sở cho <ph name="DEVICE_NAME" /></translation>
 <translation id="6321407676395378991">Bật trình bảo vệ màn hình</translation>
-<translation id="6324916366299863871">Chỉnh sửa phím tắt</translation>
+<translation id="6324916366299863871">Chỉnh sửa lối tắt</translation>
 <translation id="6325525973963619867">Lỗi</translation>
 <translation id="6327262166342360252">Hình nền này do AI tạo dựa trên văn bản sau: "<ph name="PROMPT" />".</translation>
 <translation id="6331191339300272798">Giao diện tối tự động</translation>
@@ -1437,7 +1439,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Hỏi chuyên gia trong diễn đàn trợ giúp Chromebook</translation>
-<translation id="7309823890857024809">tranh tĩnh vật tối giản với một vài cành hoa anh túc trong bình thuỷ tinh trên nền đen</translation>
 <translation id="7311368985037279727">màu bàn phím</translation>
 <translation id="7317831949569936035">Đăng ký học</translation>
 <translation id="7319430975418800333">A3</translation>
@@ -1472,6 +1473,7 @@ Hãy tải mô hình chép lời xuống (tối đa 100 MB) để nhận các b�
 <translation id="7425832472614771259">Đã tải <ph name="LANGUAGE_NAME" /> mô hình chép lời xuống (<ph name="PROGRESS_PERCENTAGE" />%)</translation>
 <translation id="7427315641433634153">MSCHAP</translation>
 <translation id="7438298994385592770">Không thể tắt hoặc xoá APN này. Hãy nhớ tắt hoặc xoá các APN <ph name="ATTACH" /> đã bật.</translation>
+<translation id="7458359366992324037">Hiển thị từ xa</translation>
 <translation id="7458970041932198923">Vui lòng kết nối mạng và tải lại trang để xem và đặt hình đại diện.</translation>
 <translation id="7469648432129124067">Đã phát hiện thấy cổng</translation>
 <translation id="7481312909269577407">Chuyển tiếp</translation>

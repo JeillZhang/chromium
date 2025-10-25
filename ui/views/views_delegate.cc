@@ -11,6 +11,7 @@
 #include "ui/accessibility/accessibility_features.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/views/widget/native_widget_private.h"
+#include "ui/views/window/default_frame_view.h"
 
 #if defined(USE_AURA)
 #include "ui/views/accessibility/tree/browser_views_ax_manager.h"
@@ -97,9 +98,9 @@ gfx::ImageSkia* ViewsDelegate::GetDefaultWindowIcon() const {
 }
 #endif
 
-std::unique_ptr<NonClientFrameView>
-ViewsDelegate::CreateDefaultNonClientFrameView(Widget* widget) {
-  return nullptr;
+std::unique_ptr<FrameView> ViewsDelegate::CreateDefaultFrameView(
+    Widget* widget) {
+  return std::make_unique<DefaultFrameView>(widget);
 }
 
 bool ViewsDelegate::IsShuttingDown() const {

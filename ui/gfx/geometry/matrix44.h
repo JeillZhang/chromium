@@ -117,8 +117,8 @@ class COMPONENT_EXPORT(GEOMETRY_SKIA) Matrix44 {
     matrix_[col][row] = value;
   }
 
-  void GetColMajor(double[16]) const;
-  void GetColMajorF(float[16]) const;
+  void GetColMajor(base::span<double, 16>) const;
+  void GetColMajorF(base::span<float, 16>) const;
 
   // this = this * translation.
   void PreTranslate(double dx, double dy);
@@ -187,7 +187,7 @@ class COMPONENT_EXPORT(GEOMETRY_SKIA) Matrix44 {
 
   // Same as above, but assumes the vec[2] is 0 and vec[3] is 1, discards
   // vec[2], and returns vec[3].
-  double MapVector2(double vec[2]) const;
+  double MapVector2(base::span<double, 2> vec) const;
 
   void Flatten();
 

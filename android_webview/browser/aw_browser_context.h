@@ -14,7 +14,9 @@
 #include "android_webview/browser/aw_contents_io_thread_client.h"
 #include "android_webview/browser/aw_contents_origin_matcher.h"
 #include "android_webview/browser/aw_context_permissions_delegate.h"
+#include "android_webview/browser/aw_origin_matched_header.h"
 #include "android_webview/browser/aw_permission_manager.h"
+#include "android_webview/browser/aw_preconnector.h"
 #include "android_webview/browser/aw_ssl_host_state_delegate.h"
 #include "android_webview/browser/file_system_access/aw_file_system_access_permission_context.h"
 #include "android_webview/browser/network_service/aw_proxy_config_monitor.h"
@@ -26,6 +28,7 @@
 #include "base/functional/callback.h"
 #include "base/lazy_instance.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/keyed_service/core/simple_factory_key.h"
 #include "components/prefs/pref_registry_simple.h"
@@ -57,7 +60,6 @@ class VisitedLinkWriter;
 namespace android_webview {
 
 class AwBrowserContextIoThreadHandle;
-class AwContentsOriginMatcher;
 class AwFormDatabaseService;
 class AwQuotaManagerBridge;
 class CookieManager;
@@ -125,7 +127,7 @@ class AwBrowserContext : public content::BrowserContext,
   void WarmUpSpareRenderer(JNIEnv* const env);
 
   // content::BrowserContext implementation.
-  base::FilePath GetPath() override;
+  base::FilePath GetPath() const override;
   bool IsOffTheRecord() override;
   content::DownloadManagerDelegate* GetDownloadManagerDelegate() override;
   content::BrowserPluginGuestManager* GetGuestManager() override;
@@ -185,9 +187,68 @@ class AwBrowserContext : public content::BrowserContext,
 
   void ClearPersistentOriginTrialStorageForTesting(JNIEnv* env);
 
-  scoped_refptr<AwContentsOriginMatcher> service_worker_xrw_allowlist_matcher();
+  void SetExtraHeadersForUrl(const GURL& url, const std::string& headers);
 
-  void SetExtraHeaders(const GURL& url, const std::string& headers);
+  // Set a static header name-value pair to be sent to origins that match the
+  // `origin_rules` patterns.
+  //
+  // This method exist for legacy reasons, and will overwrite the first mapping
+  // of `header_name`. It should not be used alongside `AddOriginMatchedHeader`.
+  //
+  // The values of `header_name` and `header_value`
+  // must pass `HttpUtil::IsValidHeaderName()` and
+  // `HttpUtil::IsValidHeaderValue()` respectively. This check is being enforced
+  // in Java by the WebView code.
+  std::vector<std::string> SetOriginMatchedHeader(
+      JNIEnv* env,
+      std::string& header_name,
+      std::string& header_value,
+      const std::vector<std::string>& origin_rules);
+
+  // Set a static header name-value pair to be sent to origins that match the
+  // `origin_rules` patterns.
+  //
+  // If the (header_name, header_value) pair already exists, then the provided
+  // `origin_rules` will be merged with the existing origin rules.
+  //
+  // The values of `header_name` and `header_value`
+  // must pass `HttpUtil::IsValidHeaderName()` and
+  // `HttpUtil::IsValidHeaderValue()` respectively. This check is being enforced
+  // in Java by the WebView code.
+  std::vector<std::string> AddOriginMatchedHeader(
+      JNIEnv* env,
+      std::string& header_name,
+      std::string& header_value,
+      const std::vector<std::string>& origin_rules);
+
+  bool HasOriginMatchedHeader(JNIEnv* env, const std::string& header_name);
+
+  // Finds all `AwOriginMatchedHeader`s that match the `header_name` and
+  // `header_value`.
+  //
+  // If `header_name` is std::nullopt, it will return all values.
+  // If `header_name` is provided and `header_value` is std::nullopt, it will
+  // return all values where `header_name` matches. If both values are provided,
+  // it will return values where both match.
+  std::vector<scoped_refptr<AwOriginMatchedHeader>> FindOriginMatchedHeaders(
+      JNIEnv* env,
+      const std::optional<std::string>& header_name,
+      const std::optional<std::string>& header_value);
+
+  // Removes origin matched headers that match the `header_name` and
+  // `header_value`. If `header_value` is `std::nullopt`, it only uses
+  // `header_name` for matching.
+  void ClearOriginMatchedHeader(JNIEnv* env,
+                                const std::string& header_name,
+                                const std::optional<std::string>& header_value);
+
+  void ClearAllOriginMatchedHeaders(JNIEnv* env);
+
+  const std::vector<scoped_refptr<AwOriginMatchedHeader>>&
+  GetOriginMatchedHeaders();
+
+  // Adds a QUIC hints for the given origins.
+  void AddQuicHints(JNIEnv* env, const std::vector<GURL>& origins);
 
  private:
   friend class AwBrowserContextIoThreadHandle;
@@ -228,9 +289,9 @@ class AwBrowserContext : public content::BrowserContext,
   AwFileSystemAccessPermissionContext fsa_permission_context_;
   SimpleFactoryKey simple_factory_key_;
 
-  scoped_refptr<AwContentsOriginMatcher> service_worker_xrw_allowlist_matcher_;
-
-  std::map<std::string, std::string> extra_headers_;
+  // Map of extra headers for specific URLs supplied through the loadUrl(String,
+  // Map) API.
+  std::map<std::string, std::string> extra_headers_for_urls_;
 
   base::android::ScopedJavaGlobalRef<jobject> obj_;
 
@@ -244,6 +305,7 @@ class AwBrowserContext : public content::BrowserContext,
   std::unique_ptr<CookieManager> cookie_manager_;
 
   std::unique_ptr<AwPrefetchManager> prefetch_manager_;
+  std::unique_ptr<AwPreconnector> preconnector_;
 
   // The IO thread client that should be used by service workers.
   base::android::ScopedJavaGlobalRef<jobject> sw_io_thread_client_;
@@ -256,6 +318,8 @@ class AwBrowserContext : public content::BrowserContext,
   // in-flight requests, only applied to the requests made afterwards. It should
   // be enabled before making any requests.
   bool enable_stale_dns_ = false;
+
+  std::vector<scoped_refptr<AwOriginMatchedHeader>> origin_matched_headers_;
 
   base::WeakPtrFactory<AwBrowserContext> weak_method_factory_{this};
 };

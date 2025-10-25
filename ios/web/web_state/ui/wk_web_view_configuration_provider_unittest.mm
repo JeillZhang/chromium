@@ -8,12 +8,10 @@
 
 #import <vector>
 
-#import "base/logging.h"
-#import "base/memory/ptr_util.h"
-#import "base/run_loop.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/test/bind.h"
 #import "base/test/task_environment.h"
+#import "base/test/test_future.h"
 #import "base/uuid.h"
 #import "ios/web/public/js_messaging/content_world.h"
 #import "ios/web/public/js_messaging/java_script_feature.h"
@@ -22,126 +20,15 @@
 #import "ios/web/public/test/scoped_testing_web_client.h"
 #import "ios/web/public/web_client.h"
 #import "ios/web/web_state/ui/wk_content_rule_list_provider.h"
+#import "ios/web/web_state/ui/wk_content_rule_list_util.h"
+#import "testing/gmock/include/gmock/gmock.h"
 #import "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
 #import "testing/platform_test.h"
 
+using base::test::TestFuture;
+
 namespace web {
-namespace {
-
-// Constants for Content Rule List Tests
-NSString* const kTestScriptBlockingListIdentifier = @"script-blocking-list";
-NSString* const kTestBlockLocalListIdentifier = @"block-local";
-NSString* const kTestMixedContentAutoupgradeListIdentifier =
-    @"mixed-content-autoupgrade";
-
-// Helper functions for Content Rule List Tests
-NSString* CreateValidScriptBlockingJSONRules() {
-  // A simple rule that blocks everything (for testing presence)
-  return @"[{\"trigger\":{\"url-filter\":\".*\"},\"action\":{\"type\":"
-         @"\"block\"}}]";
-}
-
-NSString* CreateInvalidScriptBlockingJSONRules() {
-  // Malformed JSON (missing closing brace/bracket)
-  return @"[{\"trigger\":{\"url-filter\":\".*\"},\"action\":{\"type\":"
-         @"\"block\"";
-}
-
-// ContentRuleList test helper functions
-
-// Helper to clear a specific rule list from the WKContentRuleListStore and
-// wait.
-void ClearRuleListFromStoreAndWait(NSString* identifier) {
-  base::RunLoop run_loop;
-
-  // Look up the content rule list.
-  void (^lookup_completion_block)(WKContentRuleList*, NSError*) =
-      base::CallbackToBlock(base::BindLambdaForTesting(
-          [&](WKContentRuleList* ruleList, NSError* lookup_error) {
-            if (lookup_error) {
-              // An error occurred during lookup.
-              // Don't log if the error is
-              // WKErrorContentRuleListStoreLookUpFailed (Code 8), as this
-              // simply means the list isn't there, so no removal is needed.
-              if (!([lookup_error.domain isEqualToString:WKErrorDomain] &&
-                    lookup_error.code ==
-                        WKErrorContentRuleListStoreLookUpFailed)) {
-                LOG(ERROR) << "Error looking up list '" << identifier.UTF8String
-                           << "' for potential removal: "
-                           << lookup_error.description.UTF8String;
-              }
-              run_loop.Quit();  // Stop if lookup failed or list confirmed not
-                                // found via error.
-              return;
-            }
-
-            if (ruleList) {
-              // Lookup was successful and the ruleList exists. Proceed to
-              // remove it.
-              void (^removal_completion_block)(NSError*) =
-                  base::CallbackToBlock(
-                      base::BindLambdaForTesting([&](NSError* removal_error) {
-                        // Handle errors during removal.
-                        if (removal_error) {
-                          LOG(ERROR) << "Unexpected error removing list '"
-                                     << identifier.UTF8String
-                                     << "' after successful lookup: "
-                                     << removal_error.description.UTF8String;
-                        }
-                        run_loop.Quit();  // Quit after the removal attempt
-                      }));
-
-              [WKContentRuleListStore.defaultStore
-                  removeContentRuleListForIdentifier:identifier
-                                   completionHandler:removal_completion_block];
-            } else {
-              // Lookup was successful (no error), but ruleList is nil.
-              // No removal needed.
-              run_loop.Quit();
-            }
-          }));
-
-  [WKContentRuleListStore.defaultStore
-      lookUpContentRuleListForIdentifier:identifier
-                       completionHandler:lookup_completion_block];
-
-  run_loop.Run();
-}
-
-// Helper to check rule list presence in the store (asynchronously)
-bool CheckStoreForRuleListAndWait(NSString* identifier) {
-  bool found = false;
-  base::RunLoop run_loop;
-  // Use base::CallbackToBlock to convert the base::RepeatingCallback to an
-  // Objective-C block.
-  void (^completion_block)(WKContentRuleList*, NSError*) =
-      base::CallbackToBlock(base::BindLambdaForTesting(
-          [&](WKContentRuleList* ruleList, NSError* error) {
-            found = (ruleList != nil);
-            run_loop.Quit();
-          }));
-
-  [WKContentRuleListStore.defaultStore
-      lookUpContentRuleListForIdentifier:identifier
-                       completionHandler:completion_block];
-  run_loop.Run();
-  return found;
-}
-
-NSError* CallUpdateScriptBlockingRuleListAndWait(
-    WKContentRuleListProvider* rule_list_provider,
-    NSString* json_rules) {
-  NSError* result = nil;
-  base::RunLoop run_loop;
-  rule_list_provider->UpdateScriptBlockingRuleList(
-      json_rules, base::BindLambdaForTesting([&](NSError* error) {
-        result = error;
-        run_loop.Quit();
-      }));
-  run_loop.Run();
-  return result;
-}
 
 class WKWebViewConfigurationProviderTest : public PlatformTest {
  public:
@@ -149,14 +36,15 @@ class WKWebViewConfigurationProviderTest : public PlatformTest {
       : web_client_(std::make_unique<FakeWebClient>()) {}
 
  protected:
-  void TearDown() override {
-    // Clean up by removing lists from the store. This is relevant for
-    // Content Rule List tests to avoid test leakage.
-    ClearRuleListFromStoreAndWait(kTestScriptBlockingListIdentifier);
-    ClearRuleListFromStoreAndWait(kTestBlockLocalListIdentifier);
-    ClearRuleListFromStoreAndWait(kTestMixedContentAutoupgradeListIdentifier);
-
-    PlatformTest::TearDown();
+  // Helper to create a WKWebViewConfigurationProvider with a mock rule list
+  // provider for testing. This can call the private constructor because
+  // WKWebViewConfigurationProvider declares this test class as a friend.
+  std::unique_ptr<WKWebViewConfigurationProvider>
+  CreateProviderWithMockRuleListProvider(
+      BrowserState* browser_state,
+      std::unique_ptr<WKContentRuleListProvider> rule_list_provider) {
+    return base::WrapUnique(new WKWebViewConfigurationProvider(
+        browser_state, std::move(rule_list_provider)));
   }
 
   // Returns WKWebViewConfigurationProvider associated with `browser_state_`.
@@ -173,33 +61,12 @@ class WKWebViewConfigurationProviderTest : public PlatformTest {
     return static_cast<FakeWebClient*>(web_client_.Get());
   }
 
-  // BrowserState required for WKWebViewConfigurationProvider creation.
   web::ScopedTestingWebClient web_client_;
   FakeBrowserState browser_state_;
-  base::test::TaskEnvironment task_environment_{
-      base::test::TaskEnvironment::TimeSource::MOCK_TIME};
+  base::test::TaskEnvironment task_environment_;
 };
 
-// Tests that each WKWebViewConfigurationProvider has own, non-nil
-// configuration and configurations returned by the same provider will always
-// have the same process pool.
-TEST_F(WKWebViewConfigurationProviderTest, ConfigurationOwnerhip) {
-  // Configuration is not nil.
-  WKWebViewConfigurationProvider& provider = GetProvider();
-  ASSERT_TRUE(provider.GetWebViewConfiguration());
-
-  // Same non-nil WKProcessPool for the same provider.
-  ASSERT_TRUE(provider.GetWebViewConfiguration().processPool);
-  EXPECT_EQ(provider.GetWebViewConfiguration().processPool,
-            provider.GetWebViewConfiguration().processPool);
-
-  // Different WKProcessPools for different providers.
-  FakeBrowserState other_browser_state;
-  WKWebViewConfigurationProvider& other_provider =
-      GetProvider(&other_browser_state);
-  EXPECT_NE(provider.GetWebViewConfiguration().processPool,
-            other_provider.GetWebViewConfiguration().processPool);
-}
+namespace {
 
 // Tests Non-OffTheRecord configuration.
 TEST_F(WKWebViewConfigurationProviderTest, NoneOffTheRecordConfiguration) {
@@ -221,7 +88,6 @@ TEST_F(WKWebViewConfigurationProviderTest, OffTheRecordConfiguration) {
 TEST_F(WKWebViewConfigurationProviderTest, ConfigurationProtection) {
   WKWebViewConfigurationProvider& provider = GetProvider();
   WKWebViewConfiguration* config = provider.GetWebViewConfiguration();
-  WKProcessPool* pool = [config processPool];
   WKPreferences* prefs = [config preferences];
   WKUserContentController* userContentController =
       [config userContentController];
@@ -231,14 +97,11 @@ TEST_F(WKWebViewConfigurationProviderTest, ConfigurationProtection) {
   WKWebViewConfiguration* other_wk_web_view_configuration =
       GetProvider(&other_browser_state).GetWebViewConfiguration();
   ASSERT_TRUE(other_wk_web_view_configuration);
-  config.processPool = other_wk_web_view_configuration.processPool;
   config.preferences = other_wk_web_view_configuration.preferences;
   config.userContentController =
       other_wk_web_view_configuration.userContentController;
 
   // Make sure that the properties of internal configuration were not changed.
-  EXPECT_TRUE(provider.GetWebViewConfiguration().processPool);
-  EXPECT_EQ(pool, provider.GetWebViewConfiguration().processPool);
   EXPECT_TRUE(provider.GetWebViewConfiguration().preferences);
   EXPECT_EQ(prefs, provider.GetWebViewConfiguration().preferences);
   EXPECT_TRUE(provider.GetWebViewConfiguration().userContentController);
@@ -260,13 +123,38 @@ TEST_F(WKWebViewConfigurationProviderTest, Purge) {
   EXPECT_FALSE(config);
 }
 
-// Tests that the content rule list provider is returned.
-TEST_F(WKWebViewConfigurationProviderTest, GetContentRuleListProvider) {
-  WKWebViewConfigurationProvider& config_provider = GetProvider();
-  // Getting the WKContentRuleListProvider may trigger asynchronous compilation.
-  WKContentRuleListProvider* rule_list_provider =
-      config_provider.GetContentRuleListProvider();
-  EXPECT_NE(nullptr, rule_list_provider);
+class MockWKContentRuleListProvider : public WKContentRuleListProvider {
+ public:
+  explicit MockWKContentRuleListProvider(const base::FilePath& path)
+      : WKContentRuleListProvider(path) {}
+  ~MockWKContentRuleListProvider() override = default;
+
+  MOCK_METHOD(void,
+              UpdateRuleList,
+              (RuleListKey key,
+               std::string json_rules,
+               OperationCallback callback),
+              (override));
+  MOCK_METHOD(void,
+              RemoveRuleList,
+              (RuleListKey key, OperationCallback callback),
+              (override));
+};
+
+// Tests that the static content rule lists are created on initialization.
+TEST_F(WKWebViewConfigurationProviderTest, StaticContentRuleListsAreCreated) {
+  auto rule_list_provider =
+      std::make_unique<testing::StrictMock<MockWKContentRuleListProvider>>(
+          browser_state_.GetStatePath());
+  EXPECT_CALL(
+      *rule_list_provider,
+      UpdateRuleList(kBlockLocalResourcesRuleListKey, testing::_, testing::_));
+  EXPECT_CALL(
+      *rule_list_provider,
+      UpdateRuleList(kMixedContentUpgradeRuleListKey, testing::_, testing::_));
+
+  auto provider = CreateProviderWithMockRuleListProvider(
+      &browser_state_, std::move(rule_list_provider));
 }
 
 // Tests that configuration's userContentController has additional scripts
@@ -613,212 +501,6 @@ TEST_F(WKWebViewConfigurationProviderTest,
   EXPECT_NSNE(data_store, recorded_data_store);
   // Ensure data store is reset again for `//ios/web` managed browser.
   EXPECT_NSNE(config_data_store, recorded_data_store);
-}
-
-// Tests that the static block-local list is eventually compiled and installed.
-TEST_F(WKWebViewConfigurationProviderTest, StaticBlockLocalListInstalled) {
-  WKWebViewConfigurationProvider& config_provider = GetProvider();
-  WKContentRuleListProvider* rule_list_provider =
-      config_provider.GetContentRuleListProvider();
-  ASSERT_NE(nullptr, rule_list_provider);
-
-  base::RunLoop run_loop;
-  // Assume rule_list_provider now has this method.
-  rule_list_provider->SetOnAllStaticListsCompiledCallback(
-      run_loop.QuitClosure());
-  run_loop.Run();  // Wait for the signal from the provider.
-
-  EXPECT_TRUE(CheckStoreForRuleListAndWait(kTestBlockLocalListIdentifier))
-      << "Block-local list (" << kTestBlockLocalListIdentifier
-      << ") should be present in store after provider signals completion.";
-}
-
-// Tests that the static mixed-content list is eventually compiled and
-// installed.
-TEST_F(WKWebViewConfigurationProviderTest, StaticMixedContentListInstalled) {
-  WKWebViewConfigurationProvider& config_provider = GetProvider();
-  WKContentRuleListProvider* rule_list_provider =
-      config_provider.GetContentRuleListProvider();
-  ASSERT_NE(nullptr, rule_list_provider);
-
-  base::RunLoop run_loop;
-  // Assume rule_list_provider now has this method.
-  rule_list_provider->SetOnAllStaticListsCompiledCallback(
-      run_loop.QuitClosure());
-  run_loop.Run();  // Wait for the signal from the provider.
-
-  EXPECT_TRUE(
-      CheckStoreForRuleListAndWait(kTestMixedContentAutoupgradeListIdentifier))
-      << "Mixed-content list (" << kTestMixedContentAutoupgradeListIdentifier
-      << ") should be present in store after provider signals completion.";
-}
-
-// Tests adding a valid script blocking rule list.
-TEST_F(WKWebViewConfigurationProviderTest, AddValidScriptBlockingRules) {
-  // Get the WKWebViewConfigurationProvider for the fixture's browser_state.
-  WKWebViewConfigurationProvider& config_provider = GetProvider();
-  WKContentRuleListProvider* rule_list_provider =
-      config_provider.GetContentRuleListProvider();
-  ASSERT_NE(nullptr, rule_list_provider);
-
-  ASSERT_FALSE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Pre-condition: Script blocking list should not be in store.";
-
-  NSString* valid_json = CreateValidScriptBlockingJSONRules();
-  // Pass the obtained rule_list_provider to the helper.
-  NSError* result =
-      CallUpdateScriptBlockingRuleListAndWait(rule_list_provider, valid_json);
-
-  // Check callback results
-  EXPECT_FALSE(result) << "Callback should report nil error for valid JSON.";
-
-  // Check side effects
-  EXPECT_TRUE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Script blocking list should be present in store after adding valid "
-         "rules.";
-}
-
-// Tests attempting to add an invalid script blocking rule list.
-TEST_F(WKWebViewConfigurationProviderTest, AddInvalidScriptBlockingRules) {
-  WKWebViewConfigurationProvider& config_provider = GetProvider();
-  WKContentRuleListProvider* rule_list_provider =
-      config_provider.GetContentRuleListProvider();
-  ASSERT_NE(nullptr, rule_list_provider);
-
-  ASSERT_FALSE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Pre-condition: Script blocking list should not be in store.";
-
-  NSString* invalid_json = CreateInvalidScriptBlockingJSONRules();
-  NSError* result =
-      CallUpdateScriptBlockingRuleListAndWait(rule_list_provider, invalid_json);
-
-  // Check callback results
-  ASSERT_NE(nil, result)
-      << "Callback should report non-nil error for invalid JSON.";
-  // Assuming WKErrorDomain and WKErrorContentRuleListStoreCompileFailed are
-  // available/correct.
-  EXPECT_NSEQ(WKErrorDomain, result.domain)
-      << "Error domain should be WKErrorDomain for compilation issues.";
-  EXPECT_EQ(WKErrorContentRuleListStoreCompileFailed, result.code)
-      << "Error code should indicate compilation failure.";
-
-  // Check side effects (list should not be installed, state unchanged)
-  EXPECT_FALSE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Script blocking list should NOT be present in store after attempting "
-         "to add invalid rules.";
-}
-
-// Tests attempting to update with nil when a list already exists.
-TEST_F(WKWebViewConfigurationProviderTest, UpdateWithNilWhenListExists) {
-  WKWebViewConfigurationProvider& config_provider = GetProvider();
-  WKContentRuleListProvider* rule_list_provider =
-      config_provider.GetContentRuleListProvider();
-  ASSERT_NE(nullptr, rule_list_provider);
-
-  // First, add a list to ensure there's something to remove.
-  NSError* add_result = CallUpdateScriptBlockingRuleListAndWait(
-      rule_list_provider, CreateValidScriptBlockingJSONRules());
-  ASSERT_EQ(nil, add_result);
-  ASSERT_TRUE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Setup: List should be in store before update attempt.";
-
-  // Now, attempt to "update" by passing nil. This should clear the list.
-  NSError* update_result =
-      CallUpdateScriptBlockingRuleListAndWait(rule_list_provider, nil);
-
-  // Expect no error for a successful clear.
-  EXPECT_FALSE(update_result)
-      << "Callback should report nil error for successful clear.";
-
-  // The list should now be removed from the store.
-  EXPECT_FALSE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Script blocking list SHOULD NOT be present in store after clearing "
-         "with nil.";
-}
-
-// Tests attempting to update with an empty string when a list already exists.
-TEST_F(WKWebViewConfigurationProviderTest,
-       UpdateWithEmptyStringWhenListExists) {
-  WKWebViewConfigurationProvider& config_provider = GetProvider();
-  WKContentRuleListProvider* rule_list_provider =
-      config_provider.GetContentRuleListProvider();
-  ASSERT_NE(nullptr, rule_list_provider);
-
-  // First, add a list.
-  NSError* add_result = CallUpdateScriptBlockingRuleListAndWait(
-      rule_list_provider, CreateValidScriptBlockingJSONRules());
-  ASSERT_EQ(nil, add_result);
-  ASSERT_TRUE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Setup: List should be in store before update attempt.";
-
-  // Now, attempt to update by passing an empty string
-  NSError* update_result =
-      CallUpdateScriptBlockingRuleListAndWait(rule_list_provider, @"");
-
-  // Check callback results (compilation fails for empty string)
-  ASSERT_NE(nil, update_result)
-      << "Callback should report non-nil error for empty string input.";
-  EXPECT_NSEQ(WKErrorDomain, update_result.domain);
-  EXPECT_EQ(WKErrorContentRuleListStoreCompileFailed, update_result.code);
-
-  // Check side effects (list should NOT be removed, should remain active in
-  // store)
-  EXPECT_TRUE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Script blocking list SHOULD remain present in store after failed "
-         "update via empty string.";
-}
-
-// Tests updating an existing script blocking rule list with new valid rules.
-TEST_F(WKWebViewConfigurationProviderTest, UpdateExistingScriptBlockingRules) {
-  WKWebViewConfigurationProvider& config_provider = GetProvider();
-  WKContentRuleListProvider* rule_list_provider =
-      config_provider.GetContentRuleListProvider();
-  ASSERT_NE(nullptr, rule_list_provider);
-
-  // 1. Add an initial list
-  NSError* initial_add_result = CallUpdateScriptBlockingRuleListAndWait(
-      rule_list_provider, CreateValidScriptBlockingJSONRules());
-  ASSERT_EQ(nil, initial_add_result);
-  ASSERT_TRUE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Setup: List should be in store after initial add.";
-
-  // 2. Update with new rules
-  NSString* updated_json =
-      @"[{\"trigger\":{\"url-filter\":\"example\\\\.com\"},\"action\":{"
-      @"\"type\":\"block\"}}]";  // A different rule
-  NSError* update_result =
-      CallUpdateScriptBlockingRuleListAndWait(rule_list_provider, updated_json);
-
-  // Check callback results
-  EXPECT_FALSE(update_result)
-      << "Callback should report nil error for valid update.";
-
-  // Check side effects
-  EXPECT_TRUE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Script blocking list should still be present in store after update.";
-}
-
-// Tests attempting to update with nil when no list exists.
-TEST_F(WKWebViewConfigurationProviderTest, UpdateWithNilWhenNoListExists) {
-  WKWebViewConfigurationProvider& config_provider = GetProvider();
-  WKContentRuleListProvider* rule_list_provider =
-      config_provider.GetContentRuleListProvider();
-  ASSERT_NE(nullptr, rule_list_provider);
-
-  ASSERT_FALSE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "Pre-condition: List should not be present in store.";
-
-  NSError* result =
-      CallUpdateScriptBlockingRuleListAndWait(rule_list_provider, nil);
-
-  // Expect success because clearing is a valid operation, even if list wasn't
-  // there.
-  // Expect no error for a successful clear.
-  EXPECT_FALSE(result)
-      << "Callback should report nil error for successful clear.";
-
-  EXPECT_FALSE(CheckStoreForRuleListAndWait(kTestScriptBlockingListIdentifier))
-      << "List should remain not present in store.";
 }
 
 }  // namespace

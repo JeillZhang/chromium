@@ -29,12 +29,17 @@
 
 #include "third_party/blink/renderer/platform/fonts/font_description.h"
 
+#include <set>
+
 #include "base/compiler_specific.h"
 #include "base/memory/values_equivalent.h"
+#include "base/notreached.h"
 #include "base/strings/to_string.h"
 #include "build/build_config.h"
 #include "third_party/blink/public/platform/web_font_description.h"
+#include "third_party/blink/renderer/platform/geometry/evaluation_input.h"
 #include "third_party/blink/renderer/platform/language.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/wtf/hash_functions.h"
 #include "third_party/blink/renderer/platform/wtf/size_assertions.h"
 #include "third_party/blink/renderer/platform/wtf/text/atomic_string_hash.h"
@@ -55,10 +60,14 @@ struct SameSizeAsFontDescription {
   scoped_refptr<FontPalette> palette_;
   scoped_refptr<FontVariantAlternates> font_variant_alternates_;
   AtomicString locale;
-  float sizes[5];
+  float sizes[3];
+  Length letter_spacing;
+  Length word_spacing;
   FontSizeAdjust size_adjust_;
+  ResolvedFontFeatures resolved_font_features_;
   FontSelectionRequest selection_request_;
   FieldsAsUnsignedType bitfields;
+  AtomicString language_override_;
 };
 
 ASSERT_SIZE(FontDescription, SameSizeAsFontDescription);
@@ -73,7 +82,7 @@ FontDescription FontDescription::CreateHashTableEmptyValue() {
   return result;
 }
 
-FontDescription::FontDescription(WTF::HashTableDeletedValueType) {
+FontDescription::FontDescription(HashTableDeletedValueType) {
   UNSAFE_TODO(memset(this, 0, sizeof(FontDescription)));
   fields_.hash_category_ = kHashDeletedValue;
 }
@@ -82,11 +91,12 @@ FontDescription::FontDescription()
     : specified_size_(0),
       computed_size_(0),
       adjusted_size_(0),
-      letter_spacing_(0),
-      word_spacing_(0),
+      letter_spacing_(Length(0, Length::kFixed)),
+      word_spacing_(Length(0, Length::kFixed)),
       font_selection_request_(kNormalWeightValue,
                               kNormalWidthValue,
                               kNormalSlopeValue) {
+  fields_as_unsigned_ = FieldsAsUnsignedType();
   fields_.orientation_ = static_cast<unsigned>(FontOrientation::kHorizontal);
   fields_.width_variant_ = kRegularWidth;
   fields_.variant_caps_ = kCapsNormal;
@@ -117,6 +127,7 @@ FontDescription::FontDescription()
   fields_.variant_position_ = kNormalVariantPosition;
   fields_.variant_emoji_ = kNormalVariantEmoji;
   fields_.text_spacing_trim_ = static_cast<unsigned>(TextSpacingTrim::kInitial);
+  fields_.is_forced_colors_mode_ = false;
 }
 
 FontDescription::FontDescription(const FontDescription&) = default;
@@ -134,6 +145,7 @@ bool FontDescription::operator==(const FontDescription& other) const {
          font_selection_request_ == other.font_selection_request_ &&
          fields_as_unsigned_.parts[0] == other.fields_as_unsigned_.parts[0] &&
          fields_as_unsigned_.parts[1] == other.fields_as_unsigned_.parts[1] &&
+         fields_as_unsigned_.parts[2] == other.fields_as_unsigned_.parts[2] &&
          (feature_settings_ == other.feature_settings_ ||
           (feature_settings_ && other.feature_settings_ &&
            *feature_settings_ == *other.feature_settings_)) &&
@@ -191,6 +203,34 @@ FontSelectionRequest FontDescription::GetFontSelectionRequest() const {
   return font_selection_request_;
 }
 
+float FontDescription::LetterSpacing() const {
+  switch (letter_spacing_.GetType()) {
+    case Length::kFixed:
+      return letter_spacing_.Pixels();
+    case Length::kPercent:
+      return letter_spacing_.Percent() / 100 * computed_size_;
+    case Length::kCalculated:
+      return letter_spacing_.NonNanCalculatedValue(LayoutUnit(computed_size_),
+                                                   {});
+    default:
+      NOTREACHED();
+  }
+}
+
+float FontDescription::WordSpacing() const {
+  switch (word_spacing_.GetType()) {
+    case Length::kFixed:
+      return word_spacing_.Pixels();
+    case Length::kPercent:
+      return word_spacing_.Percent() / 100 * computed_size_;
+    case Length::kCalculated:
+      return word_spacing_.NonNanCalculatedValue(LayoutUnit(computed_size_),
+                                                 {});
+    default:
+      NOTREACHED();
+  }
+}
+
 FontDescription::VariantLigatures FontDescription::GetVariantLigatures() const {
   VariantLigatures ligatures;
 
@@ -227,6 +267,18 @@ void FontDescription::SetVariantNumeric(
   fields_.variant_numeric_ = variant_numeric.fields_as_unsigned_;
 
   UpdateTypesettingFeatures();
+}
+
+FontVariantEmoji FontDescription::VariantEmoji() const {
+  FontVariantEmoji emoji_variant =
+      static_cast<FontVariantEmoji>(fields_.variant_emoji_);
+  if (RuntimeEnabledFeatures::EmojiMonochromeRenderingEnabled() &&
+      IsForcedColorsMode() &&
+      (emoji_variant == kNormalVariantEmoji ||
+       emoji_variant == kUnicodeVariantEmoji)) {
+    return kTextVariantEmoji;
+  }
+  return emoji_variant;
 }
 
 float FontDescription::EffectiveFontSize() const {
@@ -289,7 +341,8 @@ FontCacheKey FontDescription::CacheKey(
                          options | font_selection_request_.GetHash() << 13,
                          device_scale_factor_for_key, size_adjust_,
                          variation_settings_, font_palette_,
-                         font_variant_alternates_, is_unique_match);
+                         font_variant_alternates_, is_unique_match,
+                         fields_.is_forced_colors_mode_);
 #if BUILDFLAG(IS_ANDROID)
   if (const LayoutLocale* locale = Locale()) {
     if (FontCache::GetLocaleSpecificFamilyName(creation_params.Family()))
@@ -329,7 +382,7 @@ void FontDescription::UpdateTypesettingFeatures() {
   // When the effective letter-spacing between two characters is not zero (due
   // to either justification or non-zero computed letter-spacing), user agents
   // should not apply optional ligatures.
-  if (letter_spacing_ == 0) {
+  if (letter_spacing_.IsZero()) {
     switch (CommonLigaturesState()) {
       case FontDescription::kDisabledLigaturesState:
         fields_.typesetting_features_ &= ~blink::kLigatures;
@@ -359,33 +412,38 @@ unsigned FontDescription::StyleHashWithoutFamilyList() const {
   if (settings) {
     unsigned num_features = settings->size();
     for (unsigned i = 0; i < num_features; ++i) {
-      WTF::AddIntToHash(hash, settings->at(i).Tag());
-      WTF::AddIntToHash(hash, settings->at(i).Value());
+      AddIntToHash(hash, settings->at(i).Tag());
+      AddIntToHash(hash, settings->at(i).Value());
     }
   }
 
   if (VariationSettings()) {
-    WTF::AddIntToHash(hash, VariationSettings()->GetHash());
+    AddIntToHash(hash, VariationSettings()->GetHash());
+  }
+
+  if (HasLanguageOverride()) {
+    AddIntToHash(hash, language_override_.Hash());
   }
 
   if (font_palette_) {
-    WTF::AddIntToHash(hash, font_palette_->GetHash());
+    AddIntToHash(hash, font_palette_->GetHash());
   }
 
   if (locale_) {
     const AtomicString& locale = locale_->LocaleString();
-    WTF::AddIntToHash(hash, locale.Hash());
+    AddIntToHash(hash, locale.Hash());
   }
 
-  WTF::AddFloatToHash(hash, specified_size_);
-  WTF::AddFloatToHash(hash, computed_size_);
-  WTF::AddFloatToHash(hash, adjusted_size_);
-  WTF::AddFloatToHash(hash, letter_spacing_);
-  WTF::AddFloatToHash(hash, word_spacing_);
-  WTF::AddIntToHash(hash, fields_as_unsigned_.parts[0]);
-  WTF::AddIntToHash(hash, fields_as_unsigned_.parts[1]);
-  WTF::AddIntToHash(hash, font_selection_request_.GetHash());
-  WTF::AddIntToHash(hash, size_adjust_.GetHash());
+  AddFloatToHash(hash, specified_size_);
+  AddFloatToHash(hash, computed_size_);
+  AddFloatToHash(hash, adjusted_size_);
+  AddIntToHash(hash, letter_spacing_.GetHash());
+  AddIntToHash(hash, word_spacing_.GetHash());
+  AddIntToHash(hash, fields_as_unsigned_.parts[0]);
+  AddIntToHash(hash, fields_as_unsigned_.parts[1]);
+  AddIntToHash(hash, fields_as_unsigned_.parts[2]);
+  AddIntToHash(hash, font_selection_request_.GetHash());
+  AddIntToHash(hash, size_adjust_.GetHash());
 
   return hash;
 }
@@ -396,8 +454,8 @@ unsigned FontDescription::GetHash() const {
        family = family->Next()) {
     if (family->FamilyName().empty())
       continue;
-    WTF::AddIntToHash(hash, family->FamilyIsGeneric());
-    WTF::AddIntToHash(hash, WTF::GetHash(family->FamilyName()));
+    AddIntToHash(hash, family->FamilyIsGeneric());
+    AddIntToHash(hash, blink::GetHash(family->FamilyName()));
   }
   return hash;
 }
@@ -521,10 +579,51 @@ int FontDescription::MinimumPrefixWidthToHyphenate() const {
 }
 
 ResolvedFontFeatures FontDescription::ResolveFontFeatures() const {
-  if (const FontVariantAlternates* alternates = GetFontVariantAlternates()) {
-    return alternates->GetResolvedFontFeatures();
+  if (const auto* alternates = GetFontVariantAlternates()) {
+    ResolvedFontFeatures features_with_description =
+        alternates->GetResolvedFontFeatures();
+    features_with_description.AppendVector(resolved_font_features_);
+    return features_with_description;
   }
-  return ResolvedFontFeatures();
+  return resolved_font_features_;
+}
+
+void FontDescription::MergeFontFeatureSettingsWithDescriptor(
+    const FontFeatureSettings* feature_settings_descriptor) {
+  ResolvedFontFeatures resolved_font_features =
+      ResolveFontFeatureSettingsDescriptor(FeatureSettings(),
+                                           feature_settings_descriptor);
+  SetResolvedFontFeatures(std::move(resolved_font_features));
+}
+
+void FontDescription::MergeFontVariationSettingsWithDescriptor(
+    const FontVariationSettings* variation_settings_descriptor) {
+  scoped_refptr<FontVariationSettings> font_variation_settings =
+      FontVariationSettings::Create();
+
+  if ((!variation_settings_ || variation_settings_->size() == 0) &&
+      (!variation_settings_descriptor ||
+       variation_settings_descriptor->size() == 0)) {
+    SetVariationSettings(font_variation_settings);
+    return;
+  }
+
+  std::set<uint32_t> existing_tags;
+  // Store the existing axis settings
+  if (variation_settings_) {
+    for (const FontVariationAxis& axis : *variation_settings_) {
+      existing_tags.insert(axis.Tag());
+      font_variation_settings->Append(axis);
+    }
+  }
+  for (const FontVariationAxis& axis : *variation_settings_descriptor) {
+    if (existing_tags.find(axis.Tag()) == existing_tags.end()) {
+      font_variation_settings->Append(
+          FontVariationAxis(axis.Tag(), axis.Value()));
+    }
+  }
+  std::sort(font_variation_settings->begin(), font_variation_settings->end());
+  SetVariationSettings(font_variation_settings);
 }
 
 String FontDescription::ToString(GenericFamilyType familyType) {
@@ -737,7 +836,7 @@ String FontDescription::ToString() const {
       // string method.
       (locale_ ? locale_->LocaleString().Ascii().c_str() : ""), specified_size_,
       computed_size_, adjusted_size_, size_adjust_.ToString().Ascii().c_str(),
-      letter_spacing_, word_spacing_,
+      LetterSpacing(), WordSpacing(),
       font_selection_request_.ToString().Ascii().c_str(),
       blink::ToString(
           static_cast<TypesettingFeatures>(fields_.typesetting_features_))

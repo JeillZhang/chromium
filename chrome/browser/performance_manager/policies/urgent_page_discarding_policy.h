@@ -20,7 +20,7 @@ namespace policies {
 
 // Urgently discard a tab when receiving a memory pressure signal.
 class UrgentPageDiscardingPolicy : public GraphOwned,
-                                   public SystemNodeObserver {
+                                   public base::MemoryPressureListener {
  public:
   UrgentPageDiscardingPolicy();
   ~UrgentPageDiscardingPolicy() override;
@@ -36,9 +36,7 @@ class UrgentPageDiscardingPolicy : public GraphOwned,
   static void DisableForTesting();
 
  private:
-  // SystemNodeObserver:
-  void OnMemoryPressure(
-      base::MemoryPressureListener::MemoryPressureLevel new_level) override;
+  void OnMemoryPressure(base::MemoryPressureLevel new_level) override;
 
   // Callback called when a discard attempt has completed.
   void PostDiscardAttemptCallback(bool success);
@@ -49,6 +47,9 @@ class UrgentPageDiscardingPolicy : public GraphOwned,
       base::TimeTicks on_memory_pressure_at,
       std::optional<memory_pressure::ReclaimTarget> reclaim_target_kb);
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+  base::MemoryPressureListenerRegistration
+      memory_pressure_listener_registration_;
 
   // True while we are in the process of discarding tab(s) in response to a
   // memory pressure notification. It becomes false once we're done responding

@@ -4,6 +4,8 @@
 
 package org.chromium.android_webview;
 
+import static java.lang.annotation.ElementType.TYPE_USE;
+
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -48,10 +50,9 @@ import org.chromium.content_public.browser.WebContents;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
-import java.util.Collections;
-import java.util.HashSet;
+import java.lang.annotation.Target;
 import java.util.Map;
-import java.util.Set;
+import java.util.Objects;
 
 /**
  * Stores Android WebView specific settings that does not need to be synced to WebKit.
@@ -67,7 +68,7 @@ public class AwSettings {
     private static final String TAG = "AwSettings";
     private static final boolean TRACE = false;
 
-    /* See {@link android.webkit.WebSettings}. */
+    /** See {@link android.webkit.WebSettings}. */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef({
         LAYOUT_ALGORITHM_NORMAL,
@@ -80,11 +81,15 @@ public class AwSettings {
     public @interface LayoutAlgorithm {}
 
     public static final int LAYOUT_ALGORITHM_NORMAL = 0;
-    /* See {@link android.webkit.WebSettings}. */
+
+    /** See {@link android.webkit.WebSettings}. */
     public static final int LAYOUT_ALGORITHM_SINGLE_COLUMN = 1;
-    /* See {@link android.webkit.WebSettings}. */
+
+    /** See {@link android.webkit.WebSettings}. */
     public static final int LAYOUT_ALGORITHM_NARROW_COLUMNS = 2;
+
     public static final int LAYOUT_ALGORITHM_TEXT_AUTOSIZING = 3;
+    private static final int LAYOUT_ALGORITHM_COUNT = 4;
 
     public static final int FORCE_DARK_OFF = ForceDarkMode.FORCE_DARK_OFF;
     public static final int FORCE_DARK_AUTO = ForceDarkMode.FORCE_DARK_AUTO;
@@ -120,7 +125,32 @@ public class AwSettings {
     public static final int ATTRIBUTION_APP_SOURCE_AND_APP_TRIGGER =
             AttributionBehavior.APP_SOURCE_AND_APP_TRIGGER;
 
-    private Set<String> mRequestedWithHeaderAllowedOriginRules;
+    /**
+     * Do not change these constants. Apps rely on them for compatibility across WebView versions.
+     */
+
+    // LINT.IfChange(AwSettingsHyperlinkContextMenuItems)
+    @IntDef(
+            flag = true,
+            value = {
+                HyperlinkContextMenuItems.DISABLED,
+                HyperlinkContextMenuItems.COPY_LINK_ADDRESS,
+                HyperlinkContextMenuItems.COPY_LINK_TEXT,
+                HyperlinkContextMenuItems.OPEN_LINK
+            })
+    @Retention(RetentionPolicy.SOURCE)
+    @Target(TYPE_USE)
+    public @interface HyperlinkContextMenuItems {
+        int DISABLED = 0;
+        int COPY_LINK_ADDRESS = 1; // 2^0
+        int COPY_LINK_TEXT = 1 << 1; // 2^1
+        int OPEN_LINK = 1 << 2; // 2^2
+    }
+
+    // LINT.ThenChange(/android_webview/support_library/boundary_interfaces/src/org/chromium/support_lib_boundary/WebSettingsBoundaryInterface.java:BoundaryHyperlinkContextMenuItems)
+
+    private @HyperlinkContextMenuItems int mHyperlinkContextMenuItems =
+            HyperlinkContextMenuItems.DISABLED;
 
     private final Context mContext;
     private WebContents mWebContents;
@@ -185,6 +215,8 @@ public class AwSettings {
     private boolean mBackForwardCacheEnabled;
     private boolean mHasCalledSetBackForwardCacheEnabledBefore;
 
+    private @Nullable AwBackForwardCacheSettings mAwBackForwardCacheSettings;
+
     private boolean mCssHexAlphaColorEnabled;
     private boolean mScrollTopLeftInteropEnabled;
     private boolean mWillSuppressErrorPage;
@@ -203,7 +235,7 @@ public class AwSettings {
     private final boolean mAllowGeolocationOnInsecureOrigins;
     private final boolean mDoNotUpdateSelectionOnMutatingSelectionRange;
 
-    private final boolean mPasswordEchoEnabled;
+    private boolean mPasswordEchoEnabled;
 
     // Not accessed by the native side.
     private boolean mBlockSpecialFileUrls;
@@ -330,6 +362,11 @@ public class AwSettings {
                     AwSettings.this::updateBackForwardCacheEnabledOnUiThreadLocked);
         }
 
+        void updateBackForwardCacheSettings() {
+            runOnUiThreadBlockingAndLocked(
+                    AwSettings.this::updateBackForwardCacheSettingsOnUiThreadLocked);
+        }
+
         void updateGeolocationEnabled() {
             runOnUiThreadBlockingAndLocked(
                     AwSettings.this::updateGeolocationEnabledOnUiThreadLocked);
@@ -337,7 +374,7 @@ public class AwSettings {
     }
 
     interface ZoomSupportChangeListener {
-        public void onGestureZoomSupportChanged(
+        void onGestureZoomSupportChanged(
                 boolean supportsDoubleTapZoom, boolean supportsMultiTouchZoom);
     }
 
@@ -401,8 +438,6 @@ public class AwSettings {
             mAllowFileUrlAccess =
                     ContextUtils.getApplicationContext().getApplicationInfo().targetSdkVersion
                             < Build.VERSION_CODES.R;
-            mRequestedWithHeaderAllowedOriginRules =
-                    ManifestMetadataUtil.getXRequestedWithAllowList();
             mIntegrityApiStatusConfig = new AwMediaIntegrityApiStatusConfig();
             mSpeculativeLoadingAllowedFlags =
                     SpeculativeLoadingAllowedFlags.SPECULATIVE_LOADING_DISABLED;
@@ -487,7 +522,6 @@ public class AwSettings {
                 mEventHandler.bindUiThread();
                 mNativeAwSettings = AwSettingsJni.get().init(AwSettings.this, webContents);
                 updateEverythingLocked();
-                setRequestedWithHeaderOriginAllowListLocked(mRequestedWithHeaderAllowedOriginRules);
                 WebauthnModeProvider.getInstance()
                         .setWebauthnModeForWebContents(webContents, mWebauthnMode);
                 flushBackForwardCacheOnUiThreadLocked();
@@ -782,20 +816,15 @@ public class AwSettings {
         if (TRACE) Log.i(TAG, "setUserAgentString=" + ua);
         synchronized (mAwSettingsLock) {
             final String oldUserAgent = mUserAgent;
-            if (ua == null || ua.length() == 0) {
+            if (ua == null || ua.isEmpty()) {
                 mUserAgent = LazyDefaultUserAgent.sInstance;
+            } else if (!AwBrowserContext.isValidHttpHeaderValue(ua)) {
+                throw new IllegalArgumentException("Invalid HTTP header value: '" + ua + "'");
             } else {
                 mUserAgent = ua;
             }
             if (!oldUserAgent.equals(mUserAgent)) {
-                if (ua != null
-                        && ua.length() > 0
-                        && AwBrowserContext.BAD_HEADER_CHAR.matcher(ua).find()) {
-                    throw new IllegalArgumentException(
-                            AwBrowserContext.BAD_HEADER_MSG + "Invalid User-Agent '" + ua + "'");
-                }
-                mEventHandler.runOnUiThreadBlockingAndLocked(
-                        () -> updateUserAgentOnUiThreadLocked());
+                mEventHandler.runOnUiThreadBlockingAndLocked(this::updateUserAgentOnUiThreadLocked);
             }
         }
     }
@@ -1304,6 +1333,8 @@ public class AwSettings {
     /** See {@link android.webkit.WebSettings#setLayoutAlgorithm}. */
     public void setLayoutAlgorithm(@LayoutAlgorithm int l) {
         if (TRACE) Log.i(TAG, "setLayoutAlgorithm=" + l);
+        RecordHistogram.recordEnumeratedHistogram(
+                "Android.WebView.SetLayoutAlgorithm", l, LAYOUT_ALGORITHM_COUNT);
         synchronized (mAwSettingsLock) {
             if (mLayoutAlgorithm != l) {
                 mLayoutAlgorithm = l;
@@ -1317,48 +1348,6 @@ public class AwSettings {
     public int getLayoutAlgorithm() {
         synchronized (mAwSettingsLock) {
             return mLayoutAlgorithm;
-        }
-    }
-
-    public void setRequestedWithHeaderOriginAllowList(Set<String> allowedOriginRules) {
-        // Even though clients shouldn't pass in null, it's better to guard against it
-        allowedOriginRules =
-                allowedOriginRules != null ? allowedOriginRules : Collections.emptySet();
-        AwWebContentsMetricsRecorder.recordRequestedWithHeaderModeAPIUsage(allowedOriginRules);
-        synchronized (mAwSettingsLock) {
-            setRequestedWithHeaderOriginAllowListLocked(allowedOriginRules);
-        }
-    }
-
-    private void setRequestedWithHeaderOriginAllowListLocked(final Set<String> allowedOriginRules) {
-        assert Thread.holdsLock(mAwSettingsLock);
-        if (mNativeAwSettings == 0) {
-            return;
-        }
-
-        // Final set to be updated by the Runnable on the UI thread.
-        final Set<String> rejectedRules = new HashSet<>();
-
-        mEventHandler.runOnUiThreadBlockingAndLocked(
-                () -> {
-                    flushBackForwardCache();
-                    String[] rejected =
-                            AwSettingsJni.get()
-                                    .updateXRequestedWithAllowListOriginMatcher(
-                                            mNativeAwSettings,
-                                            allowedOriginRules.toArray(new String[0]));
-                    rejectedRules.addAll(java.util.Arrays.asList(rejected));
-                });
-
-        if (!rejectedRules.isEmpty()) {
-            throw new IllegalArgumentException("Malformed origin match rules: " + rejectedRules);
-        }
-        mRequestedWithHeaderAllowedOriginRules = allowedOriginRules;
-    }
-
-    public Set<String> getRequestedWithHeaderOriginAllowList() {
-        synchronized (mAwSettingsLock) {
-            return mRequestedWithHeaderAllowedOriginRules;
         }
     }
 
@@ -1565,6 +1554,15 @@ public class AwSettings {
     private boolean getPasswordEchoEnabledLocked() {
         assert Thread.holdsLock(mAwSettingsLock);
         return mPasswordEchoEnabled;
+    }
+
+    public void setPasswordEchoEnabled(boolean enabled) {
+        synchronized (mAwSettingsLock) {
+            if (mPasswordEchoEnabled != enabled) {
+                mPasswordEchoEnabled = enabled;
+                mEventHandler.updateWebkitPreferencesLocked();
+            }
+        }
     }
 
     /** See {@link android.webkit.WebSettings#setDomStorageEnabled}. */
@@ -1845,6 +1843,29 @@ public class AwSettings {
     public boolean getBackForwardCacheEnabled() {
         synchronized (mAwSettingsLock) {
             return mBackForwardCacheEnabled;
+        }
+    }
+
+    public void setBackForwardCacheSettings(AwBackForwardCacheSettings backForwardCacheSettings) {
+        if (TRACE) Log.i(TAG, "setBackForwardCacheSettings=" + backForwardCacheSettings);
+        assert backForwardCacheSettings != null;
+        // Setting BackForwardCacheSettings implicitly enables BFCache as well.
+        setBackForwardCacheEnabled(true);
+        synchronized (mAwSettingsLock) {
+            if (Objects.equals(mAwBackForwardCacheSettings, backForwardCacheSettings)) {
+                return;
+            }
+            mAwBackForwardCacheSettings = backForwardCacheSettings;
+            mEventHandler.updateBackForwardCacheSettings();
+        }
+    }
+
+    @CalledByNative
+    @Nullable
+    public AwBackForwardCacheSettings getBackForwardCacheSettings() {
+        synchronized (mAwSettingsLock) {
+            assert Thread.holdsLock(mAwSettingsLock);
+            return mAwBackForwardCacheSettings;
         }
     }
 
@@ -2158,6 +2179,15 @@ public class AwSettings {
         }
     }
 
+    private void updateBackForwardCacheSettingsOnUiThreadLocked() {
+        assert mEventHandler.mHandler != null;
+        ThreadUtils.assertOnUiThread();
+        if (mNativeAwSettings != 0) {
+            AwSettingsJni.get()
+                    .updateBackForwardCacheSettingsLocked(mNativeAwSettings, AwSettings.this);
+        }
+    }
+
     private void updateGeolocationEnabledOnUiThreadLocked() {
         assert mEventHandler.mHandler != null;
         ThreadUtils.assertOnUiThread();
@@ -2257,6 +2287,26 @@ public class AwSettings {
         }
     }
 
+    /**
+     * Sets the hyperlink context menu item flags set on this AwSettings. By default, all items are
+     * disabled.
+     *
+     * @param hyperlinkMenuItems A bitwise combination of flags from {@link
+     *     HyperlinkContextMenuItems}.
+     */
+    public void setHyperlinkContextMenuItems(@HyperlinkContextMenuItems int hyperlinkMenuItems) {
+        synchronized (mAwSettingsLock) {
+            mHyperlinkContextMenuItems = hyperlinkMenuItems;
+        }
+    }
+
+    /** Gets the hyperlink context menu item flags set on this AwSettings. */
+    public @HyperlinkContextMenuItems int getHyperlinkContextMenuItems() {
+        synchronized (mAwSettingsLock) {
+            return mHyperlinkContextMenuItems;
+        }
+    }
+
     @NativeMethods
     interface Natives {
         long init(AwSettings caller, WebContents webContents);
@@ -2296,6 +2346,8 @@ public class AwSettings {
 
         void updateBackForwardCacheEnabledLocked(long nativeAwSettings, AwSettings caller);
 
+        void updateBackForwardCacheSettingsLocked(long nativeAwSettings, AwSettings caller);
+
         boolean isForceDarkApplied(long nativeAwSettings, AwSettings caller);
 
         boolean prefersDarkFromTheme(long nativeAwSettings, AwSettings caller);
@@ -2305,8 +2357,6 @@ public class AwSettings {
 
         boolean getEnterpriseAuthenticationAppLinkPolicyEnabled(
                 long nativeAwSettings, AwSettings caller);
-
-        String[] updateXRequestedWithAllowListOriginMatcher(long nativeAwSettings, String[] rules);
 
         void updateGeolocationEnabledLocked(long nativeAwSettings, AwSettings caller);
     }

@@ -10,8 +10,11 @@
 #include "base/memory/raw_ptr.h"
 #include "chrome/browser/extensions/extension_keybinding_registry.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
+#include "extensions/buildflags/buildflags.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/global_accelerator_listener/global_accelerator_listener.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace content {
 class BrowserContext;
@@ -75,7 +78,9 @@ class ExtensionCommandsGlobalRegistry
   // Overridden from ExtensionKeybindingRegistry:
   bool PopulateCommands(const Extension* extension,
                         ui::CommandMap* commands) override;
-  bool RegisterAccelerator(const ui::Accelerator& accelerator) override;
+  bool RegisterAccelerator(const ui::Accelerator& accelerator,
+                           const ExtensionId& extension_id,
+                           const std::string& command_name) override;
   void UnregisterAccelerator(const ui::Accelerator& accelerator) override;
   void OnShortcutHandlingSuspended(bool suspended) override;
 

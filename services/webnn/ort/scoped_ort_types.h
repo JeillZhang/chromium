@@ -34,6 +34,13 @@ struct ScopedOrtTypeTraitsHelper<OrtEnv*> {
 };
 
 template <>
+struct ScopedOrtTypeTraitsHelper<OrtSession*> {
+  static void Free(OrtSession* value) {
+    PlatformFunctions::GetInstance()->ort_api()->ReleaseSession(value);
+  }
+};
+
+template <>
 struct ScopedOrtTypeTraitsHelper<OrtSessionOptions*> {
   static void Free(OrtSessionOptions* value) {
     PlatformFunctions::GetInstance()->ort_api()->ReleaseSessionOptions(value);
@@ -111,12 +118,20 @@ struct ScopedOrtTypeTraitsHelper<OrtModel*> {
   }
 };
 
+template <>
+struct ScopedOrtTypeTraitsHelper<OrtAllocator*> {
+  static void Free(OrtAllocator* value) {
+    PlatformFunctions::GetInstance()->ort_api()->ReleaseAllocator(value);
+  }
+};
+
 template <typename T>
 using ScopedOrtType = base::ScopedGeneric<T*, ScopedOrtTypeTraits<T*>>;
 
 }  // namespace internal
 
 using ScopedOrtEnv = internal::ScopedOrtType<OrtEnv>;
+using ScopedOrtSession = internal::ScopedOrtType<OrtSession>;
 using ScopedOrtSessionOptions = internal::ScopedOrtType<OrtSessionOptions>;
 using ScopedOrtStatus = internal::ScopedOrtType<OrtStatus>;
 using ScopedOrtValue = internal::ScopedOrtType<OrtValue>;
@@ -129,6 +144,7 @@ using ScopedOrtValueInfo = internal::ScopedOrtType<OrtValueInfo>;
 using ScopedOrtNode = internal::ScopedOrtType<OrtNode>;
 using ScopedOrtGraph = internal::ScopedOrtType<OrtGraph>;
 using ScopedOrtModel = internal::ScopedOrtType<OrtModel>;
+using ScopedOrtAllocator = internal::ScopedOrtType<OrtAllocator>;
 
 }  // namespace webnn::ort
 

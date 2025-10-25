@@ -183,6 +183,11 @@ class PLATFORM_EXPORT ResourceFetcher
     return freezable_task_runner_;
   }
 
+  const scoped_refptr<base::SingleThreadTaskRunner>& GetUnfreezableTaskRunner()
+      const {
+    return unfreezable_task_runner_;
+  }
+
   // Create a loader. This cannot be called after ClearContext is called.
   std::unique_ptr<URLLoader> CreateURLLoader(
       const network::ResourceRequest&,
@@ -283,6 +288,9 @@ class PLATFORM_EXPORT ResourceFetcher
   // If `skip_service_worker` is true, the identifier won't be a ServiceWorker's
   // identifier to keep the cache separated.
   String GetCacheIdentifier(const KURL& url, bool skip_service_worker) const;
+  String GetCacheIdentifier(ResourceType type,
+                            const KURL& url,
+                            bool skip_service_worker) const;
 
   // If `url` exists as a resource in a subresource bundle in this frame,
   // returns its UnguessableToken; otherwise, returns std::nullopt.
@@ -370,8 +378,7 @@ class PLATFORM_EXPORT ResourceFetcher
   void CancelWebBundleSubresourceLoadersFor(
       const base::UnguessableToken& web_bundle_token);
 
-  void OnMemoryPressure(
-      base::MemoryPressureListener::MemoryPressureLevel) override;
+  void OnMemoryPressure(base::MemoryPressureLevel) override;
 
   void MaybeRecordLCPPSubresourceMetrics(const KURL& document_url);
 
@@ -379,7 +386,7 @@ class PLATFORM_EXPORT ResourceFetcher
   // changed such that the load should no longer be deferred.
   void ReloadImagesIfNotDeferred();
 
-  void MaybeStartSpeculativeImageDecode();
+  void StartSpeculativeImageDecodes();
 
   // Populates the provided request's permissions policy.
   void PopulateResourceRequestPermissionsPolicy(
@@ -407,6 +414,11 @@ class PLATFORM_EXPORT ResourceFetcher
       LcppDeferUnusedPreloadExcludedResourceType excluded_resource_type) {
     defer_unused_preload_excluded_resource_type_for_testing_ =
         excluded_resource_type;
+  }
+
+  base::TimeDelta total_taken_time_for_did_load_resource_from_memory_cache()
+      const {
+    return total_taken_time_for_did_load_resource_from_memory_cache_;
   }
 
  private:
@@ -489,8 +501,6 @@ class PLATFORM_EXPORT ResourceFetcher
   void StopFetchingIncludingKeepaliveLoaders();
 
   void MaybeSaveResourceToStrongReference(Resource* resource);
-
-  void SpeculativeImageDecodeFinished();
 
   enum class RevalidationPolicy {
     kUse,
@@ -603,6 +613,10 @@ class PLATFORM_EXPORT ResourceFetcher
       bool handled_by_serviceworker,
       const blink::ServiceWorkerRouterInfo* router_info);
 
+  void RecordResourceHistogram(std::string_view prefix,
+                               ResourceType type,
+                               RevalidationPolicyForMetrics policy) const;
+
   void ScheduleLoadingPotentiallyUnusedPreload(Resource*);
   void StartLoadAndFinishIfFailed(Resource*,
                                   bool is_potentially_unused_preload);
@@ -707,16 +721,8 @@ class PLATFORM_EXPORT ResourceFetcher
 
   SubresourceLoadMetrics subresource_load_metrics_;
 
-  // Number of of not-small images that get a priority boost.
-  // TODO(http://crbug.com/1431169): change this to a const after the
-  // feature flag is removed.
-  uint32_t boosted_image_target_ = 0;
-
   // Number of images that have had their priority boosted by heuristics.
   uint32_t boosted_image_count_ = 0;
-
-  // Area (in pixels) below which an image is considered "small"
-  uint32_t small_image_max_size_ = 0;
 
   // Number of resources that have had their priority boosted based on LCPP
   // signals.
@@ -727,6 +733,9 @@ class PLATFORM_EXPORT ResourceFetcher
       defer_unused_preload_preloaded_reason_for_testing_;
   features::LcppDeferUnusedPreloadExcludedResourceType
       defer_unused_preload_excluded_resource_type_for_testing_;
+
+  // The accumulated time taken by `DidLoadResourceFromMemoryCache()`.
+  base::TimeDelta total_taken_time_for_did_load_resource_from_memory_cache_;
 };
 
 class ResourceCacheValidationSuppressor {

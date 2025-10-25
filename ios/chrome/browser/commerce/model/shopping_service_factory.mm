@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/commerce/model/shopping_service_factory.h"
 
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/commerce/core/commerce_feature_list.h"
 #import "components/commerce/core/proto/commerce_subscription_db_content.pb.h"
 #import "components/commerce/core/proto/parcel_tracking_db_content.pb.h"
@@ -12,6 +13,7 @@
 #import "components/keyed_service/core/service_access_type.h"
 #import "components/prefs/pref_service.h"
 #import "components/variations/service/variations_service_utils.h"
+#import "ios/chrome/app/tests_hook.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
 #import "ios/chrome/browser/commerce/model/session_proto_db_factory.h"
 #import "ios/chrome/browser/history/model/history_service_factory.h"
@@ -64,13 +66,15 @@ ShoppingServiceFactory::ShoppingServiceFactory()
 }
 
 std::unique_ptr<KeyedService> ShoppingServiceFactory::BuildServiceInstanceFor(
-    web::BrowserState* state) const {
-  ProfileIOS* profile = ProfileIOS::FromBrowserState(state);
-  PrefService* pref_service = profile->GetPrefs();
+    ProfileIOS* profile) const {
+  if (auto service = tests_hook::CreateShoppingService(profile)) {
+    return service;
+  }
 
+  PrefService* pref_service = profile->GetPrefs();
   return std::make_unique<ShoppingService>(
       GetCurrentCountryCode(GetApplicationContext()->GetVariationsService()),
-      GetApplicationContext()->GetApplicationLocale(),
+      GetApplicationContext()->GetApplicationLocaleStorage()->Get(),
       ios::BookmarkModelFactory::GetForProfile(profile),
       OptimizationGuideServiceFactory::GetForProfile(profile), pref_service,
       IdentityManagerFactory::GetForProfile(profile),

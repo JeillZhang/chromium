@@ -7,7 +7,7 @@
 #include <windows.h>
 
 #include "base/check.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/platform/ax_platform_node_win.h"
 #include "ui/display/win/screen_win.h"
@@ -24,11 +24,11 @@ AXSystemCaretWin::AXSystemCaretWin(gfx::AcceleratedWidget event_target)
   data_.id = -1;
   data_.role = ax::mojom::Role::kCaret;
   // |get_accState| should return 0 which means that the caret is visible.
-  data_.state = 0;
+  data_.state = AXStates(0U);
   data_.AddState(ax::mojom::State::kInvisible);
   // According to MSDN, "Edit" should be the name of the caret object.
   data_.SetName(u"Edit");
-  data_.relative_bounds.offset_container_id = -1;
+  data_.relative_bounds.offset_container_id = kInvalidAXNodeID;
 
   if (event_target_) {
     ::NotifyWinEvent(EVENT_OBJECT_CREATE, event_target_, OBJID_CARET,
@@ -43,12 +43,8 @@ AXSystemCaretWin::~AXSystemCaretWin() {
   }
 }
 
-Microsoft::WRL::ComPtr<IAccessible> AXSystemCaretWin::GetCaret() const {
-  Microsoft::WRL::ComPtr<IAccessible> caret_accessible;
-  HRESULT hr = static_cast<AXPlatformNodeWin&>(*caret_).QueryInterface(
-      IID_PPV_ARGS(&caret_accessible));
-  DCHECK(SUCCEEDED(hr));
-  return caret_accessible;
+IAccessible* AXSystemCaretWin::GetCaret() const {
+  return static_cast<AXPlatformNodeWin*>(caret_.get());
 }
 
 void AXSystemCaretWin::MoveCaretTo(const gfx::Rect& bounds_physical_pixels) {

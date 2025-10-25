@@ -31,12 +31,11 @@ template <typename MojoClass>
 static base::android::ScopedJavaLocalRef<jstring> MojoClassToJSON(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& byte_buffer) {
-  auto span = base::android::JavaByteBufferToSpan(env, byte_buffer.obj());
+  auto span = base::android::JavaByteBufferToSpan(env, byte_buffer);
   auto options = MojoClass::New();
   CHECK(MojoClass::Deserialize(span.data(), span.size(), &options));
   base::Value value = webauthn::ToValue(options);
-  std::string json;
-  base::JSONWriter::Write(value, &json);
+  std::string json = base::WriteJson(value).value_or("");
   return base::android::ConvertUTF8ToJavaString(env, json);
 }
 
@@ -95,6 +94,14 @@ JNI_Fido2CredentialRequest_GetCredentialResponseFromJson(
     const base::android::JavaParamRef<jstring>& jjson) {
   return MojoClassFromJSON<blink::mojom::GetAssertionAuthenticatorResponse>(
       env, webauthn::GetAssertionResponseFromValue, jjson);
+}
+
+static base::android::ScopedJavaLocalRef<jstring>
+JNI_Fido2CredentialRequest_ReportOptionsToJson(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& byte_buffer) {
+  return MojoClassToJSON<blink::mojom::PublicKeyCredentialReportOptions>(
+      env, byte_buffer);
 }
 
 }  // namespace webauthn

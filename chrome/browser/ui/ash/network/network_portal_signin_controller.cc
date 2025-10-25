@@ -12,6 +12,7 @@
 #include "chrome/browser/chromeos/network/network_portal_signin_window.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
@@ -73,7 +74,7 @@ class SigninWebDialogDelegate : public ui::WebDialogDelegate {
 
     const float kScale = 0.8;
     set_dialog_size(gfx::ScaleToRoundedSize(
-        display::Screen::GetScreen()->GetPrimaryDisplay().size(), kScale));
+        display::Screen::Get()->GetPrimaryDisplay().size(), kScale));
   }
 
   ~SigninWebDialogDelegate() override = default;
@@ -131,7 +132,7 @@ void NetworkPortalSigninController::ShowSignin(SigninSource source) {
 
   url = default_network->probe_url();
   if (url.is_empty()) {
-    url = GURL(captive_portal::CaptivePortalDetector::kDefaultURL);
+    url = GURL(captive_portal::CaptivePortalDetector::GetDefaultUrl());
   }
 
   SigninMode mode = GetSigninMode(portal_state);
@@ -303,7 +304,7 @@ void NetworkPortalSigninController::ShowSigninDialog(const GURL& url) {
 
 void NetworkPortalSigninController::ShowSigninWindow(const GURL& url) {
   // Calls NetworkPortalSigninWindow::Show in the appropriate browser.
-  ash::NewWindowDelegate::GetPrimary()->OpenCaptivePortalSignin(url);
+  ash::NewWindowDelegate::GetInstance()->OpenCaptivePortalSignin(url);
 }
 
 void NetworkPortalSigninController::ShowTab(Profile* profile, const GURL& url) {
@@ -324,7 +325,7 @@ void NetworkPortalSigninController::ShowTab(Profile* profile, const GURL& url) {
 
 void NetworkPortalSigninController::ShowActiveProfileTab(const GURL& url) {
   // Opens a new tab the appropriate browser.
-  ash::NewWindowDelegate::GetPrimary()->OpenUrl(
+  ash::NewWindowDelegate::GetInstance()->OpenUrl(
       url, NewWindowDelegate::OpenUrlFrom::kUserInteraction,
       NewWindowDelegate::Disposition::kNewForegroundTab);
 }

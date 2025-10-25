@@ -17,14 +17,27 @@ enum class FeedSwipeIPHVariation {
   kAnimated,
 };
 
+// Represents the possible onboarding treatments of Lens Overlay.
+enum class NTPMIAEntrypointVariation {
+  // The default experience.
+  kDisabled = 0,
+  // The entrypoint is shown in the omnibox as a single button.
+  kOmniboxContainedSingleButton = 1,
+  // The entrypoint is shown in the omnibox as a button inline with Lens and
+  // Voice.
+  kOmniboxContainedInline = 2,
+  // The entrypoint is shown inside the enlarged fake omnibox.
+  kOmniboxContainedEnlargedFakebox = 3,
+  // The entrypoint is shown inside the enlarged fake omnibox without incognito
+  // shortcut.
+  kEnlargedFakeboxNoIncognito = 4,
+  // The entrypoint is shown as a quick actions button, with enlarged fake
+  // omnibox
+  kAIMInQuickAction = 5,
+  kMaxValue = kAIMInQuickAction,
+};
+
 #pragma mark - Feature declarations
-
-// Feature flag to enable static resource serving for the Discover feed.
-// TODO(crbug.com/40246814): Remove this.
-BASE_DECLARE_FEATURE(kEnableDiscoverFeedStaticResourceServing);
-
-// Feature flag to enable discofeed endpoint for the Discover feed.
-BASE_DECLARE_FEATURE(kEnableDiscoverFeedDiscoFeedEndpoint);
 
 // Feature flag to fix the NTP view hierarchy if it is broken before applying
 // constraints.
@@ -42,15 +55,8 @@ BASE_DECLARE_FEATURE(kOverrideFeedSettings);
 // Feature flag to enable sending discover feedback to an updated target
 BASE_DECLARE_FEATURE(kWebFeedFeedbackReroute);
 
-// Feature flag to enable signed out user view demotion.
-BASE_DECLARE_FEATURE(kEnableSignedOutViewDemotion);
-
 // Feature flag to enable ghost cards on the iPad feeds.
 BASE_DECLARE_FEATURE(kEnableiPadFeedGhostCards);
-
-// Feature flag to enable account-switching UI when tapping the NTP identity
-// disc.
-BASE_DECLARE_FEATURE(kIdentityDiscAccountMenu);
 
 // Feature flag to enable in-product help for swipe action on the Feed.
 BASE_DECLARE_FEATURE(kFeedSwipeInProductHelp);
@@ -101,9 +107,6 @@ extern const char kDeprecateFeedHeaderParameterSearchFieldTopMargin[];
 extern const char kDeprecateFeedHeaderParameterSpaceBetweenModules[];
 extern const char kDeprecateFeedHeaderParameterHeaderBottomPadding[];
 
-// Parameter to show the settings button in the account menu.
-extern const char kShowSettingsInAccountMenuParam[];
-
 // Parameter to indicate which arm of feature kFeedSwipeInProductHelp is
 // enabled.
 extern const char kFeedSwipeInProductHelpArmParam[];
@@ -122,14 +125,10 @@ bool IsContentSuggestionsForSupervisedUserEnabled(PrefService* pref_service);
 // YES if discover feedback is going to be sent to the updated target.
 bool IsWebFeedFeedbackRerouteEnabled();
 
-// YES if the signed out user view demotion is enabled.
-bool IsSignedOutViewDemotionEnabled();
-
 // Whether ghost cards are enabled on the iPad feeds.
 bool IsiPadFeedGhostCardsEnabled();
 
 // YES if the NTP and feed header elements should be re-positioned as described.
-bool ShouldRemoveDiscoverLabel(bool is_google_default_search_engine);
 bool ShouldEnlargeLogoAndFakebox();
 
 // If feed header should be deprecated, retrieve the value for `param_name` for
@@ -138,14 +137,23 @@ double GetDeprecateFeedHeaderParameterValueAsDouble(
     const std::string& param_name,
     double default_value);
 
-// YES if the account menu is enabled with the settings button.
-bool IdentityDiscAccountMenuEnabledWithSettings();
-
 // Returns the enabled variation of feature kFeedSwipeInProductHelp.
 FeedSwipeIPHVariation GetFeedSwipeIPHVariation();
 
 // YES if the feed visibility is handled by the eligibility service instead of
 // the new tab page mediator.
 bool UseFeedEligibilityService();
+
+// Returns the enabled variation of feature kNTPMIAEntrypoint;
+NTPMIAEntrypointVariation GetNTPMIAEntrypointVariation();
+
+// Whether to show only the MIA button in the fakebox.
+bool ShowOnlyMIAEntrypointInNTPFakebox();
+
+// Whether the quick actions row should be displayed.
+bool ShouldShowQuickActionsRow();
+
+// Whether a MIA variation should increase the size of the fakebox.
+bool ShouldEnlargeNTPFakeboxForMIA();
 
 #endif  // IOS_CHROME_BROWSER_NTP_UI_BUNDLED_NEW_TAB_PAGE_FEATURE_H_

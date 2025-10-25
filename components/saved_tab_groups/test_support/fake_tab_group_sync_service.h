@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_SAVED_TAB_GROUPS_TEST_SUPPORT_FAKE_TAB_GROUP_SYNC_SERVICE_H_
 #define COMPONENTS_SAVED_TAB_GROUPS_TEST_SUPPORT_FAKE_TAB_GROUP_SYNC_SERVICE_H_
 
+#include <vector>
+
 #include "base/observer_list.h"
 #include "components/saved_tab_groups/public/saved_tab_group.h"
 #include "components/saved_tab_groups/public/tab_group_sync_service.h"
@@ -31,11 +33,17 @@ class FakeTabGroupSyncService : public TabGroupSyncService {
   void UpdateGroupPosition(const base::Uuid& sync_id,
                            std::optional<bool> is_pinned,
                            std::optional<int> new_index) override;
+  void UpdateBookmarkNodeId(
+      const base::Uuid& sync_id,
+      std::optional<base::Uuid> bookmark_node_id) override;
   void AddTab(const LocalTabGroupID& group_id,
               const LocalTabID& tab_id,
               const std::u16string& title,
               const GURL& url,
               std::optional<size_t> position) override;
+  void AddUrl(const base::Uuid& group_id,
+              const std::u16string& title,
+              const GURL& url) override;
   void NavigateTab(const LocalTabGroupID& group_id,
                    const LocalTabID& tab_id,
                    const GURL& url,
@@ -61,6 +69,8 @@ class FakeTabGroupSyncService : public TabGroupSyncService {
   void MakeTabGroupSharedForTesting(
       const LocalTabGroupID& local_group_id,
       const syncer::CollaborationId& collaboration_id) override;
+  void MakeTabGroupUnsharedForTesting(
+      const LocalTabGroupID& local_group_id) override;
   void AboutToUnShareTabGroup(const LocalTabGroupID& local_group_id,
                               base::OnceClosure on_complete_callback) override;
   void OnTabGroupUnShareComplete(const LocalTabGroupID& local_group_id,
@@ -76,7 +86,7 @@ class FakeTabGroupSyncService : public TabGroupSyncService {
       const EitherGroupID& either_id) const override;
   std::vector<LocalTabGroupID> GetDeletedGroupIds() const override;
   std::optional<std::u16string> GetTitleForPreviouslyExistingSharedTabGroup(
-      const CollaborationId& collaboration_id) const override;
+      const syncer::CollaborationId& collaboration_id) const override;
   std::optional<LocalTabGroupID> OpenTabGroup(
       const base::Uuid& sync_group_id,
       std::unique_ptr<TabGroupActionContext> context) override;
@@ -114,6 +124,8 @@ class FakeTabGroupSyncService : public TabGroupSyncService {
       TabGroupSyncService::UrlRestrictionCallback callback) override;
   std::unique_ptr<std::vector<SavedTabGroup>>
   TakeSharedTabGroupsAvailableAtStartupForMessaging() override;
+  bool HadSharedTabGroupsLastSession(bool open_shared_tab_groups) override;
+  VersioningMessageController* GetVersioningMessageController() override;
   void OnLastTabClosed(const SavedTabGroup& saved_tab_group) override;
   void AddObserver(Observer* observer) override;
   void RemoveObserver(Observer* observer) override;

@@ -22,6 +22,7 @@
 #include "device/vr/openxr/openxr_graphics_binding.h"
 #include "device/vr/openxr/openxr_interaction_profiles.h"
 #include "device/vr/openxr/openxr_util.h"
+#include "device/vr/public/cpp/features.h"
 
 namespace device {
 
@@ -159,6 +160,9 @@ XrResult OpenXrPlatformHelper::CreateInstance(XrInstance* instance,
     }
   }
 
+  EnableExtensionIfSupported(XR_EXT_FUTURE_EXTENSION_NAME);
+  EnableExtensionIfSupported(OpenXrVisibilityMaskHandler::GetExtension());
+
   for (const auto& extension : handled_extensions) {
     EnableExtensionIfSupported(extension.c_str());
   }
@@ -183,6 +187,13 @@ XrResult OpenXrPlatformHelper::CreateInstance(XrInstance* instance,
   // try to enable across the board.
   for (const auto* extension : GetOptionalExtensions()) {
     EnableExtensionIfSupported(extension);
+  }
+
+  if (base::FeatureList::IsEnabled(features::kWebXRLayers)) {
+    for (const auto* extension :
+         OpenXrExtensionHelper::GetRequiredExtensionsForLayers()) {
+      EnableExtensionIfSupported(extension);
+    }
   }
 
   instance_create_info.enabledExtensionCount =
@@ -220,8 +231,8 @@ void OpenXrPlatformHelper::UpdateExtensionFactorySupport() {
   OpenXrApiWrapper::GetSystem(xr_instance_, &system);
 
   for (auto* extension_factory : GetExtensionHandlerFactories()) {
-    extension_factory->ProcessSystemProperties(extension_enumeration,
-                                               xr_instance_, system);
+    extension_factory->CheckAndUpdateEnabledState(extension_enumeration,
+                                                  xr_instance_, system);
   }
 }
 

@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chromeos/ash/components/timezone/timezone_request.h"
 
 #include <stddef.h>
@@ -14,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/json/json_reader.h"
 #include "base/metrics/histogram_functions.h"
@@ -25,6 +21,7 @@
 #include "base/values.h"
 #include "google_apis/google_api_keys.h"
 #include "net/base/load_flags.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -177,7 +174,7 @@ void RecordUmaResult(TimeZoneRequestResult result, unsigned retries) {
 GURL TimeZoneRequestURL(const GURL& url,
                         const Geoposition& geoposition,
                         bool sensor) {
-  std::string query(url.query());
+  std::string query(url.GetQuery());
   query += base::StringPrintf(
       "%s=%f,%f", kLocationString, geoposition.latitude, geoposition.longitude);
   if (url == DefaultTimezoneProviderURL()) {
@@ -231,8 +228,8 @@ bool ParseServerResponse(const GURL& server_url,
           << response_body;
 
   // Parse the response, ignoring comments.
-  auto parsed_json =
-      base::JSONReader::ReadAndReturnValueWithError(response_body);
+  auto parsed_json = base::JSONReader::ReadAndReturnValueWithError(
+      response_body, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   if (!parsed_json.has_value()) {
     PrintTimeZoneError(server_url,
                        "JSONReader failed: " + parsed_json.error().message,
@@ -263,10 +260,11 @@ bool ParseServerResponse(const GURL& server_url,
 
   bool found = false;
   for (size_t i = 0; i < std::size(statusString2Enum); ++i) {
-    if (*status != statusString2Enum[i].string)
+    if (*status != UNSAFE_TODO(statusString2Enum[i]).string) {
       continue;
+    }
 
-    timezone->status = statusString2Enum[i].value;
+    timezone->status = UNSAFE_TODO(statusString2Enum[i]).value;
     found = true;
     break;
   }
@@ -489,7 +487,8 @@ std::string TimeZoneResponseData::ToStringForDebug() const {
       "error_message='%s', status=%u (%s)",
       dstOffset, rawOffset, timeZoneId.c_str(), timeZoneName.c_str(),
       error_message.c_str(), (unsigned)status,
-      (status < std::size(status2string) ? status2string[status] : "unknown"));
+      (status < std::size(status2string) ? UNSAFE_TODO(status2string[status])
+                                         : "unknown"));
 }
 
 }  // namespace ash

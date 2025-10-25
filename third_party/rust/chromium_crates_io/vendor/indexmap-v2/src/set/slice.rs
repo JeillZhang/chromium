@@ -1,4 +1,4 @@
-use super::{Bucket, Entries, IndexSet, IntoIter, Iter};
+use super::{Bucket, IndexSet, IntoIter, Iter};
 use crate::util::{slice_eq, try_simplify_range};
 
 use alloc::boxed::Box;
@@ -85,6 +85,7 @@ impl<T> Slice<T> {
     /// Divides one slice into two at an index.
     ///
     /// ***Panics*** if `index > len`.
+    #[track_caller]
     pub fn split_at(&self, index: usize) -> (&Self, &Self) {
         let (first, second) = self.entries.split_at(index);
         (Self::from_slice(first), Self::from_slice(second))
@@ -117,11 +118,13 @@ impl<T> Slice<T> {
 
     /// Search over a sorted set for a value.
     ///
-    /// Returns the position where that value is present, or the position where it can be inserted
-    /// to maintain the sort. See [`slice::binary_search`] for more details.
+    /// Returns the position where that value is present, or the position where
+    /// it can be inserted to maintain the sort. See
+    /// [`slice::binary_search`] for more details.
     ///
-    /// Computes in **O(log(n))** time, which is notably less scalable than looking the value up in
-    /// the set this is a slice from using [`IndexSet::get_index_of`], but this can also position
+    /// Computes in **O(log(n))** time, which is notably less scalable than
+    /// looking the value up in the set this is a slice from using
+    /// [`IndexSet::get_index_of`], but this can also position
     /// missing values.
     pub fn binary_search(&self, x: &T) -> Result<usize, usize>
     where
@@ -132,8 +135,9 @@ impl<T> Slice<T> {
 
     /// Search over a sorted set with a comparator function.
     ///
-    /// Returns the position where that value is present, or the position where it can be inserted
-    /// to maintain the sort. See [`slice::binary_search_by`] for more details.
+    /// Returns the position where that value is present, or the position where
+    /// it can be inserted to maintain the sort. See
+    /// [`slice::binary_search_by`] for more details.
     ///
     /// Computes in **O(log(n))** time.
     #[inline]
@@ -146,8 +150,9 @@ impl<T> Slice<T> {
 
     /// Search over a sorted set with an extraction function.
     ///
-    /// Returns the position where that value is present, or the position where it can be inserted
-    /// to maintain the sort. See [`slice::binary_search_by_key`] for more details.
+    /// Returns the position where that value is present, or the position where
+    /// it can be inserted to maintain the sort. See
+    /// [`slice::binary_search_by_key`] for more details.
     ///
     /// Computes in **O(log(n))** time.
     #[inline]
@@ -159,8 +164,37 @@ impl<T> Slice<T> {
         self.binary_search_by(|k| f(k).cmp(b))
     }
 
-    /// Returns the index of the partition point of a sorted set according to the given predicate
-    /// (the index of the first element of the second partition).
+    /// Checks if the values of this slice are sorted.
+    #[inline]
+    pub fn is_sorted(&self) -> bool
+    where
+        T: PartialOrd,
+    {
+        self.entries.is_sorted_by(|a, b| a.key <= b.key)
+    }
+
+    /// Checks if this slice is sorted using the given comparator function.
+    #[inline]
+    pub fn is_sorted_by<'a, F>(&'a self, mut cmp: F) -> bool
+    where
+        F: FnMut(&'a T, &'a T) -> bool,
+    {
+        self.entries.is_sorted_by(move |a, b| cmp(&a.key, &b.key))
+    }
+
+    /// Checks if this slice is sorted using the given sort-key function.
+    #[inline]
+    pub fn is_sorted_by_key<'a, F, K>(&'a self, mut sort_key: F) -> bool
+    where
+        F: FnMut(&'a T) -> K,
+        K: PartialOrd,
+    {
+        self.entries.is_sorted_by_key(move |a| sort_key(&a.key))
+    }
+
+    /// Returns the index of the partition point of a sorted set according to
+    /// the given predicate (the index of the first element of the second
+    /// partition).
     ///
     /// See [`slice::partition_point`] for more details.
     ///
@@ -298,8 +332,9 @@ impl<T> Index<usize> for Slice<T> {
     }
 }
 
-// We can't have `impl<I: RangeBounds<usize>> Index<I>` because that conflicts with `Index<usize>`.
-// Instead, we repeat the implementations for all the core range types.
+// We can't have `impl<I: RangeBounds<usize>> Index<I>` because that conflicts
+// with `Index<usize>`. Instead, we repeat the implementations for all the core
+// range types.
 macro_rules! impl_index {
     ($($range:ty),*) => {$(
         impl<T, S> Index<$range> for IndexSet<T, S> {

@@ -3,13 +3,17 @@
 // found in the LICENSE file.
 
 #include "chrome/common/extensions/manifest_tests/chrome_manifest_test.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/manifest_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
+
 namespace errors = extensions::manifest_errors;
 namespace keys = extensions::manifest_keys;
-using extensions::ErrorUtils;
+
+namespace extensions {
 
 using ContentSecurityPolicyManifestTest = ChromeManifestTest;
 
@@ -31,3 +35,5 @@ TEST_F(ContentSecurityPolicyManifestTest, InsecureContentSecurityPolicy) {
                    keys::kContentSecurityPolicy, "object-src"))};
   RunTestcases(testcases, EXPECT_TYPE_WARNING);
 }
+
+}  // namespace extensions

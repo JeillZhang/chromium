@@ -17,7 +17,7 @@
 #include "url/gurl.h"
 
 namespace base {
-class Value;
+class DictValue;
 }  // namespace base
 
 namespace endpoint_fetcher {
@@ -59,7 +59,6 @@ class ProductSpecificationsServerProxy {
  protected:
   virtual std::unique_ptr<endpoint_fetcher::EndpointFetcher>
   CreateEndpointFetcher(const GURL& url,
-                        const std::string& http_method,
                         const std::string& post_data);
 
  private:
@@ -69,7 +68,7 @@ class ProductSpecificationsServerProxy {
   // Returns a ProductSpecifications object for the provided JSON. If the JSON
   // cannot be converted, std::nullopt is returned.
   static std::optional<ProductSpecifications>
-  ProductSpecificationsFromJsonResponse(const base::Value& compareJson);
+  ProductSpecificationsFromJsonResponse(const base::DictValue& compare_json);
 
   void HandleSpecificationsResponse(
       std::vector<uint64_t> cluster_ids,

@@ -76,10 +76,7 @@ std::string BuildSearchRequestPayload(const std::string& selected_text,
   request_context.Set(kLanguageContextKey, std::move(language_context));
   payload.Set(kRequestContextKey, std::move(request_context));
 
-  std::string request_payload_str;
-  base::JSONWriter::Write(payload, &request_payload_str);
-
-  return request_payload_str;
+  return base::WriteJson(payload).value_or("");
 }
 
 }  // namespace
@@ -112,11 +109,11 @@ void SearchResultLoader::BuildRequest(
 
 void SearchResultLoader::ProcessResponse(
     const PreprocessedOutput& preprocessed_output,
-    std::unique_ptr<std::string> response_body,
+    std::optional<std::string> response_body,
     ResponseParserCallback complete_callback) {
   search_response_parser_ =
       std::make_unique<SearchResponseParser>(std::move(complete_callback));
-  search_response_parser_->ProcessResponse(std::move(response_body));
+  search_response_parser_->ProcessResponse(*response_body);
 }
 
 }  // namespace quick_answers

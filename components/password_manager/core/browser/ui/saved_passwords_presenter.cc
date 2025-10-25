@@ -179,6 +179,23 @@ bool SavedPasswordsPresenter::RemoveCredential(
   undo_helper_->EndGroupingActions();
   return !forms_to_delete.empty();
 }
+bool SavedPasswordsPresenter::RemoveBackupPassword(
+    const CredentialUIEntry& credential) {
+  std::vector<PasswordForm> forms_to_update =
+      GetCorrespondingPasswordForms(credential);
+  undo_helper_->StartGroupingActions();
+  for (const auto& current_form : forms_to_update) {
+    PasswordForm without_backup(current_form);
+    without_backup.DeletePasswordBackupNote();
+    // |current_form| is unchanged result obtained from
+    // 'OnGetPasswordStoreResultsFrom'. So it can be present only in one
+    // store at a time.
+    GetStoreFor(current_form).UpdateLogin(without_backup);
+    undo_helper_->BackupPasswordRemoved(current_form);
+  }
+  undo_helper_->EndGroupingActions();
+  return !forms_to_update.empty();
+}
 
 void SavedPasswordsPresenter::DeleteAllData(
     base::OnceCallback<void(bool)> success_callback) {
@@ -417,6 +434,32 @@ std::vector<CredentialUIEntry> SavedPasswordsPresenter::GetSavedPasswords()
 
 std::vector<CredentialUIEntry> SavedPasswordsPresenter::GetBlockedSites() {
   return passwords_grouper_->GetBlockedSites();
+}
+
+base::flat_set<ActorLoginPermission>
+SavedPasswordsPresenter::GetActorLoginPermissions() const {
+  std::vector<ActorLoginPermission> permissions;
+  for (const auto& credential : passwords_grouper_->GetAllCredentials()) {
+    for (const auto& form : GetCorrespondingPasswordForms(credential)) {
+      if (form.actor_login_approved) {
+        permissions.emplace_back(form.url, form.username_value);
+      }
+    }
+  }
+  return base::flat_set<ActorLoginPermission>(std::move(permissions));
+}
+
+void SavedPasswordsPresenter::RevokeActorLoginPermission(
+    const ActorLoginPermission& site) {
+  for (const auto& credential : passwords_grouper_->GetAllCredentials()) {
+    for (const auto& form : GetCorrespondingPasswordForms(credential)) {
+      if (form.url == site.url && form.username_value == site.username) {
+        PasswordForm updated_form = form;
+        updated_form.actor_login_approved = false;
+        GetStoreFor(updated_form).UpdateLogin(updated_form);
+      }
+    }
+  }
 }
 
 std::vector<PasswordForm>

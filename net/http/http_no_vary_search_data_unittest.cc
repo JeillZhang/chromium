@@ -2,37 +2,44 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 #include "net/http/http_no_vary_search_data.h"
 
 #include <algorithm>
 #include <array>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/to_vector.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/strings/strcat.h"
 #include "base/strings/string_util.h"
 #include "base/test/gmock_expected_support.h"
 #include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/types/expected.h"
+#include "net/base/features.h"
 #include "net/base/pickle.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/fuzztest/src/fuzztest/fuzztest.h"
 #include "url/gurl.h"
 
 namespace net {
 
 namespace {
 
-using testing::IsEmpty;
-using testing::Optional;
-using testing::UnorderedElementsAreArray;
+using ::testing::Combine;
+using ::testing::IsEmpty;
+using ::testing::Optional;
+using ::testing::UnorderedElementsAreArray;
+using ::testing::Values;
+using ::testing::ValuesIn;
 
 TEST(HttpNoVarySearchCreateTest, CreateFromNoVaryParamsNonEmptyVaryOnKeyOrder) {
   const auto no_vary_search =
@@ -779,11 +786,11 @@ const TestData response_headers_tests[] = {
 
 INSTANTIATE_TEST_SUITE_P(HttpNoVarySearchResponseHeadersTest,
                          HttpNoVarySearchResponseHeadersTest,
-                         testing::ValuesIn(response_headers_tests));
+                         ValuesIn(response_headers_tests));
 
 INSTANTIATE_TEST_SUITE_P(HttpNoVarySearchResponseHeadersParseFailureTest,
                          HttpNoVarySearchResponseHeadersParseFailureTest,
-                         testing::ValuesIn(response_header_failed));
+                         ValuesIn(response_header_failed));
 
 struct NoVarySearchCompareTestData {
   const GURL request_url;
@@ -792,7 +799,13 @@ struct NoVarySearchCompareTestData {
   const bool expected_match;
 };
 
-TEST(HttpNoVarySearchCompare, CheckUrlEqualityWithSpecialCharacters) {
+HttpNoVarySearchData CreateFromRawHeaders(std::string_view raw_headers) {
+  const std::string headers = HttpUtil::AssembleRawHeaders(raw_headers);
+  const auto parsed = base::MakeRefCounted<HttpResponseHeaders>(headers);
+  return HttpNoVarySearchData::ParseFromHeaders(*parsed).value();
+}
+
+TEST(HttpNoVarySearchAreEquivalentTest, CheckUrlEqualityWithSpecialCharacters) {
   // Use special characters in both `keys` and `values`.
   const base::flat_map<std::string, std::string> percent_encoding = {
       {"!", "%21"},    {"#", "%23"},    {"$", "%24"},    {"%", "%25"},
@@ -807,11 +820,8 @@ TEST(HttpNoVarySearchCompare, CheckUrlEqualityWithSpecialCharacters) {
       "HTTP/1.1 200 OK\r\n"
       R"(No-Vary-Search: params=("c"))"
       "\r\n\r\n";
-  const std::string headers = HttpUtil::AssembleRawHeaders(raw_headers);
-  const auto parsed = base::MakeRefCounted<HttpResponseHeaders>(headers);
 
-  const auto no_vary_search_data =
-      HttpNoVarySearchData::ParseFromHeaders(*parsed).value();
+  const auto no_vary_search_data = CreateFromRawHeaders(raw_headers);
 
   for (const auto& [key, value] : percent_encoding) {
     std::string request_url_template =
@@ -835,10 +845,8 @@ TEST(HttpNoVarySearchCompare, CheckUrlEqualityWithSpecialCharacters) {
         "\r\n\r\n";
     base::ReplaceSubstringsAfterOffset(&header_template, 0, "$key", key);
 
-    const auto parsed_header = base::MakeRefCounted<HttpResponseHeaders>(
-        HttpUtil::AssembleRawHeaders(header_template));
     const auto no_vary_search_data_special_char =
-        HttpNoVarySearchData::ParseFromHeaders(*parsed_header).value();
+        CreateFromRawHeaders(header_template);
 
     EXPECT_TRUE(no_vary_search_data_special_char.AreEquivalent(
         GURL(request_url_template), GURL(cached_url_template)));
@@ -856,8 +864,60 @@ constexpr std::pair<std::string_view, std::string_view>
         {"𐨀", R"(%F0%90%A8%80)"},
 };
 
-TEST(HttpNoVarySearchCompare,
-     CheckUrlEqualityWithPercentEncodedNonASCIICharactersExcept) {
+enum class AreEquivalentImplementation {
+  kOld,
+  kNew,
+  kNewWithCheck,
+};
+
+// Configures the ImplementationOverrideForTesting object to simulate
+// enabling/disabling feature "HttpNoVarySearchDataUseNewAreEquivalent" and
+// parameter "check_result" according to `implementation`.
+std::unique_ptr<
+    ScopedHttpNoVarySearchDataEquivalentImplementationOverrideForTesting>
+ConfigureAreEquivalentImplementation(
+    AreEquivalentImplementation implementation) {
+  switch (implementation) {
+    case AreEquivalentImplementation::kOld:
+      return std::make_unique<
+          ScopedHttpNoVarySearchDataEquivalentImplementationOverrideForTesting>(
+          false, false);
+
+    case AreEquivalentImplementation::kNew:
+      return std::make_unique<
+          ScopedHttpNoVarySearchDataEquivalentImplementationOverrideForTesting>(
+          true, false);
+
+    case AreEquivalentImplementation::kNewWithCheck:
+      return std::make_unique<
+          ScopedHttpNoVarySearchDataEquivalentImplementationOverrideForTesting>(
+          true, true);
+  }
+}
+
+class HttpNoVarySearchAreEquivalentTest
+    : public ::testing::Test,
+      public ::testing::WithParamInterface<AreEquivalentImplementation> {
+ public:
+  HttpNoVarySearchAreEquivalentTest() {
+    are_equivalent_implementation_override_ =
+        ConfigureAreEquivalentImplementation(GetParam());
+  }
+
+ private:
+  std::unique_ptr<
+      ScopedHttpNoVarySearchDataEquivalentImplementationOverrideForTesting>
+      are_equivalent_implementation_override_;
+};
+
+INSTANTIATE_TEST_SUITE_P(HttpNoVarySearchAreEquivalentTest,
+                         HttpNoVarySearchAreEquivalentTest,
+                         Values(AreEquivalentImplementation::kOld,
+                                AreEquivalentImplementation::kNew,
+                                AreEquivalentImplementation::kNewWithCheck));
+
+TEST_P(HttpNoVarySearchAreEquivalentTest,
+       CheckUrlEqualityWithPercentEncodedNonASCIICharactersExcept) {
   for (const auto& [key, value] : kPercentEncodedNonAsciiKeys) {
     std::string request_url_template = R"(https://a.test/index.html?$key=c)";
     std::string cached_url_template = R"(https://a.test/index.html?c=3&$key=c)";
@@ -869,10 +929,8 @@ TEST(HttpNoVarySearchCompare,
         "\r\n\r\n";
     base::ReplaceSubstringsAfterOffset(&header_template, 0, "$key", value);
 
-    const auto parsed_header = base::MakeRefCounted<HttpResponseHeaders>(
-        HttpUtil::AssembleRawHeaders(header_template));
     const auto no_vary_search_data_special_char =
-        HttpNoVarySearchData::ParseFromHeaders(*parsed_header).value();
+        CreateFromRawHeaders(header_template);
 
     EXPECT_TRUE(no_vary_search_data_special_char.AreEquivalent(
         GURL(request_url_template), GURL(cached_url_template)))
@@ -882,8 +940,8 @@ TEST(HttpNoVarySearchCompare,
   }
 }
 
-TEST(HttpNoVarySearchCompare,
-     CheckUrlEqualityWithPercentEncodedNonASCIICharacters) {
+TEST_P(HttpNoVarySearchAreEquivalentTest,
+       CheckUrlEqualityWithPercentEncodedNonASCIICharacters) {
   for (const auto& [key, value] : kPercentEncodedNonAsciiKeys) {
     std::string request_url_template =
         R"(https://a.test/index.html?a=2&$key=c)";
@@ -896,10 +954,8 @@ TEST(HttpNoVarySearchCompare,
         "\r\n\r\n";
     base::ReplaceSubstringsAfterOffset(&header_template, 0, "$key", value);
 
-    const auto parsed_header = base::MakeRefCounted<HttpResponseHeaders>(
-        HttpUtil::AssembleRawHeaders(header_template));
     const auto no_vary_search_data_special_char =
-        HttpNoVarySearchData::ParseFromHeaders(*parsed_header).value();
+        CreateFromRawHeaders(header_template);
 
     EXPECT_TRUE(no_vary_search_data_special_char.AreEquivalent(
         GURL(request_url_template), GURL(cached_url_template)))
@@ -909,18 +965,30 @@ TEST(HttpNoVarySearchCompare,
   }
 }
 
-class HttpNoVarySearchCompare
-    : public ::testing::Test,
-      public ::testing::WithParamInterface<NoVarySearchCompareTestData> {};
+class HttpNoVarySearchAreEquivalentParameterizedTest
+    : public ::testing::TestWithParam<std::tuple<NoVarySearchCompareTestData,
+                                                 AreEquivalentImplementation>> {
+ protected:
+  HttpNoVarySearchAreEquivalentParameterizedTest() {
+    are_equivalent_implementation_override_ =
+        ConfigureAreEquivalentImplementation(std::get<1>(GetParam()));
+  }
 
-TEST_P(HttpNoVarySearchCompare, CheckUrlEqualityByNoVarySearch) {
-  const auto& test_data = GetParam();
+  const NoVarySearchCompareTestData& GetTestData() const {
+    return std::get<0>(GetParam());
+  }
 
-  const std::string headers =
-      HttpUtil::AssembleRawHeaders(test_data.raw_headers);
-  const auto parsed = base::MakeRefCounted<HttpResponseHeaders>(headers);
-  const auto no_vary_search_data =
-      HttpNoVarySearchData::ParseFromHeaders(*parsed).value();
+ private:
+  std::unique_ptr<
+      ScopedHttpNoVarySearchDataEquivalentImplementationOverrideForTesting>
+      are_equivalent_implementation_override_;
+};
+
+TEST_P(HttpNoVarySearchAreEquivalentParameterizedTest,
+       CheckUrlEqualityByNoVarySearch) {
+  const auto& test_data = GetTestData();
+
+  const auto no_vary_search_data = CreateFromRawHeaders(test_data.raw_headers);
 
   EXPECT_EQ(no_vary_search_data.AreEquivalent(test_data.request_url,
                                               test_data.cached_url),
@@ -1152,9 +1220,109 @@ const NoVarySearchCompareTestData no_vary_search_compare_tests[] = {
      false},
 };
 
-INSTANTIATE_TEST_SUITE_P(HttpNoVarySearchCompare,
-                         HttpNoVarySearchCompare,
-                         testing::ValuesIn(no_vary_search_compare_tests));
+INSTANTIATE_TEST_SUITE_P(
+    HttpNoVarySearchAreEquivalentParameterizedTest,
+    HttpNoVarySearchAreEquivalentParameterizedTest,
+    Combine(ValuesIn(no_vary_search_compare_tests),
+            Values(AreEquivalentImplementation::kOld,
+                   AreEquivalentImplementation::kNew,
+                   AreEquivalentImplementation::kNewWithCheck)));
+
+// AreEquivalent() needs to operate on a URL that has a scheme that has a query
+// and fragment. Rather than forcing the fuzzer to work that it needs to start
+// the string with an http(s) scheme by itself, this function always creates an
+// https URL.
+GURL CreateUrlFromSuffix(const std::string& suffix) {
+  return GURL(base::StrCat({"https://", suffix}));
+}
+
+// Verifies that the old and new implementations of AreEquivalent() give the
+// same output for the same input. `url_suffix_a` and `url_suffix_b` are the
+// URLs to test without the initial "https://". `params`, `vary_on_params` and
+// `vary_on_key_order` are used to configure the HttpNoVarySearchData object.
+void AreEquivalentImplementationsMatch(const std::string& url_suffix_a,
+                                       const std::string& url_suffix_b,
+                                       const std::vector<std::string>& params,
+                                       bool vary_on_params,
+                                       bool vary_on_key_order) {
+  // Discard invalid configurations early so we don't waste time on them.
+  if (!vary_on_params && params.empty()) {
+    // This configuration is equivalent to the default configuration, so is
+    // invalid.
+    return;
+  }
+  const GURL url_a = CreateUrlFromSuffix(url_suffix_a);
+  if (!url_a.is_valid()) {
+    return;
+  }
+  const GURL url_b = CreateUrlFromSuffix(url_suffix_b);
+  if (!url_b.is_valid()) {
+    return;
+  }
+  const HttpNoVarySearchData data =
+      vary_on_params ? HttpNoVarySearchData::CreateFromVaryParams(
+                           params, vary_on_key_order)
+                     : HttpNoVarySearchData::CreateFromNoVaryParams(
+                           params, vary_on_key_order);
+  EXPECT_EQ(data.AreEquivalentOldImplForTesting(url_a, url_b),
+            data.AreEquivalentNewImplForTesting(url_a, url_b));
+}
+
+FUZZ_TEST(HttpNoVarySearchTest, AreEquivalentImplementationsMatch);
+
+TEST(HttpNoVarySearchTest, CanonicalizeQuery) {
+  HttpNoVarySearchData data =
+      HttpNoVarySearchData::CreateFromNoVaryParams({"rd"}, false);
+  static constexpr char kInputQuery[] =
+      "q=1&rd=e2f2a976&a&a=+&%61=%62&%c0=%c1&%61=1&a=2&a=5&b=%6&a=%c2%a2&%c2%"
+      "a2";
+  // Because `vary_on_key_order` is false, the canonicalized output is sorted by
+  // key. The original order of values must be preserved.
+  static constexpr char kExpectedOutput[] =
+      "a=&a= "
+      "&a=b&a=1&a=2&a=5&a=\xC2\xA2&b=%256&q=1&\xC2\xA2=&\xEF\xBF\xBD="
+      "\xEF\xBF\xBD";
+  GURL url(base::StrCat({"https://example.com/?", kInputQuery}));
+  EXPECT_EQ(data.CanonicalizeQuery(url), kExpectedOutput);
+}
+
+class HttpNoVarySearchCanonicalizeQueryTest
+    : public testing::TestWithParam<NoVarySearchCompareTestData> {
+ protected:
+  const NoVarySearchCompareTestData& GetTestData() const { return GetParam(); }
+};
+
+INSTANTIATE_TEST_SUITE_P(HttpNoVarySearchCanonicalizeQueryTest,
+                         HttpNoVarySearchCanonicalizeQueryTest,
+                         ValuesIn(no_vary_search_compare_tests));
+
+GURL ExtractBaseUrl(const GURL& url) {
+  GURL::Replacements replacements;
+  replacements.ClearRef();
+  replacements.ClearQuery();
+  return url.ReplaceComponents(replacements);
+}
+
+TEST_P(HttpNoVarySearchCanonicalizeQueryTest, ResultsSameAsAreEquivalent) {
+  const auto& [request_url, cached_url, raw_headers, expected_match] =
+      GetTestData();
+  if (ExtractBaseUrl(request_url) != ExtractBaseUrl(cached_url)) {
+    GTEST_SKIP() << "Differing base URLs are not interesting for this test";
+  }
+
+  const auto no_vary_search_data = CreateFromRawHeaders(raw_headers);
+  if (expected_match) {
+    EXPECT_EQ(no_vary_search_data.CanonicalizeQuery(request_url),
+              no_vary_search_data.CanonicalizeQuery(cached_url))
+        << "request_url = " << request_url << " cached_url = " << cached_url
+        << " headers = " << raw_headers << " match = " << expected_match;
+  } else {
+    EXPECT_NE(no_vary_search_data.CanonicalizeQuery(request_url),
+              no_vary_search_data.CanonicalizeQuery(cached_url))
+        << "request_url = " << request_url << " cached_url = " << cached_url
+        << " headers = " << raw_headers << " match = " << expected_match;
+  }
+}
 
 TEST(HttpNoVarySearchResponseHeadersParseHistogramTest, NoUnrecognizedKeys) {
   base::HistogramTester histogram_tester;
@@ -1218,7 +1386,8 @@ TEST(HttpNoVarySearchDataTest, ComparisonOperators) {
 
 // Use the `no_vary_search_compare_tests` as a convenient data set for testing
 // serialization and deserialization.
-using HttpNoVarySearchSerializationParameterizedTest = HttpNoVarySearchCompare;
+class HttpNoVarySearchSerializationParameterizedTest
+    : public ::testing::TestWithParam<NoVarySearchCompareTestData> {};
 
 TEST_P(HttpNoVarySearchSerializationParameterizedTest, RoundTrip) {
   const auto test_data = GetParam();
@@ -1241,7 +1410,7 @@ TEST_P(HttpNoVarySearchSerializationParameterizedTest, RoundTrip) {
 
 INSTANTIATE_TEST_SUITE_P(HttpNoVarySearchSerializationParameterizedTest,
                          HttpNoVarySearchSerializationParameterizedTest,
-                         testing::ValuesIn(no_vary_search_compare_tests));
+                         ValuesIn(no_vary_search_compare_tests));
 
 base::Pickle MakeBadPickle(uint32_t magic_number,
                            const base::flat_set<std::string>& no_vary_params,
@@ -1291,7 +1460,7 @@ const auto bad_pickle_params = std::to_array<BadPickleParams>({
 INSTANTIATE_TEST_SUITE_P(
     HttpNoVarySearchBadPickleTest,
     HttpNoVarySearchBadPickleTest,
-    testing::ValuesIn(bad_pickle_params),
+    ValuesIn(bad_pickle_params),
     [](const testing::TestParamInfo<BadPickleParams>& info) {
       return std::string(info.param.why_bad);
     });

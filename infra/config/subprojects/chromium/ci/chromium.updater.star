@@ -3,28 +3,28 @@
 # found in the LICENSE file.
 """Definitions of builders in the chromium.updater builder group."""
 
-load("//lib/branches.star", "branches")
-load("//lib/builder_config.star", "builder_config")
-load("//lib/builder_health_indicators.star", "health_spec")
-load("//lib/builders.star", "builders", "cpu", "os", "siso")
-load("//lib/ci.star", "ci")
-load("//lib/consoles.star", "consoles")
-load("//lib/gn_args.star", "gn_args")
-load("//lib/html.star", "linkify")
-load("//lib/targets.star", "targets")
+load("@chromium-luci//branches.star", "branches")
+load("@chromium-luci//builder_config.star", "builder_config")
+load("@chromium-luci//builder_health_indicators.star", "health_spec")
+load("@chromium-luci//builders.star", "builders", "cpu", "os")
+load("@chromium-luci//ci.star", "ci")
+load("@chromium-luci//consoles.star", "consoles")
+load("@chromium-luci//gn_args.star", "gn_args")
+load("@chromium-luci//html.star", "linkify")
+load("@chromium-luci//targets.star", "targets")
+load("//lib/ci_constants.star", "ci_constants")
+load("//lib/siso.star", "siso")
 
 ci.defaults.set(
-    executable = ci.DEFAULT_EXECUTABLE,
+    executable = ci_constants.DEFAULT_EXECUTABLE,
     builder_group = "chromium.updater",
-    pool = ci.DEFAULT_POOL,
+    pool = ci_constants.DEFAULT_POOL,
     cores = 8,
     os = os.LINUX_DEFAULT,
-    execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT,
-    health_spec = health_spec.DEFAULT,
-    reclient_enabled = False,
-    service_account = ci.DEFAULT_SERVICE_ACCOUNT,
-    shadow_service_account = ci.DEFAULT_SHADOW_SERVICE_ACCOUNT,
-    siso_enabled = True,
+    execution_timeout = ci_constants.DEFAULT_EXECUTION_TIMEOUT,
+    health_spec = health_spec.default(),
+    service_account = ci_constants.DEFAULT_SERVICE_ACCOUNT,
+    shadow_service_account = ci_constants.DEFAULT_SHADOW_SERVICE_ACCOUNT,
     siso_project = siso.project.DEFAULT_TRUSTED,
     siso_remote_jobs = siso.remote_jobs.DEFAULT,
 )
@@ -87,7 +87,7 @@ ci.builder(
         category = "debug|linux",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.builder(
@@ -122,7 +122,7 @@ ci.builder(
         category = "release|linux",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -157,7 +157,7 @@ ci.thin_tester(
         category = "debug|linux",
         short_name = "test",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -192,7 +192,7 @@ ci.thin_tester(
         category = "release|linux",
         short_name = "test",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.builder(
@@ -234,7 +234,7 @@ ci.builder(
         category = "debug|mac (x64)",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.builder(
@@ -276,7 +276,7 @@ ci.builder(
         category = "release|mac (x64)",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.builder(
@@ -318,7 +318,7 @@ ci.builder(
         category = "debug|mac (arm64)",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.builder(
@@ -360,7 +360,7 @@ ci.builder(
         category = "release|mac (arm64)",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.builder(
@@ -403,7 +403,7 @@ ci.builder(
         category = "debug|mac (x64)",
         short_name = "bld-asan",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -437,7 +437,7 @@ ci.thin_tester(
         category = "release|mac (arm64)",
         short_name = "12",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -471,7 +471,7 @@ ci.thin_tester(
         category = "debug|mac (x64)",
         short_name = "12 asan",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -505,7 +505,7 @@ ci.thin_tester(
         category = "debug|mac (arm64)",
         short_name = "13",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -539,7 +539,7 @@ ci.thin_tester(
         category = "release|mac (x64)",
         short_name = "13",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -573,7 +573,7 @@ ci.thin_tester(
         category = "debug|mac (arm64)",
         short_name = "14",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -607,7 +607,7 @@ ci.thin_tester(
         category = "release|mac (x64)",
         short_name = "14",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -641,7 +641,7 @@ ci.thin_tester(
         category = "debug|mac (arm64)",
         short_name = "15",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -675,7 +675,7 @@ ci.thin_tester(
         category = "release|mac (arm64)",
         short_name = "15",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.builder(
@@ -715,7 +715,7 @@ ci.builder(
         category = "debug|win (arm64)",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
     execution_timeout = 6 * time.hour,
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
@@ -757,7 +757,7 @@ ci.builder(
         category = "release|win (arm64)",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
     execution_timeout = 6 * time.hour,
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
@@ -799,7 +799,7 @@ ci.builder(
         category = "debug|win (64)",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
 
@@ -842,8 +842,8 @@ ci.builder(
         category = "debug|win (32)",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
-    execution_timeout = ci.DEFAULT_EXECUTION_TIMEOUT * 2,
+    contact_team_email = "omaha-core@google.com",
+    execution_timeout = ci_constants.DEFAULT_EXECUTION_TIMEOUT * 2,
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
 
@@ -884,7 +884,7 @@ ci.builder(
         category = "release|win (64)",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
 
@@ -925,7 +925,7 @@ ci.builder(
         category = "release|win (32)",
         short_name = "bld",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
     siso_remote_jobs = siso.remote_jobs.LOW_JOBS_FOR_CI,
 )
 
@@ -961,7 +961,7 @@ ci.thin_tester(
         category = "debug|win (64)",
         short_name = "10",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -996,7 +996,7 @@ ci.thin_tester(
         category = "debug|win (32)",
         short_name = "10 (x64)",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -1031,7 +1031,7 @@ ci.thin_tester(
         category = "release|win (32)",
         short_name = "10 (x64)",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -1066,7 +1066,7 @@ ci.thin_tester(
         category = "debug|win (64)",
         short_name = "UAC10",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -1101,7 +1101,7 @@ ci.thin_tester(
         category = "release|win (64)",
         short_name = "10",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -1136,7 +1136,7 @@ ci.thin_tester(
         category = "release|win (64)",
         short_name = "UAC10",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.builder(
@@ -1171,7 +1171,7 @@ ci.builder(
         category = "debug|win (arm64)",
         short_name = "11",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -1206,7 +1206,7 @@ ci.thin_tester(
         category = "release|win (arm64)",
         short_name = "11",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -1241,7 +1241,7 @@ ci.thin_tester(
         category = "debug|win (64)",
         short_name = "UAC11",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )
 
 ci.thin_tester(
@@ -1276,5 +1276,5 @@ ci.thin_tester(
         category = "release|win (64)",
         short_name = "11",
     ),
-    contact_team_email = "omaha@google.com",
+    contact_team_email = "omaha-core@google.com",
 )

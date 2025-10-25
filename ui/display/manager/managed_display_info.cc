@@ -22,6 +22,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+#include "components/viz/common/resources/shared_image_format.h"
 #include "ui/display/display.h"
 #include "ui/display/display_features.h"
 #include "ui/display/display_switches.h"
@@ -343,7 +344,7 @@ ManagedDisplayInfo ManagedDisplayInfo::CreateFromSpecWithID(
 
   if (has_hdr) {
     gfx::DisplayColorSpaces display_color_spaces{
-        gfx::ColorSpace::CreateHDR10(), gfx::BufferFormat::BGRA_1010102};
+        gfx::ColorSpace::CreateHDR10(), viz::SinglePlaneFormat::kBGRA_1010102};
     display_info.set_display_color_spaces(display_color_spaces);
   }
 
@@ -634,7 +635,11 @@ std::string ManagedDisplayInfo::ToString() const {
       panel_corners_radii_.ToString().c_str(),
       PanelOrientationToString(panel_orientation_).c_str(),
       detected_ ? "true" : "false",
-      display_color_spaces_.GetRasterColorSpace().ToString().c_str());
+      display_color_spaces_
+          .GetRasterAndCompositeColorSpace(
+              gfx::ContentColorUsage::kWideColorGamut)
+          .ToString()
+          .c_str());
 
   return result;
 }

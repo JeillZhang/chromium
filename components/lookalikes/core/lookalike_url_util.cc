@@ -2,17 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/lookalikes/core/lookalike_url_util.h"
 
 #include <algorithm>
 #include <string_view>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/functional/callback.h"
 #include "base/hash/sha1.h"
@@ -34,6 +30,8 @@
 #include "components/url_formatter/url_formatter.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
+#include "third_party/icu/source/common/unicode/uchar.h"
+#include "third_party/icu/source/common/unicode/utypes.h"
 
 using lookalikes::ComboSquattingParams;
 using lookalikes::DomainInfo;
@@ -225,7 +223,7 @@ bool GetSimilarDomainFromTopBucket(
     for (size_t i = 0;
          i < top_bucket_domain_params->num_edit_distance_skeletons; i++) {
       const char* const top_domain_skeleton =
-          top_bucket_domain_params->edit_distance_skeletons[i];
+          UNSAFE_TODO(top_bucket_domain_params->edit_distance_skeletons[i]);
       DCHECK(strlen(top_domain_skeleton));
       // Check edit distance on skeletons.
       if (IsEditDistanceAtMostOne(base::UTF8ToUTF16(navigated_skeleton),
@@ -661,7 +659,8 @@ std::string FindMatchedDomainForHardCodedComboSquatting(
     const DomainInfo& navigated_domain) {
   DomainInfo suggested_matched_domain =
       GetDomainInfo(brand_name + '.' + GetRegistry(navigated_domain));
-  if (IsTopDomain(suggested_matched_domain)) {
+  if (url_formatter::IsDomainAndRegistryATopDomain(
+          suggested_matched_domain.domain_and_registry)) {
     return suggested_matched_domain.hostname;
   } else {
     return brand_name + ".com";
@@ -777,8 +776,7 @@ std::string GetConsoleMessage(const GURL& lookalike_url,
                               bool is_new_heuristic) {
   const char* const kNewHeuristicMessage =
       "Future Chrome versions will show a warning on this domain name.\n";
-  return base::StrCat({"Chrome has determined that ",
-                       lookalike_url.host_piece(),
+  return base::StrCat({"Chrome has determined that ", lookalike_url.host(),
                        " could be fake or fraudulent.\n\n",
                        is_new_heuristic ? kNewHeuristicMessage : "",
                        "If you believe this is shown in error please visit "
@@ -843,7 +841,7 @@ DomainInfo GetDomainInfo(const std::string& hostname) {
 }
 
 DomainInfo GetDomainInfo(const GURL& url) {
-  return GetDomainInfo(url.host());
+  return GetDomainInfo(url.GetHost());
 }
 
 std::string GetETLDPlusOne(const std::string& hostname) {
@@ -984,20 +982,6 @@ bool IsLikelyCharacterSwapFalsePositive(const DomainInfo& navigated_domain,
   // exclude matches like google.sr and google.rs.
   return navigated_domain.domain_without_registry ==
          matched_domain.domain_without_registry;
-}
-
-bool IsTopDomain(const DomainInfo& domain_info) {
-  // Top domains are only accessible through their skeletons, so query the top
-  // domains trie for each skeleton of this domain.
-  for (const std::string& skeleton : domain_info.skeletons) {
-    const url_formatter::TopDomainEntry top_domain =
-        url_formatter::LookupSkeletonInTopDomains(
-            skeleton, url_formatter::SkeletonType::kFull);
-    if (domain_info.domain_and_registry == top_domain.domain) {
-      return true;
-    }
-  }
-  return false;
 }
 
 bool GetMatchingDomain(
@@ -1151,8 +1135,8 @@ TargetEmbeddingType SearchForEmbeddings(
   // possible embedded domains that end in that eTLD (i.e. all possible start
   // points from the beginning of the string onward).
   for (size_t end = hostname_tokens.size(); end > 0; --end) {
-    base::span<const std::string_view> etld_check_span(hostname_tokens.data(),
-                                                       end);
+    base::span<const std::string_view> UNSAFE_TODO(
+        etld_check_span(hostname_tokens.data(), end));
     std::string etld_check_host = base::JoinString(etld_check_span, ".");
     auto etld_check_dominfo = GetDomainInfo(etld_check_host);
 
@@ -1200,8 +1184,8 @@ TargetEmbeddingType SearchForEmbeddings(
     // Check for exact matches against engaged sites, among all possible
     // subdomains ending at |end|.
     for (size_t start = 0; start < end - 1; ++start) {
-      const base::span<const std::string_view> span(
-          hostname_tokens.data() + start, end - start);
+      const base::span<const std::string_view> UNSAFE_TODO(
+          span(hostname_tokens.data() + start, end - start));
       auto embedded_hostname = base::JoinString(span, ".");
       auto embedded_dominfo = GetDomainInfo(embedded_hostname);
 
@@ -1298,26 +1282,26 @@ bool ShouldBlockBySpoofCheckResult(const DomainInfo& navigated_domain) {
   // Here, only a subset of spoof checks that cause an IDN to fallback to
   // punycode are configured to show an interstitial.
   switch (navigated_domain.idn_result.spoof_check_result) {
-    case url_formatter::IDNSpoofChecker::Result::kNone:
-    case url_formatter::IDNSpoofChecker::Result::kSafe:
+    case url_formatter::IDNSpoofCheckerResult::kNone:
+    case url_formatter::IDNSpoofCheckerResult::kSafe:
       return false;
 
-    case url_formatter::IDNSpoofChecker::Result::kICUSpoofChecks:
+    case url_formatter::IDNSpoofCheckerResult::kICUSpoofChecks:
       // If the eTLD+1 contains only a mix of ASCII + Emoji, allow.
       return !IsASCIIAndEmojiOnly(navigated_domain.idn_result.result) &&
              IsPunycodeInterstitialCandidate(navigated_domain);
 
-    case url_formatter::IDNSpoofChecker::Result::kDeviationCharacters:
+    case url_formatter::IDNSpoofCheckerResult::kDeviationCharacters:
       // Failures because of deviation characters, especially ß, is common.
       return false;
 
-    case url_formatter::IDNSpoofChecker::Result::kTLDSpecificCharacters:
-    case url_formatter::IDNSpoofChecker::Result::kUnsafeMiddleDot:
-    case url_formatter::IDNSpoofChecker::Result::kWholeScriptConfusable:
-    case url_formatter::IDNSpoofChecker::Result::kDigitLookalikes:
-    case url_formatter::IDNSpoofChecker::Result::
+    case url_formatter::IDNSpoofCheckerResult::kTLDSpecificCharacters:
+    case url_formatter::IDNSpoofCheckerResult::kUnsafeMiddleDot:
+    case url_formatter::IDNSpoofCheckerResult::kWholeScriptConfusable:
+    case url_formatter::IDNSpoofCheckerResult::kDigitLookalikes:
+    case url_formatter::IDNSpoofCheckerResult::
         kNonAsciiLatinCharMixedWithNonLatin:
-    case url_formatter::IDNSpoofChecker::Result::kDangerousPattern:
+    case url_formatter::IDNSpoofCheckerResult::kDangerousPattern:
       return IsPunycodeInterstitialCandidate(navigated_domain);
   }
 }
@@ -1447,7 +1431,8 @@ ComboSquattingType GetComboSquattingType(
   // First check Combo Squatting with hard coded brand names.
   std::vector<std::pair<std::string, std::string>> brand_names;
   for (auto* it : combo_squatting_params->brand_names) {
-    brand_names.emplace_back(std::string(it[0]), std::string(it[1]));
+    brand_names.emplace_back(std::string(it[0]),
+                             std::string(UNSAFE_TODO(it[1])));
   }
   if (IsComboSquatting(brand_names, *combo_squatting_params, navigated_domain,
                        engaged_sites, matched_domain,

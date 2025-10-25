@@ -84,18 +84,24 @@
     "open",
     // command for input and select
     "show-picker",
+    // command for interest invokers (`interestfor`)
+    "toggle-interest",
     // command for number input
     "step-up",
     "step-down",
-    // invokeaction for fullscreen
+    // command for fullscreen
     "toggle-fullscreen",
     "request-fullscreen",
     "exit-fullscreen",
-    // invokeaction for audio and video
+    // command for audio and video
     "play-pause",
     "pause",
     "play",
     "toggle-muted",
+    // command for menu elements
+    "toggle-menu",
+    "hide-menu",
+    "show-menu",
 
     // loading attribute
     // https://github.com/scott-little/lazyload#ways-the-loading-attribute-can-be-used
@@ -116,6 +122,11 @@
     "toggle",
     "show",
     "hide",
+
+    // Experimental fieldset attribute for the menu elements proposal.
+    // https://open-ui.org/components/menu.explainer/.
+    "single",
+    "multiple",
 
     // hidden=until-found attribute
     // https://html.spec.whatwg.org/#the-hidden-attribute
@@ -231,5 +242,19 @@
     "-internal-print-header",
     "-internal-print-footer",
     "-internal-print-page-number",
+
+    // ElementInternals.type
+    // https://github.com/MicrosoftEdge/MSEdgeExplainers/blob/main/ElementInternalsType/explainer.md
+    "button",
+    "reset",
+    "submit",
+
+    // <style> type attribute
+    // Note that "text/css" is obsolete but not going away any time soon and "module"
+    // is still being specified.
+    // https://html.spec.whatwg.org/#obsolete-but-conforming-features:attr-style-type
+    // https://github.com/MicrosoftEdge/MSEdgeExplainers/blob/main/ShadowDOM/explainer.md
+    "text/css",
+    "module",
   ],
 }

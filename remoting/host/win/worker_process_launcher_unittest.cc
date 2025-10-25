@@ -21,7 +21,6 @@
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_listener.h"
-#include "ipc/ipc_message.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
@@ -103,7 +102,6 @@ class MockWorkerListener : public IPC::Listener,
               (override));
 
   // IPC::Listener implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
   void OnAssociatedInterfaceRequest(
       const std::string& interface_name,
       mojo::ScopedInterfaceEndpointHandle handle) override;
@@ -112,11 +110,6 @@ class MockWorkerListener : public IPC::Listener,
   mojo::AssociatedReceiver<mojom::WorkerProcessControl> worker_process_control_{
       this};
 };
-
-bool MockWorkerListener::OnMessageReceived(const IPC::Message& message) {
-  ADD_FAILURE() << "Unexpected call to OnMessageReceived()";
-  return false;
-}
 
 void MockWorkerListener::OnAssociatedInterfaceRequest(
     const std::string& interface_name,
@@ -141,7 +134,6 @@ class WorkerProcessLauncherTest : public testing::Test, public IPC::Listener {
   void SetUp() override;
 
   // IPC::Listener implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
   void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
 
@@ -162,9 +154,6 @@ class WorkerProcessLauncherTest : public testing::Test, public IPC::Listener {
 
   // Disconnects the server end of the channel (the launcher's end).
   void DisconnectServer();
-
-  // Sends a message to the worker process.
-  void SendToProcess(IPC::Message* message);
 
   // Sends a fake message to the launcher.
   void SendFakeMessageToLauncher();
@@ -245,11 +234,6 @@ void WorkerProcessLauncherTest::SetUp() {
   EXPECT_CALL(*launcher_delegate_, KillProcess())
       .Times(AnyNumber())
       .WillRepeatedly(Invoke(this, &WorkerProcessLauncherTest::KillProcess));
-}
-
-bool WorkerProcessLauncherTest::OnMessageReceived(const IPC::Message& message) {
-  ADD_FAILURE() << "Unexpected call to OnMessageReceived()";
-  return false;
 }
 
 void WorkerProcessLauncherTest::OnChannelConnected(int32_t peer_pid) {

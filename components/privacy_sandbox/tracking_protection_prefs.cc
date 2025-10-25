@@ -18,11 +18,12 @@ void RegisterProfilePrefs(PrefRegistrySimple* registry) {
       prefs::kFingerprintingProtectionEnabled, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
   registry->RegisterBooleanPref(
-      prefs::kIpProtectionEnabled, false,
+      prefs::kIpProtectionEnabled, true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 
   // TODO(https://b/333527273): The following prefs should be deprecated.
   // Still in use for Mode B.
+  registry->RegisterBooleanPref(prefs::kShowRollbackUiModeB, false);
   registry->RegisterBooleanPref(
       prefs::kBlockAll3pcToggleEnabled, false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);

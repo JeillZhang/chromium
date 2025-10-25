@@ -14,6 +14,7 @@
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/favicon/favicon_utils.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
@@ -21,7 +22,6 @@
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
-#include "chrome/browser/ui/tabs/saved_tab_groups/tab_group_sync_service_proxy.h"
 #include "chrome/browser/ui/tabs/tab_group_model.h"
 #include "chrome/browser/ui/tabs/tab_menu_model.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
@@ -32,6 +32,7 @@
 #include "chrome/browser/ui/views/bookmarks/saved_tab_groups/saved_tab_group_everything_menu.h"
 #include "chrome/browser/ui/views/bookmarks/saved_tab_groups/saved_tab_group_tabs_menu_model.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/tab_strip_view_interface.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/browser/ui/views/tabs/tab_close_button.h"
 #include "chrome/browser/ui/views/tabs/tab_group_header.h"
@@ -86,12 +87,16 @@
 #include "url/url_constants.h"
 
 namespace {
+#if !BUILDFLAG(IS_CHROMEOS)
 constexpr char kSkipPixelTestsReason[] = "Should only run in pixel_tests.";
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 }  // anonymous namespace
 
 namespace tab_groups {
 
+#if !BUILDFLAG(IS_CHROMEOS)
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kFirstTab);
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 class FaviconFetchObserver : public ui::test::ObservationStateObserver<
                                  bool,
@@ -193,26 +198,19 @@ class SavedTabGroupInteractiveTest
     : public SavedTabGroupInteractiveTestBase,
       public ::testing::WithParamInterface<bool> {
  public:
-  SavedTabGroupInteractiveTest() = default;
-  ~SavedTabGroupInteractiveTest() override = default;
-
   void SetUp() override {
-    if (IsMigrationEnabled()) {
+    if (GetParam()) {
       scoped_feature_list_.InitWithFeatures(
-          {tab_groups::kTabGroupSyncServiceDesktopMigration,
-           data_sharing::features::kDataSharingFeature},
+          {data_sharing::features::kDataSharingFeature},
           {data_sharing::features::kDataSharingJoinOnly});
     } else {
       scoped_feature_list_.InitWithFeatures(
-          {}, {tab_groups::kTabGroupSyncServiceDesktopMigration,
-               data_sharing::features::kDataSharingFeature,
+          {}, {data_sharing::features::kDataSharingFeature,
                data_sharing::features::kDataSharingJoinOnly});
     }
 
     SavedTabGroupInteractiveTestBase::SetUp();
   }
-
-  bool IsMigrationEnabled() const { return GetParam(); }
 
   MultiStep HoverTabAt(int index) {
     const char kTabToHover[] = "Tab to hover";
@@ -296,7 +294,8 @@ class SavedTabGroupInteractiveTest
   StepBuilder CreateEmptySavedGroup() {
     return Do([=, this]() {
       TabGroupSyncService* service =
-          SavedTabGroupUtils::GetServiceForProfile(browser()->profile());
+          tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+              browser()->profile());
       service->AddGroup({u"Test Test",
                          tab_groups::TabGroupColorId::kBlue,
                          {},
@@ -327,18 +326,12 @@ class SavedTabGroupInteractiveTest
                              /*created_before_syncing_tab_groups=*/false,
                              /*creation_time=*/std::nullopt};
 
-      TabGroupSyncService* service =
-          SavedTabGroupUtils::GetServiceForProfile(browser()->profile());
+      TabGroupSyncServiceImpl* service_impl =
+          static_cast<TabGroupSyncServiceImpl*>(
+              tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+                  browser()->profile()));
+      service_impl->GetModel()->AddedFromSync(std::move(group));
 
-      if (IsMigrationEnabled()) {
-        TabGroupSyncServiceImpl* service_impl =
-            static_cast<TabGroupSyncServiceImpl*>(service);
-        service_impl->GetModel()->AddedFromSync(std::move(group));
-      } else {
-        TabGroupSyncServiceProxy* service_proxy =
-            static_cast<TabGroupSyncServiceProxy*>(service);
-        service_proxy->GetModel()->AddedFromSync(std::move(group));
-      }
     });
   }
 
@@ -412,7 +405,8 @@ class SavedTabGroupInteractiveTest
   }
 
   TabGroupSyncService* service() {
-    return SavedTabGroupUtils::GetServiceForProfile(browser()->profile());
+    return tab_groups::TabGroupSyncServiceFactory::GetForProfile(
+        browser()->profile());
   }
 
  private:
@@ -965,7 +959,7 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupInteractiveTest,
                 ->tab_strip_model()
                 ->GetActiveWebContents()
                 ->GetVisibleURL()
-                .host_piece();
+                .host();
           },
           chrome::kChromeUINewTabHost));
 }
@@ -1026,7 +1020,7 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupInteractiveTest,
                 ->tab_strip_model()
                 ->GetActiveWebContents()
                 ->GetVisibleURL()
-                .host_piece();
+                .host();
           },
           chrome::kChromeUINewTabHost));
 }
@@ -1081,8 +1075,9 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupInteractiveTest,
                                                     AddTabTypes::ADD_NONE);
   const tab_groups::TabGroupId group_id_2 =
       browser()->tab_strip_model()->AddToNewGroup({1});
-  BrowserView::GetBrowserViewForBrowser(browser())->tabstrip()->StopAnimating(
-      true);
+  BrowserView::GetBrowserViewForBrowser(browser())
+      ->tab_strip_view()
+      ->StopAnimating();
 
   const char kSavedTabGroupButton1[] = "SavedTabGroupButton1";
   const char kSavedTabGroupButton2[] = "SavedTabGroupButton2";
@@ -1141,6 +1136,94 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupInteractiveTest,
       EnsureNotPresent(STGEverythingMenu::kTabGroup));
 }
 
+class SavedTabGroupContextMenuFeatureInteractiveTest
+    : public SavedTabGroupInteractiveTestBase {
+ public:
+  SavedTabGroupContextMenuFeatureInteractiveTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kTabGroupMenuImprovements);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(SavedTabGroupContextMenuFeatureInteractiveTest,
+                       CheckContextMenuShowsOnLeftClick) {
+  browser()->tab_strip_model()->AddToNewGroup({0});
+
+  RunTestSequence(
+      // Show the bookmarks bar where the buttons will be displayed.
+      FinishTabstripAnimations(), ShowBookmarksBar(),
+      // Ensure the group was saved when created.
+      EnsurePresent(kSavedTabGroupButtonElementId), FinishTabstripAnimations(),
+      PressButton(kSavedTabGroupButtonElementId),
+      EnsurePresent(STGTabsMenuModel::kOpenGroup),
+      EnsurePresent(STGTabsMenuModel::kDeleteGroupMenuItem),
+      EnsurePresent(STGTabsMenuModel::kMoveGroupToNewWindowMenuItem),
+      EnsurePresent(STGTabsMenuModel::kToggleGroupPinStateMenuItem),
+      EnsurePresent(STGTabsMenuModel::kTabsTitleItem),
+      EnsurePresent(STGTabsMenuModel::kTab));
+}
+
+class SavedTabGroupEverythingMenuMoreEntryPointsFeature
+    : public SavedTabGroupInteractiveTestBase {
+ public:
+  SavedTabGroupEverythingMenuMoreEntryPointsFeature() {
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kTabGroupMenuMoreEntryPoints);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(SavedTabGroupEverythingMenuMoreEntryPointsFeature,
+                       CheckCreateNewTabGroupInEverythingMenuHasSubmenu) {
+  browser()->tab_strip_model()->AddToNewGroup({0});
+
+  RunTestSequence(
+      // Show the bookmarks bar where the buttons will be displayed.
+      FinishTabstripAnimations(), ShowBookmarksBar(),
+      // Ensure the group was saved when created.
+      EnsurePresent(kSavedTabGroupButtonElementId), FinishTabstripAnimations(),
+      EnsurePresent(kSavedTabGroupOverflowButtonElementId),
+      PressButton(kSavedTabGroupOverflowButtonElementId),
+      SelectMenuItem(STGEverythingMenu::kTabGroup),
+      EnsurePresent(STGTabsMenuModel::kOpenGroup),
+      EnsurePresent(STGTabsMenuModel::kMoveGroupToNewWindowMenuItem),
+      EnsurePresent(STGTabsMenuModel::kToggleGroupPinStateMenuItem),
+      EnsurePresent(STGTabsMenuModel::kDeleteGroupMenuItem),
+      EnsurePresent(STGTabsMenuModel::kTabsTitleItem),
+      EnsurePresent(STGTabsMenuModel::kTab));
+}
+
+class SavedTabGroupsCreateNewTabGroupAppMenu
+    : public SavedTabGroupInteractiveTestBase {
+ public:
+  SavedTabGroupsCreateNewTabGroupAppMenu() {
+    scoped_feature_list_.InitAndEnableFeature(
+        features::kCreateNewTabGroupAppMenuTopLevel);
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(
+    SavedTabGroupsCreateNewTabGroupAppMenu,
+    CheckCreateNewTabGroupPresentInEverythingMenuFromAppMenu) {
+  RunTestSequence(FinishTabstripAnimations(),
+                  EnsurePresent(kToolbarAppMenuButtonElementId),
+                  PressButton(kToolbarAppMenuButtonElementId),
+                  WaitForShow(AppMenuModel::kTabGroupsMenuItem),
+                  SelectMenuItem(AppMenuModel::kTabGroupsMenuItem),
+                  EnsurePresent(STGEverythingMenu::kCreateNewTabGroup));
+}
+
+#if !BUILDFLAG(IS_CHROMEOS)
+// TODO(crbug.com/438799035): This test is flaky on chromeos when waiting for
+// the favicon to load. Figure out why amd re-enable.
 IN_PROC_BROWSER_TEST_P(SavedTabGroupInteractiveTest,
                        AppMenuTabGroupsShowsCorrectFavicons) {
   RunTestSequence(
@@ -1157,17 +1240,16 @@ IN_PROC_BROWSER_TEST_P(SavedTabGroupInteractiveTest,
       // Validate if the menu item view loaded a favicon from the database
       WaitForShow(STGTabsMenuModel::kTab), WaitForTabMenuItemToLoadFavicon());
 }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
+#if !BUILDFLAG(IS_CHROMEOS)
 class TabGroupShortcutsInteractiveTest
     : public SavedTabGroupInteractiveTestBase {
  public:
   TabGroupShortcutsInteractiveTest() = default;
   ~TabGroupShortcutsInteractiveTest() override = default;
 
-  void SetUp() override {
-    scoped_feature_list_.InitWithFeatures({tabs::kTabGroupShortcuts}, {});
-    SavedTabGroupInteractiveTestBase::SetUp();
-  }
+  void SetUp() override { SavedTabGroupInteractiveTestBase::SetUp(); }
 
   StepBuilder WaitForIndexToBecomeActiveTab(int index) {
     return Do([=, this]() {
@@ -1176,9 +1258,6 @@ class TabGroupShortcutsInteractiveTest
       }));
     });
   }
-
- private:
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 IN_PROC_BROWSER_TEST_F(TabGroupShortcutsInteractiveTest,
@@ -1391,6 +1470,7 @@ IN_PROC_BROWSER_TEST_F(TabGroupShortcutsInteractiveTest,
       SendAccelerator(kBrowserViewElementId, focus_prev_accelerator),
       WaitForIndexToBecomeActiveTab(3));
 }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 INSTANTIATE_TEST_SUITE_P(SavedTabGroupBar,
                          SavedTabGroupInteractiveTest,

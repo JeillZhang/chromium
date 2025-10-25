@@ -74,7 +74,8 @@ class MockTracePage : public traces_internals::mojom::Page {
 
   MOCK_METHOD(void,
               OnTraceComplete,
-              (std::optional<mojo_base::BigBuffer>),
+              (std::optional<mojo_base::BigBuffer>,
+               const std::optional<base::Token>&),
               (override));
 
   mojo::Receiver<traces_internals::mojom::Page> receiver_{this};
@@ -82,7 +83,10 @@ class MockTracePage : public traces_internals::mojom::Page {
 
 class MockTracingDelegate : public TracingDelegate {
  public:
-  MOCK_METHOD(bool, IsRecordingAllowed, (bool), (const, override));
+  MOCK_METHOD(bool,
+              IsRecordingAllowed,
+              (bool, base::TimeTicks),
+              (const, override));
   MOCK_METHOD(bool, ShouldSaveUnuploadedTrace, (), (const, override));
 #if BUILDFLAG(IS_WIN)
   MOCK_METHOD(void,
@@ -128,7 +132,7 @@ class TracesInternalsHandlerTest : public testing::Test {
 
   void SetUp() override {
     background_tracing_manager_ =
-        std::make_unique<BackgroundTracingManagerImpl>();
+        std::make_unique<BackgroundTracingManagerImpl>(&mock_tracing_delegate_);
     // Expect the Database to be opened before executing each test.
     EXPECT_CALL(fake_trace_upload_list_, OpenDatabaseIfExists());
     handler_ = std::make_unique<TracesInternalsHandlerForTesting>(
@@ -149,14 +153,15 @@ class TracesInternalsHandlerTest : public testing::Test {
 TEST_F(TracesInternalsHandlerTest, TracingStartStop) {
   auto trace_config =
       ParseTraceConfigFromText(R"pb(
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       )pb")
           .SerializeAsString();
   base::MockCallback<TracesInternalsHandler::StartTraceSessionCallback>
       start_callback;
-  handler_->StartTraceSession(mojo_base::BigBuffer(base::as_bytes(
-                                  base::span<const char>(trace_config))),
-                              start_callback.Get());
+  handler_->StartTraceSession(
+      mojo_base::BigBuffer(
+          base::as_bytes(base::span<const char>(trace_config))),
+      /*enable_privacy_filters=*/false, start_callback.Get());
 
   {
     base::RunLoop run_loop_start;
@@ -173,11 +178,13 @@ TEST_F(TracesInternalsHandlerTest, TracingStartStop) {
     EXPECT_CALL(stop_callback, Run(true)).Times(1);
 
     EXPECT_CALL(mock_page_,
-                OnTraceComplete(testing::Truly(
-                    [](const std::optional<mojo_base::BigBuffer>& trace) {
-                      return base::as_string_view(base::as_chars(
-                                 base::span(*trace))) == "this is a trace";
-                    })))
+                OnTraceComplete(
+                    testing::Truly(
+                        [](const std::optional<mojo_base::BigBuffer>& trace) {
+                          return base::as_string_view(base::as_chars(
+                                     base::span(*trace))) == "this is a trace";
+                        }),
+                    _))
         .WillOnce(base::test::RunOnceClosure(run_loop_stop.QuitClosure()));
 
     run_loop_stop.Run();
@@ -189,9 +196,10 @@ TEST_F(TracesInternalsHandlerTest, TracingTimer) {
                         data_sources: { config: { name: "Stop" } }
                       )pb")
                           .SerializeAsString();
-  handler_->StartTraceSession(mojo_base::BigBuffer(base::as_bytes(
-                                  base::span<const char>(trace_config))),
-                              base::DoNothing());
+  handler_->StartTraceSession(
+      mojo_base::BigBuffer(
+          base::as_bytes(base::span<const char>(trace_config))),
+      /*enable_privacy_filters=*/false, base::DoNothing());
 
   base::RunLoop run_loop;
 
@@ -201,7 +209,8 @@ TEST_F(TracesInternalsHandlerTest, TracingTimer) {
           testing::Truly([](const std::optional<mojo_base::BigBuffer>& trace) {
             return base::as_string_view(base::as_chars(base::span(*trace))) ==
                    "this is a trace";
-          })))
+          }),
+          _))
       .WillOnce(base::test::RunOnceClosure(run_loop.QuitClosure()));
   run_loop.Run();
 }
@@ -213,9 +222,10 @@ TEST_F(TracesInternalsHandlerTest, TracingStartFail) {
                           .SerializeAsString();
   base::MockCallback<TracesInternalsHandler::StartTraceSessionCallback>
       start_callback;
-  handler_->StartTraceSession(mojo_base::BigBuffer(base::as_bytes(
-                                  base::span<const char>(trace_config))),
-                              start_callback.Get());
+  handler_->StartTraceSession(
+      mojo_base::BigBuffer(
+          base::as_bytes(base::span<const char>(trace_config))),
+      /*enable_privacy_filters=*/false, start_callback.Get());
 
   {
     base::RunLoop run_loop_stop;
@@ -228,14 +238,15 @@ TEST_F(TracesInternalsHandlerTest, TracingStartFail) {
 TEST_F(TracesInternalsHandlerTest, TracingClone) {
   auto trace_config =
       ParseTraceConfigFromText(R"pb(
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       )pb")
           .SerializeAsString();
   base::MockCallback<TracesInternalsHandler::StartTraceSessionCallback>
       start_callback;
-  handler_->StartTraceSession(mojo_base::BigBuffer(base::as_bytes(
-                                  base::span<const char>(trace_config))),
-                              start_callback.Get());
+  handler_->StartTraceSession(
+      mojo_base::BigBuffer(
+          base::as_bytes(base::span<const char>(trace_config))),
+      /*enable_privacy_filters=*/false, start_callback.Get());
 
   {
     base::RunLoop run_loop_start;
@@ -252,10 +263,11 @@ TEST_F(TracesInternalsHandlerTest, TracingClone) {
 
     EXPECT_CALL(clone_callback,
                 Run(testing::Truly(
-                    [](const std::optional<mojo_base::BigBuffer>& trace) {
-                      return base::as_string_view(base::as_chars(
-                                 base::span(*trace))) == "this is a trace";
-                    })))
+                        [](const std::optional<mojo_base::BigBuffer>& trace) {
+                          return base::as_string_view(base::as_chars(
+                                     base::span(*trace))) == "this is a trace";
+                        }),
+                    _))
         .WillOnce(base::test::RunOnceClosure(run_loop_clone.QuitClosure()));
 
     run_loop_clone.Run();
@@ -265,14 +277,15 @@ TEST_F(TracesInternalsHandlerTest, TracingClone) {
 TEST_F(TracesInternalsHandlerTest, TracingBufferUsage) {
   auto trace_config =
       ParseTraceConfigFromText(R"pb(
-        data_sources: { config: { name: "org.chromium.trace_metadata" } }
+        data_sources: { config: { name: "org.chromium.trace_metadata2" } }
       )pb")
           .SerializeAsString();
   base::MockCallback<TracesInternalsHandler::StartTraceSessionCallback>
       start_callback;
-  handler_->StartTraceSession(mojo_base::BigBuffer(base::as_bytes(
-                                  base::span<const char>(trace_config))),
-                              start_callback.Get());
+  handler_->StartTraceSession(
+      mojo_base::BigBuffer(
+          base::as_bytes(base::span<const char>(trace_config))),
+      /*enable_privacy_filters=*/false, start_callback.Get());
 
   {
     base::RunLoop run_loop_start;

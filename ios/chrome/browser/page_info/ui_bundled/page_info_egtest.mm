@@ -21,7 +21,6 @@
 #import "ios/chrome/browser/menu/ui_bundled/menu_action_type.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/browser/overlays/model/public/web_content_area/alert_constants.h"
-#import "ios/chrome/browser/page_info/ui_bundled/features.h"
 #import "ios/chrome/browser/page_info/ui_bundled/page_info_app_interface.h"
 #import "ios/chrome/browser/page_info/ui_bundled/page_info_constants.h"
 #import "ios/chrome/browser/permissions/ui_bundled/permissions_app_interface.h"
@@ -153,7 +152,6 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
 
   config.features_enabled.push_back(
       feature_engagement::kIPHiOSInlineEnhancedSafeBrowsingPromoFeature);
-  config.features_enabled.push_back(kPageInfoLastVisitedIOS);
   config.additional_args.push_back(
       std::string("-") +
       optimization_guide::switches::kDisableCheckingUserPermissionsForTesting);
@@ -392,7 +390,7 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
   [[EarlGrey selectElementWithMatcher:
                  grey_text([NSString
                      stringWithCString:[ChromeEarlGrey webStateVisibleURL]
-                                           .host()
+                                           .GetHost()
                                            .c_str()
                               encoding:[NSString defaultCStringEncoding]])]
       assertWithMatcher:grey_sufficientlyVisible()];
@@ -505,7 +503,7 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
 // visit, and also, it tests that the correct timestamp of the last visit is
 // presented.
 // TODO(crbug.com/374063042): Flaky on device.
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 #define MAYBE_testLastVisitedSectionDisplaysYesterday \
   DISABLED_testLastVisitedSectionDisplaysYesterday
 #else
@@ -587,7 +585,7 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
 
 // Tests that tapping on the Last Visited row reveals the Last Visited subpage.
 // TODO(crbug.com/374063042): Flaky on device.
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 #define MAYBE_testLastVisitedSubpage DISABLED_testLastVisitedSubpage
 #else
 #define MAYBE_testLastVisitedSubpage testLastVisitedSubpage
@@ -629,7 +627,7 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
 // Additionally, it tests that dismissing full history reveals back the Last
 // Visited subpage.
 // TODO(crbug.com/374063042): Flaky on device.
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 #define MAYBE_testLastVisitedSubpageOpensFullHistory \
   DISABLED_testLastVisitedSubpageOpensFullHistory
 #else
@@ -688,7 +686,7 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
 // Page Info (which presents the Last Visited subpage) and opens the
 // corresponding URL.
 // TODO(crbug.com/374063042): Flaky on device.
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 #define MAYBE_testOpeningURLFromLastVisitedDismissesPageInfo \
   DISABLED_testOpeningURLFromLastVisitedDismissesPageInfo
 #else
@@ -734,7 +732,7 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
 // Tests that tapping on a history entry dismisses both full history and the
 // underlying Page Info (which presents the Last Visited subpage).
 // TODO(crbug.com/374063042): Flaky on device.
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 #define MAYBE_testOpeningURLFromFullHistoryDismissesPageInfo \
   DISABLED_testOpeningURLFromFullHistoryDismissesPageInfo
 #else
@@ -785,7 +783,7 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
 // Tests display and selection of 'Open in New Tab' in a context menu on a
 // history entry from the Last Visited subpage.
 // TODO(crbug.com/374063042): Flaky on device.
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 #define MAYBE_testContextMenuOpenInNewTab DISABLED_testContextMenuOpenInNewTab
 #else
 #define MAYBE_testContextMenuOpenInNewTab testContextMenuOpenInNewTab
@@ -886,7 +884,7 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
 // Tests display and selection of 'Open in New Incognito Tab' in a context menu
 // on a history entry from the Last Visited subpage.
 // TODO(crbug.com/374063042): Flaky on device.
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 #define MAYBE_testContextMenuOpenInNewIncognitoTab \
   DISABLED_testContextMenuOpenInNewIncognitoTab
 #else
@@ -939,7 +937,7 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
 // Tests display and selection of 'Copy URL' in a context menu on a history
 // entry from the Last Visited subpage.
 // TODO(crbug.com/374063042): Flaky on device.
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 #define MAYBE_testContextMenuCopy DISABLED_testContextMenuCopy
 #else
 #define MAYBE_testContextMenuCopy testContextMenuCopy
@@ -993,7 +991,7 @@ void AddEntryToHistoryService(GURL url, base::Time timestamp) {
 // Tests display and selection of "Share" in the context menu for a history
 // entry from the Last Visited subpage.
 // TODO(crbug.com/374063042): Flaky on device.
-#if !TARGET_IPHONE_SIMULATOR
+#if !TARGET_OS_SIMULATOR
 #define MAYBE_testContextMenuShare DISABLED_testContextMenuShare
 #else
 #define MAYBE_testContextMenuShare testContextMenuShare

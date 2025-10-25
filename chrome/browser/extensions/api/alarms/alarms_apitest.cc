@@ -7,11 +7,14 @@
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/api/test.h"
 #include "extensions/test/extension_test_message_listener.h"
 #include "extensions/test/result_catcher.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -61,7 +64,8 @@ class AlarmsApiTest : public ExtensionApiTest {
 IN_PROC_BROWSER_TEST_F(AlarmsApiTest, IncognitoSplit) {
   // We need 2 ResultCatchers because we'll be running the same test in both
   // regular and incognito mode.
-  Profile* incognito_profile = GetOrCreateIncognitoProfile();
+  Profile* incognito_profile =
+      profile()->GetPrimaryOTRProfile(/*create_if_needed=*/true);
 
   ResultCatcher catcher_incognito;
   catcher_incognito.RestrictToBrowserContext(incognito_profile);
@@ -103,7 +107,13 @@ IN_PROC_BROWSER_TEST_F(AlarmsApiTest, IncognitoSpanning) {
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
 
-IN_PROC_BROWSER_TEST_F(AlarmsApiTest, Count) {
+// TODO(crbug.com/451193827): Flaky on Android.
+#if BUILDFLAG(IS_ANDROID)
+#define MAYBE_Count DISABLED_Count
+#else
+#define MAYBE_Count Count
+#endif
+IN_PROC_BROWSER_TEST_F(AlarmsApiTest, MAYBE_Count) {
   EXPECT_TRUE(RunExtensionTest("alarms/count")) << message_;
 }
 

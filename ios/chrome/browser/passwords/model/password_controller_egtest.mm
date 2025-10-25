@@ -20,19 +20,20 @@
 #import "components/enterprise/connectors/core/realtime_reporting_test_environment.h"
 #import "components/password_manager/core/browser/features/password_features.h"
 #import "components/password_manager/core/common/password_manager_features.h"
-#import "components/plus_addresses/features.h"
+#import "components/plus_addresses/core/common/features.h"
 #import "components/policy/core/common/policy_loader_ios_constants.h"
 #import "components/strings/grit/components_strings.h"
-#import "components/sync/base/features.h"
 #import "components/sync/base/user_selectable_type.h"
 #import "components/sync/service/sync_prefs.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
+#import "ios/chrome/browser/badges/model/features.h"
+#import "ios/chrome/browser/badges/ui_bundled/badge_constants.h"
 #import "ios/chrome/browser/infobars/ui_bundled/banners/infobar_banner_constants.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/browser/passwords/model/password_manager_app_interface.h"
-#import "ios/chrome/browser/passwords/ui_bundled/bottom_sheet/password_suggestion_bottom_sheet_app_interface.h"
+#import "ios/chrome/browser/passwords/ui_bundled/bottom_sheet/credential_suggestion_bottom_sheet_app_interface.h"
 #import "ios/chrome/browser/passwords/ui_bundled/password_constants.h"
 #import "ios/chrome/browser/settings/ui_bundled/google_services/manage_sync_settings_constants.h"
 #import "ios/chrome/browser/signin/model/fake_system_identity.h"
@@ -164,6 +165,8 @@ void TypeUsernameAndPasswordOnUFF(NSString* username,
 
 // Taps on the login button in UFF for logging in.
 void LoginOnUff() {
+  [ChromeEarlGrey
+      waitForUIElementToAppearWithMatcher:chrome_test_util::WebViewMatcher()];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:chrome_test_util::TapWebElementWithId("login_btn")];
 }
@@ -202,7 +205,7 @@ void LoginOnUff() {
 
   // Also reset the dismiss count pref to 0 to make sure the bottom sheet is
   // enabled by default.
-  [PasswordSuggestionBottomSheetAppInterface setDismissCount:0];
+  [CredentialSuggestionBottomSheetAppInterface setDismissCount:0];
 
   // Clear credentials and autofill profile before starting the test in case
   // there are some left over from a previous test case.
@@ -221,7 +224,7 @@ void LoginOnUff() {
   GREYAssertTrue([PasswordManagerAppInterface clearCredentials],
                  @"Clearing credentials wasn't done.");
   [AutofillAppInterface clearProfilesStore];
-  [PasswordSuggestionBottomSheetAppInterface setDismissCount:0];
+  [CredentialSuggestionBottomSheetAppInterface setDismissCount:0];
   [super tearDownHelper];
 }
 
@@ -247,19 +250,22 @@ void LoginOnUff() {
     config.relaunch_policy = ForceRelaunchByKilling;
   }
 
-  if ([self isRunningTest:@selector(testPasswordBreachEventReported)]) {
+  if ([self
+          isRunningTest:@selector(DISABLED_testPasswordBreachEventReported)]) {
     config.features_enabled.push_back(
         password_manager::features::kMarkAllCredentialsAsLeaked);
   }
 
-// TODO(crbug.com/371189341): Test fails on device.
-#if TARGET_IPHONE_SIMULATOR
-  if ([self isRunningTest:@selector
-            (testPasswordGenerationWhileSignedInWithError)]) {
-    config.features_enabled.push_back(
-        syncer::kSyncTrustedVaultInfobarImprovements);
+  if ([self isRunningTest:@selector(FLAKY_testSaveWithoutBadges)] ||
+      [self isRunningTest:@selector(FLAKY_testUpdateWithoutBadges)]) {
+    config.features_enabled.push_back(kAutofillBadgeRemoval);
   }
-#endif  // TARGET_IPHONE_SIMULATOR
+
+  if ([self isRunningTest:@selector(testSavePromptAppearsOnFormSubmission)] ||
+      [self isRunningTest:@selector(testUpdatePromptAppearsOnFormSubmission)]) {
+    // These tests need a badge.
+    config.features_disabled.push_back(kAutofillBadgeRemoval);
+  }
 
   // The proactive password suggestion bottom sheet isn't tested here, it
   // is tested in its own suite in password_suggestion_egtest.mm.
@@ -288,9 +294,10 @@ void LoginOnUff() {
 }
 
 - (std::optional<std::string_view>)enterpriseReportingEventForTest {
-  if ([self isRunningTest:@selector(testLoginEventReported)]) {
+  if ([self isRunningTest:@selector(FLAKY_testLoginEventReported)]) {
     return "loginEvent";
-  } else if ([self isRunningTest:@selector(testPasswordBreachEventReported)]) {
+  } else if ([self isRunningTest:@selector
+                   (DISABLED_testPasswordBreachEventReported)]) {
     return "passwordBreachEvent";
   }
   return std::nullopt;
@@ -324,7 +331,7 @@ void LoginOnUff() {
 - (void)testSavePromptAppearsOnFormSubmission {
   [self loadLoginPage];
 
-  // Simulate user interacting with fields.
+  // Simulate user interacting with fields to trigger a capture of credentials.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:chrome_test_util::TapWebElementWithId(kFormUsername)];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
@@ -338,6 +345,13 @@ void LoginOnUff() {
       waitForUIElementToAppearWithMatcher:
           PasswordInfobarLabels(IDS_IOS_PASSWORD_MANAGER_SAVE_PASSWORD_PROMPT)];
 
+  // Verify that the password badge is in the omnibox.
+  [[EarlGrey
+      selectElementWithMatcher:
+          grey_accessibilityID(kBadgeButtonSavePasswordAccessibilityIdentifier)]
+      assertWithMatcher:grey_notNil()];
+
+  // Tap to save password.
   [[EarlGrey selectElementWithMatcher:PasswordInfobarButton(
                                           IDS_IOS_PASSWORD_MANAGER_SAVE_BUTTON)]
       performAction:grey_tap()];
@@ -363,7 +377,7 @@ void LoginOnUff() {
 
   // Load the page again and have a new password value to save.
   [self loadLoginPage];
-  // Simulate user interacting with fields.
+  // Simulate user interacting with fields to trigger a capture of credentials.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:chrome_test_util::TapWebElementWithId(kFormUsername)];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
@@ -377,6 +391,13 @@ void LoginOnUff() {
       waitForUIElementToAppearWithMatcher:
           PasswordInfobarLabels(IDS_IOS_PASSWORD_MANAGER_UPDATE_PASSWORD)];
 
+  // Verify that the password badge is in the omnibox.
+  [[EarlGrey selectElementWithMatcher:
+                 grey_accessibilityID(
+                     kBadgeButtonUpdatePasswordAccessibilityIdentifier)]
+      assertWithMatcher:grey_notNil()];
+
+  // Tap to update password.
   [[EarlGrey
       selectElementWithMatcher:PasswordInfobarButton(
                                    IDS_IOS_PASSWORD_MANAGER_UPDATE_BUTTON)]
@@ -455,6 +476,8 @@ void LoginOnUff() {
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:chrome_test_util::TapWebElementWithId(kFormPassword)];
 
+  [ChromeEarlGrey
+      waitForUIElementToAppearWithMatcher:chrome_test_util::WebViewMatcher()];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:chrome_test_util::TapWebElementWithId("submit_button")];
 
@@ -508,7 +531,7 @@ void LoginOnUff() {
 
 // Tests password generation flow.
 // TODO(crbug.com/40260214): The test fails on simulator.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_testPasswordGeneration FLAKY_testPasswordGeneration
 #else
 #define MAYBE_testPasswordGeneration testPasswordGeneration
@@ -583,7 +606,7 @@ void LoginOnUff() {
 // Tests that password generation is not offered for signed in users with
 // passwords toggle disabled.
 // TODO(crbug.com/371189341): Test fails on device.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_testPasswordGenerationWhileSignedInWithPasswordsDisabled \
   testPasswordGenerationWhileSignedInWithPasswordsDisabled
 #else
@@ -626,7 +649,7 @@ void LoginOnUff() {
 // Tests that password generation is not offered for signed in users with an
 // encryption error; missing passphrase.
 // TODO(crbug.com/371189341): Test fails on device.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_testPasswordGenerationWhileSignedInWithError \
   testPasswordGenerationWhileSignedInWithError
 #else
@@ -634,6 +657,11 @@ void LoginOnUff() {
   DISABLED_testPasswordGenerationWhileSignedInWithError
 #endif
 - (void)MAYBE_testPasswordGenerationWhileSignedInWithError {
+  // TODO(crbug.com/454547779): Re-enable the test.
+  if (@available(iOS 26.1, *)) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.1.");
+  }
+
   // Encrypt synced data with a passphrase to enable passphrase encryption for
   // the signed in account.
   [ChromeEarlGrey addSyncPassphrase:kPassphrase];
@@ -678,6 +706,11 @@ void LoginOnUff() {
 
 // Tests that the typed credentials are correctly saved in the sign-in UFF flow.
 - (void)testSaveTypedCredentialInUff {
+  // TODO(crbug.com/453627553): Re-enable the test.
+  if (@available(iOS 26.1, *)) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.1.");
+  }
+
   NSString* usernameValue = @"test-username";
   NSString* passwordValue = @"test-password";
 
@@ -759,6 +792,11 @@ void LoginOnUff() {
 // Tests that the typed credentials are correctly updated in the sign-in UFF
 // flow when there is already a credential stored for the corresponding email.
 - (void)testUpdateTypedCredentialInUff {
+  // TODO(crbug.com/453627553): Re-enable the test.
+  if (@available(iOS 26.1, *)) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.1.");
+  }
+
   NSString* usernameValue = @"test-username";
   NSString* passwordValue = @"test-password";
   NSString* passwordValueToBeReplaced = @"old-password";
@@ -803,8 +841,9 @@ void LoginOnUff() {
                                 password:passwordValue];
 }
 
+// TODO(crbug.com/428877349): Re-enable after fixing the test flakiness.
 // Tests that a login event is reported to an enterprise connector.
-- (void)testLoginEventReported {
+- (void)FLAKY_testLoginEventReported {
   [self loadLoginPage];
 
   // Simulate login.
@@ -825,8 +864,8 @@ void LoginOnUff() {
 
   const Event& event = requests[0].events(0);
   GREYAssertTrue(event.has_login_event(), @"Wrong event type.");
-  GREYAssertEqual(self.testServer->GetURL("/"), event.login_event().url(),
-                  @"Wrong URL reported to server.");
+  GREYAssertEqual(self.testServer->GetURL("/simple_login_form.html"),
+                  event.login_event().url(), @"Wrong URL reported to server.");
   // The `test-username` portion of the email will be masked, but the domain
   // part shouldn't be.
   GREYAssertTrue(
@@ -835,7 +874,8 @@ void LoginOnUff() {
 }
 
 // Tests that a password breach event is reported to an enterprise connector.
-- (void)testPasswordBreachEventReported {
+// TODO(crbug.com/429140546): flaky on chromium/ci/ios-simulator-noncq.
+- (void)DISABLED_testPasswordBreachEventReported {
   [self loadLoginPage];
 
   // Simulate login.
@@ -868,12 +908,102 @@ void LoginOnUff() {
                   @"Wrong number of leaked identities.");
 
   const Identity& identity = event.password_breach_event().identities(0);
-  GREYAssertEqual(self.testServer->GetURL("/"), identity.url(),
-                  @"Wrong URL reported for leaked identity.");
+  GREYAssertEqual(self.testServer->GetURL("/simple_login_form.html"),
+                  identity.url(), @"Wrong URL reported for leaked identity.");
   // The `test-username` portion of the email will be masked, but the domain
   // part shouldn't be.
   GREYAssertTrue(identity.username().ends_with("@test-domain.com"),
                  @"Wrong domain in leaked username.");
+}
+
+// TODO(crbug.com/440644620): Find a solution to page loading flakes.
+// Tests that the password save flow via the infobar still works correctly
+// when the badge is removed.
+- (void)FLAKY_testSaveWithoutBadges {
+  [self loadLoginPage];
+
+  // Simulate user interacting with fields to trigger a capture of credentials.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId(kFormUsername)];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId(kFormPassword)];
+
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId("submit_button")];
+
+  // Wait until the save password prompt becomes visible.
+  [ChromeEarlGrey
+      waitForUIElementToAppearWithMatcher:
+          PasswordInfobarLabels(IDS_IOS_PASSWORD_MANAGER_SAVE_PASSWORD_PROMPT)];
+
+  [[EarlGrey
+      selectElementWithMatcher:
+          grey_accessibilityID(kBadgeButtonSavePasswordAccessibilityIdentifier)]
+      assertWithMatcher:grey_nil()];
+
+  // Save password.
+  [[EarlGrey selectElementWithMatcher:PasswordInfobarButton(
+                                          IDS_IOS_PASSWORD_MANAGER_SAVE_BUTTON)]
+      performAction:grey_tap()];
+
+  // Wait until the save password infobar disappears.
+  [ChromeEarlGrey
+      waitForUIElementToDisappearWithMatcher:
+          PasswordInfobarLabels(IDS_IOS_PASSWORD_MANAGER_SAVE_PASSWORD_PROMPT)];
+
+  // Verify that the credentials were saved.
+  int credentialsCount = [PasswordManagerAppInterface storedCredentialsCount];
+  GREYAssertEqual(1, credentialsCount, @"Wrong number of stored credentials.");
+}
+
+// TODO(crbug.com/440644620): Find a solution to page loading flakes.
+// Tests that the password update flow via the infobar still works correctly
+// when the badge is removed.
+- (void)FLAKY_testUpdateWithoutBadges {
+  // Load the page the first time an store credentials.
+  [self loadLoginPage];
+  [PasswordManagerAppInterface storeCredentialWithUsername:@"Eguser"
+                                                  password:@"OldPass"];
+  int credentialsCount = [PasswordManagerAppInterface storedCredentialsCount];
+  GREYAssertEqual(1, credentialsCount, @"Wrong number of initial credentials.");
+
+  // Load the page again and have a new password value to save.
+  [self loadLoginPage];
+
+  // Simulate user interacting with fields to trigger a capture of credentials.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId(kFormUsername)];
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId(kFormPassword)];
+
+  // Submit to trigger the password update infobar.
+  [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
+      performAction:chrome_test_util::TapWebElementWithId("submit_button")];
+
+  // Wait until the update password prompt becomes visible.
+  [ChromeEarlGrey
+      waitForUIElementToAppearWithMatcher:
+          PasswordInfobarLabels(IDS_IOS_PASSWORD_MANAGER_UPDATE_PASSWORD)];
+
+  // Verify that the password badge isn't there.
+  [[EarlGrey
+      selectElementWithMatcher:
+          grey_accessibilityID(kBadgeButtonSavePasswordAccessibilityIdentifier)]
+      assertWithMatcher:grey_nil()];
+
+  // Tap to update password.
+  [[EarlGrey
+      selectElementWithMatcher:PasswordInfobarButton(
+                                   IDS_IOS_PASSWORD_MANAGER_UPDATE_BUTTON)]
+      performAction:grey_tap()];
+
+  // Wait until the update password infobar disappears.
+  [ChromeEarlGrey
+      waitForUIElementToDisappearWithMatcher:
+          PasswordInfobarLabels(IDS_IOS_PASSWORD_MANAGER_UPDATE_PASSWORD)];
+
+  credentialsCount = [PasswordManagerAppInterface storedCredentialsCount];
+  GREYAssertEqual(1, credentialsCount, @"Wrong number of final credentials.");
 }
 
 @end

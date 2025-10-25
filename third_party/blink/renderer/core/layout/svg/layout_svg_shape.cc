@@ -82,10 +82,12 @@ LayoutSVGShape::LayoutSVGShape(SVGGeometryElement* node)
 
 LayoutSVGShape::~LayoutSVGShape() = default;
 
-void LayoutSVGShape::StyleDidChange(StyleDifference diff,
-                                    const ComputedStyle* old_style) {
+void LayoutSVGShape::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutSVGModelObject::StyleDidChange(diff, old_style);
+  LayoutSVGModelObject::StyleDidChange(diff, old_style, style_change_context);
 
   if (diff.NeedsFullLayout()) {
     SetNeedsBoundariesUpdate();
@@ -104,7 +106,8 @@ void LayoutSVGShape::StyleDidChange(StyleDifference diff,
     // are significant enough to require invalidating the cache.
     if (!diff.NeedsFullLayout() && stroke_path_cache_) {
       if (old_style->StrokeDashOffset() != style.StrokeDashOffset() ||
-          *old_style->StrokeDashArray() != *style.StrokeDashArray()) {
+          base::ValuesEquivalent(old_style->StrokeDashArray(),
+                                 style.StrokeDashArray())) {
         stroke_path_cache_.reset();
       }
     }
@@ -146,8 +149,9 @@ void LayoutSVGShape::CreatePath() {
 
 float LayoutSVGShape::DashScaleFactor() const {
   NOT_DESTROYED();
-  if (!StyleRef().HasDashArray())
+  if (!StyleRef().StrokeDashArray()) {
     return 1;
+  }
   return To<SVGGeometryElement>(*GetElement()).PathLengthScaleFactor();
 }
 

@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_AUTOFILL_CONTENT_BROWSER_TEST_AUTOFILL_MANAGER_INJECTOR_H_
 #define COMPONENTS_AUTOFILL_CONTENT_BROWSER_TEST_AUTOFILL_MANAGER_INJECTOR_H_
 
+#include <vector>
+
 #include "components/autofill/content/browser/content_autofill_client.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/content/browser/content_autofill_driver_factory.h"
@@ -168,12 +170,12 @@ class TestAutofillManagerInjector : public TestAutofillManagerInjectorBase {
     }
 
    private:
-    raw_ptr<TestAutofillManagerInjector> owner_;
+    raw_ptr<TestAutofillManagerInjector, DanglingUntriaged> owner_;
 
     // Observed source. We can't use a ScopedObservation because we use
     // ContentAutofillDriverFactoryTestApi::AddObserverAtIndex() instead of
     // ContentAutofillDriverFactory::AddObserver().
-    raw_ptr<ContentAutofillDriverFactory> factory_ = nullptr;
+    raw_ptr<ContentAutofillDriverFactory, DanglingUntriaged> factory_ = nullptr;
   };
 
   void ObserveWebContentsAndInjectManager(content::WebContents* web_contents) {

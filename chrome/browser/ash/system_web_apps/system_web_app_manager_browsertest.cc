@@ -33,6 +33,7 @@
 #include "chrome/browser/apps/app_service/browser_app_launcher.h"
 #include "chrome/browser/apps/app_service/launch_utils.h"
 #include "chrome/browser/ash/accessibility/accessibility_manager.h"
+#include "chrome/browser/ash/accessibility/chromevox_test_utils.h"
 #include "chrome/browser/ash/accessibility/speech_monitor.h"
 #include "chrome/browser/ash/app_list/app_list_client_impl.h"
 #include "chrome/browser/ash/app_list/app_list_model_updater.h"
@@ -89,6 +90,7 @@
 #include "extensions/common/constants.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/context_menu/context_menu.mojom.h"
+#include "ui/accessibility/accessibility_features.h"
 #include "ui/base/idle/idle.h"
 #include "ui/base/idle/scoped_set_idle_state.h"
 #include "ui/base/mojom/menu_source_type.mojom.h"
@@ -1056,17 +1058,8 @@ IN_PROC_BROWSER_TEST_P(SystemWebAppManagerUninstallBrowserTest, Uninstall) {
 }
 
 // Test that all registered System Apps can be re-installed.
-class SystemWebAppManagerInstallAllAppsBrowserTest
-    : public TestProfileTypeMixin<SystemWebAppBrowserTestBase> {
- public:
-  SystemWebAppManagerInstallAllAppsBrowserTest() {
-    features_.InitAndEnableFeature(features::kEnableAllSystemWebApps);
-  }
-  ~SystemWebAppManagerInstallAllAppsBrowserTest() override = default;
-
- private:
-  base::test::ScopedFeatureList features_;
-};
+using SystemWebAppManagerInstallAllAppsBrowserTest =
+    TestProfileTypeMixin<SystemWebAppBrowserTestBase>;
 
 // TODO(crbug.com/40162953): At the moment, PRE_Test failures aren't
 // reported in test summary, thus won't fail the CI build job. So we need a
@@ -1789,56 +1782,49 @@ IN_PROC_BROWSER_TEST_P(SystemWebAppSingleWindowTest, WindowReuse) {
   EXPECT_EQ(web_contents, LaunchAppWithoutWaiting(std::move(params)));
 }
 
-class SystemWebAppAccessibilityTest : public SystemWebAppSingleWindowTest {
- protected:
-  void EnableChromeVox();
-  test::SpeechMonitor speech_monitor_;
-};
-
-void SystemWebAppAccessibilityTest::EnableChromeVox() {
-  AccessibilityManager::Get()->EnableSpokenFeedback(true);
-  speech_monitor_.ExpectSpeechPattern("*");
-  speech_monitor_.Call([this]() {
-    extensions::browsertest_util::ExecuteScriptInBackgroundPageDeprecated(
-        browser()->profile(), extension_misc::kChromeVoxExtensionId, R"JS(
-        import('/chromevox/mv2/background/chromevox_state.js').then(
-            module => module.ChromeVoxState.ready().then(() =>
-                window.domAutomationController.send('done')));
-        )JS");
-  });
-}
+class SystemWebAppAccessibilityTest : public SystemWebAppSingleWindowTest {};
 
 IN_PROC_BROWSER_TEST_P(SystemWebAppAccessibilityTest,
                        CanCycleToWindowControlButtons) {
-  EnableChromeVox();
+  if (::features::IsAccessibilityManifestV3EnabledForChromeVox()) {
+    // TODO(https://crbug.com/388867840): Re-enable this test. This test
+    // currently fails when ChromeVox runs in manifest v3 due to complex timing
+    // issues. In manifest v2, pressing F6 jumps to the correct pane, but it
+    // doesn't work in manifest v3 because the accelerator shortcut isn't
+    // properly bound.
+    return;
+  }
+
+  ChromeVoxTestUtils chromevox_test_utils;
+  chromevox_test_utils.EnableChromeVox();
   WaitForTestSystemAppInstall();
 
   // Launch the app so it shows up in shelf.
   Browser* app_browser;
   gfx::NativeWindow app_window;
 
-  speech_monitor_.Call([&]() {
+  chromevox_test_utils.sm()->Call([&]() {
     LaunchApp(GetAppType(), &app_browser);
     app_window = app_browser->window()->GetNativeWindow();
     // F6 to switch pane.
     ui::test::EventGenerator generator(app_window->GetRootWindow(), app_window);
     generator.PressAndReleaseKey(ui::VKEY_F6, ui::EF_FINAL);
   });
-  speech_monitor_.ExpectSpeech("Test System App");
-  speech_monitor_.ExpectSpeech("Application");
+  chromevox_test_utils.sm()->ExpectSpeech("Test System App");
+  chromevox_test_utils.sm()->ExpectSpeech("Application");
 
   // Launcher-B to find minimize button.
-  speech_monitor_.Call([&]() {
+  chromevox_test_utils.sm()->Call([&]() {
     // Search+B to switch pane.
     ui::test::EventGenerator generator(app_window->GetRootWindow());
     generator.PressAndReleaseKeyAndModifierKeys(
         ui::VKEY_B, ui::EF_COMMAND_DOWN | ui::EF_FINAL);
   });
-  speech_monitor_.ExpectSpeech("Minimize");
-  speech_monitor_.ExpectSpeech("Button");
+  chromevox_test_utils.sm()->ExpectSpeech("Minimize");
+  chromevox_test_utils.sm()->ExpectSpeech("Button");
 
   // Start the actions.
-  speech_monitor_.Replay();
+  chromevox_test_utils.sm()->Replay();
 }
 
 class SystemWebAppAbortsLaunchTest
@@ -1887,6 +1873,10 @@ class SystemWebAppIconHealthMetricsTest
         .Post(FROM_HERE, run_loop.QuitClosure());
     run_loop.Run();
   }
+
+ private:
+  base::test::ScopedFeatureList feature_list_{
+      ::features::kWebAppUsePrimaryIcon};
 };
 
 IN_PROC_BROWSER_TEST_P(SystemWebAppIconHealthMetricsTest, ReportsMetrics) {
@@ -1914,7 +1904,7 @@ IN_PROC_BROWSER_TEST_P(SystemWebAppIconHealthMetricsTest,
       SystemWebAppManager::GetWebAppProvider(browser()->profile())
           ->icon_manager()
           .GetIconFilePathForTesting(app_id, web_app::IconPurpose::ANY, 32);
-
+  CHECK(!icon_path.empty());
   {
     base::ScopedAllowBlockingForTesting allow_blocking;
     base::WriteFile(icon_path, "Not a PNG file");

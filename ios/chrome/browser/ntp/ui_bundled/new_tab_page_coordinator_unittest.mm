@@ -94,7 +94,7 @@ class NewTabPageCoordinatorTest : public PlatformTest {
     test_profile_builder.AddTestingFactory(
         commerce::ShoppingServiceFactory::GetInstance(),
         base::BindRepeating(
-            [](web::BrowserState*) -> std::unique_ptr<KeyedService> {
+            [](ProfileIOS* profile) -> std::unique_ptr<KeyedService> {
               return std::make_unique<commerce::MockShoppingService>();
             }));
     test_profile_builder.AddTestingFactory(
@@ -331,7 +331,7 @@ class NewTabPageCoordinatorTest : public PlatformTest {
   IOSChromeScopedTestingLocalState scoped_testing_local_state_;
   TestProfileManagerIOS profile_manager_;
   raw_ptr<ProfileIOS> profile_;
-  raw_ptr<web::WebState> web_state_;
+  raw_ptr<web::WebState, DanglingUntriaged> web_state_;
   id toolbar_delegate_;
   id delegate_;
   std::unique_ptr<Browser> browser_;
@@ -499,7 +499,7 @@ TEST_F(NewTabPageCoordinatorTest, DidNavigateWithinWebState) {
 
     // Remove one of the tabs so that NTPCoordinator will actually stop.
     browser_->GetWebStateList()->CloseWebStateAt(
-        /*index=*/0, /* close_flags= */ 0);
+        /*index=*/0, WebStateList::ClosingReason::kDefault);
     [coordinator_ stopIfNeeded];
     EXPECT_FALSE(coordinator_.started);
     EXPECT_FALSE(coordinator_.visible);
@@ -542,7 +542,7 @@ TEST_F(NewTabPageCoordinatorTest, DidNavigateBetweenWebStates) {
 
     // Close non-NTP web state to get back to NTP web state.
     browser_->GetWebStateList()->CloseWebStateAt(
-        /*index=*/1, /* close_flags= */ 0);
+        /*index=*/1, WebStateList::ClosingReason::kDefault);
     [coordinator_ didNavigateToNTPInWebState:web_state_];
     if (!off_the_record) {
       histogram_tester_->ExpectTotalCount(kNTPTimeSpentHistogram, 1);
@@ -554,7 +554,7 @@ TEST_F(NewTabPageCoordinatorTest, DidNavigateBetweenWebStates) {
     // Close all web states.
     [coordinator_ didNavigateAwayFromNTP];
     CloseAllWebStates(*browser_->GetWebStateList(),
-                      WebStateList::CLOSE_NO_FLAGS);
+                      WebStateList::ClosingReason::kDefault);
     [coordinator_ stopIfNeeded];
     if (!off_the_record) {
       histogram_tester_->ExpectTotalCount(kNTPTimeSpentHistogram, 2);

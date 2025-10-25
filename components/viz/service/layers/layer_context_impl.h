@@ -10,6 +10,8 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
 #include "base/types/expected.h"
 #include "cc/animation/animation_host.h"
 #include "cc/layers/tile_display_layer_impl.h"
@@ -20,6 +22,7 @@
 #include "components/viz/service/viz_service_export.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
+#include "services/viz/public/mojom/compositing/compositor_frame_sink.mojom.h"
 #include "services/viz/public/mojom/compositing/layer_context.mojom.h"
 
 namespace cc {
@@ -43,13 +46,13 @@ class VIZ_SERVICE_EXPORT LayerContextImpl : public cc::LayerTreeHostImplClient,
   // `compositor_sink` with client connection details given by `context`.
   LayerContextImpl(CompositorFrameSinkSupport* compositor_sink,
                    mojom::PendingLayerContext& context,
-                   bool draw_mode_is_gpu);
+                   mojom::LayerContextSettingsPtr settings);
 
   // Static factory method for testing purposes. The created object's lifetime
   // is not managed by this function.
   static std::unique_ptr<LayerContextImpl> CreateForTesting(
       CompositorFrameSinkSupport* compositor_sink,
-      bool draw_mode_is_gpu);
+      mojom::LayerContextSettingsPtr settings);
 
   ~LayerContextImpl() override;
 
@@ -57,7 +60,11 @@ class VIZ_SERVICE_EXPORT LayerContextImpl : public cc::LayerTreeHostImplClient,
 
   base::expected<void, std::string> DoUpdateDisplayTree(
       mojom::LayerTreeUpdatePtr update);
-  void DoDraw(const BeginFrameArgs& begin_frame_args);
+  base::expected<void, std::string> DoUpdateDisplayTiling(
+      mojom::TilingPtr tiling,
+      bool update_damage);
+  void DoDraw(const BeginFrameArgs& begin_frame_args,
+              base::TimeTicks start_update_display_tree);
 
   // Receive exported resources returned from the frame sink.
   void ReceiveReturnsFromParent(std::vector<ReturnedResource> resources);
@@ -69,7 +76,7 @@ class VIZ_SERVICE_EXPORT LayerContextImpl : public cc::LayerTreeHostImplClient,
   // to.
   LayerContextImpl(
       CompositorFrameSinkSupport* compositor_sink,
-      bool draw_mode_is_gpu,
+      mojom::LayerContextSettingsPtr settings,
       mojo::PendingAssociatedReceiver<mojom::LayerContext> receiver_pipe,
       mojo::PendingAssociatedRemote<mojom::LayerContextClient> client_pipe);
 
@@ -148,6 +155,12 @@ class VIZ_SERVICE_EXPORT LayerContextImpl : public cc::LayerTreeHostImplClient,
   // client, via the frame sink.
   void DoReturnResources();
 
+  void HandleBadMojoMessage(const std::string& function,
+                            const std::string& error);
+
+  void DoDrawInternal(const BeginFrameArgs& begin_frame_args,
+                      base::TimeTicks start_update_display_tree);
+
   const raw_ptr<CompositorFrameSinkSupport> compositor_sink_;
   const std::unique_ptr<cc::AnimationHost> animation_host_{
       cc::AnimationHost::CreateMainInstance()};
@@ -161,6 +174,10 @@ class VIZ_SERVICE_EXPORT LayerContextImpl : public cc::LayerTreeHostImplClient,
 
   raw_ptr<cc::LayerTreeFrameSinkClient> frame_sink_client_ = nullptr;
   const std::unique_ptr<cc::LayerTreeHostImpl> host_impl_;
+
+  // Must be the last member to ensure this is destroyed first in the
+  // destruction order and invalidates all weak pointers.
+  base::WeakPtrFactory<LayerContextImpl> weak_factory_{this};
 };
 
 }  // namespace viz

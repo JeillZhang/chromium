@@ -268,8 +268,8 @@ TEST(RenderPassIOTest, QuadList) {
           render_pass0->CreateAndAppendDrawQuad<TileDrawQuad>();
       quad->SetAll(render_pass0->shared_quad_state_list.ElementAt(sqs_index),
                    gfx::Rect(0, 0, 256, 512), gfx::Rect(2, 2, 250, 500), true,
-                   ResourceId(512u), gfx::RectF(0.0f, 0.0f, 0.9f, 0.8f),
-                   gfx::Size(256, 512), true, true);
+                   ResourceId(512u), gfx::RectF(0.0f, 0.0f, 0.9f, 0.8f), true,
+                   true);
       ++quad_count;
     }
     {
@@ -320,7 +320,8 @@ TEST(RenderPassIOTest, CompositorRenderPassList) {
   std::string json_text;
   ASSERT_TRUE(base::ReadFileToString(json_path, &json_text));
 
-  std::optional<base::Value> dict0 = base::JSONReader::Read(json_text);
+  std::optional<base::Value> dict0 =
+      base::JSONReader::Read(json_text, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   EXPECT_TRUE(dict0.has_value());
   CompositorRenderPassList render_pass_list;
   EXPECT_TRUE(
@@ -359,7 +360,8 @@ TEST(RenderPassIOTest, CompositorFrameData) {
   std::string json_text;
   ASSERT_TRUE(base::ReadFileToString(json_path, &json_text));
 
-  std::optional<base::Value> list0 = base::JSONReader::Read(json_text);
+  std::optional<base::Value> list0 =
+      base::JSONReader::Read(json_text, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   EXPECT_TRUE(list0.has_value());
   std::vector<FrameData> frame_data_list;
   EXPECT_TRUE(FrameDataFromList(list0->GetList(), &frame_data_list));

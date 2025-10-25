@@ -45,9 +45,14 @@ void SetAutofillFormFeatureFlags(WebFrame* web_frame) {
                          features::kAutofillAcrossIframesIosThrottling));
 
   AutofillFormFeaturesJavaScriptFeature::GetInstance()
-      ->SetAutofillDisallowSlashDotLabels(
+      ->SetAutofillDisallowMoreHyphenLikeLabels(
           web_frame, base::FeatureList::IsEnabled(
-                         features::kAutofillDisallowSlashDotLabels));
+                         features::kAutofillDisallowMoreHyphenLikeLabels));
+
+  AutofillFormFeaturesJavaScriptFeature::GetInstance()
+      ->SetAutofillIgnoreCheckableElements(
+          web_frame, base::FeatureList::IsEnabled(
+                         features::kAutofillIgnoreCheckableElements));
 
   AutofillFormFeaturesJavaScriptFeature::GetInstance()
       ->SetAutofillIsolatedContentWorld(
@@ -68,6 +73,16 @@ void SetAutofillFormFeatureFlags(WebFrame* web_frame) {
       ->SetAutofillDedupeFormSubmission(
           web_frame,
           base::FeatureList::IsEnabled(kAutofillDedupeFormSubmission));
+
+  AutofillFormFeaturesJavaScriptFeature::GetInstance()
+      ->SetAutofillReportFormSubmissionErrors(
+          web_frame,
+          base::FeatureList::IsEnabled(kAutofillReportFormSubmissionErrors));
+
+  AutofillFormFeaturesJavaScriptFeature::GetInstance()
+      ->SetAutofillCountFormSubmissionInRenderer(
+          web_frame,
+          base::FeatureList::IsEnabled(kAutofillCountFormSubmissionInRenderer));
 }
 
 AutofillFormFeaturesInjector::~AutofillFormFeaturesInjector() = default;

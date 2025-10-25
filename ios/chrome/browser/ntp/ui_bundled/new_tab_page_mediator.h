@@ -9,6 +9,9 @@
 
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_mutator.h"
 
+namespace feature_engagement {
+class Tracker;
+}  // namespace feature_engagement
 namespace image_fetcher {
 class ImageFetcherService;
 }  // namespace image_fetcher
@@ -38,9 +41,12 @@ class HomeBackgroundCustomizationService;
 @protocol NewTabPageContentDelegate;
 @protocol NewTabPageHeaderConsumer;
 @class NewTabPageState;
+class PlaceholderService;
 class PrefService;
+class ProfileIOS;
 class TemplateURLService;
 class UrlLoadingBrowserAgent;
+class UserUploadedImageManager;
 @protocol UserAccountImageUpdateDelegate;
 
 // Mediator for the NTP Home panel, handling the interactions with the
@@ -66,11 +72,15 @@ class UrlLoadingBrowserAgent;
             (HomeBackgroundCustomizationService*)backgroundCustomizationService
                    imageFetcherService:
                        (image_fetcher::ImageFetcherService*)imageFetcherService
+              userUploadedImageManager:
+                  (UserUploadedImageManager*)userUploadedImageManager
          browserViewVisibilityNotifier:
              (BrowserViewVisibilityNotifierBrowserAgent*)
                  browserViewVisibilityNotifierBrowserAgent
     discoverFeedVisibilityBrowserAgent:
         (DiscoverFeedVisibilityBrowserAgent*)discoverFeedVisibilityBrowserAgent
+              featureEngagementTracker:(feature_engagement::Tracker*)tracker
+                               profile:(ProfileIOS*)profile
     NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -84,6 +94,8 @@ class UrlLoadingBrowserAgent;
 // Observer for feed visibility changes.
 @property(nonatomic, weak) id<DiscoverFeedVisibilityObserver>
     feedVisibilityObserver;
+// Placeholder service, for placeholder text and image.
+@property(nonatomic, assign) PlaceholderService* placeholderService;
 // Delegate for controlling the current feed.
 @property(nonatomic, weak) id<FeedControlDelegate> feedControlDelegate;
 // Delegate for actions relating to the NTP content.
@@ -108,6 +120,9 @@ class UrlLoadingBrowserAgent;
 
 // Restores the current state of the NTP.
 - (void)restoreNTPStateForWebState:(web::WebState*)webState;
+
+// Update the background of the NTP.
+- (void)updateBackground;
 
 @end
 

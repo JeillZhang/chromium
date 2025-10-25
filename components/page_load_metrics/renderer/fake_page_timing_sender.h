@@ -139,8 +139,8 @@ class FakePageTimingSender : public PageTimingSender {
     std::optional<gfx::Rect> actual_main_frame_intersection_rect_;
     std::optional<gfx::Rect> expected_main_frame_viewport_rect_;
     std::optional<gfx::Rect> actual_main_frame_viewport_rect_;
-    mojom::InputTiming expected_input_timing;
-    mojom::InputTiming actual_input_timing;
+    mojom::InputTiming expected_input_timing_;
+    mojom::InputTiming actual_input_timing_;
     std::optional<blink::SubresourceLoadMetrics>
         expected_subresource_load_metrics_;
     std::optional<blink::SubresourceLoadMetrics>
@@ -166,8 +166,7 @@ class FakePageTimingSender : public PageTimingSender {
           subresource_load_metrics,
       const mojom::SoftNavigationMetricsPtr& soft_navigation_metrics) override;
 
-  void SetUpUkmReporting(
-      base::ReadOnlySharedMemoryRegion smoothness_memory,
+  void SetUpDroppedFramesReporting(
       base::ReadOnlySharedMemoryRegion dropped_frames_memory) override;
 
   void SendCustomUserTiming(mojom::CustomUserTimingMarkPtr timing) override;

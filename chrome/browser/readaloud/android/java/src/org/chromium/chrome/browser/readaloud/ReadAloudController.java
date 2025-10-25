@@ -19,6 +19,7 @@ import android.view.WindowManager;
 import androidx.annotation.IntDef;
 import androidx.annotation.VisibleForTesting;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.hash.Hashing;
 
@@ -93,10 +94,12 @@ import org.chromium.ui.insets.InsetObserver;
 import org.chromium.url.GURL;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /**
  * The main entrypoint component for Read Aloud feature. It's responsible for checking its
@@ -124,9 +127,6 @@ public class ReadAloudController
     private LayoutStateProvider.@Nullable LayoutStateObserver mLayoutStateObserver;
 
     private final ObserverList<Runnable> mReadabilityUpdateObserverList = new ObserverList<>();
-    // Delay added to readability check that should run it after largest contentful paint for >85%
-    // of users http://uma/p/chrome/timeline_v2?sid=c975abf9022aac7b36bf28285f068dd6
-    private static final int READABILITY_DELAY = 3000;
     private static final int MAX_URL_ENTRIES = 300;
     private static final LruCache<Integer, ReadabilityInfo> sReadabilityInfoMap =
             new LruCache<>(MAX_URL_ENTRIES);
@@ -177,30 +177,40 @@ public class ReadAloudController
     private boolean mKeepScreenOnFlagIsSet;
     @Nullable private CallbackController mCallbackController;
 
-  private final SendFeedbackCallback mSendFeedbackCallback =
-      new SendFeedbackCallback() {
-        @Override
-        public void onSuccess() {}
+    @Nullable private List<String> mUrls;
+    private int mCurrentUrlIndex;
+    private @Entrypoint int mEntrypoint;
 
-        @Override
-        public void onFailure(Throwable t) {
-          Log.e(TAG, "Failed to send feedback.", t);
-        }
-      };
+    private final SendFeedbackCallback mSendFeedbackCallback =
+            new SendFeedbackCallback() {
+                @Override
+                public void onSuccess() {}
+
+                @Override
+                public void onFailure(Throwable t) {
+                    Log.e(TAG, "Failed to send feedback.", t);
+                }
+            };
 
     /**
      * ReadAloud entrypoint defined in readaloud/enums.xml.
      *
      * <p>Do not reorder or remove items, only add new items before NUM_ENTRIES.
      */
-    @IntDef({Entrypoint.OVERFLOW_MENU, Entrypoint.MAGIC_TOOLBAR, Entrypoint.RESTORED_PLAYBACK})
+    @IntDef({
+        Entrypoint.OVERFLOW_MENU,
+        Entrypoint.MAGIC_TOOLBAR,
+        Entrypoint.RESTORED_PLAYBACK,
+        Entrypoint.FEED_PLAYBACK
+    })
     public @interface Entrypoint {
         int OVERFLOW_MENU = 0;
         int MAGIC_TOOLBAR = 1;
         int RESTORED_PLAYBACK = 2;
+        int FEED_PLAYBACK = 3;
 
         // Be sure to also update enums.xml when updating these values.
-        int NUM_ENTRIES = 3;
+        int NUM_ENTRIES = 4;
     }
 
     /** Clock to use so we can mock time in tests. */
@@ -217,7 +227,8 @@ public class ReadAloudController
         ResettersForTesting.register(() -> sClock = oldValue);
   }
 
-  private static class ReadabilityInfo {
+  @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
+  static class ReadabilityInfo {
       private final Map<PlaybackArgs.PlaybackMode, ReadAloudReadabilityHooks.ReadabilityResult> mReadabilityInfoPerMode;
       private final long mResponseTimestamp;
 
@@ -261,8 +272,16 @@ public class ReadAloudController
                   || (isAudioOverviewsAllowed() && isReadable(PlaybackArgs.PlaybackMode.OVERVIEW));
       }
 
+      boolean isReadable(String tabLanguage) {
+        // A better version of readability that accounts for the page language.
+          return isReadable(PlaybackArgs.PlaybackMode.CLASSIC)
+                  || (isAudioOverviewsAllowed()
+                      && isReadable(PlaybackArgs.PlaybackMode.OVERVIEW)
+                      && isLanguageSupportedForOverview(tabLanguage));
+      }
+
       boolean isReadable(PlaybackArgs.PlaybackMode mode) {
-      return getReadabilityResultForMode(mode).readable;
+        return getReadabilityResultForMode(mode).readable;
       }
 
       long getResponseTime() {
@@ -507,15 +526,16 @@ public class ReadAloudController
     private final ReadAloudReadabilityHooks.ReadabilityPerModeCallback mReadabilityPerModeCallback =
             new ReadAloudReadabilityHooks.ReadabilityPerModeCallback() {
                 @Override
-                public void onSuccess(String url, Map<PlaybackArgs.PlaybackMode, ReadAloudReadabilityHooks.ReadabilityResult> readabilityPerMode) {
+                public void onSuccess(
+                        String url,
+                        Map<PlaybackArgs.PlaybackMode, ReadAloudReadabilityHooks.ReadabilityResult>
+                                readabilityPerMode) {
                     if (url.isEmpty() || url == null) {
                         assert false;
                         return;
                     }
                     ReadabilityInfo readabilityInfo =
-                            new ReadabilityInfo(
-                                    readabilityPerMode,
-                                    sClock.currentTimeMillis());
+                            new ReadabilityInfo(readabilityPerMode, sClock.currentTimeMillis());
                     boolean isReadable = readabilityInfo.isReadable();
 
                     Log.d(TAG, "onSuccess called for %s", url);
@@ -526,15 +546,8 @@ public class ReadAloudController
                     // If destroy() was already called, stop now. Recording metrics should be okay.
                     if (mIsDestroyed) return;
 
-                    // Register _KnownReadable trial before checking more playback conditions
-                    if (isReadable) {
-                        ReadAloudFeatures.activateKnownReadableTrial();
-                    }
-
                     int urlHash = urlToHash(url);
-                    sReadabilityInfoMap.put(
-                            urlHash,
-                            readabilityInfo);
+                    sReadabilityInfoMap.put(urlHash, readabilityInfo);
                     mPendingRequests.remove(urlHash);
                     notifyReadabilityMayHaveChanged();
                 }
@@ -574,7 +587,6 @@ public class ReadAloudController
             FullscreenManager fullscreenManager) {
         sInstances.add(this);
         mCallbackController = new CallbackController();
-        ReadAloudFeatures.init();
         mActivity = activity;
         mProfileSupplier = profileSupplier;
         new OneShotCallback<>(mProfileSupplier, this::onProfileAvailable);
@@ -597,7 +609,9 @@ public class ReadAloudController
         mActivityLifecycleDispatcher.register(this);
         mUserEducationHelper =
                 new UserEducationHelper(
-                        activity, mProfileSupplier, new Handler(Looper.getMainLooper()));
+                        activity,
+                        (Supplier<@Nullable Profile>) mProfileSupplier,
+                        new Handler(Looper.getMainLooper()));
         mActivePlaybackTabSupplier = new ObservableSupplierImpl<>();
         if (ReadAloudFeatures.isTapToSeekEnabled()) {
             new TapToSeekSelectionManager(this, mActivePlaybackTabSupplier);
@@ -720,7 +734,7 @@ public class ReadAloudController
                                 PostTask.postDelayedTask(
                                         TaskTraits.UI_DEFAULT,
                                         () -> maybeCheckReadability(tab),
-                                        READABILITY_DELAY);
+                                        ReadAloudFeatures.getReadabilityDelayMsAfterPageLoad());
                             }
                         }
 
@@ -792,14 +806,6 @@ public class ReadAloudController
                             if (tab == mActivePlaybackTabSupplier.get()) {
                                 mPlayingTabTranslationObserver.stopObservingTab(tab);
                             }
-                        }
-
-                        @Override
-                        public void webContentsWillSwap(Tab tab) {
-                            // When restoring a tab from Recent Tabs, the tab's native WebContents
-                            // is destroyed and replaced by a different one. We must remove the old
-                            // WebContents' translation observers before it is destroyed.
-                            removeTranslationObservers(tab);
                         }
 
                         private void maybeAddTranslationObserver(Tab tab) {
@@ -912,12 +918,10 @@ public class ReadAloudController
                 && !ReadAloudFeatures.isInMultiWindowAndDisabled(mActivity);
     }
 
-    /** Returns true if the web contents within current Tab is readable. */
-    @Contract("null -> false")
-    public boolean isReadable(@Nullable Tab tab) {
-        // If we don't have a valid Profile, playback won't work.
+    private boolean isTabUnavailableForReadAloud(@Nullable Tab tab) {
+      // If we don't have a valid Profile, playback won't work.
         // TODO(crbug.com/41491180): Remove when valid profile is guaranteed.
-        if (tab == null
+      return tab == null
                 || GURL.isEmptyOrInvalid(tab.getUrl())
                 || tab.getWebContents() == null
                 || mProfileSupplier.get() == null
@@ -925,18 +929,49 @@ public class ReadAloudController
                 || DeviceConditions.getCurrentNetConnectionType(mActivity.getApplicationContext())
                         == ConnectionType.CONNECTION_NONE
                 // TODO(crbug.com/363326024): Remove once feature is supported for PDF.
-                || (tab.isNativePage() && tab.getNativePage().isPdf())) {
+                || (tab.isNativePage() && assumeNonNull(tab.getNativePage()).isPdf());
+    }
+
+    /** Returns true if the web contents within current Tab is readable. */
+    @Contract("null -> false")
+    public boolean isReadable(@Nullable Tab tab) {
+        if (isTabUnavailableForReadAloud(tab)) {
             return false;
         }
-
-        if (isTabLanguageSupported(tab) && isAvailable()) {
-            int sanitizedUrlHash = urlToHash(stripUserData(tab.getUrl()).getSpec());
+        Tab nonNullTab = assumeNonNull(tab);
+        TabLanguageStatus tabLanguageStatus = isTabLanguageSupported(nonNullTab);
+        if (tabLanguageStatus.mSupported && isAvailable()) {
+            int sanitizedUrlHash = urlToHash(stripUserData(nonNullTab.getUrl()).getSpec());
             ReadabilityInfo info = getReadabilityInfoIfUnexpired(sanitizedUrlHash);
             if (info != null) {
-                return info.isReadable();
+              if (ReadAloudFeatures.shouldConsiderLanguageInOverviewReadability()) {
+                return info.isReadable(tabLanguageStatus.mLanguage);
+              }
+              return info.isReadable();
             }
         }
         return false;
+    }
+
+    /** Returns which mode would be played if the user chooses to listen to this page, or UNSPECIFIED if unsupported. */
+    public PlaybackMode getModeToPlay(@Nullable Tab tab) {
+        // If we don't have a valid Profile, playback won't work.
+        // TODO(crbug.com/41491180): Remove when valid profile is guaranteed.
+        if (isTabUnavailableForReadAloud(tab)) {
+            return PlaybackMode.UNSPECIFIED;
+        }
+
+        Tab nonNullTab = assumeNonNull(tab);
+        TabLanguageStatus tabLanguageStatus = isTabLanguageSupported(nonNullTab);
+        if (tabLanguageStatus.mSupported && isAvailable()) {
+            int sanitizedUrlHash = urlToHash(stripUserData(nonNullTab.getUrl()).getSpec());
+            ReadabilityInfo info = getReadabilityInfoIfUnexpired(sanitizedUrlHash);
+            if (info != null && (ReadAloudFeatures.shouldConsiderLanguageInOverviewReadability() ? info.isReadable(tabLanguageStatus.mLanguage) : info.isReadable())) {
+              List<PlaybackMode> playbackModes = getPlaybackModesForNewPlayback(info, tabLanguageStatus.mLanguage);
+              return playbackModes.size() > 0 ? playbackModes.get(0) : PlaybackMode.UNSPECIFIED;
+            }
+        }
+        return PlaybackMode.UNSPECIFIED;
     }
 
     /**
@@ -961,13 +996,13 @@ public class ReadAloudController
     }
 
     /** Returns true if the tab's current language is supported by the available voices. */
-    private boolean isTabLanguageSupported(Tab tab) {
+    private TabLanguageStatus isTabLanguageSupported(Tab tab) {
         if (mReadabilityHooks == null) {
-            return false;
+            return new TabLanguageStatus("und", false);
         }
 
         String playbackLanguage = getLanguageForNewPlayback(tab);
-        return mReadabilityHooks.getCompatibleLanguages().contains(playbackLanguage);
+        return new TabLanguageStatus(playbackLanguage, mReadabilityHooks.getCompatibleLanguages().contains(playbackLanguage));
     }
 
     /**
@@ -976,6 +1011,36 @@ public class ReadAloudController
      */
     public boolean isRestoringPlayer() {
         return mRestoringPlayer;
+    }
+
+    /**
+     * Play the overview for a list of urls, creating and showing the player if it isn't already
+     * showing.
+     */
+    public void playOverviewForUrls(List<String> urls, @Entrypoint int entrypoint) {
+        if (urls == null || urls.isEmpty()) return;
+
+        maybeInitializePlaybackHooks();
+
+        mUrls = urls;
+        mCurrentUrlIndex = 0;
+        mEntrypoint = entrypoint;
+        playOverviewForCurrentUrl();
+    }
+
+    private void playOverviewForCurrentUrl() {
+        assert mUrls != null;
+        final String url = mUrls.get(mCurrentUrlIndex);
+        createOverviewPlaybackForUrl(new GURL(url), 0, mEntrypoint)
+                .then(
+                        playback -> {
+                            assumeNonNull(mPlayerCoordinator).playbackReady(playback, PLAYING);
+                            playback.play();
+                            ReadAloudMetrics.recordPlaybackStarted();
+                        },
+                        exception -> {
+                            Log.d(TAG, "playTab failed: %s", assumeNonNull(exception).getMessage());
+                        });
     }
 
     /**
@@ -1064,6 +1129,55 @@ public class ReadAloudController
         }
     }
 
+    private Promise<Playback> createOverviewPlaybackForUrl(
+            GURL url, long dateModified, @Entrypoint int entrypoint) {
+        assert !GURL.isEmptyOrInvalid(url);
+
+        resetCurrentPlayback(ReasonForStoppingPlayback.NEW_PLAYBACK_REQUEST);
+
+        if (!assumeNonNull(mPlaybackHooks).voicesInitialized()) {
+            mPlaybackHooks.initVoices();
+        }
+
+        final String sanitizedUrl = url.getSpec();
+        final List<PlaybackMode> playbackModes = new ArrayList<>();
+        playbackModes.add(PlaybackMode.OVERVIEW);
+
+        // Notify player UI that playback is happening soon and show UI in case there's an error
+        // coming.
+        assumeNonNull(mPlayerCoordinator).playTabRequested(playbackModes.get(0));
+
+        PlaybackArgs args =
+                new PlaybackArgs(
+                        sanitizedUrl,
+                        /* isUrl= */ true,
+                        /* language= */ null,
+                        mPlaybackHooks.getPlaybackVoiceList(
+                                ReadAloudPrefs.getVoices(getPrefService())),
+                        /* dateModifiedMsSinceEpoch= */ dateModified,
+                        /* playbackModes= */ playbackModes);
+        Log.d(TAG, "Creating playback with args: %s", args);
+
+        Promise<Playback> promise = createPlayback(args);
+        promise.then(
+                playback -> {
+                    Playback.Metadata metadata = assumeNonNull(playback.getMetadata());
+                    mFeedbackType.set(FeedbackType.NONE);
+                    updateVoiceMenu(getLanguage(metadata.languageCode()));
+                    mPlayback = playback;
+                    mPlayback.addListener(ReadAloudController.this);
+                },
+                exception -> {
+                    String message = assumeNonNull(assumeNonNull(exception).getMessage());
+                    Log.e(TAG, message);
+                    if (exception instanceof ReadAloudUnsupportedException) {
+                        Log.e(TAG, "Attempting to play a non readable website");
+                    }
+                    onCreatePlaybackFailed(entrypoint);
+                });
+        return promise;
+    }
+
     private Promise<Playback> createTabPlayback(
             Tab tab, long dateModified, @Entrypoint int entrypoint) {
         assert !GURL.isEmptyOrInvalid(tab.getUrl());
@@ -1093,12 +1207,12 @@ public class ReadAloudController
         ReadabilityInfo readabilityInfo = getReadabilityInfoIfUnexpired(sanitizedUrlHash);
         final String playbackLanguage = getLanguageForNewPlayback(tab);
 
-        PlaybackMode playbackMode =
-                getPlaybackModeForNewPlayback(readabilityInfo, playbackLanguage);
+        List<PlaybackMode> playbackModes =
+                getPlaybackModesForNewPlayback(readabilityInfo, playbackLanguage);
 
         // Notify player UI that playback is happening soon and show UI in case there's an error
         // coming.
-        assumeNonNull(mPlayerCoordinator).playTabRequested(playbackMode);
+        assumeNonNull(mPlayerCoordinator).playTabRequested(playbackModes.get(0));
 
         boolean isTranslated = isTranslated(tab);
         var voices = mPlaybackHooks.getVoicesFor(playbackLanguage);
@@ -1114,13 +1228,13 @@ public class ReadAloudController
                 new PlaybackArgs(
                         sanitizedUrl,
                         /* isUrl= */ true,
-                        isTranslated && playbackMode != PlaybackMode.OVERVIEW
+                        isTranslated
                                 ? playbackLanguage
                                 : null,
                         mPlaybackHooks.getPlaybackVoiceList(
                                 ReadAloudPrefs.getVoices(getPrefService())),
                         /* dateModifiedMsSinceEpoch= */ dateModified,
-                        /* playbackMode= */ playbackMode);
+                        /* playbackModes= */ playbackModes);
         Log.d(TAG, "Creating playback with args: %s", args);
 
         Promise<Playback> promise = createPlayback(args);
@@ -1131,7 +1245,7 @@ public class ReadAloudController
                     Playback.Metadata metadata = assumeNonNull(playback.getMetadata());
                     mFeedbackType.set(FeedbackType.NONE);
                     maybeSetUpHighlighter(metadata);
-                    updatePlaybackModeSelectionEnabled(readabilityInfo, playbackLanguage);
+                    updatePlaybackModeSelectionEnabled(readabilityInfo, playbackLanguage, playback, playbackModes);
                     updateVoiceMenu(
                             isTranslated
                                     ? playbackLanguage
@@ -1231,7 +1345,6 @@ public class ReadAloudController
         ApplicationStatus.unregisterActivityStateListener(this);
         resetCurrentPlayback(ReasonForStoppingPlayback.APP_DESTROYED);
         mStateToRestoreOnBringingToForeground = null;
-        ReadAloudFeatures.shutdown();
         InsetObserver insetObserver = mActivityWindowAndroid.getInsetObserver();
         if (insetObserver != null) {
             insetObserver.removeObserver(this);
@@ -1340,39 +1453,49 @@ public class ReadAloudController
                 /* clearPassword= */ true);
     }
 
-    private boolean isLanguageSupportedForOverview(String language) {
+    private static boolean isLanguageSupportedForOverview(String language) {
         return language.equals("en");
     }
 
-    private PlaybackMode getPlaybackModeForNewPlayback(@Nullable ReadabilityInfo readabilityInfo, String webPageLanguage) {
+    @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
+    List<PlaybackMode> getPlaybackModesForNewPlayback(@Nullable ReadabilityInfo readabilityInfo, String webPageLanguage) {
       if (!isAudioOverviewsAllowed()) {
           // AO feature is disabled, return CLASSIC.
-          return PlaybackMode.CLASSIC;
+          return ImmutableList.of(PlaybackMode.CLASSIC);
       }
       if (!isLanguageSupportedForOverview(webPageLanguage)) {
         // Language unsupported for AO.
-        return PlaybackMode.CLASSIC;
+        return ImmutableList.of(PlaybackMode.CLASSIC);
       }
       if (readabilityInfo == null) {
         // Unexpected, but just to make sure (also simplifies the next conditions).
-        return PlaybackMode.CLASSIC;
+        return ImmutableList.of(PlaybackMode.CLASSIC);
       }
+      ImmutableList.Builder<PlaybackMode> modes = ImmutableList.builder();
       PlaybackMode preferredPlaybackMode = ReadAloudPrefs.getPlaybackMode(getPrefService());
       if (preferredPlaybackMode == PlaybackMode.OVERVIEW || preferredPlaybackMode == PlaybackMode.UNSPECIFIED) {
         // Preferred mode is either AO or unset (in which case we default to AO).
         if (readabilityInfo.isReadable(PlaybackMode.OVERVIEW)) {
             // Preferred mode is OVERVIEW and AO is supported.
-            return PlaybackMode.OVERVIEW;
+            modes.add(PlaybackMode.OVERVIEW);
+            if (readabilityInfo.isReadable(PlaybackMode.CLASSIC)) {
+              modes.add(PlaybackMode.CLASSIC);
+            }
+            return modes.build();
         }
         // Preferred mode is OVERVIEW but is unsupported. Fallback to CLASSIC.
-        return PlaybackMode.CLASSIC;
+        return ImmutableList.of(PlaybackMode.CLASSIC);
       }
       // Preferred mode is CLASSIC.
       if (readabilityInfo.isReadable(PlaybackMode.CLASSIC)) {
           // Preferred mode is CLASSIC and supported.
-          return PlaybackMode.CLASSIC;
+          modes.add(PlaybackMode.CLASSIC);
+          if (readabilityInfo.isReadable(PlaybackMode.OVERVIEW)) {
+            modes.add(PlaybackMode.OVERVIEW);
+          }
+          return modes.build();
         }
-      return PlaybackMode.OVERVIEW;
+      return ImmutableList.of(PlaybackMode.OVERVIEW);
     }
 
     private String getLanguageForNewPlayback(Tab tab) {
@@ -1411,7 +1534,7 @@ public class ReadAloudController
     }
 
     private void updatePlaybackModeSelectionEnabled(
-            @Nullable ReadabilityInfo readabilityInfo, String language) {
+            @Nullable ReadabilityInfo readabilityInfo, String language, Playback playback, List<PlaybackMode> supportedPlaybackModes) {
         if (!isAudioOverviewsAllowed()) {
             mPlaybackModeSelectionEnabled.set(
                     PlaybackModeSelectionEnablementStatus.FEATURE_DISABLED);
@@ -1423,6 +1546,28 @@ public class ReadAloudController
                     PlaybackModeSelectionEnablementStatus.MODE_SELECTION_DISABLED_UNKNOWN_REASON);
             return;
         }
+
+        // This means that the actual playback mode used was the last one in the supported modes list.
+        // It happens in one of the following cases:
+        // 1. Only one mode was supported during readability.
+        // 2. More than one mode was supported during readability, but a fallback occurred during playback (e.g. because of a readability FP).
+        // In the latter case, if the selected mode is the last one in the list, we don't offer the button.
+        PlaybackMode actualPlaybackMode = assumeNonNull(playback.getMetadata()).playbackMode();
+        int indexOfActualPlaybackMode = supportedPlaybackModes.indexOf(actualPlaybackMode);
+        if (supportedPlaybackModes.size() > 0
+            && indexOfActualPlaybackMode >= 0
+            && indexOfActualPlaybackMode >= supportedPlaybackModes.size() - 1) {
+            if (actualPlaybackMode == PlaybackMode.OVERVIEW) {
+              mPlaybackModeSelectionEnabled.set(
+                    PlaybackModeSelectionEnablementStatus.MODE_SELECTION_DISABLED_CLASSIC_UNAVAILABLE);
+            } else {
+              mPlaybackModeSelectionEnabled.set(
+                    PlaybackModeSelectionEnablementStatus.MODE_SELECTION_DISABLED_AO_UNAVAILABLE);
+            }
+
+            return;
+        }
+
         boolean classicSupported = readabilityInfo.isReadable(PlaybackMode.CLASSIC);
         boolean overviewSupported = readabilityInfo.isReadable(PlaybackMode.OVERVIEW);
         boolean isLanguageSupported = isLanguageSupportedForOverview(language);
@@ -1505,6 +1650,20 @@ public class ReadAloudController
     }
 
     @Override
+    public void moveToPrevious() {
+        if (mUrls == null || mCurrentUrlIndex == 0) return;
+        mCurrentUrlIndex--;
+        playOverviewForCurrentUrl();
+    }
+
+    @Override
+    public void moveToNext() {
+        if (mUrls == null || mCurrentUrlIndex == mUrls.size() - 1) return;
+        mCurrentUrlIndex++;
+        playOverviewForCurrentUrl();
+    }
+
+    @Override
     public void onPositiveFeedback() {
       if (mPlayback == null) {
         return;
@@ -1540,7 +1699,9 @@ public class ReadAloudController
 
     @Override
     public void setPlaybackModeAndApplyToPlayback(PlaybackMode mode) {
-        TrackerFactory.getTrackerForProfile(getProfile())
+        Profile profile = getProfile();
+        assert profile != null;
+        TrackerFactory.getTrackerForProfile(profile)
                 .notifyEvent("read_aloud_playback_mode_clicked");
         ReadAloudPrefs.setPlaybackMode(getPrefService(), mode);
 
@@ -1988,6 +2149,15 @@ public class ReadAloudController
         return mCurrentTabTranslationObserver;
     }
 
+    public int getNumberOfUrlsForTest() {
+        assert mUrls != null;
+        return mUrls.size();
+    }
+
+    public int getCurrentUrlIndexForTest() {
+        return mCurrentUrlIndex;
+    }
+
     private int urlToHash(String url) {
         return Hashing.murmur3_32_fixed().hashUnencodedChars(url).asInt();
     }
@@ -2010,5 +2180,15 @@ public class ReadAloudController
     @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
     public void setActivePlaybackTab(Tab tab) {
         mActivePlaybackTabSupplier.set(tab);
+    }
+
+    private static class TabLanguageStatus {
+      final String mLanguage;
+      final boolean mSupported;
+
+      TabLanguageStatus(String language, boolean supported) {
+        this.mLanguage = language;
+        this.mSupported = supported;
+      }
     }
 }

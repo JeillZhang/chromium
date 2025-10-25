@@ -11,7 +11,6 @@ import android.graphics.drawable.Drawable;
 import android.net.Uri;
 import android.provider.Browser;
 
-import androidx.annotation.Nullable;
 import androidx.browser.customtabs.CustomTabsIntent;
 import androidx.preference.Preference;
 
@@ -20,11 +19,13 @@ import org.jni_zero.NativeMethods;
 
 import org.chromium.base.Callback;
 import org.chromium.base.CommandLine;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.IntentUtils;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
-import org.chromium.build.BuildConfig;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.LaunchIntentDispatcher;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider.CustomTabsUiType;
@@ -62,23 +63,23 @@ import org.chromium.content_public.browser.ContentFeatureList;
 import org.chromium.content_public.browser.ContentFeatureMap;
 import org.chromium.content_public.common.ContentFeatures;
 import org.chromium.content_public.common.ContentSwitches;
-import org.chromium.device.DeviceFeatureList;
-import org.chromium.device.DeviceFeatureMap;
+import org.chromium.media.MediaFeatures;
 import org.chromium.url.GURL;
 
 import java.util.List;
 import java.util.Set;
 
 /** A SiteSettingsDelegate instance that contains Chrome-specific Site Settings logic. */
+@NullMarked
 public class ChromeSiteSettingsDelegate implements SiteSettingsDelegate {
     private final Context mContext;
     private final Profile mProfile;
     private final PrivacySandboxBridge mPrivacySandboxBridge;
-    private BrowsingDataModel mBrowsingDataModel;
-    private ManagedPreferenceDelegate mManagedPreferenceDelegate;
-    private SnackbarManager mSnackbarManager;
-    private PrivacySandboxSnackbarController mPrivacySandboxController;
-    private LargeIconBridge mLargeIconBridge;
+    private @Nullable BrowsingDataModel mBrowsingDataModel;
+    private @Nullable ManagedPreferenceDelegate mManagedPreferenceDelegate;
+    private @Nullable SnackbarManager mSnackbarManager;
+    private @Nullable PrivacySandboxSnackbarController mPrivacySandboxController;
+    private @Nullable LargeIconBridge mLargeIconBridge;
 
     public ChromeSiteSettingsDelegate(Context context, Profile profile) {
         mContext = context;
@@ -152,6 +153,8 @@ public class ChromeSiteSettingsDelegate implements SiteSettingsDelegate {
             case SiteSettingsCategory.Type.AUTO_DARK_WEB_CONTENT:
                 return ChromeFeatureList.isEnabled(
                         ChromeFeatureList.DARKEN_WEBSITES_CHECKBOX_IN_THEMES_SETTING);
+            case SiteSettingsCategory.Type.AUTO_PICTURE_IN_PICTURE:
+                return ChromeFeatureList.isEnabled(MediaFeatures.AUTO_PICTURE_IN_PICTURE_ANDROID);
             case SiteSettingsCategory.Type.BLUETOOTH:
                 return ContentFeatureMap.isEnabled(
                         ContentFeatureList.WEB_BLUETOOTH_NEW_PERMISSIONS_BACKEND);
@@ -164,9 +167,11 @@ public class ChromeSiteSettingsDelegate implements SiteSettingsDelegate {
                 return PermissionUtil.handTrackingNeedsAdditionalPermissions();
             case SiteSettingsCategory.Type.REQUEST_DESKTOP_SITE:
                 // Desktop Android always requests desktop sites, so hide the category.
-                return !BuildConfig.IS_DESKTOP_ANDROID;
-            case SiteSettingsCategory.Type.SERIAL_PORT:
-                return DeviceFeatureMap.isEnabled(DeviceFeatureList.BLUETOOTH_RFCOMM_ANDROID);
+                return !DeviceInfo.isDesktop();
+            case SiteSettingsCategory.Type.LOCAL_NETWORK_ACCESS:
+                return ChromeFeatureList.isEnabled(ChromeFeatureList.LOCAL_NETWORK_ACCESS);
+            case SiteSettingsCategory.Type.WINDOW_MANAGEMENT:
+                return ChromeFeatureList.sAndroidWindowManagementWebApi.isEnabled();
             default:
                 return true;
         }
@@ -175,6 +180,11 @@ public class ChromeSiteSettingsDelegate implements SiteSettingsDelegate {
     @Override
     public boolean isIncognitoModeEnabled() {
         return IncognitoUtils.isIncognitoModeEnabled(mProfile);
+    }
+
+    @Override
+    public boolean isIncognito() {
+        return mProfile.isIncognitoBranded();
     }
 
     @Override
@@ -191,11 +201,6 @@ public class ChromeSiteSettingsDelegate implements SiteSettingsDelegate {
     @Override
     public boolean isPermissionSiteSettingsRadioButtonFeatureEnabled() {
         return ChromeFeatureList.isEnabled(ChromeFeatureList.PERMISSION_SITE_SETTING_RADIO_BUTTON);
-    }
-
-    @Override
-    public boolean isAlwaysBlock3pcsIncognitoEnabled() {
-        return ChromeFeatureList.isEnabled(ChromeFeatureList.ALWAYS_BLOCK_3PCS_INCOGNITO);
     }
 
     @Override
@@ -388,12 +393,6 @@ public class ChromeSiteSettingsDelegate implements SiteSettingsDelegate {
     }
 
     @Override
-    public boolean shouldShowPrivacySandboxRwsUi() {
-        return ChromeFeatureList.isEnabled(
-                ChromeFeatureList.PRIVACY_SANDBOX_RELATED_WEBSITE_SETS_UI);
-    }
-
-    @Override
     public void getBrowsingDataModel(Callback<BrowsingDataModel> callback) {
         BrowsingDataBridge.buildBrowsingDataModelFromDisk(
                 mProfile,
@@ -413,13 +412,18 @@ public class ChromeSiteSettingsDelegate implements SiteSettingsDelegate {
     }
 
     @Override
-    public boolean isSafetyHubEnabled() {
-        return ChromeFeatureList.isEnabled(ChromeFeatureList.SAFETY_HUB);
+    public boolean isPermissionAutorevocationEnabled() {
+        return UserPrefs.get(mProfile).getBoolean(Pref.UNUSED_SITE_PERMISSIONS_REVOCATION_ENABLED);
     }
 
     @Override
-    public boolean isPermissionAutorevocationEnabled() {
-        return UserPrefs.get(mProfile).getBoolean(Pref.UNUSED_SITE_PERMISSIONS_REVOCATION_ENABLED);
+    public boolean isRelatedWebsiteSetsUiEnabled() {
+        return ChromeFeatureList.isEnabled(ChromeFeatureList.RELATED_WEBSITE_SETS_UI);
+    }
+
+    @Override
+    public boolean isSettingsContainmentEnabled() {
+        return ChromeFeatureList.sAndroidSettingsContainment.isEnabled();
     }
 
     @Override

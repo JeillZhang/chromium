@@ -6,23 +6,34 @@
 
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "components/enterprise/connectors/core/common.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/animation/bounds_animator.h"
 #include "ui/views/controls/styled_label.h"
 #include "ui/views/controls/textarea/textarea.h"
 #include "ui/views/layout/box_layout_view.h"
+#include "ui/views/layout/fill_layout.h"
 #include "ui/views/layout/table_layout_view.h"
 
 namespace enterprise_connectors {
 
 namespace {
 
+constexpr base::TimeDelta kResizeAnimationDuration = base::Milliseconds(100);
+
+constexpr gfx::Insets kSideImageInsets(8);
+
 constexpr int kLineHeight = 20;
+constexpr int kSideImageSize = 24;
 constexpr int kPaddingBeforeBypassJustification = 16;
 constexpr size_t kMaxBypassJustificationLength = 280;
+constexpr int kMessageAndIconRowLeadingPadding = 32;
+constexpr int kMessageAndIconRowTrailingPadding = 48;
+constexpr int kSideIconBetweenChildSpacing = 16;
 
 }  // namespace
 
@@ -30,15 +41,32 @@ ContentAnalysisDialogDelegate::ContentAnalysisDialogDelegate(
     ContentAnalysisDelegateBase* delegate,
     content::WebContents::Getter web_contents_getter,
     bool is_cloud,
-    safe_browsing::DeepScanAccessPoint access_point,
-    int files_count)
-    : delegate_base_(delegate),
+    DeepScanAccessPoint access_point,
+    int files_count,
+    FinalContentAnalysisResult final_result)
+    : final_result_(final_result),
+      delegate_base_(delegate),
       web_contents_getter_(web_contents_getter),
       is_cloud_(is_cloud),
       access_point_(access_point),
-      files_count_(files_count) {}
+      files_count_(files_count) {
+  set_fixed_width(views::LayoutProvider::Get()->GetDistanceMetric(
+      views::DISTANCE_MODAL_DIALOG_PREFERRED_WIDTH));
 
-ContentAnalysisDialogDelegate::~ContentAnalysisDialogDelegate() = default;
+  SetupButtons();
+
+  if (is_warning() && bypass_requires_justification()) {
+    bypass_justification_text_length_->SetEnabledColor(
+        bypass_justification_text_length_->GetColorProvider()->GetColor(
+            ui::kColorAlertHighSeverity));
+  }
+}
+
+ContentAnalysisDialogDelegate::~ContentAnalysisDialogDelegate() {
+  if (bypass_justification_) {
+    bypass_justification_->SetController(nullptr);
+  }
+}
 
 std::u16string ContentAnalysisDialogDelegate::GetWindowTitle() const {
   return std::u16string();
@@ -48,16 +76,75 @@ bool ContentAnalysisDialogDelegate::ShouldShowCloseButton() const {
   return false;
 }
 
-views::Widget* ContentAnalysisDialogDelegate::GetWidget() {
-  return contents_view_->GetWidget();
-}
-
-const views::Widget* ContentAnalysisDialogDelegate::GetWidget() const {
-  return contents_view_->GetWidget();
-}
-
 ui::mojom::ModalType ContentAnalysisDialogDelegate::GetModalType() const {
   return ui::mojom::ModalType::kChild;
+}
+
+views::View* ContentAnalysisDialogDelegate::GetContentsView() {
+  if (!contents_view_) {
+    DVLOG(1) << __func__ << ": first time";
+    contents_view_ = new views::BoxLayoutView();  // Owned by caller.
+    contents_view_->SetOrientation(views::BoxLayout::Orientation::kVertical);
+    // Padding to distance the top image from the icon and message.
+    contents_view_->SetBetweenChildSpacing(16);
+
+    // padding to distance the message from the button(s).  When doing a cloud
+    // based analysis, a top image is added to the view and the top padding
+    // looks fine.  When not doing a cloud-based analysis set the top padding
+    // to make things look nice.
+    contents_view_->SetInsideBorderInsets(
+        gfx::Insets::TLBR(is_cloud_ ? 0 : 24, 0, 10, 0));
+
+    // Add the top image for cloud-based analysis.
+    if (is_cloud_) {
+      image_ = contents_view_->AddChildView(
+          std::make_unique<ContentAnalysisTopImageView>(this));
+    }
+
+    // Create message area layout.
+    contents_layout_ = contents_view_->AddChildView(
+        std::make_unique<views::TableLayoutView>());
+    contents_layout_
+        ->AddPaddingColumn(views::TableLayout::kFixedSize,
+                           kMessageAndIconRowLeadingPadding)
+        .AddColumn(views::LayoutAlignment::kStart,
+                   views::LayoutAlignment::kStart,
+                   views::TableLayout::kFixedSize,
+                   views::TableLayout::ColumnSize::kUsePreferred, 0, 0)
+        .AddPaddingColumn(views::TableLayout::kFixedSize,
+                          kSideIconBetweenChildSpacing)
+        .AddColumn(views::LayoutAlignment::kStretch,
+                   views::LayoutAlignment::kStretch, 1.0f,
+                   views::TableLayout::ColumnSize::kUsePreferred, 0, 0)
+        .AddPaddingColumn(views::TableLayout::kFixedSize,
+                          kMessageAndIconRowTrailingPadding)
+        // There is initially only 1 row in the table for the side icon and
+        // message. Rows are added later when other elements are needed.
+        .AddRows(1, views::TableLayout::kFixedSize);
+
+    // Add the side icon.
+    contents_layout_->AddChildView(CreateSideIcon());
+
+    // Add the message.
+    message_ =
+        contents_layout_->AddChildView(std::make_unique<views::StyledLabel>());
+    message_->SetText(GetDialogMessage());
+    message_->SetLineHeight(kLineHeight);
+
+    // Calculate the width of the side icon column with insets and padding.
+    int side_icon_column_width = kMessageAndIconRowLeadingPadding +
+                                 kSideImageInsets.width() + kSideImageSize +
+                                 kSideIconBetweenChildSpacing;
+    message_->SizeToFit(fixed_width() - side_icon_column_width -
+                        kMessageAndIconRowTrailingPadding);
+    message_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+
+    if (!is_pending()) {
+      UpdateDialogAppearance();
+    }
+  }
+
+  return contents_view_;
 }
 
 int ContentAnalysisDialogDelegate::GetTopImageId() const {
@@ -171,6 +258,50 @@ void ContentAnalysisDialogDelegate::UpdateStateFromFinalResult(
   }
 }
 
+void ContentAnalysisDialogDelegate::UpdateDialogAppearance() {
+  DCHECK(is_result());
+
+  int height_before = contents_view_->GetPreferredSize().height();
+
+  UpdateViews();
+
+  // Resize the dialog's height. This is needed since the text might take more
+  // lines after changing.
+  int height_after = contents_view_->GetHeightForWidth(contents_view_->width());
+
+  int height_to_add = std::max(height_after - height_before, 0);
+  if (height_to_add > 0 && GetWidget()) {
+    Resize(height_to_add);
+  }
+
+  // Update the dialog.
+  DialogDelegate::DialogModelChanged();
+  contents_view_->InvalidateLayout();
+}
+
+void ContentAnalysisDialogDelegate::Shutdown() {
+  contents_view_ = nullptr;
+  image_ = nullptr;
+  side_icon_image_ = nullptr;
+  side_icon_spinner_ = nullptr;
+  message_ = nullptr;
+  learn_more_link_ = nullptr;
+  justification_text_label_ = nullptr;
+  bypass_justification_ = nullptr;
+  bypass_justification_text_length_ = nullptr;
+  contents_layout_ = nullptr;
+  bounds_animator_.reset();
+  delegate_base_ = nullptr;
+}
+
+std::optional<std::u16string>
+ContentAnalysisDialogDelegate::GetJustification() {
+  if (delegate_base_->BypassRequiresJustification() && bypass_justification_) {
+    return std::u16string(bypass_justification_->GetText());
+  }
+  return std::nullopt;
+}
+
 void ContentAnalysisDialogDelegate::SetupButtons() {
   if (is_warning()) {
     // Include the Ok and Cancel buttons if there is a bypassable warning.
@@ -207,12 +338,12 @@ void ContentAnalysisDialogDelegate::SetupButtons() {
 }
 
 std::u16string ContentAnalysisDialogDelegate::GetCancelButtonText() const {
-  int text_id;
   auto overriden_text = delegate_base_->OverrideCancelButtonText();
   if (overriden_text) {
     return overriden_text.value();
   }
 
+  int text_id;
   switch (dialog_state_) {
     case State::SUCCESS:
       NOTREACHED();
@@ -326,7 +457,7 @@ std::u16string ContentAnalysisDialogDelegate::GetCustomMessage() const {
 }
 
 bool ContentAnalysisDialogDelegate::is_print_scan() const {
-  return access_point_ == safe_browsing::DeepScanAccessPoint::PRINT;
+  return access_point_ == DeepScanAccessPoint::PRINT;
 }
 
 bool ContentAnalysisDialogDelegate::has_custom_message() const {
@@ -343,6 +474,53 @@ bool ContentAnalysisDialogDelegate::has_custom_message_ranges() const {
 
 bool ContentAnalysisDialogDelegate::bypass_requires_justification() const {
   return delegate_base_->BypassRequiresJustification();
+}
+
+bool ContentAnalysisDialogDelegate::is_cloud() const {
+  return is_cloud_;
+}
+
+FinalContentAnalysisResult ContentAnalysisDialogDelegate::final_result() const {
+  return final_result_;
+}
+
+base::WeakPtr<ContentAnalysisDialogDelegate>
+ContentAnalysisDialogDelegate::GetWeakPtr() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+
+views::ImageView* ContentAnalysisDialogDelegate::GetTopImageForTesting() const {
+  return image_;
+}
+
+views::Throbber* ContentAnalysisDialogDelegate::GetSideIconSpinnerForTesting()
+    const {
+  return side_icon_spinner_;
+}
+
+views::StyledLabel* ContentAnalysisDialogDelegate::GetMessageForTesting()
+    const {
+  return message_;
+}
+
+views::Link* ContentAnalysisDialogDelegate::GetLearnMoreLinkForTesting() const {
+  return learn_more_link_;
+}
+
+views::Label*
+ContentAnalysisDialogDelegate::GetBypassJustificationLabelForTesting() const {
+  return justification_text_label_;
+}
+
+views::Textarea*
+ContentAnalysisDialogDelegate::GetBypassJustificationTextareaForTesting()
+    const {
+  return bypass_justification_;
+}
+
+views::Label*
+ContentAnalysisDialogDelegate::GetJustificationTextLengthForTesting() const {
+  return bypass_justification_text_length_;
 }
 
 void ContentAnalysisDialogDelegate::UpdateViews() {
@@ -377,6 +555,46 @@ void ContentAnalysisDialogDelegate::UpdateViews() {
     AddJustificationTextAreaToDialog();
     AddJustificationTextLengthToDialog();
   }
+}
+
+void ContentAnalysisDialogDelegate::Resize(int height_to_add) {
+  // Only resize if the dialog is updated to show a result.
+  DCHECK(is_result());
+  views::Widget* widget = GetWidget();
+  DCHECK(widget);
+
+  gfx::Rect dialog_rect = widget->GetContentsView()->GetContentsBounds();
+  int new_height = dialog_rect.height();
+
+  // Remove the button row's height if it's removed in the success case.
+  if (is_success()) {
+    DCHECK(contents_view_->parent());
+    DCHECK_EQ(contents_view_->parent()->children().size(), 2ul);
+    DCHECK_EQ(contents_view_->parent()->children()[0], contents_view_);
+
+    views::View* button_row_view = contents_view_->parent()->children()[1];
+    new_height -= button_row_view->GetContentsBounds().height();
+  }
+
+  // Apply the message lines delta.
+  new_height += height_to_add;
+  dialog_rect.set_height(new_height);
+
+  // Setup the animation.
+  bounds_animator_ =
+      std::make_unique<views::BoundsAnimator>(widget->GetRootView());
+  bounds_animator_->SetAnimationDuration(kResizeAnimationDuration);
+
+  DCHECK(widget->GetRootView());
+  views::View* view_to_resize = widget->GetRootView()->children()[0];
+
+  // Start the animation.
+  bounds_animator_->AnimateViewTo(view_to_resize, dialog_rect);
+
+  // Change the widget's size.
+  gfx::Size new_size = view_to_resize->size();
+  new_size.set_height(new_height);
+  widget->SetSize(new_size);
 }
 
 void ContentAnalysisDialogDelegate::AddLinksToDialogMessage() {
@@ -557,6 +775,24 @@ void ContentAnalysisDialogDelegate::LearnMoreLinkClickedCallback(
                              WindowOpenDisposition::NEW_FOREGROUND_TAB,
                              ui::PAGE_TRANSITION_LINK, false),
       /*navigation_handle_callback=*/{});
+}
+
+std::unique_ptr<views::View> ContentAnalysisDialogDelegate::CreateSideIcon() {
+  // The icon left of the text has the appearance of a blue "Enterprise" logo
+  // with a spinner when the scan is pending.
+  auto icon = std::make_unique<views::View>();
+  icon->SetLayoutManager(std::make_unique<views::FillLayout>());
+  side_icon_image_ = icon->AddChildView(
+      std::make_unique<ContentAnalysisSideIconImageView>(this));
+
+  // Add a spinner if the scan result is pending.
+  if (is_pending()) {
+    auto spinner = std::make_unique<ContentAnalysisSideIconSpinnerView>(this);
+    spinner->Start();
+    side_icon_spinner_ = icon->AddChildView(std::move(spinner));
+  }
+
+  return icon;
 }
 
 }  // namespace enterprise_connectors

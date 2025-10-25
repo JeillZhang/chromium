@@ -25,6 +25,7 @@
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/child_process_host.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -62,6 +63,7 @@
 #include "extensions/common/manifest_handlers/incognito_info.h"
 #include "extensions/common/mojom/message_port.mojom-shared.h"
 #include "extensions/common/permissions/permissions_data.h"
+#include "ipc/constants.mojom.h"
 #include "third_party/abseil-cpp/absl/functional/overload.h"
 #include "url/gurl.h"
 
@@ -143,7 +145,8 @@ void MaybeDisableBackForwardCacheForMessaging(content::RenderFrameHost* host) {
 // offer the possibility to restart a closed connection to a previous state.
 constexpr const char* kDefaultSWExtendedLifetimeList[] = {
     // Smart Card Connector
-    "chrome-extension://khpfeaanjngmcnplbdlpegiifgpfgdco/",
+    "chrome-extension://khpfeaanjngmcnplbdlpegiifgpfgdco/",  // stable
+    "chrome-extension://mockcojkppdndnhgonljagclgpkjbkek/",  // beta
 
     // Citrix Receiver
     "chrome-extension://haiffjcadagjlijoggckpgfnoeiflnem/",  // stable
@@ -799,10 +802,13 @@ void MessageService::OpenChannelToTabImpl(
   // Therefore, possible origins are either an extension origin or an opaque
   // origin created by an extension. See https://crbug.com/1407087.
   url::Origin source_origin = url::Origin();
+  GURL source_url;
   if (source.is_for_render_frame()) {
     source_origin = source.GetRenderFrameHost()->GetLastCommittedOrigin();
+    source_url = source.GetRenderFrameHost()->GetLastCommittedURL();
   } else if (source.is_for_service_worker() && extension) {
     source_origin = extension->origin();
+    source_url = BackgroundInfo::GetBackgroundServiceWorkerScriptURL(extension);
   }
 
   BrowserContext* receiver_context = receiver_contents->GetBrowserContext();
@@ -814,9 +820,8 @@ void MessageService::OpenChannelToTabImpl(
           std::nullopt,  // No source_tab, as there is no frame.
           ExtensionApiFrameIdMap::FrameData(), receiver.release(),
           receiver_port_id, MessagingEndpoint::ForExtension(extension_id),
-          std::move(opener_port), extension_id,
-          GURL(),  // Source URL doesn't make sense for opening to tabs.
-          source_origin, channel_type, channel_name,
+          std::move(opener_port), extension_id, source_url, source_origin,
+          channel_type, channel_name,
           false);  // Connections to tabs aren't webview guests.
   OpenChannelImpl(receiver_context, std::move(params), extension,
                   false /* did_enqueue */);
@@ -944,7 +949,7 @@ void MessageService::OpenChannelImpl(BrowserContext* browser_context,
   AddChannel(std::move(channel_ptr), params->receiver_port_id);
 
   int guest_process_id = content::ChildProcessHost::kInvalidUniqueID;
-  int guest_render_frame_routing_id = MSG_ROUTING_NONE;
+  int guest_render_frame_routing_id = IPC::mojom::kRoutingIdNone;
 #if BUILDFLAG(ENABLE_GUEST_VIEW)
   if (params->include_guest_process_info &&
       // TODO(lazyboy): Investigate <webview> SW messaging.
@@ -1047,26 +1052,27 @@ void MessageService::CloseChannel(const PortId& port_id,
                                   const std::string& error_message) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   ClosePortImpl(port_id, content::ChildProcessHost::kInvalidUniqueID,
-                MSG_ROUTING_NONE, kMainThreadId, true, error_message);
+                IPC::mojom::kRoutingIdNone, kMainThreadId, true, error_message);
 }
 
 void MessageService::ClosePort(const PortId& port_id,
                                int process_id,
                                const PortContext& port_context,
-                               bool force_close) {
-  int routing_id =
-      port_context.frame ? port_context.frame->routing_id : MSG_ROUTING_NONE;
+                               bool close_channel,
+                               const std::string& error_message) {
+  int routing_id = port_context.frame ? port_context.frame->routing_id
+                                      : IPC::mojom::kRoutingIdNone;
   int worker_thread_id =
       port_context.worker ? port_context.worker->thread_id : kMainThreadId;
-  ClosePortImpl(port_id, process_id, routing_id, worker_thread_id, force_close,
-                std::string());
+  ClosePortImpl(port_id, process_id, routing_id, worker_thread_id,
+                close_channel, error_message);
 }
 
 void MessageService::ClosePortImpl(const PortId& port_id,
                                    int process_id,
                                    int routing_id,
                                    int worker_thread_id,
-                                   bool force_close,
+                                   bool close_channel,
                                    const std::string& error_message) {
   // Note: The channel might be not yet created (if the opener became invalid
   // before the channel initialization completed) or already gone (if the other
@@ -1081,7 +1087,7 @@ void MessageService::ClosePortImpl(const PortId& port_id,
           context_id,
           base::BindOnce(&MessageService::PendingLazyContextClosePort,
                          weak_factory_.GetWeakPtr(), port_id, process_id,
-                         routing_id, worker_thread_id, force_close,
+                         routing_id, worker_thread_id, close_channel,
                          error_message));
     }
     return;
@@ -1090,7 +1096,7 @@ void MessageService::ClosePortImpl(const PortId& port_id,
   // The difference between closing a channel and port is that closing a port
   // does not necessarily have to destroy the channel if there are multiple
   // receivers, whereas closing a channel always forces all ports to be closed.
-  if (force_close) {
+  if (close_channel) {
     CloseChannelImpl(it, port_id, error_message, true);
   } else if (port_id.is_opener) {
     it->second->opener->ClosePort(process_id, routing_id, worker_thread_id);
@@ -1209,6 +1215,14 @@ void MessageService::NotifyResponsePending(const PortId& port_id) {
     return;
 
   it->second->receiver->NotifyResponsePending();
+}
+
+bool MessageService::HasPendingLazyContextChannelsForExtension(
+    const ExtensionId& extension_id) const {
+  return std::ranges::any_of(
+      pending_lazy_context_channels_, [&extension_id](const auto& pair) {
+        return pair.second.extension_id() == extension_id;
+      });
 }
 
 bool MessageService::MaybeAddPendingLazyContextOpenChannelTask(
@@ -1353,8 +1367,10 @@ void MessageService::PendingLazyContextOpenChannel(
     std::unique_ptr<LazyContextTaskQueue::ContextInfo> context_info) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  if (context_info == nullptr)
-    return;  // TODO(mpcomplete): notify source of disconnect?
+  if (context_info == nullptr) {
+    // TODO(crbug.com/371011217): notify disconnect.
+    return;
+  }
 
   // Finish tracking SW context wake up.
   if (!open_channel_wakeup_context_tracking_id.is_empty()) {

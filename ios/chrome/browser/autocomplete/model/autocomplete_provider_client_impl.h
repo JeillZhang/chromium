@@ -6,12 +6,15 @@
 #define IOS_CHROME_BROWSER_AUTOCOMPLETE_MODEL_AUTOCOMPLETE_PROVIDER_CLIENT_IMPL_H_
 
 #import "base/memory/raw_ptr.h"
+#import "base/memory/weak_ptr.h"
 #import "components/omnibox/browser/actions/omnibox_pedal.h"
 #import "components/omnibox/browser/autocomplete_provider_client.h"
+#import "components/omnibox/browser/gemini_prototype_omnibox_service.h"
 #import "ios/chrome/browser/autocomplete/model/autocomplete_scheme_classifier_impl.h"
 #import "ios/chrome/browser/autocomplete/model/tab_matcher_impl.h"
 
 class AutocompleteScoringModelService;
+class AimEligibilityService;
 class OnDeviceTailModelService;
 class ProfileIOS;
 struct ProviderStateService;
@@ -75,6 +78,11 @@ class AutocompleteProviderClientImpl : public AutocompleteProviderClient {
   ProviderStateService* GetProviderStateService() const override;
   base::CallbackListSubscription GetLensSuggestInputsWhenReady(
       LensOverlaySuggestInputsCallback callback) const override;
+  AimEligibilityService* GetAimEligibilityService() const override;
+  tab_groups::TabGroupSyncService* GetTabGroupSyncService() const override;
+  GeminiPrototypeOmniboxService* GetGeminiPrototypeOmniboxService()
+      const override;
+
   std::string GetAcceptLanguages() const override;
   std::string GetEmbedderRepresentationOfAboutScheme() const override;
   std::vector<std::u16string> GetBuiltinURLs() override;
@@ -82,7 +90,6 @@ class AutocompleteProviderClientImpl : public AutocompleteProviderClient {
   component_updater::ComponentUpdateService* GetComponentUpdateService()
       override;
   signin::IdentityManager* GetIdentityManager() const override;
-  tab_groups::TabGroupSyncService* GetTabGroupSyncService() const override;
   bool IsOffTheRecord() const override;
   bool IsIncognitoProfile() const override;
   bool IsGuestSession() const override;
@@ -113,10 +120,10 @@ class AutocompleteProviderClientImpl : public AutocompleteProviderClient {
   void CloseIncognitoWindows() override {}
   void PromptPageTranslation() override {}
   void OpenLensOverlay(bool show) override {}
-  void IssueContextualSearchRequest(
-      const GURL& destination_url,
-      AutocompleteMatchType::Type match_type,
-      bool is_zero_prefix_suggestion) override {}
+  void IssueContextualSearchRequest(const GURL& destination_url,
+                                    AutocompleteMatchType::Type match_type,
+                                    bool is_zero_prefix_suggestion) override {}
+  base::WeakPtr<AutocompleteProviderClient> GetWeakPtr() override;
 
  private:
   raw_ptr<ProfileIOS> profile_;
@@ -131,6 +138,7 @@ class AutocompleteProviderClientImpl : public AutocompleteProviderClient {
   std::unique_ptr<OmniboxPedalProvider> pedal_provider_;
   // Whether or not the app is currently in the background state.
   bool in_background_state_ = false;
+  base::WeakPtrFactory<AutocompleteProviderClientImpl> weak_factory_{this};
 };
 
 #endif  // IOS_CHROME_BROWSER_AUTOCOMPLETE_MODEL_AUTOCOMPLETE_PROVIDER_CLIENT_IMPL_H_

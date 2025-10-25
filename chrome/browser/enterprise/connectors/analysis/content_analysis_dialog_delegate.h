@@ -6,15 +6,17 @@
 #define CHROME_BROWSER_ENTERPRISE_CONNECTORS_ANALYSIS_CONTENT_ANALYSIS_DIALOG_DELEGATE_H_
 
 #include "base/functional/callback_forward.h"
-#include "chrome/browser/enterprise/connectors/analysis/content_analysis_delegate_base.h"
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/enterprise/connectors/analysis/content_analysis_views.h"
 #include "chrome/browser/safe_browsing/cloud_content_scanning/deep_scanning_utils.h"
 #include "components/enterprise/connectors/core/common.h"
+#include "components/enterprise/connectors/core/content_analysis_delegate_base.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
 #include "ui/views/window/dialog_delegate.h"
 
 namespace views {
+class BoundsAnimator;
 class BoxLayoutView;
 class Link;
 class StyledLabel;
@@ -56,16 +58,16 @@ class ContentAnalysisDialogDelegate : public views::DialogDelegate,
       ContentAnalysisDelegateBase* delegate,
       content::WebContents::Getter web_contents_getter,
       bool is_cloud,
-      safe_browsing::DeepScanAccessPoint access_point,
-      int files_count);
+      DeepScanAccessPoint access_point,
+      int files_count,
+      FinalContentAnalysisResult final_result);
   ~ContentAnalysisDialogDelegate() override;
 
   // views::DialogDelegate:
   std::u16string GetWindowTitle() const override;
   bool ShouldShowCloseButton() const override;
-  views::Widget* GetWidget() override;
-  const views::Widget* GetWidget() const override;
   ui::mojom::ModalType GetModalType() const override;
+  views::View* GetContentsView() override;
 
   // ContentAnalysisBaseView::Delegate:
   int GetTopImageId() const override;
@@ -83,14 +85,39 @@ class ContentAnalysisDialogDelegate : public views::DialogDelegate,
   inline bool is_warning() const { return dialog_state_ == State::WARNING; }
   inline bool is_pending() const { return dialog_state_ == State::PENDING; }
 
+  // Updates `final_result_` and `dialog_state_`.
   void UpdateStateFromFinalResult(FinalContentAnalysisResult final_result);
+
+  // Update the appearance of the dialog. This will not do anything unless the
+  // dialog's state was changed by `UpdateStateFromFinalResult()` since the last
+  // `UpdateDialogAppearance()` call.
+  void UpdateDialogAppearance();
+
+  // Resets internal members to avoid dangling pointers. Only call this when the
+  // owning widget is about to be destroyed.
+  void Shutdown();
+
+  // Returns the text entered by the user to justify bypassing a warning, or
+  // null if no bypass justification text field was shown.
+  std::optional<std::u16string> GetJustification();
 
   bool has_learn_more_url() const;
   bool bypass_requires_justification() const;
+  bool is_cloud() const;
+  FinalContentAnalysisResult final_result() const;
 
-  // TODO(crbug.com/422111748): Change this to "private" after
-  // `ContentAnalysisDialogController` no longer inherits from this class.
- protected:
+  base::WeakPtr<ContentAnalysisDialogDelegate> GetWeakPtr();
+
+  // Accessors used to validate the views in tests.
+  views::ImageView* GetTopImageForTesting() const;
+  views::Throbber* GetSideIconSpinnerForTesting() const;
+  views::StyledLabel* GetMessageForTesting() const;
+  views::Link* GetLearnMoreLinkForTesting() const;
+  views::Label* GetBypassJustificationLabelForTesting() const;
+  views::Textarea* GetBypassJustificationTextareaForTesting() const;
+  views::Label* GetJustificationTextLengthForTesting() const;
+
+ private:
   // Helper functions to set/get various parts of the dialog depending on the
   // values of `dialog_state_` and `delegate_base_`.
   void SetupButtons();
@@ -111,6 +138,9 @@ class ContentAnalysisDialogDelegate : public views::DialogDelegate,
   // to use in the first GetContentsView() call, before the dialog is shown.
   void UpdateViews();
 
+  // Resizes the already shown dialog to accommodate changes in its content.
+  void Resize(int height_to_add);
+
   // Helper methods to get the admin message shown in dialog.
   void AddLinksToDialogMessage();
   void UpdateDialogMessage(std::u16string new_message);
@@ -123,6 +153,10 @@ class ContentAnalysisDialogDelegate : public views::DialogDelegate,
   void AddJustificationTextLengthToDialog();
 
   void LearnMoreLinkClickedCallback(const ui::Event& event);
+
+  // Returns a newly created side icon. The created views are set to
+  // `side_icon_image_` and `side_icon_spinner_`.
+  std::unique_ptr<views::View> CreateSideIcon();
 
   // Views above the buttons. `contents_view_` owns every other view.
   raw_ptr<views::BoxLayoutView> contents_view_ = nullptr;
@@ -141,6 +175,9 @@ class ContentAnalysisDialogDelegate : public views::DialogDelegate,
   // Table layout owned by `contents_view_`.
   raw_ptr<views::TableLayoutView> contents_layout_ = nullptr;
 
+  // Used to animate dialog height changes.
+  std::unique_ptr<views::BoundsAnimator> bounds_animator_;
+
   // Used to show the appropriate message.
   FinalContentAnalysisResult final_result_;
 
@@ -158,12 +195,14 @@ class ContentAnalysisDialogDelegate : public views::DialogDelegate,
 
   // The access point that caused this dialog to open. This changes what text
   // and top image are shown to the user.
-  safe_browsing::DeepScanAccessPoint access_point_;
+  DeepScanAccessPoint access_point_;
 
   // Indicates whether the scan being done is for files (files_count_>0) or for
   // text (files_count_==0). This changes what text and top image are shown to
   // the user.
   int files_count_;
+
+  base::WeakPtrFactory<ContentAnalysisDialogDelegate> weak_ptr_factory_{this};
 };
 
 }  // namespace enterprise_connectors

@@ -10,6 +10,7 @@
 #import <utility>
 #import <vector>
 
+#import "base/barrier_closure.h"
 #import "base/functional/bind.h"
 #import "base/functional/callback.h"
 #import "base/functional/callback_helpers.h"
@@ -19,6 +20,7 @@
 #import "components/enterprise/browser/controller/browser_dm_token_storage.h"
 #import "components/enterprise/browser/controller/chrome_browser_cloud_management_controller.h"
 #import "components/enterprise/browser/reporting/common_pref_names.h"
+#import "components/enterprise/browser/reporting/report_scheduler.h"
 #import "components/policy/core/browser/policy_conversions.h"
 #import "components/policy/core/browser/webui/json_generation.h"
 #import "components/policy/core/browser/webui/machine_level_user_cloud_policy_status_provider.h"
@@ -42,6 +44,8 @@
 #import "ios/chrome/browser/policy/model/browser_policy_connector_ios.h"
 #import "ios/chrome/browser/policy/model/policy_conversions_client_ios.h"
 #import "ios/chrome/browser/policy/model/profile_policy_connector.h"
+#import "ios/chrome/browser/policy/model/reporting/cloud_profile_reporting_service_factory_ios.h"
+#import "ios/chrome/browser/policy/model/reporting/cloud_profile_reporting_service_ios.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/ui/util/pasteboard_util.h"
@@ -208,23 +212,45 @@ void PolicyUIHandler::HandleCopyPoliciesJson(const base::Value::List& args) {
 void PolicyUIHandler::HandleUploadReport(const base::Value::List& args) {
   upload_report_count_ += 1;
   DCHECK_EQ(1u, args.size());
-  std::string callback_id = args[0].GetString();
+  const std::string& callback_id = args[0].GetString();
   auto* report_scheduler = GetApplicationContext()
                                ->GetBrowserPolicyConnector()
                                ->chrome_browser_cloud_management_controller()
                                ->report_scheduler();
+  auto* profile_report_scheduler =
+      enterprise_reporting::CloudProfileReportingServiceFactoryIOS::
+          GetForProfile(ProfileIOS::FromWebUIIOS(web_ui()))
+              ->report_scheduler();
+
+  int report_count = 0;
   if (report_scheduler) {
-    report_scheduler->UploadFullReport(
-        base::BindOnce(&PolicyUIHandler::OnReportUploaded,
-                       weak_factory_.GetWeakPtr(), callback_id));
-  } else {
+    report_count++;
+  }
+  if (profile_report_scheduler) {
+    report_count++;
+  }
+
+  if (report_count == 0) {
+    // Nothing to upload, return immediately.
     OnReportUploaded(callback_id);
+    return;
+  }
+
+  // Upload 1 or 2 reports depending on which type(s) of reporting are enabled.
+  const auto on_report_uploaded = base::BarrierClosure(
+      report_count, base::BindOnce(&PolicyUIHandler::OnReportUploaded,
+                                   weak_factory_.GetWeakPtr(), callback_id));
+  if (report_scheduler) {
+    report_scheduler->UploadFullReport(on_report_uploaded);
+  }
+  if (profile_report_scheduler) {
+    profile_report_scheduler->UploadFullReport(on_report_uploaded);
   }
 }
 
 void PolicyUIHandler::HandleSetLocalTestPolicies(
     const base::Value::List& args) {
-  std::string json_policies_string = args[1].GetString();
+  const std::string& json_policies_string = args[1].GetString();
 
   if (!PolicyUI::ShouldLoadTestPage(ProfileIOS::FromWebUIIOS(web_ui()))) {
     web_ui()->ResolveJavascriptCallback(args[0], true);
@@ -260,7 +286,7 @@ void PolicyUIHandler::HandleRevertLocalTestPolicies(
 
 void PolicyUIHandler::HandleRestartBrowser(const base::Value::List& args) {
   CHECK(args.size() == 2);
-  std::string policies = args[1].GetString();
+  const std::string& policies = args[1].GetString();
 
   // Set policies to preference
   PrefService* prefs = GetApplicationContext()->GetLocalState();

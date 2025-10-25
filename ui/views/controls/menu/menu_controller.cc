@@ -11,6 +11,7 @@
 #include "base/callback_list.h"
 #include "base/check.h"
 #include "base/containers/flat_set.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/functional/bind.h"
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/rtl.h"
@@ -36,7 +37,7 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_rep.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #include "ui/native_theme/native_theme.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/menu_button.h"
@@ -706,7 +707,7 @@ void MenuController::Run(Widget* parent,
     //  for more details.
     menu_open_mouse_loc_ =
         ConvertFromScreen(*to_select->GetRootMenuItem()->GetSubmenu(),
-                          display::Screen::GetScreen()->GetCursorScreenPoint());
+                          display::Screen::Get()->GetCursorScreenPoint());
   } else {
     // Set the selection, which opens the initial menu.
     SetSelection(root, SELECTION_OPEN_SUBMENU | SELECTION_UPDATE_IMMEDIATELY);
@@ -1516,9 +1517,9 @@ ui::PostDispatchAction MenuController::OnWillDispatchKeyEvent(
 void MenuController::UpdateSubmenuSelection(SubmenuView* submenu) {
   if (submenu->IsShowing()) {
     HandleMouseLocation(
-        submenu, ConvertFromScreen(
-                     GetRootMenu(*submenu),
-                     display::Screen::GetScreen()->GetCursorScreenPoint()));
+        submenu,
+        ConvertFromScreen(GetRootMenu(*submenu),
+                          display::Screen::Get()->GetCursorScreenPoint()));
   }
 }
 
@@ -1535,20 +1536,6 @@ void MenuController::OnWidgetDestroying(Widget* widget) {
   // Exit menu to ensure that we are not holding on to resources when the
   // widget has been destroyed.
   ExitMenu();
-}
-
-void MenuController::OnWidgetBoundsChanged(Widget* widget,
-                                           const gfx::Rect& new_bounds) {
-  DCHECK_EQ(owner_, widget);
-
-  // Ignore bounds changes while in the middle of showing a submenu.
-  if (showing_submenu_) {
-    return;
-  }
-
-  // Close all open menus when the browser window is moved or resized (e.g. due
-  // to moving the window with the keyboard).
-  Cancel(ExitType::kAll);
 }
 
 bool MenuController::IsCancelAllTimerRunningForTest() {
@@ -1581,6 +1568,34 @@ void MenuController::OnMenuItemDestroying(MenuItemView* menu_item) {
   }
 #endif
   UnregisterAlertedItem(menu_item);
+
+  bool found_in_pending_state = false;
+  bool found_in_current_state = false;
+  int menu_stack_matches = 0;
+
+  if (pending_state_.item == menu_item) {
+    pending_state_.item = nullptr;
+    found_in_pending_state = true;
+  }
+  if (state_.item == menu_item) {
+    state_.item = nullptr;
+    found_in_current_state = true;
+  }
+
+  for (auto& menu_state_pair : menu_stack_) {
+    if (menu_state_pair.first.item == menu_item) {
+      menu_state_pair.first.item = nullptr;
+      menu_stack_matches++;
+    }
+  }
+
+  if (found_in_pending_state || found_in_current_state ||
+      menu_stack_matches > 0) {
+    // This indicates a lifecycle management issue - MenuItemView destroyed
+    // while still referenced by MenuController.
+    // Remove this DumpWithoutCrashing once we get enough information.
+    base::debug::DumpWithoutCrashing();
+  }
 }
 
 void MenuController::AnimationProgressed(const gfx::Animation* animation) {
@@ -1614,8 +1629,16 @@ void MenuController::SetSelection(MenuItemView* menu_item,
       pending_state_.submenu_open !=
           !!(selection_types & SELECTION_OPEN_SUBMENU);
 
+  auto this_ref = AsWeakPtr();
+
   if (pending_item_changed && pending_state_.item) {
     SetHotTrackedButton(nullptr);
+  }
+
+  // SetHotTrackedButton does some accessibility stuff that could conceivably
+  // cause `this` to be deleted, so protect against that.
+  if (!this_ref) {
+    return;
   }
 
   // Notify an accessibility focus event on all menu items except for the root.
@@ -1634,7 +1657,13 @@ void MenuController::SetSelection(MenuItemView* menu_item,
     // the focus appears to be elsewhere.
     menu_item->GetViewAccessibility().SetPopupFocusOverride();
   }
-
+  // Possible fix for https:://crbug.com/443019015, in case menu_controller is
+  // getting deleted as a side effect of accessibility code above. The crash
+  // happens when accessibility has been turned on around the same time as
+  // opening the menu.
+  if (!this_ref) {
+    return;
+  }
   // Notify the old path it isn't selected.
   MenuDelegate* current_delegate =
       current_path.empty() ? nullptr : current_path.front()->GetDelegate();
@@ -1668,6 +1697,12 @@ void MenuController::SetSelection(MenuItemView* menu_item,
   pending_state_.item = menu_item;
   pending_state_.submenu_open = (selection_types & SELECTION_OPEN_SUBMENU) != 0;
 
+  // Possible fix for https:://crbug.com/443019015, in case `this` is getting
+  // deleted as a side effect of code above. From the crash dumps, it's pretty
+  // clear that both `cancel_all_timer_` and `this` have been deleted.
+  if (!this_ref) {
+    return;
+  }
   // Stop timers.
   StopCancelAllTimer();
   // Resets show timer only when pending menu item is changed.
@@ -2005,8 +2040,7 @@ void MenuController::UpdateInitialLocation(const gfx::Rect& anchor_bounds,
   // Calculate the bounds of the monitor we'll show menus on. Do this once to
   // avoid repeated system queries for the info.
   const display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestPoint(
-          anchor_bounds.origin());
+      display::Screen::Get()->GetDisplayNearestPoint(anchor_bounds.origin());
   pending_state_.monitor_bounds = display.work_area();
 
   if (!pending_state_.monitor_bounds.Contains(anchor_bounds)) {
@@ -2112,8 +2146,8 @@ bool MenuController::ShowSiblingMenu(SubmenuView* source,
   }
 
   // TODO(oshima): Replace with views only API.
-  if (!owner_ || !display::Screen::GetScreen()->IsWindowUnderCursor(
-                     owner_->GetNativeWindow())) {
+  if (!owner_ ||
+      !display::Screen::Get()->IsWindowUnderCursor(owner_->GetNativeWindow())) {
     return false;
   }
 
@@ -2447,8 +2481,7 @@ void MenuController::OpenMenuImpl(MenuItemView* item, bool show) {
     // work correctly if the widget isn't shown.
     if (item->GetSubmenu()->GetWidget()) {
       const gfx::Point mouse_pos = ConvertFromScreen(
-          *item->submenu_,
-          display::Screen::GetScreen()->GetCursorScreenPoint());
+          *item->submenu_, display::Screen::Get()->GetCursorScreenPoint());
       MenuPart part_under_mouse = GetMenuPart(item->submenu_.get(), mouse_pos);
       if (part_under_mouse.type != MenuPartType::kNone) {
         menu_open_mouse_loc_ =
@@ -2792,11 +2825,16 @@ gfx::Rect MenuController::CalculateBubbleMenuBounds(
             item->actual_menu_position() == MenuPosition::kAboveBounds) {
           // menu_size is expected to include not just the content size
           // but also the (border and shadow) insets, which can go offscreen.
-          max_height =
+          // When anchor_bounds is above or below monitor_bounds, max_height
+          // calculation will be larger than monitor+insets. To prevent
+          // std::clamp crashing due to y_max < y_min, std::min with current
+          // max_height.
+          max_height = std::min(
+              max_height,
               std::max(anchor_bounds.y() - monitor_bounds.y(),
                        monitor_bounds.bottom() - anchor_bounds.bottom()) -
-              (is_bubble_menu ? 0 : menu_config.touchable_anchor_offset) +
-              border_insets.height();
+                  (is_bubble_menu ? 0 : menu_config.touchable_anchor_offset) +
+                  border_insets.height());
         }
       }
       // The menu should always have a non-empty available area.
@@ -2933,8 +2971,6 @@ gfx::Rect MenuController::CalculateBubbleMenuBounds(
     const int y_min = monitor_bounds.y() - border_insets.top();
     const int y_max =
         monitor_bounds.bottom() - menu_size.height() + border_insets.bottom();
-    DCHECK_LE(x_min, x_max);
-    DCHECK_LE(y_min, y_max);
     x = std::clamp(x, x_min, x_max);
     y = std::clamp(y, y_min, y_max);
   } else {
@@ -3236,12 +3272,19 @@ void MenuController::SelectByChar(char16_t character) {
   char16_t char_array[] = {character, 0};
   char16_t key = base::i18n::ToLower(char_array)[0];
   MenuItemView* item = pending_state_.item;
+  if (!item) {
+    return;
+  }
   if (!item->SubmenuIsShowing()) {
     item = item->GetParentMenuItem();
   }
   DCHECK(item);
   DCHECK(item->HasSubmenu());
   DCHECK(item->GetSubmenu());
+
+  if (!item) {
+    return;
+  }
   if (item->GetSubmenu()->GetMenuItems().empty()) {
     return;
   }
@@ -3281,7 +3324,7 @@ void MenuController::RepostEventAndCancel(SubmenuView* source,
       gfx::NativeView native_view = source->GetWidget()->GetNativeView();
       gfx::NativeWindow window =
           native_view
-              ? display::Screen::GetScreen()->GetWindowAtScreenPoint(screen_loc)
+              ? display::Screen::Get()->GetWindowAtScreenPoint(screen_loc)
               : nullptr;
 
       state_.item->GetRootMenuItem()->GetSubmenu()->ReleaseCapture();

@@ -130,6 +130,7 @@ public class Snackbar {
     public static final int UMA_SEARCH_ENGINE_CHANGED_NOTIFICATION = 73;
     public static final int UMA_BOOKMARK_BATCH_UPLOAD = 74;
     public static final int UMA_NTP_MOST_VISITED_UNPIN_UNDO = 75;
+    public static final int UMA_SIGN_IN = 76;
 
     private final @Nullable SnackbarController mController;
     private final CharSequence mText;
@@ -138,7 +139,7 @@ public class Snackbar {
     private @Nullable Object mActionData;
     private int mBackgroundColor;
     private int mTextApperanceResId;
-    private boolean mSingleLine = true;
+    private boolean mDefaultLines = true;
     private int mDurationMs;
     private @Nullable Drawable mProfileImage;
     private final int mType;
@@ -216,10 +217,11 @@ public class Snackbar {
     }
 
     /**
-     * Sets whether the snackbar text should be limited to a single line and ellipsized if needed.
+     * Sets whether the snackbar text should be limited to 2, the default number of lines, and
+     * ellipsized if needed.
      */
-    public Snackbar setSingleLine(boolean singleLine) {
-        mSingleLine = singleLine;
+    public Snackbar setDefaultLines(boolean defaultLines) {
+        mDefaultLines = defaultLines;
         return this;
     }
 
@@ -284,8 +286,8 @@ public class Snackbar {
         return mActionData;
     }
 
-    boolean getSingleLine() {
-        return mSingleLine;
+    boolean getDefaultLines() {
+        return mDefaultLines;
     }
 
     public int getDuration() {

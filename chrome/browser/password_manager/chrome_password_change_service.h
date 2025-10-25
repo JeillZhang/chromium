@@ -16,6 +16,10 @@
 
 class GURL;
 
+namespace autofill {
+class LogRouter;
+}  // namespace autofill
+
 namespace affiliations {
 class AffiliationService;
 }
@@ -28,7 +32,31 @@ class WebContents;
 
 namespace password_manager {
 class PasswordFeatureManager;
+class PasswordManagerSettingsService;
 }
+
+class PrefService;
+
+// Password change availability state used for UMA. Corresponds to
+// `PasswordChangeAvailability` in enums.xml.
+//
+// These values are persisted to logs.
+// Entries should not be renumbered and numeric values should never be reused.
+// LINT.IfChange(PasswordChangeAvailability)
+enum class PasswordChangeAvailability {
+  kAvailable = 0,
+  kPasswordGenerationDisabled = 1,
+  kModelExecutionNotAllowed = 2,
+  kPasswordSavingDisabled = 3,
+  kDisabledByPolicy = 4,
+  kFeatureDisabled = 5,
+  kUnsupportedLanguage = 6,
+  kUnsupportedCountryCode = 7,
+  kNotSupportedSite = 8,
+  kNoSavedPasswords = 9,
+  kMaxValue = kNoSavedPasswords,
+};
+// LINT.ThenChange(/tools/metrics/histograms/metadata/password/enums.xml:PasswordChangeAvailability)
 
 class ChromePasswordChangeService
     : public KeyedService,
@@ -44,10 +72,12 @@ class ChromePasswordChangeService
       "PasswordManager.HasPasswordChangeUrl";
 
   ChromePasswordChangeService(
+      PrefService* pref_service,
       affiliations::AffiliationService* affiliation_service,
       OptimizationGuideKeyedService* optimization_keyed_service,
-      std::unique_ptr<password_manager::PasswordFeatureManager>
-          feature_manager);
+      password_manager::PasswordManagerSettingsService* settings_service,
+      std::unique_ptr<password_manager::PasswordFeatureManager> feature_manager,
+      autofill::LogRouter* log_router);
   ~ChromePasswordChangeService() override;
 
   // Indicates that password change will be proposed to the user for a given
@@ -66,8 +96,17 @@ class ChromePasswordChangeService
       content::WebContents* web_contents);
 
   // PasswordChangeServiceInterface implementation.
-  bool IsPasswordChangeAvailable() override;
-  bool IsPasswordChangeSupported(const GURL& url) override;
+  bool IsPasswordChangeAvailable() const override;
+  bool IsPasswordChangeSupported(
+      const GURL& url,
+      const autofill::LanguageCode& page_language) const override;
+  void RecordLoginAttemptQuality(
+      password_manager::LogInWithChangedPasswordOutcome login_outcome,
+      const GURL& page_url) const override;
+
+  // Checks if user has interacted with the feature and only then general
+  // availability.
+  bool UserIsActivePasswordChangeUser() const;
 
  private:
   // PasswordChangeDelegate::Observer impl.
@@ -76,12 +115,23 @@ class ChromePasswordChangeService
   // KeyedService impl.
   void Shutdown() override;
 
+  PasswordChangeAvailability GetGeneralAvailability() const;
+  PasswordChangeAvailability GetPerSiteAvailability(
+      const GURL& url,
+      const autofill::LanguageCode& page_language) const;
+
+  const raw_ptr<PrefService> pref_service_;
   const raw_ptr<affiliations::AffiliationService> affiliation_service_;
   const raw_ptr<OptimizationGuideKeyedService> optimization_keyed_service_;
+  const raw_ptr<password_manager::PasswordManagerSettingsService>
+      settings_service_;
   std::unique_ptr<password_manager::PasswordFeatureManager> feature_manager_;
 
   std::vector<std::unique_ptr<PasswordChangeDelegate>>
       password_change_delegates_;
+
+  // The router for logs. Maybe be null in tests.
+  const raw_ptr<autofill::LogRouter> log_router_;
 
   base::WeakPtrFactory<ChromePasswordChangeService> weak_ptr_factory_{this};
 };

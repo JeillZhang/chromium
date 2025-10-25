@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "ash/constants/ash_features.h"
-#include "ash/test/ash_test_base.h"
 #include "ash/test/ash_test_helper.h"
 #include "base/containers/extend.h"
 #include "base/containers/flat_set.h"
@@ -28,7 +27,6 @@
 #include "chrome/browser/apps/app_service/app_launch_params.h"
 #include "chrome/browser/apps/app_service/app_service_proxy.h"
 #include "chrome/browser/apps/app_service/app_service_proxy_factory.h"
-#include "chrome/browser/apps/app_service/browser_app_launcher.h"
 #include "chrome/browser/apps/app_service/metrics/app_platform_metrics.h"
 #include "chrome/browser/apps/app_service/metrics/app_platform_metrics_service_test_base.h"
 #include "chrome/browser/apps/app_service/metrics/app_platform_metrics_utils.h"
@@ -42,6 +40,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/web_applications/test/web_app_install_test_utils.h"
+#include "chrome/test/base/chrome_ash_test_base.h"
 #include "chrome/test/base/test_browser_window_aura.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/components/mgs/managed_guest_session_test_utils.h"
@@ -296,6 +295,14 @@ class AppPlatformMetricsServiceTest : public AppPlatformMetricsServiceTestBase {
                  InstallReason::kUser, InstallSource::kUnknown)});
 
     pre_installed_apps_.insert(
+        {kSystemWebAppId,
+         // SystemWebApp is registered as AppType::kWeb in production.
+         TestApp(kSystemWebAppId, AppType::kWeb, "chrome://os-settings",
+                 Readiness::kReady, InstallReason::kSystem,
+                 InstallSource::kSystem,
+                 /*should_notify_initialized=*/false)});
+
+    pre_installed_apps_.insert(
         {kWebAppId1,
          TestApp(kWebAppId1, AppType::kWeb, "https://foo.com",
                  Readiness::kReady, InstallReason::kSync, InstallSource::kSync,
@@ -305,11 +312,6 @@ class AppPlatformMetricsServiceTest : public AppPlatformMetricsServiceTestBase {
         {kWebAppId2, TestApp(kWebAppId2, AppType::kWeb, "https://foo2.com",
                              Readiness::kReady, InstallReason::kSync,
                              InstallSource::kSync)});
-    pre_installed_apps_.insert(
-        {kSystemWebAppId,
-         TestApp(kSystemWebAppId, AppType::kSystemWeb, "https://os-settings",
-                 Readiness::kReady, InstallReason::kSystem,
-                 InstallSource::kSystem)});
 
     pre_installed_apps_.insert(
         {"u", TestApp("u", AppType::kUnknown, "", Readiness::kReady,
@@ -432,8 +434,8 @@ class AppPlatformMetricsServiceTest : public AppPlatformMetricsServiceTestBase {
     params.type = Browser::TYPE_NORMAL;
     browser_window1_ =
         std::make_unique<TestBrowserWindowAura>(std::move(window));
-    params.window = browser_window1_.get();
-    return std::unique_ptr<Browser>(Browser::Create(params));
+    params.window = browser_window1_.release();
+    return Browser::DeprecatedCreateOwnedForTesting(params);
   }
 
   std::unique_ptr<Browser> CreateBrowserWithAuraWindow2() {
@@ -445,8 +447,8 @@ class AppPlatformMetricsServiceTest : public AppPlatformMetricsServiceTestBase {
     params.type = Browser::TYPE_NORMAL;
     browser_window2_ =
         std::make_unique<TestBrowserWindowAura>(std::move(window));
-    params.window = browser_window2_.get();
-    return std::unique_ptr<Browser>(Browser::Create(params));
+    params.window = browser_window2_.release();
+    return Browser::DeprecatedCreateOwnedForTesting(params);
   }
 
   std::unique_ptr<Browser> CreateBrowserWindow(
@@ -461,10 +463,9 @@ class AppPlatformMetricsServiceTest : public AppPlatformMetricsServiceTestBase {
   }
 
   std::unique_ptr<aura::Window> CreateWebAppWindow(aura::Window* parent) {
-    std::unique_ptr<aura::Window> window(
-        aura::test::CreateTestWindowWithDelegate(&delegate1_, 1, gfx::Rect(),
-                                                 parent));
-    return window;
+    return aura::test::CreateTestWindow({.delegate = &delegate1_,
+                                         .parent = parent,
+                                         .window_id = 1});
   }
 
   GURL GetSourceUrlForApp(const std::string& app_id) {
@@ -1591,9 +1592,8 @@ TEST_F(AppPlatformMetricsServiceTest, LaunchApps) {
   VerifyAppLaunchPerAppTypeHistogram(1, GetWebAppTypeName());
   VerifyAppLaunchPerAppTypeV2Histogram(1, AppTypeNameV2::kWebWindow);
 
-  // TODO(crbug.com/40199106): Register non-mojom apps and use
-  // AppServiceProxy::LaunchAppWithParams to test launching.
-  proxy->BrowserAppLauncher()->LaunchAppWithParamsForTesting(AppLaunchParams(
+  // TODO(crbug.com/40199106): Register non-mojom apps.
+  proxy->LaunchAppWithParams(AppLaunchParams(
       kWebAppId2, LaunchContainer::kLaunchContainerTab,
       WindowOpenDisposition::NEW_FOREGROUND_TAB, LaunchSource::kFromTest));
 
@@ -1602,7 +1602,7 @@ TEST_F(AppPlatformMetricsServiceTest, LaunchApps) {
   VerifyAppLaunchPerAppTypeHistogram(1, AppTypeName::kChromeBrowser);
   VerifyAppLaunchPerAppTypeV2Histogram(1, AppTypeNameV2::kWebTab);
 
-  proxy->BrowserAppLauncher()->LaunchAppWithParamsForTesting(AppLaunchParams(
+  proxy->LaunchAppWithParams(AppLaunchParams(
       kSystemWebAppId, LaunchContainer::kLaunchContainerTab,
       WindowOpenDisposition::NEW_FOREGROUND_TAB, LaunchSource::kFromTest));
   VerifyAppsLaunchUkm("app://" + std::string(kSystemWebAppId),
@@ -1768,7 +1768,7 @@ class AppPlatformInputMetricsTest : public AppPlatformMetricsServiceTest {
   void SetUp() override {
     PreSetUp();
     AppPlatformMetricsServiceTest::SetUp();
-    widget_ = ash::AshTestBase::CreateTestWidget(
+    widget_ = ChromeAshTestBase::CreateTestWidget(
         views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET);
   }
 
@@ -1834,10 +1834,9 @@ class AppPlatformInputMetricsTest : public AppPlatformMetricsServiceTest {
     Browser::CreateParams params(profile(), true);
     params.type = Browser::TYPE_NORMAL;
     browser_window_ = std::make_unique<TestBrowserWindow>();
-    params.window = browser_window_.get();
     browser_window_->SetNativeWindow(window());
-    params.window = browser_window_.get();
-    return std::unique_ptr<Browser>(Browser::Create(params));
+    params.window = browser_window_.release();
+    return Browser::DeprecatedCreateOwnedForTesting(params);
   }
 
   TestApp& ActivatePreInstalledApp(const std::string& app_id) {

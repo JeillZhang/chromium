@@ -15,7 +15,7 @@
   <uses-permission android:name="android.permission.INTERNET"/>
   <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-  <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35"/>
+  <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="36"/>
   <application
       android:name="org.chromium.android_webview.nonembedded.WebViewApkApplication"
       android:extractNativeLibs="false"
@@ -57,16 +57,12 @@
     <activity-alias  # DIFF-ANCHOR: da85c28e
         android:name="org.chromium.android_webview.SafeModeState"
         android:enabled="false"
-        android:process=":webview_apk"
-        android:targetActivity="org.chromium.android_webview.devui.MainActivity"
-        android:visibleToInstantApps="true">
+        android:targetActivity="org.chromium.android_webview.devui.MainActivity">
     </activity-alias>  # DIFF-ANCHOR: da85c28e
     <activity-alias  # DIFF-ANCHOR: b7cc06e9
         android:name="org.chromium.android_webview.devui.DeveloperModeState"
         android:enabled="false"
-        android:process=":webview_apk"
-        android:targetActivity="org.chromium.android_webview.devui.MainActivity"
-        android:visibleToInstantApps="true">
+        android:targetActivity="org.chromium.android_webview.devui.MainActivity">
     </activity-alias>  # DIFF-ANCHOR: b7cc06e9
     <meta-data android:name="$PACKAGE.WebViewLibrary" android:value="libmonochrome_64.so"/>
     <meta-data android:name="com.google.android.gms.version" android:value="@integer/google_play_services_version"/>
@@ -182,6 +178,9 @@
       <meta-data android:name="STARTUP_FEATURE_CONFIGURE_PARTITIONED_COOKIES" android:value="true"/>
       <meta-data android:name="STARTUP_FEATURE_SET_DATA_DIRECTORY_SUFFIX" android:value="true"/>
       <meta-data android:name="STARTUP_FEATURE_SET_DIRECTORY_BASE_PATH" android:value="true"/>
+      <meta-data android:name="STARTUP_FEATURE_SET_PROFILES_TO_LOAD" android:value="true"/>
+      <meta-data android:name="STARTUP_FEATURE_SET_UI_THREAD_STARTUP_MODE" android:value="true"/>
+      <meta-data android:name="STARTUP_FEATURE_SET_UI_THREAD_STARTUP_MODE_V2" android:value="true"/>
     </service>  # DIFF-ANCHOR: c52936d7
     <service  # DIFF-ANCHOR: dc926e35
         android:name="org.chromium.android_webview.services.VariationsSeedServer"
@@ -510,7 +509,6 @@
     </service>  # DIFF-ANCHOR: e2f3bbbd
     <uses-library android:name="android.ext.adservices" android:required="false"/>
     <uses-library android:name="androidx.window.extensions" android:required="false"/>
-    <uses-library android:name="com.android.extensions.xr" android:required="false"/>
     <uses-static-library android:name="org.chromium.trichromelibrary" android:certDigest="32a2fc74d731105859e5a85df16d95f102d85b22099b8064c5d8915c61dad1e0" android:version="OFFSET=33"/>
   </application>
 </manifest>

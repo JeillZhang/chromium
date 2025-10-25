@@ -15,15 +15,9 @@
 
 namespace IPC {
 
-class Message;
-
 // Implemented by consumers of a Channel to receive messages.
 class COMPONENT_EXPORT(IPC) Listener {
  public:
-  // Called when a message is received.  Returns true iff the message was
-  // handled.
-  virtual bool OnMessageReceived(const Message& message) = 0;
-
   // Called when the channel is connected and we have received the internal
   // Hello message from the peer.
   virtual void OnChannelConnected(int32_t peer_pid) {}
@@ -33,7 +27,7 @@ class COMPONENT_EXPORT(IPC) Listener {
   virtual void OnChannelError() {}
 
   // Called when a message's deserialization failed.
-  virtual void OnBadMessageReceived(const Message& message) {}
+  virtual void OnBadMessageReceived() {}
 
   // Called when an associated interface request is received on a Channel and
   // the Channel has no registered handler for it.

@@ -8,27 +8,29 @@
 #include <string_view>
 
 #include "base/containers/span.h"
+#include "base/functional/function_ref.h"
 #include "base/observer_list_types.h"
 #include "chrome/browser/ash/browser_delegate/browser_type.h"
 #include "components/webapps/common/web_app_id.h"
 #include "url/gurl.h"
 
-class Browser;
+class AccountId;
+class BrowserWindowInterface;
+
+namespace aura {
+class Window;
+}  // namespace aura
 
 namespace content {
 class WebContents;
 }  // namespace content
-
-namespace user_manager {
-class User;
-}  // namespace user_manager
 
 namespace ash {
 
 class BrowserDelegate;
 
 // BrowserController is a singleton created by
-// ChromeBrowserMainExtraPartsAsh::PostProfileInit. See also README.md.
+// ChromeBrowserMainPartsAsh::PostProfileInit. See also README.md.
 class BrowserController {
  public:
   // See AddObserver below.
@@ -39,6 +41,13 @@ class BrowserController {
     // of the browser (the instance still exists but we shouldn't allow
     // arbitrary operations).
     virtual void OnLastBrowserClosed() {}
+
+    // Called when a browser is created.
+    // Note: When invoking BrowserController::ForEachBrowser in
+    // OnBrowserCreated, the new browser will show up for
+    // kAscendingCreationTime but not yet for kAscendingActivationTime.
+    // TODO(crbug.com/369688254): Revisit this behavior.
+    virtual void OnBrowserCreated(BrowserDelegate* browser) {}
   };
 
   // See CreateWebApp below.
@@ -51,14 +60,28 @@ class BrowserController {
     int32_t restore_id;
   };
 
+  // See ForEachBrowser below.
+  enum class BrowserOrder {
+    kAscendingCreationTime,
+    kAscendingActivationTime,
+  };
+  using enum BrowserOrder;
+
+  // See ForEachBrowser below.
+  enum class IterationDirective {
+    kContinueIteration,
+    kBreakIteration,
+  };
+  using enum IterationDirective;
+
   static BrowserController* GetInstance();
 
   // Returns the corresponding delegate, possibly creating it first.
   // Returns nullptr for a nullptr input.
   // NOTE: This function is here only temporarily to facilitate transitioning
-  // code from Browser to BrowserDelegate incrementally. See also
+  // code from BrowserWindowInterface to BrowserDelegate incrementally. See also
   // BrowserDelegate::GetBrowser.
-  virtual BrowserDelegate* GetDelegate(Browser* browser) = 0;
+  virtual BrowserDelegate* GetDelegate(BrowserWindowInterface* bwi) = 0;
 
   // Returns (the delegate for) the most recently used browser that still
   // exists. Returns nullptr if there's none.
@@ -72,12 +95,23 @@ class BrowserController {
   // currently visible and on-the-record. Returns nullptr if there's none.
   virtual BrowserDelegate* GetLastUsedVisibleOnTheRecordBrowser() = 0;
 
+  // Iterates over (the delegates for) the currently existing browsers in the
+  // given order, invoking the callback for each. The callback can terminate the
+  // iteration early by returning kBreakIteration.
+  virtual void ForEachBrowser(
+      BrowserOrder order,
+      base::FunctionRef<IterationDirective(BrowserDelegate&)> callback) = 0;
+
+  // Returns (the delegate for) the browser associated with the given native
+  // window, if any. This can be nullptr when the browser is shutting down.
+  virtual BrowserDelegate* GetBrowserForWindow(aura::Window* window) = 0;
+
   // Returns (the delegate for) the most recently activated web app browser
   // that matches the given parameters. Returns nullptr if there's none.
   // Url matching is done ignoring any references, and only if `url` is not
   // empty.
   // The `browser_type` must be kApp or kAppPopup.
-  virtual BrowserDelegate* FindWebApp(const user_manager::User& user,
+  virtual BrowserDelegate* FindWebApp(const AccountId& account_id,
                                       webapps::AppId app_id,
                                       BrowserType browser_type,
                                       const GURL& url = GURL()) = 0;
@@ -87,7 +121,7 @@ class BrowserController {
   // is not possible for the given arguments.
   // This is needed by the Media app.
   virtual BrowserDelegate* NewTabWithPostData(
-      const user_manager::User& user,
+      const AccountId& account_id,
       const GURL& url,
       base::span<const uint8_t> post_data,
       std::string_view extra_headers) = 0;
@@ -97,7 +131,7 @@ class BrowserController {
   // home tab is added if that feature is supported and a URL is registered for
   // the app.
   // Returns nullptr if the creation is not possible for the given arguments.
-  virtual BrowserDelegate* CreateWebApp(const user_manager::User& user,
+  virtual BrowserDelegate* CreateWebApp(const AccountId& account_id,
                                         webapps::AppId app_id,
                                         BrowserType browser_type,
                                         const CreateParams& params) = 0;
@@ -107,12 +141,16 @@ class BrowserController {
   // ARC. It's based on the Browser::TYPE_CUSTOM_TAB type that only exists on
   // ChromeOS. Consider getting rid of this special type.
   virtual BrowserDelegate* CreateCustomTab(
-      const user_manager::User& user,
+      const AccountId& account_id,
       std::unique_ptr<content::WebContents> contents) = 0;
 
   // Facilitates observation of browser events.
   virtual void AddObserver(Observer* observer) = 0;
   virtual void RemoveObserver(Observer* observer) = 0;
+
+  // Encapsulates the creation of AutofillClient instances.
+  virtual void CreateAutofillClientForWebContents(
+      content::WebContents* web_contents) = 0;
 
  protected:
   BrowserController();

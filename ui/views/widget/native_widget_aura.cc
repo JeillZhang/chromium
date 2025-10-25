@@ -14,6 +14,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/memory/raw_ptr.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/task/single_thread_task_runner.h"
@@ -46,6 +47,7 @@
 #include "ui/events/event.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/insets.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/native_theme/native_theme_aura.h"
 #include "ui/views/buildflags.h"
 #include "ui/views/drag_utils.h"
@@ -241,8 +243,8 @@ void NativeWidgetAura::InitNativeWidget(Widget::InitParams params) {
   RegisterNativeWidgetForWindow(this, window_);
   window_->SetType(GetAuraWindowTypeForWidgetType(params.type));
   if (params.rounded_corners) {
-    window_->SetProperty(aura::client::kWindowCornerRadiusKey,
-                         params.rounded_corners->upper_left());
+    window_->SetProperty(aura::client::kWindowRoundedCornersKey,
+                         params.rounded_corners.value());
   }
   window_->SetProperty(aura::client::kShowStateKey, params.show_state);
 
@@ -318,7 +320,7 @@ void NativeWidgetAura::InitNativeWidget(Widget::InitParams params) {
       // If a parent or context is specified but no bounds are given, use the
       // origin of the display so that the widget will be added to the same
       // display as the parent or context.
-      gfx::Rect bounds = display::Screen::GetScreen()
+      gfx::Rect bounds = display::Screen::Get()
                              ->GetDisplayNearestWindow(parent_or_context)
                              .bounds();
       window_bounds.set_origin(bounds.origin());
@@ -382,8 +384,7 @@ void NativeWidgetAura::ReparentNativeViewImpl(gfx::NativeView new_parent) {
   ReparentAuraWindow(GetNativeView(), new_parent);
 }
 
-std::unique_ptr<NonClientFrameView>
-NativeWidgetAura::CreateNonClientFrameView() {
+std::unique_ptr<FrameView> NativeWidgetAura::CreateFrameView() {
   return nullptr;
 }
 
@@ -488,9 +489,8 @@ void NativeWidgetAura::CenterWindow(const gfx::Size& size) {
   // When centering window, we take the intersection of the host and
   // the parent. We assume the root window represents the visible
   // rect of a single screen.
-  gfx::Rect work_area = display::Screen::GetScreen()
-                            ->GetDisplayNearestWindow(window_)
-                            .work_area();
+  gfx::Rect work_area =
+      display::Screen::Get()->GetDisplayNearestWindow(window_).work_area();
 
   aura::client::ScreenPositionClient* screen_position_client =
       aura::client::GetScreenPositionClient(window_->GetRootWindow());
@@ -570,12 +570,10 @@ void NativeWidgetAura::InitModalType(ui::mojom::ModalType modal_type) {
   }
 }
 
-void NativeWidgetAura::OnWidgetThemeChanged(
-    ui::ColorProviderKey::ColorMode color_mode,
-    std::optional<SkColor> background_color) {
+void NativeWidgetAura::SetBackgroundColor(SkColor background_color) {
   // Intentional no-op.
-  // The window frame is drawn by views. The OS does not need to know about
-  // which color mode the window is using.
+  // The window is drawn by views. The OS does not need to know about what
+  // background color the window is using.
 }
 
 gfx::Rect NativeWidgetAura::GetWindowBoundsInScreen() const {
@@ -624,7 +622,12 @@ gfx::Rect NativeWidgetAura::GetRestoredBounds() const {
 }
 
 std::string NativeWidgetAura::GetWorkspace() const {
-  int desk_index = window_->GetProperty(aura::client::kWindowWorkspaceKey);
+  if (!window_) {
+    return std::string();
+  }
+
+  const int desk_index =
+      window_->GetProperty(aura::client::kWindowWorkspaceKey);
   if (desk_index == aura::client::kWindowWorkspaceUnassignedWorkspace ||
       desk_index == aura::client::kWindowWorkspaceVisibleOnAllWorkspaces) {
     return std::string();
@@ -643,7 +646,7 @@ void NativeWidgetAura::SetBounds(const gfx::Rect& bounds) {
 void NativeWidgetAura::SetBoundsInternal(const gfx::Rect& bounds,
                                          std::optional<int64_t> display_id) {
   display::Display dst_display;
-  auto* screen = display::Screen::GetScreen();
+  auto* screen = display::Screen::Get();
   // TODO(crbug.com/40281188): Call SetBoundsInScreen directly.
   if (!display_id ||
       !screen->GetDisplayWithDisplayId(display_id.value(), &dst_display)) {
@@ -995,9 +998,7 @@ gfx::Rect NativeWidgetAura::GetWorkAreaBoundsInScreen() const {
   if (!window_) {
     return gfx::Rect();
   }
-  return display::Screen::GetScreen()
-      ->GetDisplayNearestWindow(window_)
-      .work_area();
+  return display::Screen::Get()->GetDisplayNearestWindow(window_).work_area();
 }
 
 Widget::MoveLoopResult NativeWidgetAura::RunMoveLoop(
@@ -1448,12 +1449,11 @@ namespace {
 #if BUILDFLAG(ENABLE_DESKTOP_AURA) && (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_OZONE))
 void CloseWindow(aura::Window* window) {
   if (window) {
-    Widget* widget = Widget::GetWidgetForNativeView(window);
-    if (widget && widget->is_secondary_widget()) {
-      // To avoid the delay in shutdown caused by using Close which may wait
-      // for animations, use CloseNow. Because this is only used on secondary
-      // widgets it seems relatively safe to skip the extra processing of
-      // Close.
+    if (Widget* widget = Widget::GetWidgetForNativeView(window)) {
+      // To avoid the delay in shutdown caused by using Close() which may wait
+      // for animations, use CloseNow(). Because this is only called during
+      // application exit and NativeWidgets have lifetimes decoupled from their
+      // associated Widget it is safe to call CloseNow() here.
       widget->CloseNow();
     }
   }
@@ -1471,7 +1471,7 @@ BOOL CALLBACK WindowCallbackProc(HWND hwnd, LPARAM lParam) {
 }  // namespace
 
 // static
-void Widget::CloseAllSecondaryWidgets() {
+void Widget::CloseAllWidgets() {
 #if BUILDFLAG(IS_WIN)
   EnumThreadWindows(GetCurrentThreadId(), WindowCallbackProc, 0);
 #endif
@@ -1552,6 +1552,17 @@ Widget::Widgets NativeWidgetPrivate::GetAllOwnedWidgets(
     }
     owned.merge(GetAllOwnedWidgets(transient_child));
   }
+
+#if BUILDFLAG(ENABLE_DESKTOP_AURA)
+  // If the aura::Window is a desktop widget, fetch any additional widgets
+  // with an ownership relationship established at the platform-window level.
+  NativeWidgetPrivate* native_widget =
+      GetNativeWidgetForNativeView(native_view);
+  if (native_widget && native_widget->IsDesktopNativeWidget()) {
+    owned.merge(static_cast<DesktopNativeWidgetAura*>(native_widget)
+                    ->GetOwnedDesktopWidgets());
+  }
+#endif  // BUILDFLAG(ENABLE_DESKTOP_AURA)
 
   // Add all child windows.
   for (aura::Window* child : native_view->children()) {

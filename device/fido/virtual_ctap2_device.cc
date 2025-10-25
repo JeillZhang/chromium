@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "device/fido/virtual_ctap2_device.h"
 
 #include <algorithm>
@@ -16,6 +11,7 @@
 #include <string>
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/containers/contains.h"
 #include "base/containers/span.h"
 #include "base/functional/bind.h"
@@ -28,9 +24,9 @@
 #include "components/apdu/apdu_response.h"
 #include "components/cbor/reader.h"
 #include "components/cbor/writer.h"
-#include "crypto/ec_private_key.h"
 #include "crypto/hash.h"
-#include "crypto/sha2.h"
+#include "crypto/keypair.h"
+#include "crypto/sign.h"
 #include "device/fido/authenticator_get_assertion_response.h"
 #include "device/fido/authenticator_make_credential_response.h"
 #include "device/fido/authenticator_supported_options.h"
@@ -792,9 +788,11 @@ FidoDevice::CancelToken VirtualCtap2Device::DeviceTransact(
 
   const CtapRequestCommand ctap_command =
       static_cast<CtapRequestCommand>(cmd_type);
-  if (config_.override_response_map.contains(ctap_command)) {
-    ReturnCtap2Response(std::move(cb),
-                        config_.override_response_map.at(ctap_command), {});
+  const auto override_response_it =
+      config_.override_response_map.find(ctap_command);
+  if (override_response_it != config_.override_response_map.end()) {
+    ReturnCtap2Response(std::move(cb), override_response_it->second.first,
+                        override_response_it->second.second);
     return 0;
   }
 
@@ -850,9 +848,16 @@ FidoDevice::CancelToken VirtualCtap2Device::DeviceTransact(
       response_code = OnCredentialManagement(request_bytes, &response_data);
       break;
     case CtapRequestCommand::kAuthenticatorBioEnrollment:
-    case CtapRequestCommand::kAuthenticatorBioEnrollmentPreview:
-      response_code = OnBioEnrollment(request_bytes, &response_data);
+    case CtapRequestCommand::kAuthenticatorBioEnrollmentPreview: {
+      std::optional<CtapDeviceResponseCode> maybe_response_code =
+          OnBioEnrollment(request_bytes, &response_data);
+      if (!maybe_response_code) {
+        // Simulate timeout due to unresponded user tap.
+        return 0;
+      }
+      response_code = *maybe_response_code;
       break;
+    }
     case CtapRequestCommand::kAuthenticatorSelection:
       DCHECK(SupportsAtLeast(Ctap2Version::kCtap2_1));
       if (!SimulatePress()) {
@@ -902,8 +907,7 @@ std::optional<CtapDeviceResponseCode> VirtualCtap2Device::CheckUserVerification(
   if (mutable_state()->pin_uv_token_rpid &&
       rp_id != mutable_state()->pin_uv_token_rpid) {
     // Invalidate the PIN token.
-    memset(mutable_state()->pin_token, 0xff,
-           sizeof(mutable_state()->pin_token));
+    std::ranges::fill(mutable_state()->pin_token, 0xff);
     mutable_state()->pin_uv_token_permissions = 0;
     mutable_state()->pin_uv_token_rpid.reset();
   }
@@ -1203,7 +1207,7 @@ std::optional<CtapDeviceResponseCode> VirtualCtap2Device::OnMakeCredential(
   }
 
   // Our key handles are simple hashes of the public key.
-  const auto key_handle = crypto::SHA256Hash(public_key->cose_key_bytes);
+  const auto key_handle = crypto::hash::Sha256(public_key->cose_key_bytes);
 
   std::optional<cbor::Value> extensions;
   cbor::Value::MapValue extensions_map;
@@ -1299,7 +1303,7 @@ std::optional<CtapDeviceResponseCode> VirtualCtap2Device::OnMakeCredential(
 
   AuthenticatorData authenticator_data(
       rp_id_hash, !mutable_state()->unset_up_bit,
-      mutable_state()->unset_uv_bit ? false : user_verified,
+      user_verified && !mutable_state()->unset_uv_bit,
       mutable_state()->default_backup_eligibility,
       mutable_state()->default_backup_state,
       /*sign_counter=*/01ul,
@@ -1314,14 +1318,14 @@ std::optional<CtapDeviceResponseCode> VirtualCtap2Device::OnMakeCredential(
   // deterministic behavior.
   std::vector<uint8_t> sig;
   if (!config_.none_attestation) {
-    std::unique_ptr<crypto::ECPrivateKey> attestation_private_key =
-        crypto::ECPrivateKey::CreateFromPrivateKeyInfo(GetAttestationKey());
+    auto key =
+        crypto::keypair::PrivateKey::FromPrivateKeyInfo(GetAttestationKey());
+    CHECK(key && key->IsEc());
     if (mutable_state()->ctap2_invalid_signature) {
       sig = {0x00};
     } else {
-      bool status =
-          Sign(attestation_private_key.get(), std::move(sign_buffer), &sig);
-      DCHECK(status);
+      sig = crypto::sign::Sign(crypto::sign::SignatureKind::ECDSA_SHA256, *key,
+                               sign_buffer);
     }
   }
 
@@ -1618,11 +1622,12 @@ std::optional<CtapDeviceResponseCode> VirtualCtap2Device::OnGetAssertion(
     }
 
     hmac_salt1.emplace();
-    memcpy(hmac_salt1->data(), salts.data(), hmac_salt1->size());
+    base::span(*hmac_salt1)
+        .copy_from(base::span(salts).first(hmac_salt1->size()));
     if (salts.size() == 64) {
       hmac_salt2.emplace();
-      memcpy(hmac_salt2->data(), salts.data() + hmac_salt1->size(),
-             hmac_salt2->size());
+      base::span(*hmac_salt2)
+          .copy_from(base::span(salts).subspan(hmac_salt1->size()));
     }
 
     hmac_shared_key = std::move(shared_key);
@@ -1682,8 +1687,8 @@ std::optional<CtapDeviceResponseCode> VirtualCtap2Device::OnGetAssertion(
 
     AuthenticatorData authenticator_data(
         rp_id_hash,
-        mutable_state()->unset_up_bit ? false : request.user_presence_required,
-        mutable_state()->unset_uv_bit ? false : user_verified,
+        request.user_presence_required && !mutable_state()->unset_up_bit,
+        user_verified && !mutable_state()->unset_uv_bit,
         registration.second->backup_eligible, registration.second->backup_state,
         registration.second->counter, std::move(opt_attested_cred_data),
         std::move(extensions));
@@ -2370,7 +2375,9 @@ CtapDeviceResponseCode VirtualCtap2Device::OnCredentialManagement(
   NOTREACHED();
 }
 
-CtapDeviceResponseCode VirtualCtap2Device::OnBioEnrollment(
+// Returns std::nullopt if the request should be left hanging due to a simulate
+// user not tapping the security key sensor.
+std::optional<CtapDeviceResponseCode> VirtualCtap2Device::OnBioEnrollment(
     base::span<const uint8_t> request_bytes,
     std::vector<uint8_t>* response) {
   request_state_.Reset();
@@ -2480,6 +2487,9 @@ CtapDeviceResponseCode VirtualCtap2Device::OnBioEnrollment(
           config_.bio_enrollment_capacity) {
         return CtapDeviceResponseCode::kCtap2ErrFpDatabaseFull;
       }
+      if (!SimulatePress()) {
+        return std::nullopt;
+      }
       mutable_state()->bio_current_template_id = 0;
       while (mutable_state()->bio_templates.find(
                  ++(*mutable_state()->bio_current_template_id)) !=
@@ -2503,6 +2513,9 @@ CtapDeviceResponseCode VirtualCtap2Device::OnBioEnrollment(
       if (!mutable_state()->bio_current_template_id ||
           mutable_state()->bio_current_template_id != *template_id) {
         NOTREACHED() << "Invalid current enrollment or template id parameter.";
+      }
+      if (!SimulatePress()) {
+        return std::nullopt;
       }
       if (mutable_state()->bio_enrollment_next_sample_error) {
         response_map.emplace(
@@ -2719,8 +2732,7 @@ CtapDeviceResponseCode VirtualCtap2Device::OnLargeBlobs(
       auto offset_vec = base::U32ToLittleEndian(offset);
       pinauth_bytes.insert(pinauth_bytes.end(), offset_vec.begin(),
                            offset_vec.end());
-      std::array<uint8_t, crypto::kSHA256Length> set_hash =
-          crypto::SHA256Hash(set);
+      auto set_hash = crypto::hash::Sha256(set);
       pinauth_bytes.insert(pinauth_bytes.end(), set_hash.begin(),
                            set_hash.end());
       CtapDeviceResponseCode pin_status = VerifyPINUVAuthToken(
@@ -2840,7 +2852,8 @@ CtapDeviceResponseCode VirtualCtap2Device::OnAuthenticatorGetInfo(
 AttestedCredentialData VirtualCtap2Device::ConstructAttestedCredentialData(
     base::span<const uint8_t> key_handle,
     std::unique_ptr<PublicKey> public_key) {
-  constexpr std::array<uint8_t, 2> sha256_length = {0, crypto::kSHA256Length};
+  constexpr std::array<uint8_t, 2> sha256_length = {0,
+                                                    crypto::hash::kSha256Size};
   constexpr std::array<uint8_t, 16> kZeroAaguid = {0, 0, 0, 0, 0, 0, 0, 0,
                                                    0, 0, 0, 0, 0, 0, 0, 0};
   base::span<const uint8_t, 16> aaguid(kDeviceAaguid);

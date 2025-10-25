@@ -11,6 +11,7 @@
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "base/unguessable_token.h"
@@ -19,6 +20,7 @@
 #include "components/input/render_widget_host_input_event_router.h"
 #include "components/input/render_widget_host_view_input_observer.h"
 #include "components/viz/common/features.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/surfaces/subtree_capture_id.h"
 #include "components/viz/host/host_frame_sink_manager.h"
 #include "content/browser/compositor/surface_utils.h"
@@ -168,7 +170,8 @@ void RenderWidgetHostViewBase::CopyMainAndPopupFromSurface(
     const gfx::Rect& src_subrect,
     const gfx::Size& dst_size,
     float scale_factor,
-    base::OnceCallback<void(const SkBitmap&)> callback) {
+    base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+        callback) {
   if (!main_host || !main_frame_host)
     return;
 
@@ -187,9 +190,10 @@ void RenderWidgetHostViewBase::CopyMainAndPopupFromSurface(
 
   // First locate the popup relative to the main page, in DIPs
   const gfx::Point parent_location =
-      main_host->GetView()->GetBoundsInRootWindow().origin();
+      main_host->GetView()->GetViewBounds().origin();
   const gfx::Point popup_location =
-      popup_host->GetView()->GetBoundsInRootWindow().origin();
+      popup_host->GetView()->GetViewBounds().origin();
+
   const gfx::Point offset_dips =
       PointAtOffsetFromOrigin(popup_location - parent_location);
   const gfx::Vector2d offset_physical =
@@ -206,25 +210,29 @@ void RenderWidgetHostViewBase::CopyMainAndPopupFromSurface(
   //         the just-acquired popup image, and then calls the original
   //         (outer) callback with the combined image.
   auto main_image_done_callback = base::BindOnce(
-      [](base::OnceCallback<void(const SkBitmap&)> final_callback,
+      [](base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+             final_callback,
          const gfx::Vector2d offset,
          base::WeakPtr<DelegatedFrameHost> popup_frame_host,
          const gfx::Rect src_subrect, const gfx::Size dst_size,
-         const SkBitmap& main_image) {
+         const viz::CopyOutputBitmapWithMetadata& main_result) {
         if (!popup_frame_host)
           return;
 
         // Build a new callback that actually combines images.
         auto popup_done_callback = base::BindOnce(
-            [](base::OnceCallback<void(const SkBitmap&)> final_callback,
-               const gfx::Vector2d offset, const SkBitmap& main_image,
-               const SkBitmap& popup_image) {
+            [](base::OnceCallback<void(
+                   const viz::CopyOutputBitmapWithMetadata&)> final_callback,
+               const gfx::Vector2d offset,
+               const viz::CopyOutputBitmapWithMetadata& main_result,
+               const viz::CopyOutputBitmapWithMetadata& popup_result) {
               // Draw popup_image into main_image.
-              SkCanvas canvas(main_image, SkSurfaceProps{});
-              canvas.drawImage(popup_image.asImage(), offset.x(), offset.y());
-              std::move(final_callback).Run(main_image);
+              SkCanvas canvas(main_result.bitmap, SkSurfaceProps{});
+              canvas.drawImage(popup_result.bitmap.asImage(), offset.x(),
+                               offset.y());
+              std::move(final_callback).Run(main_result);
             },
-            std::move(final_callback), offset, std::move(main_image));
+            std::move(final_callback), offset, std::move(main_result));
 
         // Second, request the popup image.
         gfx::Rect popup_subrect(src_subrect - offset);
@@ -243,27 +251,29 @@ void RenderWidgetHostViewBase::CopyMainAndPopupFromSurface(
 void RenderWidgetHostViewBase::CopyFromSurface(
     const gfx::Rect& src_rect,
     const gfx::Size& output_size,
-    base::OnceCallback<void(const SkBitmap&)> callback) {
+    base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+        callback) {
   NOTIMPLEMENTED_LOG_ONCE();
-  std::move(callback).Run(SkBitmap());
+  std::move(callback).Run(viz::CopyOutputBitmapWithMetadata());
 }
 
 void RenderWidgetHostViewBase::CopyFromExactSurface(
     const gfx::Rect& src_rect,
     const gfx::Size& output_size,
-    base::OnceCallback<void(const SkBitmap&)> callback) {
+    base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+        callback) {
   NOTIMPLEMENTED_LOG_ONCE();
-  std::move(callback).Run(SkBitmap());
+  std::move(callback).Run(viz::CopyOutputBitmapWithMetadata());
 }
 
 #if BUILDFLAG(IS_ANDROID)
 void RenderWidgetHostViewBase::CopyFromExactSurfaceWithIpcDelay(
     const gfx::Rect& src_rect,
     const gfx::Size& output_size,
-    base::OnceCallback<void(const SkBitmap&)> callback,
+    base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)> callback,
     base::TimeDelta ipc_delay) {
   NOTIMPLEMENTED_LOG_ONCE();
-  std::move(callback).Run(SkBitmap());
+  std::move(callback).Run(viz::CopyOutputBitmapWithMetadata());
 }
 #endif
 
@@ -477,7 +487,7 @@ void RenderWidgetHostViewBase::UpdateScreenInfo() {
           ->GetPlatformRuntimeProperties()
           .supports_per_window_scaling) {
     const float window_scale =
-        display::Screen::GetScreen()
+        display::Screen::Get()
             ->GetPreferredScaleFactorForView(GetNativeView())
             .value_or(1.0f);
     auto& screen = new_screen_infos.mutable_current();
@@ -722,6 +732,11 @@ gfx::PointF RenderWidgetHostViewBase::TransformPointToRootCoordSpaceF(
   return RenderWidgetHostViewInput::TransformPointToRootCoordSpaceF(point);
 }
 
+gfx::PointF RenderWidgetHostViewBase::TransformRootPointToViewCoordSpace(
+    const gfx::PointF& point) {
+  return RenderWidgetHostViewInput::TransformRootPointToViewCoordSpace(point);
+}
+
 bool RenderWidgetHostViewBase::IsRenderWidgetHostViewChildFrame() const {
   return false;
 }
@@ -808,7 +823,7 @@ display::ScreenInfos RenderWidgetHostViewBase::GetNewScreenInfosForUpdate() {
 
   display::ScreenInfos screen_infos;
 
-  if (auto* screen = display::Screen::GetScreen()) {
+  if (auto* screen = display::Screen::Get()) {
     gfx::NativeView native_view = GetNativeView();
     const auto& display = native_view
                               ? screen->GetDisplayNearestView(native_view)
@@ -872,7 +887,7 @@ void RenderWidgetHostViewBase::OnShowWithPageVisibility(
   const bool web_contents_is_visible =
       page_visibility == PageVisibilityState::kVisible;
 
-  if (host_->is_hidden()) {
+  if (host_->IsHidden()) {
     // If the WebContents is becoming visible, ask the compositor to report the
     // visibility time for metrics. Otherwise the widget is being rendered even
     // though the WebContents is hidden or occluded, for example due to being

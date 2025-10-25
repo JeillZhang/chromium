@@ -22,19 +22,16 @@
 #include "chrome/common/pref_names.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/oauth_consumer_ids.h"
 #include "components/variations/service/variations_service.h"
 #include "components/variations/service/variations_service_utils.h"
-#include "google_apis/gaia/gaia_constants.h"
 #include "net/base/load_flags.h"
-
-const char kAidaEndpointUrl[] =
-    "https://aida.googleapis.com/v1/aida:doConversation";
 
 constexpr auto kLoggingDisallowedCountries =
     base::MakeFixedFlatSet<std::string_view>(
-        {"at", "be", "bg", "ch", "cy", "cz", "de", "dk", "ee", "es", "fi",
-         "fr", "gb", "gr", "hr", "hu", "ie", "is", "it", "li", "lt", "lu",
-         "lv", "mt", "nl", "no", "pl", "pt", "ro", "se", "si", "sk"});
+        {"at", "be", "bg", "cy", "cz", "de", "dk", "ee", "es", "fi", "fr",
+         "gb", "gr", "hr", "hu", "ie", "is", "it", "li", "lt", "lu", "lv",
+         "mt", "nl", "no", "pl", "pt", "ro", "se", "si", "sk"});
 
 constexpr auto kAidaSupportedCountries =
     base::MakeFixedFlatSet<std::string_view>(
@@ -57,10 +54,7 @@ constexpr auto kAidaSupportedCountries =
          "tv", "tw", "tz", "ug", "um", "us", "uy", "uz", "vc", "ve", "vg", "vi",
          "vn", "vu", "wf", "ws", "ye", "za", "zm", "zw"});
 
-AidaClient::AidaClient(Profile* profile)
-    : profile_(*profile),
-      aida_endpoint_(kAidaEndpointUrl),
-      aida_scope_(GaiaConstants::kAidaOAuth2Scope) {}
+AidaClient::AidaClient(Profile* profile) : profile_(*profile) {}
 
 AidaClient::~AidaClient() = default;
 
@@ -151,13 +145,6 @@ AidaClient::ScopedOverride AidaClient::OverrideCountryForTesting(
       base::BindOnce([]() { GetCountryCodeOverride().reset(); }));
 }
 
-void AidaClient::OverrideAidaEndpointAndScopeForTesting(
-    const std::string& aida_endpoint,
-    const std::string& aida_scope) {
-  aida_endpoint_ = aida_endpoint;
-  aida_scope_ = aida_scope;
-}
-
 void AidaClient::RemoveAccessToken() {
   access_token_.clear();
 }
@@ -177,7 +164,7 @@ void AidaClient::PrepareRequestOrFail(
   CoreAccountId account_id =
       identity_manager->GetPrimaryAccountId(signin::ConsentLevel::kSignin);
   access_token_fetcher_ = identity_manager->CreateAccessTokenFetcherForAccount(
-      account_id, "AIDA client", signin::ScopeSet{aida_scope_},
+      account_id, signin::OAuthConsumerId::kDevtoolsAida,
       base::BindOnce(&AidaClient::AccessTokenFetchFinished,
                      base::Unretained(this), std::move(callback)),
       signin::AccessTokenFetcher::Mode::kImmediate);
@@ -206,7 +193,6 @@ void AidaClient::PrepareAidaRequest(
   CHECK(!access_token_.empty());
 
   network::ResourceRequest aida_request;
-  aida_request.url = GURL(aida_endpoint_);
   aida_request.load_flags = net::LOAD_DISABLE_CACHE;
   aida_request.credentials_mode = network::mojom::CredentialsMode::kOmit;
   aida_request.method = "POST";

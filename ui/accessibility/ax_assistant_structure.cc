@@ -50,6 +50,7 @@ bool IsLeaf(const AXNode* node) {
 
   switch (node->GetRole()) {
     case ax::mojom::Role::kImage:
+    case ax::mojom::Role::kMenuItemSeparator:
     case ax::mojom::Role::kMeter:
     case ax::mojom::Role::kScrollBar:
     case ax::mojom::Role::kSlider:
@@ -69,8 +70,9 @@ std::u16string GetInnerText(const AXNode* node) {
     return node->GetString16Attribute(ax::mojom::StringAttribute::kName);
   }
   std::u16string text;
-  for (auto iter = node->UnignoredChildrenBegin();
-       iter != node->UnignoredChildrenEnd(); ++iter) {
+  for (auto iter = node->UnignoredChildrenBegin(),
+            end = node->UnignoredChildrenEnd();
+       iter != end; ++iter) {
     text += GetInnerText(iter.get());
   }
   return text;
@@ -152,8 +154,9 @@ std::u16string GetText(const AXNode* node) {
   }
 
   if (text.empty() && IsLeaf(node)) {
-    for (auto iter = node->UnignoredChildrenBegin();
-         iter != node->UnignoredChildrenEnd(); ++iter) {
+    for (auto iter = node->UnignoredChildrenBegin(),
+              end = node->UnignoredChildrenEnd();
+         iter != end; ++iter) {
       text += GetInnerText(iter.get());
     }
   }
@@ -326,8 +329,9 @@ void WalkAXTreeDepthFirst(const AXNode* node,
   if (!class_name.empty())
     result->html_attributes.emplace_back("class", class_name);
 
-  for (auto iter = node->UnignoredChildrenBegin();
-       iter != node->UnignoredChildrenEnd(); ++iter) {
+  for (auto iter = node->UnignoredChildrenBegin(),
+            end = node->UnignoredChildrenEnd();
+       iter != end; ++iter) {
     auto* n = AddChild(assistant_tree);
     result->children_indices.push_back(assistant_tree->nodes.size() - 1);
     WalkAXTreeDepthFirst(iter.get(), absolute_clipped_rect,
@@ -413,6 +417,7 @@ const char* AXRoleToAndroidClassName(ax::mojom::Role role, bool has_parent) {
     case ax::mojom::Role::kRadioGroup:
       return kAXRadioGroupClassname;
     case ax::mojom::Role::kSwitch:
+      return kAXSwitchClassname;
     case ax::mojom::Role::kToggleButton:
       return kAXToggleButtonClassname;
     case ax::mojom::Role::kCanvas:
@@ -432,8 +437,9 @@ const char* AXRoleToAndroidClassName(ax::mojom::Role role, bool has_parent) {
     case ax::mojom::Role::kListBox:
     case ax::mojom::Role::kDescriptionList:
       return kAXListViewClassname;
+    // An Android dialog is just a generic window, so both `kDialog` and
+    // `kAlertDialog` Chrome roles are mapped to Android's `kAXAlertDialog`.
     case ax::mojom::Role::kDialog:
-      return kAXDialogClassname;
     case ax::mojom::Role::kAlertDialog:
       return kAXAlertDialogClassname;
     case ax::mojom::Role::kRootWebArea:

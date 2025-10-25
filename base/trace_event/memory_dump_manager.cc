@@ -26,6 +26,7 @@
 #include "base/trace_event/heap_profiler_allocation_context_tracker.h"
 #include "base/trace_event/malloc_dump_provider.h"
 #include "base/trace_event/memory_dump_provider.h"
+#include "base/trace_event/memory_dump_request_args.h"
 #include "base/trace_event/memory_dump_scheduler.h"
 #include "base/trace_event/memory_infra_background_allowlist.h"
 #include "base/trace_event/process_memory_dump.h"
@@ -313,16 +314,6 @@ void MemoryDumpManager::CreateProcessDump(const MemoryDumpRequestArgs& args,
                                     TRACE_ID_LOCAL(args.dump_guid), "dump_guid",
                                     TRACE_STR_COPY(guid_str));
 
-  // If argument filter is enabled then only background mode dumps should be
-  // allowed. In case the trace config passed for background tracing session
-  // missed the allowed modes argument, it crashes here instead of creating
-  // unexpected dumps.
-  if (TraceLog::GetInstance()
-          ->GetCurrentTraceConfig()
-          .IsArgumentFilterEnabled()) {
-    CHECK_EQ(MemoryDumpLevelOfDetail::kBackground, args.level_of_detail);
-  }
-
   std::unique_ptr<ProcessMemoryDumpAsyncState> pmd_async_state;
   {
     AutoLock lock(lock_);
@@ -489,7 +480,7 @@ void MemoryDumpManager::FinishAsyncProcessDump(
 
   if (!pmd_async_state->callback.is_null()) {
     std::move(pmd_async_state->callback)
-        .Run(true /* success */, dump_guid,
+        .Run(ProcessMemoryDumpOutcome::kSuccess, dump_guid,
              std::move(pmd_async_state->process_memory_dump));
   }
 

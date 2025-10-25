@@ -51,7 +51,7 @@
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/chromeos/policy/dlp/dlp_content_manager.h"
@@ -74,16 +74,13 @@ using content::WebContents;
 // TabSharingInfoBar.
 // This flag only has an effect if:
 // - the TabCaptureInfobarLinks feature is enabled.
-BASE_FEATURE(kTabSharingBarOmitHttpAndHttps,
-             "TabSharingBarOmitHttpAndHttps",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kTabSharingBarOmitHttpAndHttps, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Omit cryptographic url-schemes for the shared tab in the TabSharingInfoBar.
 // This flag only has an effect if:
 // - the TabCaptureInfobarLinks feature is enabled, and
 // - the TabSharingBarOmitHttpAndHttps feature is disabled.
 BASE_FEATURE(kTabSharingBarOmitCryptographic,
-             "TabSharingBarOmitCryptographic",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -139,16 +136,6 @@ url::Origin GetOriginFromId(GlobalRenderFrameHostId rfh_id) {
   return rfh->GetLastCommittedOrigin();
 }
 
-bool CapturerRestrictedToSameOrigin(GlobalRenderFrameHostId capturer_id) {
-  WebContents* capturer = WebContentsFromId(capturer_id);
-  if (!capturer) {
-    return false;
-  }
-  return capture_policy::GetAllowedCaptureLevel(
-             GetOriginFromId(capturer_id).GetURL(), capturer) ==
-         AllowedScreenCaptureLevel::kSameOrigin;
-}
-
 TabRole GetTabRole(bool is_capturing_tab, bool is_captured_tab) {
   if (is_capturing_tab && is_captured_tab) {
     return TabRole::kSelfCapturingTab;
@@ -192,7 +179,8 @@ TabSharingUIViews::TabSharingUIViews(
       can_focus_capturer_(GetOriginFromId(capturer).scheme() !=
                           extensions::kExtensionScheme),
       capturer_restricted_to_same_origin_(
-          CapturerRestrictedToSameOrigin(capturer)),
+          capture_policy::CapturerRestrictedToSameOrigin(
+              WebContentsFromId(capturer))),
       shared_tab_media_id_(media_id),
       capturer_name_(std::move(capturer_name)),
       shared_tab_(WebContents::FromRenderFrameHost(RenderFrameHost::FromID(
@@ -201,20 +189,12 @@ TabSharingUIViews::TabSharingUIViews(
       shared_tab_scheme_display_(GetSharedTabSchemeDisplay()),
       app_preferred_current_tab_(app_preferred_current_tab),
       capture_type_(capture_type),
-      captured_surface_control_active_(captured_surface_control_active) {
+      captured_surface_control_active_(captured_surface_control_active),
+      uma_logger_(content::DesktopMediaID::Type::TYPE_WEB_CONTENTS) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   Observe(shared_tab_);
   shared_tab_name_ = GetSharedTabName(shared_tab_, shared_tab_scheme_display_);
-
-  if (capturer_restricted_to_same_origin_) {
-    // base::Unretained is safe here because we own the origin observer, so it
-    // cannot outlive us.
-    shared_tab_origin_observer_ = std::make_unique<SameOriginObserver>(
-        shared_tab_, capturer_origin_,
-        base::BindRepeating(&TabSharingUIViews::StopCaptureDueToPolicy,
-                            base::Unretained(this)));
-  }
 
   WebContents* const capturer_wc = WebContentsFromId(capturer_);
   if (capturer_wc) {
@@ -301,6 +281,10 @@ void TabSharingUIViews::StopSharing() {
   shared_tab_ = nullptr;
 }
 
+ScreensharingControlsHistogramLogger& TabSharingUIViews::GetUmaLogger() {
+  return uma_logger_;
+}
+
 void TabSharingUIViews::OnBrowserAdded(Browser* browser) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   CHECK(browser);
@@ -367,9 +351,10 @@ void TabSharingUIViews::OnInfoBarRemoved(infobars::InfoBar* infobar,
   }
 
   infobar->owner()->RemoveObserver(this);
+
+  content::WebContents* content_for_removed_infobar = infobars_entry->first;
   infobars_.erase(infobars_entry);
-  if (infobars::ContentInfoBarManager::WebContentsFromInfoBar(infobar) ==
-      shared_tab_) {
+  if (content_for_removed_infobar == shared_tab_) {
     StopSharing();
   }
 }
@@ -563,23 +548,18 @@ void TabSharingUIViews::CreateTabCaptureIndicator() {
       content::MediaStreamUI::StateChangeCallback());
 }
 
-void TabSharingUIViews::StopCaptureDueToPolicy(content::WebContents* contents) {
-  DCHECK(shared_tab_ == contents);
-  StopSharing();
-  // We use |contents| rather than |shared_tab_| here because |shared_tab_| is
-  // cleared by the call to StopSharing().
-  capture_policy::ShowCaptureTerminatedDialog(contents);
-}
-
 void TabSharingUIViews::UpdateTabCaptureData(WebContents* contents,
                                              TabCaptureUpdate update) {
   if (!contents) {
     return;
   }
 
-  TabCaptureContentsBorderHelper::CreateForWebContents(contents);
   auto* const helper =
       TabCaptureContentsBorderHelper::FromWebContents(contents);
+
+  if (!helper) {
+    return;
+  }
 
   switch (update) {
     case TabCaptureUpdate::kCaptureAdded:

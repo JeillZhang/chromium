@@ -10,6 +10,7 @@
 #include <optional>
 #include <vector>
 
+#include "base/callback_list.h"
 #include "base/functional/callback.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/web_applications/web_app_install_utils.h"
@@ -21,6 +22,7 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "mojo/public/cpp/bindings/associated_remote.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-forward.h"
+#include "third_party/blink/public/mojom/manifest/manifest_manager.mojom-forward.h"
 
 namespace content {
 class WebContents;
@@ -55,6 +57,10 @@ class WebAppDataRetriever : content::WebContentsObserver {
       base::OnceCallback<void(blink::mojom::ManifestPtr opt_manifest,
                               bool valid_manifest_for_web_app,
                               webapps::InstallableStatusCode)>;
+  using GetManifestOnceCallbackList = base::OnceCallbackList<void(
+      const base::expected<blink::mojom::ManifestPtr,
+                           blink::mojom::RequestManifestErrorPtr>&
+          manifest_result)>;
 
   using GetIconsCallback = WebAppIconDownloader::WebAppIconDownloaderCallback;
 
@@ -81,11 +87,21 @@ class WebAppDataRetriever : content::WebContentsObserver {
       CheckInstallabilityCallback callback,
       std::optional<webapps::InstallableParams> params = std::nullopt);
 
-  // Downloads icons from |icon_urls|. Runs |callback| with a map of
-  // the retrieved icons.
+  // Gets the first manifest specified by the developer on the primary page of
+  // this web contents. This will continue to execute even if the page becomes
+  // not primary, so the caller must handle any edge cases with primary page
+  // changes in the web contents.
+  virtual base::CallbackListSubscription GetPrimaryPageFirstSpecifiedManifest(
+      content::WebContents& web_contents,
+      GetManifestOnceCallbackList::CallbackType callback);
+
+  // Downloads icons specified in `icon_urls` and, if `download_page_favicons`
+  // is true, the page's favicons. Runs `callback` with the icon data,
+  // which includes the url for each icon and http results for each url
+  // fetched.
   virtual void GetIcons(content::WebContents* web_contents,
-                        const IconUrlSizeSet& extra_favicon_urls,
-                        bool skip_page_favicons,
+                        const IconUrlSizeSet& icon_urls,
+                        bool download_page_favicons,
                         bool fail_all_if_any_fail,
                         GetIconsCallback callback);
 

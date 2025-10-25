@@ -42,16 +42,16 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_item_utils.h"
+#include "content/public/common/buildflags.h"
 #include "extensions/buildflags/buildflags.h"
 #include "extensions/common/constants.h"
 #include "net/base/filename_util.h"
 #include "net/http/http_content_disposition.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "third_party/blink/public/common/mime_util/mime_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/origin.h"
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
 #include "chrome/browser/extensions/webstore_installer.h"
 #include "extensions/common/feature_switch.h"
 #endif
@@ -500,10 +500,13 @@ void DownloadTargetDeterminer::ReserveVirtualPathDone(
         return;
       case download::PathValidationResult::SUCCESS:
       case download::PathValidationResult::SUCCESS_RESOLVED_CONFLICT:
-      case download::PathValidationResult::SAME_AS_SOURCE:
         DCHECK(virtual_path_ == path ||
                conflict_action_ == DownloadPathReservationTracker::UNIQUIFY);
         break;
+      case download::PathValidationResult::SAME_AS_SOURCE:
+        ScheduleCallbackAndDeleteSelf(
+            download::DOWNLOAD_INTERRUPT_REASON_FILE_SAME_AS_SOURCE);
+        return;
       case download::PathValidationResult::COUNT:
         NOTREACHED();
     }
@@ -512,8 +515,12 @@ void DownloadTargetDeterminer::ReserveVirtualPathDone(
 
     switch (result) {
       case download::PathValidationResult::SUCCESS:
-      case download::PathValidationResult::SAME_AS_SOURCE:
         break;
+
+      case download::PathValidationResult::SAME_AS_SOURCE:
+        ScheduleCallbackAndDeleteSelf(
+            download::DOWNLOAD_INTERRUPT_REASON_FILE_SAME_AS_SOURCE);
+        return;
 
       // TODO(crbug.com/40863725): This should trigger a duplicate download
       // prompt.
@@ -1235,8 +1242,8 @@ DownloadConfirmationReason DownloadTargetDeterminer::NeedsConfirmation(
       DownloadItem::TARGET_DISPOSITION_PROMPT)
     return DownloadConfirmationReason::SAVE_AS;
 
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  // Don't prompt for extension downloads if the installation site is white
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+  // Don't prompt for extension downloads if the installation site is allow
   // listed.
   if (download_crx_util::IsTrustedExtensionDownload(GetProfile(), *download_))
     return DownloadConfirmationReason::NONE;

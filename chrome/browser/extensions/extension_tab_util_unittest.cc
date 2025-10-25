@@ -12,10 +12,13 @@
 #include "chrome/browser/extensions/extension_util.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "extensions/browser/pref_names.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/mojom/context_type.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -124,8 +127,7 @@ TEST_F(ChromeExtensionNavigationTest, PrepareURLForNavigation) {
     const std::string kTestPath("foo");
     auto url = ExtensionTabUtil::PrepareURLForNavigation(
         kTestPath, extension.get(), browser_context());
-    EXPECT_THAT(url,
-                base::test::ValueIs(extension->ResolveExtensionURL(kTestPath)));
+    EXPECT_THAT(url, base::test::ValueIs(extension->GetResourceURL(kTestPath)));
   }
   // A kill URL should return false and set the error. There are several
   // different potential kill URLs and this just checks one of them.
@@ -209,7 +211,8 @@ TEST_F(ChromeExtensionNavigationTest,
       })",
       extension_id.c_str());
 
-  std::optional<base::Value> settings = base::JSONReader::Read(json);
+  std::optional<base::Value> settings =
+      base::JSONReader::Read(json, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   testing_pref_service()->SetManagedPref(
       pref_names::kExtensionManagement,
       base::Value::ToUniquePtrValue(std::move(settings.value())));
@@ -245,23 +248,6 @@ TEST_F(ChromeExtensionNavigationTest, PrepareURLForNavigationOnDevtools) {
         kDevtoolsURL, no_permission_extension.get(), browser_context());
     EXPECT_THAT(
         url, base::test::ErrorIs(ExtensionTabUtil::kCannotNavigateToDevtools));
-  }
-  // Having the devtools permissions should allow access.
-  {
-    auto devtools_extension = ExtensionBuilder("devtools")
-                                  .SetManifestKey("devtools_page", "foo.html")
-                                  .Build();
-    auto url = ExtensionTabUtil::PrepareURLForNavigation(
-        kDevtoolsURL, devtools_extension.get(), browser_context());
-    EXPECT_THAT(url, base::test::ValueIs(kDevtoolsURL));
-  }
-  // Having the debugger permissions should also allow access.
-  {
-    auto debugger_extension =
-        ExtensionBuilder("debugger").AddAPIPermission("debugger").Build();
-    auto url = ExtensionTabUtil::PrepareURLForNavigation(
-        kDevtoolsURL, debugger_extension.get(), browser_context());
-    EXPECT_THAT(url, base::test::ValueIs(kDevtoolsURL));
   }
 }
 

@@ -76,6 +76,7 @@ class ProfilePickerHandler : public content::WebUIMessageHandler,
   friend class ProfilePickerCreationFlowBrowserTest;
   friend class ProfilePickerEnterpriseCreationFlowBrowserTest;
   friend class StartupBrowserCreatorPickerInfobarTest;
+  friend class StartupBrowserCreatorOpenUrlsInNextProfileCreatedTest;
   friend class SupervisedProfilePickerHideGuestModeTest;
   FRIEND_TEST_ALL_PREFIXES(ProfilePickerHandlerInUserProfileTest,
                            HandleExtendedAccountInformation);
@@ -110,9 +111,9 @@ class ProfilePickerHandler : public content::WebUIMessageHandler,
   void HandleGetProfileThemeInfo(const base::Value::List& args);
   void HandleGetAvailableIcons(const base::Value::List& args);
   void HandleContinueWithoutAccount(const base::Value::List& args);
+  void HandleGetProfileState(const base::Value::List& args);
 
   // Profile switch screen:
-  void HandleGetSwitchProfile(const base::Value::List& args);
   void HandleConfirmProfileSwitch(const base::Value::List& args);
   void HandleCancelProfileSwitch(const base::Value::List& args);
 
@@ -120,11 +121,11 @@ class ProfilePickerHandler : public content::WebUIMessageHandler,
   void HandleRecordSignInPromoImpression(const base::Value::List& args);
 
   void OnLoadSigninFinished(bool success);
+  void OnResetPickerButtons(bool success);
   void GatherProfileStatistics(Profile* profile);
   void OnProfileStatisticsReceived(const base::FilePath& profile_path,
                                    profiles::ProfileCategoryStats result);
 
-  void OnProfileCreationFinished(bool finished_successfully);
   void PushProfilesList();
   base::Value::List GetProfilesList();
   // Adds a profile with `profile_path` to `profiles_order_` and notifies
@@ -144,8 +145,7 @@ class ProfilePickerHandler : public content::WebUIMessageHandler,
       const base::FilePath& profile_path) override;
   void OnProfileNameChanged(const base::FilePath& profile_path,
                             const std::u16string& old_profile_name) override;
-  void OnProfileHostedDomainChanged(
-      const base::FilePath& profile_path) override;
+  void OnProfileIsManagedChanged(const base::FilePath& profile_path) override;
   void OnProfileSupervisedUserIdChanged(
       const base::FilePath& profile_path) override;
 
@@ -184,8 +184,6 @@ class ProfilePickerHandler : public content::WebUIMessageHandler,
   // Creation time of the handler, to measure performance on startup. Only set
   // when the picker is shown on startup.
   base::TimeTicks creation_time_on_startup_;
-
-  bool main_view_initialized_ = false;
 
   // Keep alive used when displaying the profile statistics in the profile
   // deletion dialog. Released when the dialog or the Picker is closed, which

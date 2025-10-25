@@ -30,6 +30,7 @@
 #include "third_party/blink/renderer/core/editing/selection_controller.h"
 
 #include "base/auto_reset.h"
+#include "base/trace_event/trace_event.h"
 #include "third_party/blink/public/common/input/web_menu_source_type.h"
 #include "third_party/blink/public/platform/web_input_event_result.h"
 #include "third_party/blink/renderer/core/annotation/annotation_agent_impl.h"
@@ -515,7 +516,11 @@ bool SelectionController::HandleSingleClick(
 
   // SelectionControllerTest_SetCaretAtHitTestResultWithDisconnectedPosition
   // makes the IsValidFor() check fail.
-  if (is_editable && event.Event().FromTouch() &&
+  bool event_should_trigger_suggestion =
+      event.Event().FromTouch() ||
+      (RuntimeEnabledFeatures::LeftClickToHandleSuggestionEnabled() &&
+       event.Event().button == WebPointerProperties::Button::kLeft);
+  if (is_editable && event_should_trigger_suggestion &&
       position_to_use.IsValidFor(*frame_->GetDocument())) {
     frame_->GetTextSuggestionController().HandlePotentialSuggestionTap(
         position_to_use.GetPosition());

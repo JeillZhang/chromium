@@ -200,7 +200,7 @@ void QsBatteryInfoViewBase::ConfigureIcon(bool bsm_active) {
                  : cros_tokens::kCrosSysOnPositiveContainer);
   const std::optional<SkColor> battery_badge_color =
       bsm_active ? std::optional<SkColor>(GetColorProvider()->GetColor(
-                       cros_tokens::kCrosSysSystemWarningContainer))
+                       cros_tokens::kCrosSysSystemOnWarningContainer))
                  : std::nullopt;
 
   PowerStatus::BatteryImageInfo info =
@@ -328,11 +328,9 @@ QuickSettingsFooter::QuickSettingsFooter(
   views::View* end_container = nullptr;
   if (PowerStatus::Get()->IsBatteryPresent()) {
     end_container = CreateEndContainer();
-    const bool use_smart_charging_ui =
-        ash::features::IsAdaptiveChargingEnabled() &&
-        Shell::Get()
-            ->adaptive_charging_controller()
-            ->is_adaptive_delaying_charge();
+    const bool use_smart_charging_ui = Shell::Get()
+                                           ->adaptive_charging_controller()
+                                           ->is_adaptive_delaying_charge();
 
     if (use_smart_charging_ui) {
       end_container->AddChildView(

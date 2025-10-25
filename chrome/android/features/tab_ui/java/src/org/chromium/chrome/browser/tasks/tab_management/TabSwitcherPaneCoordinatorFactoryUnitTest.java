@@ -34,7 +34,6 @@ import org.chromium.base.BaseSwitches;
 import org.chromium.base.Callback;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.back_press.BackPressManager;
@@ -85,6 +84,7 @@ import org.chromium.ui.modaldialog.ModalDialogManager;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.function.Supplier;
 
 /** Unit tests for {@link TabSwitcherPaneCoordinatorFactory}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -138,6 +138,7 @@ public class TabSwitcherPaneCoordinatorFactoryUnitTest {
     @Mock private BookmarkModel mBookmarkModel;
     @Mock private UndoBarThrottle mUndoBarThrottle;
     @Mock private Supplier<PaneManager> mPaneManagerSupplier;
+    @Mock private ObservableSupplierImpl<Boolean> mHubSearchBoxVisibilitySupplier;
     @Mock private Supplier<TabGroupUiActionHandler> mTabGroupUiActionHandlerSupplier;
     @Mock private Supplier<LayoutStateProvider> mLayoutStateProviderSupplier;
 
@@ -181,8 +182,10 @@ public class TabSwitcherPaneCoordinatorFactoryUnitTest {
         when(mTabGroupModelFilterProvider.getCurrentTabGroupModelFilterSupplier())
                 .thenReturn(mTabGroupModelFilterSupplier);
         when(mTabGroupModelFilter.getTabModel()).thenReturn(mTabModel);
+        when(mTabModel.iterator()).thenAnswer(invocation -> List.of(tab).iterator());
         when(mTabModel.getCount()).thenReturn(1);
         when(mTabModel.getTabAt(0)).thenReturn(tab);
+        when(mTabModel.getTabAtChecked(0)).thenReturn(tab);
         when(mTabModel.getTabById(TAB1_ID)).thenReturn(tab);
         when(mTabModel.getProfile()).thenReturn(mProfile);
 
@@ -215,7 +218,8 @@ public class TabSwitcherPaneCoordinatorFactoryUnitTest {
                         mUndoBarThrottle,
                         mPaneManagerSupplier,
                         mTabGroupUiActionHandlerSupplier,
-                        mLayoutStateProviderSupplier);
+                        mLayoutStateProviderSupplier,
+                        /* tabSwitcherDragHandler= */ null);
     }
 
     @Test
@@ -232,7 +236,8 @@ public class TabSwitcherPaneCoordinatorFactoryUnitTest {
                         /* isIncognito= */ false,
                         /* onTabGroupCreation= */ null,
                         mEdgeToEdgeSupplier,
-                        mSetOverlayViewCallback);
+                        mSetOverlayViewCallback,
+                        mHubSearchBoxVisibilitySupplier);
         assertNotNull(coordinator);
 
         TabSwitcherMessageManager messageManager = mFactory.getMessageManagerForTesting();
@@ -258,7 +263,8 @@ public class TabSwitcherPaneCoordinatorFactoryUnitTest {
                         /* isIncognito= */ false,
                         /* onTabGroupCreation= */ null,
                         mEdgeToEdgeSupplier,
-                        mSetOverlayViewCallback);
+                        mSetOverlayViewCallback,
+                        mHubSearchBoxVisibilitySupplier);
         assertNotNull(coordinator1);
 
         TabSwitcherMessageManager messageManager = mFactory.getMessageManagerForTesting();
@@ -276,7 +282,8 @@ public class TabSwitcherPaneCoordinatorFactoryUnitTest {
                         /* isIncognito= */ false,
                         /* onTabGroupCreation= */ null,
                         mEdgeToEdgeSupplier,
-                        mSetOverlayViewCallback);
+                        mSetOverlayViewCallback,
+                        mHubSearchBoxVisibilitySupplier);
         assertNotNull(coordinator2);
         assertEquals(messageManager, mFactory.getMessageManagerForTesting());
 
@@ -301,7 +308,8 @@ public class TabSwitcherPaneCoordinatorFactoryUnitTest {
                         /* isIncognito= */ false,
                         /* onTabGroupCreation= */ null,
                         mEdgeToEdgeSupplier,
-                        mSetOverlayViewCallback);
+                        mSetOverlayViewCallback,
+                        mHubSearchBoxVisibilitySupplier);
         assertNotNull(coordinator);
 
         TabSwitcherMessageManager messageManager = mFactory.getMessageManagerForTesting();

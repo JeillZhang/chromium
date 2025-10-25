@@ -17,7 +17,7 @@
 #include "chrome/browser/safe_browsing/safe_browsing_metrics_collector_factory.h"
 #include "chrome/browser/safe_browsing/safe_browsing_navigation_observer_manager_factory.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/ui/safety_hub/safety_hub_util.h"
+#include "chrome/browser/ui/safety_hub/abusive_notification_permissions_manager.h"
 #include "components/prefs/pref_service.h"
 #include "components/safe_browsing/core/common/features.h"
 #include "components/security_interstitials/content/content_metrics_helper.h"
@@ -47,8 +47,9 @@ void MaybeIgnoreAbusiveNotificationAutoRevocation(
       threat_type != SBThreatType::SB_THREAT_TYPE_URL_PHISHING) {
     return;
   }
-  safety_hub_util::SetRevokedAbusiveNotificationPermission(hcsm.get(), url,
-                                                           /*is_ignored=*/true);
+  AbusiveNotificationPermissionsManager::
+      SetRevokedAbusiveNotificationPermission(hcsm.get(), url,
+                                              /*is_ignored=*/true);
 }
 
 SafeBrowsingBlockingPage*
@@ -80,9 +81,9 @@ ChromeSafeBrowsingBlockingPageFactory::CreateSafeBrowsingPage(
           IsExtendedReportingEnabledBypassDeprecationFlag(*prefs),
           IsExtendedReportingPolicyManaged(*prefs),
           IsEnhancedProtectionEnabled(*prefs), is_proceed_anyway_disabled,
-          true,  // should_open_links_in_new_tab
-          true,  // always_show_back_to_safety
-          true,  // is_enhanced_protection_message_enabled
+          false,  // should_open_links_in_new_tab
+          true,   // always_show_back_to_safety
+          true,   // is_enhanced_protection_message_enabled
           IsSafeBrowsingPolicyManaged(*prefs), kHelpCenterLink);
 
   auto* trigger_manager =
@@ -120,14 +121,10 @@ ChromeSafeBrowsingBlockingPageFactory::CreateSafeBrowsingPage(
 #else
       base::NullCallback(),
 #endif
-      base::FeatureList::IsEnabled(
-          safe_browsing::kSafetyHubAbusiveNotificationRevocation)
-          ? base::BindOnce(
-                &MaybeIgnoreAbusiveNotificationAutoRevocation,
-                base::WrapRefCounted(
-                    HostContentSettingsMapFactory::GetForProfile(profile)),
-                main_frame_url)
-          : base::NullCallback(),
+      base::BindOnce(&MaybeIgnoreAbusiveNotificationAutoRevocation,
+                     base::WrapRefCounted(
+                         HostContentSettingsMapFactory::GetForProfile(profile)),
+                     main_frame_url),
       /*url_loader_for_testing=*/nullptr);
 }
 

@@ -6,8 +6,10 @@
 #define CHROME_BROWSER_PROFILES_BATCH_UPLOAD_BATCH_UPLOAD_SERVICE_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/functional/callback_helpers.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/timer/timer.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -48,8 +50,12 @@ class BatchUploadService : public KeyedService {
     kPasswordManagerSettings = 0,
     kPasswordPromoCard = 1,
     kBookmarksManagerPromoCard = 2,
+    kProfileMenuRowButtonAction = 3,
+    kProfileMenuPrimaryButtonAction = 4,
+    kProfileMenuPrimaryButtonWithBookmarksAction = 5,
+    kProfileMenuPrimaryButtonWithWindows10DepreciationAction = 6,
 
-    kMaxValue = kBookmarksManagerPromoCard,
+    kMaxValue = kProfileMenuPrimaryButtonWithWindows10DepreciationAction,
   };
   // LINT.ThenChange(/tools/metrics/histograms/metadata/sync/enums.xml:BatchUploadEntryPoint)
 
@@ -75,8 +81,8 @@ class BatchUploadService : public KeyedService {
           void(std::map<syncer::DataType, syncer::LocalDataDescription>)>
           result_callback);
 
-  // Gets the ordered list of all available types in BatchUpload for testing.
-  static std::vector<syncer::DataType> AvailableTypesOrderForTesting();
+  // Gets the ordered list of all available types in BatchUpload.
+  static std::vector<syncer::DataType> AvailableTypesOrder();
 
  private:
   // Callback that returns a map of `syncer::LocalDataDescription` for the data

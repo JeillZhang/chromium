@@ -20,18 +20,17 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 
 /** Pushes bubble/dot notifications for tabs. */
 @NullMarked
 public class TabBubbler extends TabObjectNotificationUpdater {
-    private final ObservableSupplier<Token> mTabGroupIdSupplier;
+    private final ObservableSupplier<@Nullable Token> mTabGroupIdSupplier;
 
     public TabBubbler(
             Profile profile,
             TabListNotificationHandler tabListNotificationHandler,
-            ObservableSupplier<Token> tabGroupIdSupplier) {
+            ObservableSupplier<@Nullable Token> tabGroupIdSupplier) {
         super(profile, tabListNotificationHandler);
         mTabGroupIdSupplier = tabGroupIdSupplier;
         // Do not observe mTabGroupIdSupplier. We will be told to #showAll() is this changes.
@@ -39,13 +38,13 @@ public class TabBubbler extends TabObjectNotificationUpdater {
 
     @Override
     public void showAll() {
-        @Nullable Token tabGroupId = mTabGroupIdSupplier.get();
+        Token tabGroupId = mTabGroupIdSupplier.get();
         if (tabGroupId == null) return;
         LocalTabGroupId localTabGroupId = new LocalTabGroupId(tabGroupId);
         EitherGroupId eitherGroupId = EitherGroupId.createLocalId(localTabGroupId);
         List<PersistentMessage> messageList =
                 mMessagingBackendService.getMessagesForGroup(
-                        eitherGroupId, Optional.of(PersistentNotificationType.DIRTY_TAB));
+                        eitherGroupId, PersistentNotificationType.DIRTY_TAB);
 
         Set<Integer> tabIds = new HashSet<>();
         for (PersistentMessage message : messageList) {

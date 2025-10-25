@@ -7,11 +7,12 @@
 
 #import <UIKit/UIKit.h>
 
+#import "ios/chrome/browser/reader_mode/model/reader_mode_browser_agent_web_state_delegate.h"
+
 @protocol AppLauncherTabHelperBrowserPresentationProvider;
 @class CommandDispatcher;
 @protocol DownloadManagerTabHelperDelegate;
 @protocol PasswordControllerDelegate;
-class PrerenderService;
 @class PrintCoordinator;
 @protocol RepostFormTabHelperDelegate;
 @class SadTabCoordinator;
@@ -22,17 +23,18 @@ class WebStateList;
 @protocol NewTabPageTabHelperDelegate;
 @protocol OverscrollActionsControllerDelegate;
 @protocol EditMenuBuilder;
+class Browser;
 
 // Mediator that handles the setup of tab helpers that require UI-layer
 // dependencies not available when AttachTabHelpers() is called.
 // The required dependencies are injected into the mediator instance as
 // properties, and are generally expected not to change during the mediator's
 // lifetime. The mediator keeps only weak references to injected dependencies.
-@interface TabLifecycleMediator : NSObject
+@interface TabLifecycleMediator
+    : NSObject <ReaderModeBrowserAgentWebStateDelegate>
 
 @property(nonatomic, weak) id<DownloadManagerTabHelperDelegate>
     downloadManagerTabHelperDelegate;
-@property(nonatomic, assign) PrerenderService* prerenderService;
 @property(nonatomic, weak) UIViewController* baseViewController;
 @property(nonatomic, weak) CommandDispatcher* commandDispatcher;
 @property(nonatomic, weak) id<NetExportTabHelperDelegate> tabHelperDelegate;
@@ -51,11 +53,10 @@ class WebStateList;
 @property(nonatomic, weak) id<EditMenuBuilder> editMenuBuilder;
 
 // Creates an instance of the mediator. Delegates will be installed into all
-// existing web states in `webStateList`. While the mediator is alive,
-// delegates will be added and removed from web states when they are inserted
-// into or removed from the web state list.
-- (instancetype)initWithWebStateList:(WebStateList*)webStateList
-    NS_DESIGNATED_INITIALIZER;
+// existing web states in the `browser` web state list. While the mediator is
+// alive, delegates will be added and removed from web states when they are
+// inserted into or removed from the web state list.
+- (instancetype)initWithBrowser:(Browser*)browser NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;
 

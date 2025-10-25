@@ -27,7 +27,6 @@
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/syslog_logging.h"
@@ -50,20 +49,18 @@
 #include "chrome/browser/ash/login/app_mode/force_install_observer.h"
 #include "chrome/browser/ash/login/app_mode/kiosk_launch_controller.h"
 #include "chrome/browser/ash/login/app_mode/network_ui_controller.h"
-#include "chrome/browser/ash/login/enterprise_user_session_metrics.h"
+#include "chrome/browser/ash/login/screens/app_launch_splash_screen.h"
 #include "chrome/browser/ash/login/wizard_controller.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
 #include "chrome/browser/ui/ash/login/login_display_host.h"
-#include "chrome/browser/ui/ash/login/webui_login_view.h"
 #include "chrome/browser/ui/webui/ash/login/app_launch_splash_screen_handler.h"
+#include "chrome/browser/ui/webui/ash/login/network_state_informer.h"
 #include "chromeos/ash/components/install_attributes/install_attributes.h"
 #include "chromeos/ash/components/network/network_handler.h"
 #include "chromeos/ash/components/network/network_state.h"
-#include "components/crash/core/common/crash_key.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/session_manager/session_manager_types.h"
-#include "components/user_manager/user.h"
 #include "url/gurl.h"
 
 namespace ash {
@@ -100,13 +97,6 @@ void RecordKioskLaunchUMA(bool is_auto_launch) {
 
   UMA_HISTOGRAM_ENUMERATION("Kiosk.LaunchType", launch_type,
                             KIOSK_LAUNCH_TYPE_COUNT);
-
-  if (is_enterprise_managed) {
-    enterprise_user_session_metrics::RecordSignInEvent(
-        is_auto_launch
-            ? enterprise_user_session_metrics::SignInEventType::AUTOMATIC_KIOSK
-            : enterprise_user_session_metrics::SignInEventType::MANUAL_KIOSK);
-  }
 }
 
 void RecordKioskLaunchDuration(KioskAppType type, base::TimeDelta duration) {
@@ -298,6 +288,7 @@ std::string ToString(KioskAppLaunchError::Error error) {
     CASE(kExtensionsPolicyInvalid);
     CASE(kUserNotAllowlisted);
     CASE(kChromeAppDeprecated);
+    CASE(kIsolatedAppNotAllowed);
   }
   NOTREACHED();
 #undef CASE
@@ -331,11 +322,13 @@ class KioskLaunchController::ScopedAcceleratorDisabler {
 };
 
 KioskLaunchController::KioskLaunchController(
+    PrefService* local_state,
     LoginDisplayHost* host,
     AppLaunchedCallback app_launched_callback,
     AppLaunchSplashScreen* splash_screen,
     LaunchCompleteCallback done_callback)
     : KioskLaunchController(
+          local_state,
           host,
           splash_screen,
           /*profile_loader=*/base::BindOnce(&LoadProfile),
@@ -348,6 +341,7 @@ KioskLaunchController::KioskLaunchController(
           std::make_unique<DefaultAcceleratorController>()) {}
 
 KioskLaunchController::KioskLaunchController(
+    PrefService* local_state,
     LoginDisplayHost* host,
     AppLaunchSplashScreen* splash_screen,
     LoadProfileCallback profile_loader,
@@ -358,7 +352,8 @@ KioskLaunchController::KioskLaunchController(
     KioskAppLauncherFactory app_launcher_factory,
     std::unique_ptr<NetworkUiController::NetworkMonitor> network_monitor,
     std::unique_ptr<AcceleratorController> accelerator_controller)
-    : host_(host),
+    : local_state_(CHECK_DEREF(local_state)),
+      host_(host),
       splash_screen_(splash_screen),
       app_launcher_factory_(std::move(app_launcher_factory)),
       network_ui_controller_(std::make_unique<NetworkUiController>(
@@ -390,12 +385,6 @@ void KioskLaunchController::Start(KioskApp kiosk_app, bool auto_launch) {
   accelerator_disabler_ =
       std::make_unique<ScopedAcceleratorDisabler>(*accelerator_controller_);
 
-  if (host_ && host_->GetWebUILoginView()) {
-    host_->GetWebUILoginView()->SetKeyboardEventsAndSystemTrayEnabled(true);
-  } else if (!host_) {
-    CHECK_IS_TEST();
-  }
-
   if (auto_launch && kiosk_app_id().type == KioskAppType::kChromeApp) {
     CHECK(KioskChromeAppManager::IsInitialized());
     KioskChromeAppManager::Get()->SetAppWasAutoLaunchedWithZeroDelay(
@@ -414,24 +403,26 @@ void KioskLaunchController::Start(KioskApp kiosk_app, bool auto_launch) {
 
   profile_loader_handle_ =
       std::move(profile_loader_)
-          .Run(kiosk_app_id().account_id, kiosk_app_id().type,
-               /*on_done=*/
-               base::BindOnce(
-                   [](KioskLaunchController* self, LoadProfileResult result) {
-                     CHECK(!self->profile_) << "Kiosk profile loaded twice";
-                     self->profile_loader_handle_.reset();
+          .Run(
+              /*local_state=*/&local_state_.get(), kiosk_app_id().account_id,
+              kiosk_app_id().type,
+              /*on_done=*/
+              base::BindOnce(
+                  [](KioskLaunchController* self, LoadProfileResult result) {
+                    CHECK(!self->profile_) << "Kiosk profile loaded twice";
+                    self->profile_loader_handle_.reset();
 
-                     if (!result.has_value()) {
-                       self->HandleProfileLoadError(std::move(result.error()));
-                       return;
-                     }
+                    if (!result.has_value()) {
+                      self->HandleProfileLoadError(std::move(result.error()));
+                      return;
+                    }
 
-                     SYSLOG(INFO) << "Profile loaded... Starting app launch.";
-                     self->profile_ = result.value();
-                     self->StartAppLaunch(*self->profile_);
-                   },
-                   // Safe because `this` owns `profile_loader_handle_`.
-                   base::Unretained(this)));
+                    SYSLOG(INFO) << "Profile loaded... Starting app launch.";
+                    self->profile_ = result.value();
+                    self->StartAppLaunch(*self->profile_);
+                  },
+                  // Safe because `this` owns `profile_loader_handle_`.
+                  base::Unretained(this)));
 }
 
 void KioskLaunchController::AddKioskProfileLoadFailedObserver(
@@ -615,11 +606,14 @@ void KioskLaunchController::OnLaunchFailed(KioskAppLaunchError::Error error) {
       std::move(attempt_relaunch_).Run();
       break;
     case Error::kChromeAppDeprecated:
-      // Keep the splash screen with the error message, do not relaunch or exit.
+    case Error::kIsolatedAppNotAllowed:
       splash_screen_->UpdateAppLaunchState(
-          ash::AppLaunchSplashScreenView::AppLaunchState::kChromeAppDeprecated);
+          error == Error::kChromeAppDeprecated
+              ? AppLaunchSplashScreenView::AppLaunchState::kChromeAppDeprecated
+              : AppLaunchSplashScreenView::AppLaunchState::
+                    kIsolatedAppNotAllowed);
       splash_screen_->HideThrobber();
-      KioskAppLaunchError::Save(error);
+      KioskAppLaunchError::Save(local_state_.get(), error);
       return;
     case Error::kHasPendingLaunch:
     case Error::kUnableToMount:
@@ -642,7 +636,7 @@ void KioskLaunchController::OnLaunchFailed(KioskAppLaunchError::Error error) {
       }
 
       // Save the error to prevent re-launch and show the error-toast.
-      KioskAppLaunchError::Save(error);
+      KioskAppLaunchError::Save(local_state_.get(), error);
       std::move(attempt_logout_).Run();
       break;
   }
@@ -678,6 +672,13 @@ void KioskLaunchController::FinishForcedExtensionsInstall(
   if (launch_on_install_ || TestOverrides::skip_splash_wait) {
     LaunchApp();
   }
+}
+
+void KioskLaunchController::OnAppLaunching() {
+  // We need to change the session state so we are able to create browser
+  // windows.
+  session_manager::SessionManager::Get()->SetSessionState(
+      session_manager::SessionState::LOGGED_IN_NOT_ACTIVE);
 }
 
 void KioskLaunchController::OnAppLaunched() {
@@ -772,10 +773,6 @@ void KioskLaunchController::LaunchApp() {
   }
 
   DCHECK(app_state_ == AppState::kInstalled);
-  // We need to change the session state so we are able to create browser
-  // windows.
-  session_manager::SessionManager::Get()->SetSessionState(
-      session_manager::SessionState::LOGGED_IN_NOT_ACTIVE);
   splash_wait_timer_.Stop();
   app_launcher_->LaunchApp();
 }

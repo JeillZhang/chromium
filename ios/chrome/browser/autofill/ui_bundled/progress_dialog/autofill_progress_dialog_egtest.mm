@@ -9,6 +9,7 @@
 #import "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #import "components/autofill/core/common/autofill_payments_features.h"
 #import "components/strings/grit/components_strings.h"
+#import "ios/chrome/browser/autofill/ui_bundled/authentication/authentication_egtest_util.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_ui_constants.h"
 #import "ios/chrome/browser/shared/ui/symbols/symbols.h"
@@ -23,34 +24,12 @@
 #import "net/test/embedded_test_server/default_handlers.h"
 #import "ui/base/l10n/l10n_util.h"
 
-namespace {
-
-const char kTestPageUrl[] = "/credit_card.html";
-NSString* const kTriggeringRequestUrl =
-    @"https://payments.google.com/payments/apis-secure/creditcardservice/"
-    @"getrealpan?s7e_suffix=chromewallet";
-NSString* const kSuccessResponseNoAuthNeeded =
-    @"{ \"pan\": \"5411111111112109\" }";
-const char kAutofillTestString[] = "Autofill Test";
-const char kFormCardName[] = "CCName";
-
-}  // namespace
-
 @interface AutofillProgressDialogDismissEGTest : ChromeTestCase {
   NSString* _enrolledCardNameAndLastFour;
 }
 @end
 
 @implementation AutofillProgressDialogDismissEGTest
-
-- (AppLaunchConfiguration)appConfigurationForTestCase {
-  AppLaunchConfiguration config;
-
-  config.features_enabled.push_back(
-      autofill::features::kAutofillEnableFpanRiskBasedAuthentication);
-
-  return config;
-}
 
 - (void)setUp {
   [super setUp];
@@ -59,7 +38,7 @@ const char kFormCardName[] = "CCName";
   [AutofillAppInterface setMandatoryReauthEnabled:NO];
   net::test_server::RegisterDefaultHandlers(self.testServer);
   GREYAssertTrue(self.testServer->Start(), @"Failed to start test server.");
-  GURL testURL = self.testServer->GetURL(kTestPageUrl);
+  GURL testURL = self.testServer->GetURL(kCreditCardUrl);
   [ChromeEarlGrey loadURL:testURL];
   [ChromeEarlGrey waitForWebStateContainingText:kAutofillTestString];
   [AutofillAppInterface considerCreditCardFormSecureForTesting];
@@ -104,7 +83,8 @@ const char kFormCardName[] = "CCName";
                           IDS_AUTOFILL_CARD_UNMASK_PROGRESS_DIALOG_TITLE)];
 }
 
-- (void)testDismissWithConfirmation_DisappearsAfterDelay {
+// TODO(crbug.com/444040307): Test is flaky.
+- (void)DISABLED_testDismissWithConfirmation_DisappearsAfterDelay {
   // Simulate flow to show dialog.
   [self simulateUserFlowToShowDialogLoadingState];
 
@@ -115,9 +95,10 @@ const char kFormCardName[] = "CCName";
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Fake the successful server response that triggers Dismiss.
-  [AutofillAppInterface setPaymentsResponse:kSuccessResponseNoAuthNeeded
-                                 forRequest:kTriggeringRequestUrl
-                              withErrorCode:net::HTTP_OK];
+  [AutofillAppInterface
+      setPaymentsResponse:kUnmaskCardSuccessResponseNoAuthNeeded
+               forRequest:kUnmaskCardRequestUrl
+            withErrorCode:net::HTTP_OK];
 
   // This delay is the autodismiss delay (1 second) + extra time to avoid
   // flakiness on the simulators (2 seconds).

@@ -5,8 +5,11 @@
 #include <string>
 #include <variant>
 
+#include "base/functional/callback.h"
+#include "components/autofill/core/browser/data_model/payments/bnpl_issuer.h"
 #include "components/autofill/core/browser/data_model/payments/credit_card.h"
 #include "components/autofill/core/browser/data_model/payments/iban.h"
+#include "components/autofill/core/browser/data_model/valuables/loyalty_card.h"
 #include "components/autofill/core/common/form_data.h"
 #include "components/autofill/core/common/form_field_data.h"
 #include "components/autofill/core/common/unique_ids.h"
@@ -16,7 +19,6 @@
 
 namespace autofill {
 
-class AutofillManager;
 class FormStructure;
 
 // An interface for interaction with the bottom sheet UI controller, which is
@@ -26,11 +28,8 @@ class TouchToFillDelegate {
  public:
   virtual ~TouchToFillDelegate() = default;
 
-  virtual AutofillManager* GetManager() = 0;
-
   virtual bool IntendsToShowTouchToFill(FormGlobalId form_id,
-                                        FieldGlobalId field_id,
-                                        const FormData& form) = 0;
+                                        FieldGlobalId field_id) = 0;
 
   // Checks whether TTF is eligible for the given web form data and, if
   // successful, triggers the corresponding surface and returns |true|.
@@ -52,6 +51,9 @@ class TouchToFillDelegate {
   virtual void ShowPaymentMethodSettings() = 0;
   virtual void CreditCardSuggestionSelected(std::string unique_id,
                                             bool is_virtual) = 0;
+  // Called when a BNPL suggestion was selected.
+  virtual void BnplSuggestionSelected(
+      std::optional<int64_t> extracted_amount) = 0;
   // Called when an IBAN suggestion was selected.
   // An Iban::Guid is passed in case of a locally stored IBAN and an
   // Iban::InstrumentId for server IBANs.
@@ -60,11 +62,17 @@ class TouchToFillDelegate {
   // Called when the user taps on a loyalty card in the payments TTF bottom
   // sheet.
   virtual void LoyaltyCardSuggestionSelected(
-      const std::string& loyalty_card_number) = 0;
+      const LoyaltyCard& loyalty_card) = 0;
   virtual void OnDismissed(bool dismissed_by_user) = 0;
+  virtual void OnErrorOkPressed() = 0;
+  virtual void OnBnplIssuerSuggestionSelected(const std::string& issuer_id) = 0;
 
   virtual void LogMetricsAfterSubmission(
       const FormStructure& submitted_form) = 0;
+
+  virtual void SetCancelCallback(base::OnceClosure cancel_callback) = 0;
+  virtual void SetSelectedIssuerCallback(
+      base::OnceCallback<void(BnplIssuer)> selected_issuer_callback) = 0;
 };
 
 }  // namespace autofill

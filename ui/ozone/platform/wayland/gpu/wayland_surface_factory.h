@@ -47,16 +47,10 @@ class WaylandSurfaceFactory : public SurfaceFactoryOzone {
       gfx::BufferFormat format,
       gfx::BufferUsage usage,
       std::optional<gfx::Size> framebuffer_size = std::nullopt) override;
-  void CreateNativePixmapAsync(gfx::AcceleratedWidget widget,
-                               gpu::VulkanDeviceQueue* device_queue,
-                               gfx::Size size,
-                               gfx::BufferFormat format,
-                               gfx::BufferUsage usage,
-                               NativePixmapCallback callback) override;
   scoped_refptr<gfx::NativePixmap> CreateNativePixmapFromHandle(
       gfx::AcceleratedWidget widget,
       gfx::Size size,
-      gfx::BufferFormat format,
+      viz::SharedImageFormat format,
       gfx::NativePixmapHandle handle) override;
   std::optional<gfx::BufferFormat> GetPreferredFormatForSolidColor()
       const override;
@@ -69,10 +63,11 @@ class WaylandSurfaceFactory : public SurfaceFactoryOzone {
   std::vector<gfx::BufferFormat> GetSupportedFormatsForTexturing()
       const override;
 
+  void SetBufferManagerForTesting(WaylandBufferManagerGpu* buffer_manager);
+
  private:
-  const raw_ptr<WaylandConnection, AcrossTasksDanglingUntriaged> connection_;
-  const raw_ptr<WaylandBufferManagerGpu, AcrossTasksDanglingUntriaged>
-      buffer_manager_;
+  const raw_ptr<WaylandConnection> connection_;
+  raw_ptr<WaylandBufferManagerGpu> buffer_manager_;
   std::unique_ptr<GLOzone> egl_implementation_;
 };
 

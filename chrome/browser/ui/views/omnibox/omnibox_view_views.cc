@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <memory>
 #include <set>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -28,39 +29,48 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
+#include "chrome/browser/autocomplete/aim_eligibility_service_factory.h"
 #include "chrome/browser/command_updater.h"
 #include "chrome/browser/external_protocol/external_protocol_handler.h"
 #include "chrome/browser/history_clusters/history_clusters_tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/send_tab_to_self/send_tab_to_self_util.h"
 #include "chrome/browser/themes/theme_service.h"
+#include "chrome/browser/ui/actions/chrome_action_id.h"
+#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
 #include "chrome/browser/ui/lens/lens_overlay_entry_point_controller.h"
 #include "chrome/browser/ui/omnibox/clipboard_utils.h"
+#include "chrome/browser/ui/omnibox/omnibox_controller.h"
+#include "chrome/browser/ui/omnibox/omnibox_edit_model.h"
+#include "chrome/browser/ui/page_action/page_action_icon_type.h"
 #include "chrome/browser/ui/view_ids.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
-#include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
+#include "chrome/browser/ui/views/location_bar/icon_label_bubble_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
-#include "chrome/browser/ui/views/omnibox/omnibox_popup_view_views.h"
-#include "chrome/browser/ui/views/omnibox/omnibox_popup_view_webui.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_result_view.h"
+#include "chrome/browser/ui/views/page_action/page_action_container_view.h"
+#include "chrome/browser/ui/views/page_action/page_action_icon_controller.h"
+#include "chrome/browser/ui/views/page_action/page_action_view.h"
 #include "chrome/browser/ui/views/send_tab_to_self/send_tab_to_self_bubble_controller.h"
-#include "chrome/browser/ui/views/user_education/browser_help_bubble.h"
 #include "chrome/grit/branded_strings.h"
+#include "chrome/grit/generated_resources.h"
 #include "components/lens/lens_features.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/omnibox_client.h"
-#include "components/omnibox/browser/omnibox_controller.h"
-#include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_selection.h"
+#include "components/omnibox/browser/omnibox_pref_names.h"
 #include "components/omnibox/browser/omnibox_prefs.h"
 #include "components/omnibox/browser/omnibox_text_util.h"
+#include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/prefs/pref_service.h"
+#include "components/search/search.h"
 #include "components/security_state/core/security_state.h"
 #include "components/send_tab_to_self/metrics_util.h"
 #include "components/strings/grit/components_strings.h"
@@ -110,6 +120,7 @@
 #include "ui/views/animation/ink_drop.h"
 #include "ui/views/border.h"
 #include "ui/views/button_drag_utils.h"
+#include "ui/views/controls/focus_ring.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/widget/widget.h"
@@ -209,6 +220,28 @@ void LogOmniboxFocusToCutOrCopyAllTextTime(
   }
 }
 
+const char kOpenMatchWithKeyboardModifiersMetricName[] =
+    "Omnibox.OpenMatchWithKeyboardModifiers";
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+// LINT.IfChange(OpenMatchWithKeyboardModifiers)
+enum class OpenMatchWithKeyboardModifiers {
+  kNoModifier = 0,
+  kCtrl = 1,
+  kAlt = 2,
+  kCtrlAlt = 3,
+  kShiftCommand = 4,
+  kCtrlShiftCommand = 5,
+  kAltShift = 6,
+  kCtrlAltShift = 7,
+  kCommand = 8,
+  kCtrlCommand = 9,
+  kShift = 10,
+  kCtrlShift = 11,
+  kMaxValue = kCtrlShift,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/omnibox/enums.xml:OpenMatchWithKeyboardModifiers)
+
 }  // namespace
 
 // OmniboxViewViews -----------------------------------------------------------
@@ -272,10 +305,6 @@ OmniboxViewViews::~OmniboxViewViews() {
   ash::input_method::InputMethodManager::Get()->RemoveCandidateWindowObserver(
       this);
 #endif
-
-  // Explicitly teardown members which have a reference to us.  Just to be safe
-  // we want them to be destroyed before destroying any other internal state.
-  popup_view_.reset();
 }
 
 void OmniboxViewViews::Init() {
@@ -292,16 +321,6 @@ void OmniboxViewViews::Init() {
   }
 
   if (location_bar_view_) {
-    if (base::FeatureList::IsEnabled(omnibox::kWebUIOmniboxPopup)) {
-      popup_view_ = std::make_unique<OmniboxPopupViewWebUI>(
-          /*omnibox_view=*/this, controller(), location_bar_view_);
-    } else {
-      popup_view_ = std::make_unique<OmniboxPopupViewViews>(
-          /*omnibox_view=*/this, controller(), location_bar_view_);
-    }
-    popup_view_opened_subscription_ =
-        popup_view_->AddOpenListener(base::BindRepeating(
-            &OmniboxViewViews::OnPopupOpened, base::Unretained(this)));
     // Set whether the text should be used to improve typing suggestions.
     SetShouldDoLearning(!location_bar_view_->profile()->IsOffTheRecord());
   }
@@ -370,17 +389,35 @@ void OmniboxViewViews::ResetTabState(content::WebContents* web_contents) {
 }
 
 void OmniboxViewViews::InstallPlaceholderText() {
-  // If `keyword_placeholder()` is set, then the user is in a keyword mode that
-  // has placeholder text. Use that instead of the DSE placeholder text.
   if (!model()->keyword_placeholder().empty()) {
+    // If `keyword_placeholder()` is set, then the user is in a keyword mode
+    // that has placeholder text, so display that.
     SetPlaceholderText(model()->keyword_placeholder());
+  } else if (ShouldInstallAimPlaceholderText()) {
+    // If the Omnibox is visibly focused w/ AI Mode enabled, display the AI Mode
+    // placeholder text to suggest tabbing into AI Mode. Note, even if the AI
+    // placeholder text is installed, it will only be visible if
+    // ShouldShowAimPlaceholderText() is also true.
+    SetPlaceholderText(
+        l10n_util::GetStringUTF16(IDS_OMNIBOX_AIM_PLACEHOLDER_TEXT));
+    // Override the AIM accessibility placeholder text, so that the tab icon is
+    // not announced.
+    GetViewAccessibility().SetPlaceholder(
+        l10n_util::GetStringUTF8(IDS_ACC_AI_MODE_PLACEHOLDER_TEXT));
   } else if (const auto* default_provider = controller()
                                                 ->client()
                                                 ->GetTemplateURLService()
                                                 ->GetDefaultSearchProvider()) {
-    // Otherwise, if a DSE is set, use the DSE placeholder text.
-    SetPlaceholderText(l10n_util::GetStringFUTF16(
-        IDS_OMNIBOX_PLACEHOLDER_TEXT, default_provider->short_name()));
+    if (base::FeatureList::IsEnabled(omnibox::kWebUIOmniboxAimPopup) &&
+        search::DefaultSearchProviderIsGoogle(
+            controller()->client()->GetTemplateURLService())) {
+      SetPlaceholderText(l10n_util::GetStringFUTF16(
+          IDS_WEBUI_OMNIBOX_PLACEHOLDER_TEXT, default_provider->short_name()));
+    } else {
+      // Otherwise, if a DSE is set, use the DSE placeholder text.
+      SetPlaceholderText(l10n_util::GetStringFUTF16(
+          IDS_OMNIBOX_PLACEHOLDER_TEXT, default_provider->short_name()));
+    }
   } else {
     SetPlaceholderText(std::u16string());
   }
@@ -452,12 +489,8 @@ void OmniboxViewViews::EnterKeywordModeForDefaultSearchProvider() {
       OmniboxEventProto::KEYBOARD_SHORTCUT);
 }
 
-void OmniboxViewViews::GetSelectionBounds(
-    std::u16string::size_type* start,
-    std::u16string::size_type* end) const {
-  const gfx::Range range = GetSelectedRange();
-  *start = static_cast<size_t>(range.start());
-  *end = static_cast<size_t>(range.end());
+gfx::Range OmniboxViewViews::GetSelectionBounds() const {
+  return GetSelectedRange();
 }
 
 void OmniboxViewViews::SelectAll(bool reversed) {
@@ -487,8 +520,7 @@ void OmniboxViewViews::SetFocus(bool is_user_initiated) {
   std::unique_ptr<ImmersiveRevealedLock> focus_reveal_lock;
   if (location_bar_view_ && location_bar_view_->browser()) {
     focus_reveal_lock =
-        BrowserView::GetBrowserViewForBrowser(location_bar_view_->browser())
-            ->immersive_mode_controller()
+        ImmersiveModeController::From(location_bar_view_->browser())
             ->GetRevealedLock(ImmersiveModeController::ANIMATE_REVEAL_YES);
   }
 
@@ -539,6 +571,52 @@ void OmniboxViewViews::SetFocus(bool is_user_initiated) {
   model()->ConsumeCtrlKey();
 }
 
+IconLabelBubbleView* OmniboxViewViews::GetAiModePageActionIconView() const {
+  // Verify location bar is fully initialized because the
+  // page_action_icon_controller may not be ready yet.
+  if (!location_bar_view_ || !location_bar_view_->IsInitialized()) {
+    return nullptr;
+  }
+  if (IsPageActionMigrated(PageActionIconType::kAiMode)) {
+    return location_bar_view_->page_action_container()->GetPageActionView(
+        kActionAiMode);
+  }
+  return location_bar_view_->page_action_icon_controller()->GetIconView(
+      PageActionIconType::kAiMode);
+}
+
+void OmniboxViewViews::ApplyFocusRingToAimButton(bool force_focus) {
+  IconLabelBubbleView* icon_view = GetAiModePageActionIconView();
+  if (!icon_view) {
+    return;
+  }
+  auto* const focus_ring = views::FocusRing::Get(icon_view);
+  focus_ring->SetColorId(kColorOmniboxResultsFocusIndicator);
+  focus_ring->SetHasFocusPredicate(base::BindRepeating(
+      [](bool force_focus, const views::View* parent) {
+        if (force_focus) {
+          // Focus ring is forced to be shown in this case. Used by the omnibox
+          // popup when it wants to indicate button focus even though the
+          // omnibox itself is still the focused view.
+          return true;
+        } else {
+          // Otherwise, focus ring is shown if the parent view has focus (the
+          // standard behavior, required to handle normal tab key focus
+          // traversal).
+          return parent->HasFocus();
+        }
+      },
+      force_focus));
+  focus_ring->SchedulePaint();
+
+  aim_page_action_icon_has_fake_focus_ = force_focus;
+}
+
+bool OmniboxViewViews::AimButtonVisible() const {
+  IconLabelBubbleView* aim_icon_view = GetAiModePageActionIconView();
+  return aim_icon_view && aim_icon_view->GetVisible();
+}
+
 int OmniboxViewViews::GetTextWidth() const {
   // Returns the width necessary to display the current text, including any
   // necessary space for the cursor or border/margin.
@@ -551,10 +629,6 @@ int OmniboxViewViews::GetUnelidedTextWidth() const {
   const auto width = GetTextWidth();
   GetRenderText()->SetElideBehavior(elide_behavior);
   return width;
-}
-
-bool OmniboxViewViews::IsImeComposing() const {
-  return IsIMEComposing();
 }
 
 gfx::Size OmniboxViewViews::GetMinimumSize() const {
@@ -592,6 +666,16 @@ void OmniboxViewViews::OnPaint(gfx::Canvas* canvas) {
     SCOPED_UMA_HISTOGRAM_TIMER("Omnibox.PaintTime");
     Textfield::OnPaint(canvas);
   }
+
+  // Record an impression of the AIM hint text if it is being shown.
+  const bool should_show_placeholder = ShouldShowPlaceholderText();
+  const bool is_aim_placeholder =
+      GetPlaceholderText() ==
+      l10n_util::GetStringUTF16(IDS_OMNIBOX_AIM_PLACEHOLDER_TEXT);
+  if (should_show_placeholder && is_aim_placeholder && !aim_hint_shown_) {
+    aim_hint_shown_ = true;
+    RecordAimHintImpression();
+  }
 }
 
 void OmniboxViewViews::ExecuteCommand(int command_id, int event_flags) {
@@ -604,9 +688,11 @@ void OmniboxViewViews::ExecuteCommand(int command_id, int event_flags) {
     case IDC_PASTE_AND_GO:
       model()->PasteAndGo(GetClipboardText(/*notify_if_restricted=*/true));
       return;
+    case IDC_EDIT_SEARCH_ENGINES:
     case IDC_SHOW_FULL_URLS:
     case IDC_SHOW_GOOGLE_LENS_SHORTCUT:
-    case IDC_EDIT_SEARCH_ENGINES:
+    case IDC_SHOW_AI_MODE_OMNIBOX_BUTTON:
+    case IDC_SHOW_SEARCH_TOOLS:
       location_bar_view_->command_updater()->ExecuteCommand(command_id);
       return;
 
@@ -753,19 +839,18 @@ std::u16string_view OmniboxViewViews::GetSelectedText() const {
 }
 
 void OmniboxViewViews::UpdateAccessibleTextSelection() {
-  std::u16string::size_type entry_start;
-  std::u16string::size_type entry_end;
+  gfx::Range entry;
 
   if (saved_selection_for_focus_change_.IsValid()) {
-    entry_start = saved_selection_for_focus_change_.start();
-    entry_end = saved_selection_for_focus_change_.end();
+    entry = {saved_selection_for_focus_change_.start(),
+             saved_selection_for_focus_change_.end()};
   } else {
-    GetSelectionBounds(&entry_start, &entry_end);
+    entry = GetSelectionBounds();
   }
 
   GetViewAccessibility().SetTextSelStart(
-      entry_start + friendly_suggestion_text_prefix_length_);
-  GetViewAccessibility().SetTextSelEnd(entry_end +
+      entry.start() + friendly_suggestion_text_prefix_length_);
+  GetViewAccessibility().SetTextSelEnd(entry.end() +
                                        friendly_suggestion_text_prefix_length_);
 }
 
@@ -799,13 +884,57 @@ bool OmniboxViewViews::HandleEarlyTabActions(const ui::KeyEvent& event) {
     return false;
   }
 
-  if (!model()->PopupIsOpen()) {
+  if (model()->PopupIsOpen()) {
+    model()->OnTabPressed(event.IsShiftDown());
+    return true;
+  } else {
+    // When the popup is open, focus on the AI Mode page action icon is handled
+    // by `OmniboxPopupSelection` and `OmniboxEditModel`. And normally, when the
+    // popup is closed, the user can focus the AI Mode page action icon with
+    // standard keyboard navigation. However, when the popup is closed and the
+    // keyboard accessibility setting is disabled (which currently only is
+    // possible on Mac), tab traversal will move directly from the omnibox to
+    // the web contents. In order to keep the behavior of the AI Mode page
+    // action icon consistent with the popup open case, where it can always be
+    // focused with tab traversal, special logic is required. The approach used
+    // here is to retain focus in the omnibox but change the focus indicators to
+    // show the page action icon as focused. If the user attempts to activate
+    // the page action icon with <space> or <return>, these events will still be
+    // handled by the omnibox in `HandleKeyEvent`, which has a special cases for
+    // when the page action icon has this "fake" focus.
+    if (GetAiModePageActionIconView() &&
+        !GetFocusManager()->keyboard_accessible()) {
+      if (!event.IsShiftDown()) {
+        if (aim_page_action_icon_has_fake_focus_) {
+          // If the page action icon already has focus and the user presses
+          // <tab>, remove the focus ring from the page action and have the
+          // focus manager advance focus as normal.
+          ApplyFocusRingToAimButton(false);
+          GetFocusManager()->AdvanceFocus(/*reverse=*/false);
+        } else {
+          // If the page action icon lacks focus and the user presses <tab>,
+          // remove focus indicators from the omnibox (the omnibox's focus ring
+          // is shown when the caret is visible) and add the focus ring to the
+          // icon to establish the "fake" focus.
+          model()->SetCaretVisibility(false);
+          ApplyFocusRingToAimButton(true);
+        }
+      } else {
+        if (aim_page_action_icon_has_fake_focus_) {
+          // In the <shift>-<tab> case, remove the focus ring from the page
+          // action icon and restore focus indicators to the omnibox.
+          ApplyFocusRingToAimButton(false);
+          model()->SetCaretVisibility(true);
+        } else {
+          // Normal case of using <shift>-<tab> to do reverse focus traversal
+          // out of the omnibox.
+          GetFocusManager()->AdvanceFocus(/*reverse=*/true);
+        }
+      }
+      return true;
+    }
     return false;
   }
-
-  model()->OnTabPressed(event.IsShiftDown());
-
-  return true;
 }
 
 #if BUILDFLAG(IS_MAC)
@@ -846,15 +975,18 @@ void OmniboxViewViews::UpdatePopup() {
 }
 
 void OmniboxViewViews::ApplyCaretVisibility() {
-  SetCursorEnabled(model()->is_caret_visible());
+  if (model()->focus_state() != OMNIBOX_FOCUS_NONE) {
+    SetCursorEnabled(model()->is_caret_visible());
 
-  // TODO(tommycli): Because the LocationBarView has a somewhat different look
-  // depending on whether or not the caret is visible, we have to resend a
-  // "focused" notification. Remove this once we get rid of the concept of
-  // "invisible focus".
-  if (location_bar_view_) {
-    location_bar_view_->OnOmniboxFocused();
+    // TODO(tommycli): Because the LocationBarView has a somewhat different look
+    // depending on whether or not the caret is visible, we have to resend a
+    // "focused" notification. Remove this once we get rid of the concept of
+    // "invisible focus".
+    if (location_bar_view_) {
+      location_bar_view_->OnOmniboxFocused();
+    }
   }
+  InstallPlaceholderText();
 }
 
 void OmniboxViewViews::OnTemporaryTextMaybeChanged(
@@ -926,7 +1058,12 @@ void OmniboxViewViews::ClearAccessibilityLabel() {
 void OmniboxViewViews::SetAccessibilityLabel(const std::u16string& display_text,
                                              const AutocompleteMatch& match,
                                              bool notify_text_changed) {
-  if (model()->GetPopupSelection().line == OmniboxPopupSelection::kNoMatch) {
+  if (model()->GetPopupSelection().state ==
+      OmniboxPopupSelection::LineState::FOCUSED_BUTTON_AIM) {
+    friendly_suggestion_text_ =
+        model()->GetPopupAccessibilityLabelForAimButton();
+  } else if (model()->GetPopupSelection().line ==
+             OmniboxPopupSelection::kNoMatch) {
     // If nothing is selected in the popup, we are in the no-default-match edge
     // case, and |match| is a synthetically generated match. In that case,
     // bypass OmniboxPopupModel and get the label from our synthetic |match|.
@@ -971,8 +1108,7 @@ bool OmniboxViewViews::UnapplySteadyStateElisions(UnelisionGesture gesture) {
   }
 
   // Get the original selection bounds so we can adjust it later.
-  size_t start, end;
-  GetSelectionBounds(&start, &end);
+  gfx::Range selection = GetSelectionBounds();
 
   // Try to unelide. Early exit if there's no unelisions to perform.
   const std::u16string original_text = GetText();
@@ -1002,7 +1138,7 @@ bool OmniboxViewViews::UnapplySteadyStateElisions(UnelisionGesture gesture) {
     model()->ClassifyString(original_selected_text, &match, nullptr);
     const bool selection_classifes_as_search =
         AutocompleteMatch::IsSearchType(match.type);
-    if (start != end && gesture == UnelisionGesture::MOUSE_RELEASE &&
+    if (!selection.is_empty() && gesture == UnelisionGesture::MOUSE_RELEASE &&
         !selection_classifes_as_search) {
       // For user selections that look like a URL instead of a Search:
       // If we are uneliding at the end of a drag-select (on mouse release),
@@ -1010,15 +1146,15 @@ bool OmniboxViewViews::UnapplySteadyStateElisions(UnelisionGesture gesture) {
       // the new selection spans to the beginning of the unelided URL too.
       // i.e. google.com/maps => https://www.google.com/maps
       //      ^^^^^^^^^^         ^^^^^^^^^^^^^^^^^^^^^^
-      if (start != 0) {
-        start += offset;
+      if (selection.start() != 0) {
+        selection.set_start(selection.start() + offset);
       }
-      if (end != 0) {
-        end += offset;
+      if (selection.end() != 0) {
+        selection.set_end(selection.end() + offset);
       }
     } else {
-      start += offset;
-      end += offset;
+      selection.set_start(selection.start() + offset);
+      selection.set_end(selection.end() + offset);
     }
 
     // Since we are changing the text in the double-click event handler, we
@@ -1026,13 +1162,13 @@ bool OmniboxViewViews::UnapplySteadyStateElisions(UnelisionGesture gesture) {
     OffsetDoubleClickWord(offset);
   }
 
-  SetSelectedRange(gfx::Range(start, end));
+  SetSelectedRange(selection);
   return true;
 }
 
 void OmniboxViewViews::OnBeforePossibleChange() {
   // Record our state.
-  GetState(&state_before_change_);
+  state_before_change_ = GetState();
   ime_composing_before_change_ = IsIMEComposing();
 
   // User is editing or traversing the text, as opposed to moving
@@ -1043,8 +1179,7 @@ void OmniboxViewViews::OnBeforePossibleChange() {
 
 bool OmniboxViewViews::OnAfterPossibleChange(bool allow_keyword_ui_change) {
   // See if the text or selection have changed since OnBeforePossibleChange().
-  State new_state;
-  GetState(&new_state);
+  State new_state = GetState();
   OmniboxView::StateChanges state_changes =
       GetStateChanges(state_before_change_, new_state);
 
@@ -1084,10 +1219,6 @@ void OmniboxViewViews::OnKeywordPlaceholderTextChange() {
 
 gfx::NativeView OmniboxViewViews::GetNativeView() const {
   return GetWidget()->GetNativeView();
-}
-
-gfx::NativeView OmniboxViewViews::GetRelativeWindowForPopup() const {
-  return GetWidget()->GetTopLevelWidget()->GetNativeView();
 }
 
 int OmniboxViewViews::GetWidth() const {
@@ -1405,10 +1536,23 @@ void OmniboxViewViews::OnGestureEvent(ui::GestureEvent* event) {
 
 bool OmniboxViewViews::SkipDefaultKeyEventProcessing(
     const ui::KeyEvent& event) {
-  if (views::FocusManager::IsTabTraversalKeyEvent(event) &&
-      ((model()->is_keyword_hint() && !event.IsShiftDown()) ||
-       model()->PopupIsOpen())) {
-    return true;
+  if (views::FocusManager::IsTabTraversalKeyEvent(event)) {
+    // There are three cases where <tab> traversal should be handled by the
+    // omnibox:
+    // 1. Entering keyword mode.
+    //    TODO(crbug.com/439564633): This case seems obsolete. Investigate
+    //    whether it can be removed.
+    // 2. The popup is open (in this case, <tab> events will be handled by
+    //    `OmniboxPopupSelection`.
+    // 3. The AIM page action icon is present and the keyboard accessibility
+    //    setting is disabled. See comments in `HandleEarlyTabActions` for more
+    //    details on this case.
+    if ((model()->is_keyword_hint() && !event.IsShiftDown()) ||
+        model()->PopupIsOpen() ||
+        (GetAiModePageActionIconView() &&
+         !GetFocusManager()->keyboard_accessible())) {
+      return true;
+    }
   }
   if (event.key_code() == ui::VKEY_ESCAPE && !event.IsShiftDown()) {
     return true;
@@ -1454,10 +1598,6 @@ bool OmniboxViewViews::HandleAccessibleAction(
 void OmniboxViewViews::OnFocus() {
   views::Textfield::OnFocus();
 
-  // TODO(tommycli): This does not seem like it should be necessary.
-  // Investigate why it's needed and see if we can remove it.
-  model()->ResetDisplayTexts();
-
   // TODO(oshima): Get control key state.
   model()->OnSetFocus(false);
   // Don't call WebLocationBar::OnSetFocus(), this view has already acquired
@@ -1485,6 +1625,8 @@ void OmniboxViewViews::OnFocus() {
 }
 
 void OmniboxViewViews::OnBlur() {
+  views::Textfield::OnBlur();
+
   // Save the user's existing selection to restore it later.
   saved_selection_for_focus_change_ = GetSelectedRange();
 
@@ -1510,25 +1652,28 @@ void OmniboxViewViews::OnBlur() {
     RevertAll();
   }
 
-  views::Textfield::OnBlur();
-  model()->OnWillKillFocus();
+  // If the full WebUI popup is enabled, it's expected to take focus.
+  // In this case, we should NOT close the popup when the omnibox view
+  // is blurred, because the focus is simply moving to the popup itself.
+  if (!base::FeatureList::IsEnabled(omnibox::kWebUIOmniboxFullPopup)) {
+    model()->OnWillKillFocus();
 
-  // If ZeroSuggest is active, and there is evidence that there is a text
-  // update to show, revert to ensure that update is shown now.  Otherwise,
-  // at least call CloseOmniboxPopup(), so that if ZeroSuggest is in the
-  // midst of running but hasn't yet opened the popup, it will be halted.
-  // If we fully reverted in this case, we'd lose the cursor/highlight
-  // information saved above.
-  if (!model()->user_input_in_progress() && model()->PopupIsOpen() &&
-      GetText() != model()->GetPermanentDisplayText()) {
-    RevertAll();
-  } else {
-    CloseOmniboxPopup();
+    // If ZeroSuggest is active, and there is evidence that there is a text
+    // update to show, revert to ensure that update is shown now.  Otherwise,
+    // at least call CloseOmniboxPopup(), so that if ZeroSuggest is in the
+    // midst of running but hasn't yet opened the popup, it will be halted.
+    // If we fully reverted in this case, we'd lose the cursor/highlight
+    // information saved above.
+    if (!model()->user_input_in_progress() && model()->PopupIsOpen() &&
+        GetText() != model()->GetPermanentDisplayText()) {
+      RevertAll();
+    } else {
+      CloseOmniboxPopup();
+    }
+
+    // Tell the model to reset itself.
+    model()->OnKillFocus();
   }
-
-  // Tell the model to reset itself.
-  model()->OnKillFocus();
-
   // Deselect the text. Ensures the cursor is an I-beam.
   SetSelectedRange(gfx::Range(GetCursorPosition()));
 
@@ -1554,7 +1699,9 @@ void OmniboxViewViews::OnBlur() {
   render_text->SetWhitespaceElision(false);
   render_text->SetDisplayOffset(0);
 
-  // |location_bar_view_| can be null in tests.
+  aim_hint_shown_ = false;
+
+  // `location_bar_view_` can be null in tests.
   if (location_bar_view_) {
     location_bar_view_->OnOmniboxBlurred();
 
@@ -1612,7 +1759,9 @@ bool OmniboxViewViews::IsCommandIdEnabled(int command_id) const {
 
   // These menu items are only shown when they are valid.
   if (command_id == IDC_SHOW_FULL_URLS ||
-      command_id == IDC_SHOW_GOOGLE_LENS_SHORTCUT) {
+      command_id == IDC_SHOW_GOOGLE_LENS_SHORTCUT ||
+      command_id == IDC_SHOW_AI_MODE_OMNIBOX_BUTTON ||
+      command_id == IDC_SHOW_SEARCH_TOOLS) {
     return true;
   }
 
@@ -1621,21 +1770,11 @@ bool OmniboxViewViews::IsCommandIdEnabled(int command_id) const {
           location_bar_view_->command_updater()->IsCommandEnabled(command_id));
 }
 
-OmniboxPopupView* OmniboxViewViews::GetPopupViewForTesting() const {
-  return popup_view_.get();
-}
-
 std::u16string OmniboxViewViews::GetSelectionClipboardText() const {
   return omnibox::SanitizeTextForPaste(Textfield::GetSelectionClipboardText());
 }
 
 void OmniboxViewViews::DoInsertChar(char16_t ch) {
-  // Note: Using `Textfield::GetText()` instead of the `OmniboxView`
-  // implementation because the latter makes full string copies of the former.
-  if (model()->MaybeAccelerateKeywordSelection(Textfield::GetText(), ch)) {
-    return;
-  }
-
   // When the fakebox is focused, ignore whitespace input because if the
   // fakebox is hidden and there's only whitespace in the omnibox, it's
   // difficult for the user to see that the focus moved to the omnibox.
@@ -1697,12 +1836,13 @@ void OmniboxViewViews::ExecuteTextEditCommand(ui::TextEditCommand command) {
 
 bool OmniboxViewViews::ShouldShowPlaceholderText() const {
   // The DSE placeholder text is visible only if the omnibox is blurred. The
-  // keyword placeholder text is visible even if the omnibox is focused, because
-  // users won't enter keyword mode, blur the omnibox, read the placeholder
-  // text, refocus the omnibox, and begin typing.
+  // AIM placeholder text and the keyword placeholder texts are visible even
+  // if the omnibox is focused, because users won't enter keyword mode, blur the
+  // omnibox, read the placeholder text, refocus the omnibox, and begin typing.
   return Textfield::ShouldShowPlaceholderText() &&
          (!model()->is_caret_visible() ||
-          !model()->keyword_placeholder().empty());
+          !model()->keyword_placeholder().empty() ||
+          ShouldShowAimPlaceholderText());
 }
 
 void OmniboxViewViews::UpdateAccessibleValue() {
@@ -1773,25 +1913,58 @@ bool OmniboxViewViews::HandleKeyEvent(views::Textfield* textfield,
   switch (event.key_code()) {
     case ui::VKEY_RETURN: {
       WindowOpenDisposition disposition = WindowOpenDisposition::CURRENT_TAB;
-      if ((alt && !shift) || (shift && command)) {
+      OpenMatchWithKeyboardModifiers metric_value;
+      if (alt && !shift) {
+        metric_value = control ? OpenMatchWithKeyboardModifiers::kCtrlAlt
+                               : OpenMatchWithKeyboardModifiers::kAlt;
         disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
-      } else if (alt || command) {
+      } else if (shift && command) {
+        metric_value = control
+                           ? OpenMatchWithKeyboardModifiers::kCtrlShiftCommand
+                           : OpenMatchWithKeyboardModifiers::kShiftCommand;
+        disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+      } else if (alt && shift) {
+        metric_value = control ? OpenMatchWithKeyboardModifiers::kCtrlAltShift
+                               : OpenMatchWithKeyboardModifiers::kAltShift;
         disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
-      } else if (shift) {
+      } else if (command && !shift) {
+        metric_value = control ? OpenMatchWithKeyboardModifiers::kCtrlCommand
+                               : OpenMatchWithKeyboardModifiers::kCommand;
+        disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
+      } else if (shift && !alt) {
+        metric_value = control ? OpenMatchWithKeyboardModifiers::kCtrlShift
+                               : OpenMatchWithKeyboardModifiers::kShift;
         disposition = WindowOpenDisposition::NEW_WINDOW;
-      }
-      // According to unit tests and comments, holding control when pressing
-      // enter has special behavior handled by `AcceptInput` so in this case
-      // the user is selecting their input (possibly with modification like
-      // appending ".com") and not the row match. This is indicated with an
-      // explicit `kNoMatch` line selection.
-      if (model()->PopupIsOpen() && !control) {
-        model()->OpenSelection(model()->GetPopupSelection(), event.time_stamp(),
-                               disposition);
       } else {
+        metric_value = control ? OpenMatchWithKeyboardModifiers::kCtrl
+                               : OpenMatchWithKeyboardModifiers::kNoModifier;
+      }
+      base::UmaHistogramEnumeration(kOpenMatchWithKeyboardModifiersMetricName,
+                                    metric_value);
+      if (model()->PopupIsOpen() && !control) {
+        // Normal case of pressing <return> when the popup is open.
+        model()->OpenSelection(model()->GetPopupSelection(), event.time_stamp(),
+                               disposition,
+                               /*via_keyboard=*/true);
+      } else {
+        // There are two cases handled here.
+        // 1. The popup is closed and the AIM page action icon has "fake" focus
+        //    (see comments in `HandleEarlyTabActions`). In this case, have
+        //    `OmniboxEditModel` open a `kNoMatch`/`FOCUSED_BUTTON_AIM`
+        //    selection.
+        // 2. The popup is open but <control> is down. This produces a special
+        //    behavior handled by `AcceptInput`. Instead of opening the selected
+        //    suggestion in the popup, the user is accepting their current
+        //    verbatim input, but with "www." prepended and ".com" appended (if
+        //    not already present in the input). This is triggered by having
+        //    `OmniboxEditModel` open a `kNoMatch`/`NORMAL` selection.
+        OmniboxPopupSelection::LineState line_state =
+            aim_page_action_icon_has_fake_focus_
+                ? OmniboxPopupSelection::LineState::FOCUSED_BUTTON_AIM
+                : OmniboxPopupSelection::LineState::NORMAL;
         model()->OpenSelection(
-            OmniboxPopupSelection(OmniboxPopupSelection::kNoMatch),
-            event.time_stamp(), disposition);
+            OmniboxPopupSelection(OmniboxPopupSelection::kNoMatch, line_state),
+            event.time_stamp(), disposition, /*via_keyboard=*/true);
       }
       return true;
     }
@@ -1879,9 +2052,7 @@ bool OmniboxViewViews::HandleKeyEvent(views::Textfield* textfield,
         if (shift) {
           // After uneliding, we need to move the end of the selection range
           // to the beginning of the full unelided URL.
-          size_t start, end;
-          GetSelectionBounds(&start, &end);
-          SetSelectedRange(gfx::Range(start, 0));
+          SetSelectedRange(gfx::Range(GetSelectionBounds().start(), 0));
         } else {
           // After uneliding, move the caret to the beginning of the full
           // unelided URL.
@@ -1894,13 +2065,28 @@ bool OmniboxViewViews::HandleKeyEvent(views::Textfield* textfield,
       break;
 
     case ui::VKEY_SPACE: {
-      if (model()->PopupIsOpen() && !control && !alt && !shift) {
+      if (!model()->PopupIsOpen()) {
+        // If the popup is not open and the page action icon has "fake" focus
+        // (see comments in `HandleEarlyTabActions`), have `OmniboxEditModel`
+        // open a `kNoMatch`/`FOCUSED_BUTTON_AIM` selection.
+        if (aim_page_action_icon_has_fake_focus_) {
+          model()->OpenSelection(
+              OmniboxPopupSelection(
+                  OmniboxPopupSelection::kNoMatch,
+                  OmniboxPopupSelection::LineState::FOCUSED_BUTTON_AIM),
+              event.time_stamp(), WindowOpenDisposition::CURRENT_TAB,
+              /*via_keyboard=*/true);
+          return true;
+        }
+      } else if (!control && !alt && !shift) {
         if (model()->OnSpacePressed()) {
           return true;
         }
         OmniboxPopupSelection selection = model()->GetPopupSelection();
         if (selection.IsButtonFocused()) {
-          model()->OpenSelection(selection, event.time_stamp());
+          model()->OpenSelection(selection, event.time_stamp(),
+                                 WindowOpenDisposition::CURRENT_TAB,
+                                 /*via_keyboard=*/true);
           return true;
         }
       }
@@ -2061,6 +2247,23 @@ void OmniboxViewViews::UpdateContextMenu(ui::SimpleMenuModel* menu_contents) {
         IDC_SHOW_GOOGLE_LENS_SHORTCUT,
         IDS_CONTEXT_MENU_SHOW_GOOGLE_LENS_SHORTCUT);
   }
+
+  const auto* aim_eligibility_service =
+      AimEligibilityServiceFactory::GetForProfile(
+          location_bar_view_->profile());
+  const bool is_aim_entrypoint_enabled =
+      OmniboxFieldTrial::IsAimOmniboxEntrypointEnabled(aim_eligibility_service);
+
+  if (is_aim_entrypoint_enabled) {
+    menu_contents->AddCheckItemWithStringId(
+        IDC_SHOW_AI_MODE_OMNIBOX_BUTTON,
+        IDS_CONTEXT_MENU_SHOW_AI_MODE_OMNIBOX_BUTTON);
+  }
+
+  if (omnibox_feature_configs::Toolbelt::Get().enabled) {
+    menu_contents->AddCheckItemWithStringId(IDC_SHOW_SEARCH_TOOLS,
+                                            IDS_CONTEXT_MENU_SHOW_SEARCH_TOOLS);
+  }
 }
 
 bool OmniboxViewViews::IsCommandIdChecked(int id) const {
@@ -2071,6 +2274,14 @@ bool OmniboxViewViews::IsCommandIdChecked(int id) const {
   if (id == IDC_SHOW_GOOGLE_LENS_SHORTCUT) {
     return location_bar_view_->profile()->GetPrefs()->GetBoolean(
         omnibox::kShowGoogleLensShortcut);
+  }
+  if (id == IDC_SHOW_SEARCH_TOOLS) {
+    return location_bar_view_->profile()->GetPrefs()->GetBoolean(
+        omnibox::kShowSearchTools);
+  }
+  if (id == IDC_SHOW_AI_MODE_OMNIBOX_BUTTON) {
+    return location_bar_view_->profile()->GetPrefs()->GetBoolean(
+        omnibox::kShowAiModeOmniboxButton);
   }
   return false;
 }
@@ -2099,6 +2310,7 @@ void OmniboxViewViews::OnCompositingStarted(ui::Compositor* compositor,
 }
 
 void OmniboxViewViews::OnDidPresentCompositorFrame(
+    ui::Compositor* compositor,
     uint32_t frame_token,
     const gfx::PresentationFeedback& feedback) {
   if (latency_histogram_state_ == COMPOSITING_STARTED) {
@@ -2136,10 +2348,12 @@ void OmniboxViewViews::PerformDrop(
   if (std::optional<ui::OSExchangeData::UrlInfo> url_result =
           data.GetURLAndTitle(ui::FilenameToURLPolicy::CONVERT_FILENAMES);
       url_result.has_value()) {
-    text = omnibox::StripJavascriptSchemas(base::UTF8ToUTF16(url_result->url.spec()));
+    text = omnibox::StripJavascriptSchemas(
+        base::UTF8ToUTF16(url_result->url.spec()));
   } else if (const std::optional<std::u16string> text_result = data.GetString();
              text_result.has_value()) {
-    text = omnibox::StripJavascriptSchemas(base::CollapseWhitespace(*text_result, true));
+    text = omnibox::StripJavascriptSchemas(
+        base::CollapseWhitespace(*text_result, true));
   } else {
     output_drag_op = DragOperation::kNone;
     return;
@@ -2176,27 +2390,118 @@ void OmniboxViewViews::MaybeAddSendTabToSelfItem(
   menu_contents->InsertSeparatorAt(++index, ui::NORMAL_SEPARATOR);
 }
 
-void OmniboxViewViews::OnPopupOpened() {
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-  // It's not great for promos to overlap the omnibox if the user opens the
-  // drop-down after showing the promo. This especially causes issues on Mac and
-  // Linux due to z-order/rendering issues, see crbug.com/1225046 and
-  // crbug.com/332769403 for examples.
-  BrowserHelpBubble::MaybeCloseOverlappingHelpBubbles(this);
-#endif
-}
-
 void OmniboxViewViews::UpdatePlaceholderTextColor() {
-  // Keyword placeholders are dim to differentiate from user input. DSE
-  // placeholders are not dim to draw attention to the omnibox and because the
-  // omnibox is unfocused so there's less risk of confusion with user input.
+  // AIM placeholder text and keyword placeholders are dim to differentiate from
+  // user input. DSE placeholders are not dim to draw attention to the omnibox
+  // and because the omnibox is unfocused so there's less risk of confusion with
+  // user input.
   // Null in tests.
   if (!GetColorProvider()) {
     return;
   }
+  bool dse_placeholder_installed = model()->keyword_placeholder().empty() &&
+                                   !ShouldInstallAimPlaceholderText();
   set_placeholder_text_color(GetColorProvider()->GetColor(
-      model()->keyword_placeholder().empty() ? kColorOmniboxText
-                                             : kColorOmniboxTextDimmed));
+      dse_placeholder_installed ? kColorOmniboxText : kColorOmniboxTextDimmed));
+}
+
+bool OmniboxViewViews::AreAimHintImpressionLimitsReached() const {
+  // If the hint has already been shown in the current focus session, we can
+  // ignore the limits to avoid hiding the hint text in the same session that
+  // the impression limit was reached.
+  if (aim_hint_shown_) {
+    return false;
+  }
+
+  const auto& config = omnibox_feature_configs::AiModeOmniboxEntryPoint::Get();
+  if (config.enable_hint_impression_limits) {
+    PrefService* prefs = location_bar_view_->profile()->GetPrefs();
+
+    // Check total impressions.
+    const int total_impressions =
+        prefs->GetInteger(omnibox::kAimHintTotalImpressions);
+    if (total_impressions >= config.aim_hint_impression_limit_total) {
+      return true;
+    }
+
+    // Check daily impressions.
+    const int today = (base::Time::Now() - base::Time::UnixEpoch()).InDays();
+    if (prefs->GetInteger(omnibox::kAimHintLastImpressionDay) == today &&
+        prefs->GetInteger(omnibox::kAimHintDailyImpressionsCount) >=
+            config.aim_hint_impression_limit_daily) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool OmniboxViewViews::ShouldInstallAimPlaceholderText() const {
+  // `location_bar_view_` can be null in tests.
+  if (!location_bar_view_) {
+    return false;
+  }
+
+  const auto* aim_eligibility_service =
+      AimEligibilityServiceFactory::GetForProfile(
+          location_bar_view_->profile());
+  const bool is_aim_entrypoint_enabled =
+      OmniboxFieldTrial::IsAimOmniboxEntrypointEnabled(aim_eligibility_service);
+
+  return is_aim_entrypoint_enabled && model()->is_caret_visible();
+}
+
+void OmniboxViewViews::RecordAimHintImpression() {
+  const auto& config = omnibox_feature_configs::AiModeOmniboxEntryPoint::Get();
+  if (!config.enable_hint_impression_limits) {
+    return;
+  }
+
+  PrefService* prefs = location_bar_view_->profile()->GetPrefs();
+
+  // Increment the total impressions count.
+  const int total_impressions =
+      prefs->GetInteger(omnibox::kAimHintTotalImpressions) + 1;
+  prefs->SetInteger(omnibox::kAimHintTotalImpressions, total_impressions);
+
+  // Increment the daily impressions count, resetting the count if the day has
+  // changed.
+  const int today = (base::Time::Now() - base::Time::UnixEpoch()).InDays();
+  if (prefs->GetInteger(omnibox::kAimHintLastImpressionDay) != today) {
+    prefs->SetInteger(omnibox::kAimHintLastImpressionDay, today);
+    prefs->SetInteger(omnibox::kAimHintDailyImpressionsCount, 0);
+  }
+
+  const int daily_impressions =
+      prefs->GetInteger(omnibox::kAimHintDailyImpressionsCount) + 1;
+  prefs->SetInteger(omnibox::kAimHintDailyImpressionsCount, daily_impressions);
+}
+
+bool OmniboxViewViews::ShouldShowAimPlaceholderText() const {
+  // If the hint text is hidden or the AIM button is not visible, the
+  // placeholder text is not shown.
+  if (omnibox_feature_configs::AiModeOmniboxEntryPoint::Get()
+          .hide_aim_hint_text ||
+      !AimButtonVisible()) {
+    return false;
+  }
+
+  // If the impression limits have been reached, the hint should not be shown.
+  if (AreAimHintImpressionLimitsReached()) {
+    return false;
+  }
+
+  // The placeholder text should only be shown when the omnibox is visibly
+  // focused and the popup selection state is normal (i.e. no popup buttons are
+  // focused and we are not in keyword mode). The hint text will be shown on NTP
+  // open by default, unless this option is explicitly disabled.
+  bool ntp_open = !model()->PopupIsOpen() && !model()->user_input_in_progress();
+  bool hide_text_on_ntp_open =
+      omnibox_feature_configs::AiModeOmniboxEntryPoint::Get()
+          .hide_aim_hint_text_on_ntp_open &&
+      ntp_open;
+  return model()->is_caret_visible() && !model()->is_keyword_selected() &&
+         !model()->GetPopupSelection().IsButtonFocused() &&
+         !hide_text_on_ntp_open;
 }
 
 BEGIN_METADATA(OmniboxViewViews)

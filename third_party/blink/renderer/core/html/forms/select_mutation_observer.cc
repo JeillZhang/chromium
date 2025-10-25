@@ -27,7 +27,6 @@ namespace blink {
 
 SelectMutationObserver::SelectMutationObserver(HTMLSelectElement& select)
     : select_(select), observer_(MutationObserver::Create(this)) {
-  CHECK(HTMLSelectElement::CustomizableSelectEnabled(&select));
   DCHECK(select_->IsAppearanceBase());
 
   MutationObserverInit* init = MutationObserverInit::Create();
@@ -53,22 +52,6 @@ void SelectMutationObserver::Deliver(const MutationRecordVector& records,
       if (record->attributeName() == html_names::kTabindexAttr ||
           record->attributeName() == html_names::kContenteditableAttr) {
         AddDescendantDisallowedErrorToNode(*record->target());
-      } else if ((RuntimeEnabledFeatures::
-                     SelectAccessibilityReparentInputEnabled() ||
-                     RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled())
-          &&
-                 record->attributeName() == html_names::kTypeAttr) {
-        if (auto* input = DynamicTo<HTMLInputElement>(record->target())) {
-          if (input->IsTextField()) {
-            select_->AddDescendantTextInput(input);
-          } else {
-            select_->RemoveDescendantTextInput(input);
-            // If the type attribute was changed in a way that makes the
-            // <input> no longer an allowed descendant, then we should emit an
-            // error.
-            AddDescendantDisallowedErrorToNode(*input);
-          }
-        }
       }
     }
   }
@@ -93,7 +76,6 @@ void SelectMutationObserver::CheckAddedNodes(MutationRecord* record) {
     if (IsWhitespaceOrEmpty(*descendant)) {
       continue;
     }
-    MaybeAddDescendantTextInput(descendant);
     AddDescendantDisallowedErrorToNode(*descendant);
     // Check the added node's descendants, if any.
     TraverseNodeDescendants(descendant);
@@ -110,7 +92,6 @@ void SelectMutationObserver::CheckRemovedNodes(MutationRecord* record) {
     if (IsWhitespaceOrEmpty(*descendant)) {
       continue;
     }
-    MaybeRemoveDescendantTextInput(descendant);
     if (!IsAllowedInteractiveElement(*descendant)) {
       select_->DecreaseContentModelViolationCount();
     }
@@ -118,7 +99,6 @@ void SelectMutationObserver::CheckRemovedNodes(MutationRecord* record) {
     for (Node* nested_descendant = NodeTraversal::FirstWithin(*descendant);
          nested_descendant; nested_descendant = NodeTraversal::Next(
                                 *nested_descendant, descendant)) {
-      MaybeRemoveDescendantTextInput(descendant);
       if (!IsWhitespaceOrEmpty(*nested_descendant) &&
           !IsAllowedInteractiveElement(*nested_descendant)) {
         select_->DecreaseContentModelViolationCount();
@@ -131,109 +111,24 @@ void SelectMutationObserver::TraverseNodeDescendants(const Node* node) {
   for (Node* descendant = NodeTraversal::FirstWithin(*node); descendant;
        descendant = NodeTraversal::Next(*descendant, node)) {
     if (!IsWhitespaceOrEmpty(*descendant)) {
-      MaybeAddDescendantTextInput(descendant);
       AddDescendantDisallowedErrorToNode(*descendant);
     }
   }
 }
 
-void SelectMutationObserver::MaybeAddDescendantTextInput(Node* node) {
-  if (RuntimeEnabledFeatures::SelectAccessibilityReparentInputEnabled() || RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled()) {
-    if (auto* input = DynamicTo<HTMLInputElement>(node);
-        input && input->IsTextField()) {
-      select_->AddDescendantTextInput(input);
-    }
-  }
-}
-
-void SelectMutationObserver::MaybeRemoveDescendantTextInput(Node* node) {
-  if (RuntimeEnabledFeatures::SelectAccessibilityReparentInputEnabled() || RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled()) {
-    if (auto* input = DynamicTo<HTMLInputElement>(node);
-        input && input->IsTextField()) {
-      select_->RemoveDescendantTextInput(input);
-    }
-  }
-}
-
 void SelectMutationObserver::AddDescendantDisallowedErrorToNode(Node& node) {
-  SelectElementAccessibilityIssueReason issue_reason = CheckForIssue(node);
-  if (issue_reason != SelectElementAccessibilityIssueReason::kValidChild) {
+  ElementAccessibilityIssueReason issue_reason = CheckForIssue(node);
+  if (issue_reason != ElementAccessibilityIssueReason::kValidChild) {
     if (!IsAllowedInteractiveElement(node)) {
       select_->IncreaseContentModelViolationCount();
     }
-    if (RuntimeEnabledFeatures::
-            CustomizableSelectElementAccessibilityIssuesEnabled()) {
-      Document& document = select_->GetDocument();
-      AuditsIssue::ReportSelectElementAccessibilityIssue(
-          &document, node.GetDomNodeId(), issue_reason,
-          /* has_disallowed_attributes = */ HasTabIndexAttribute(node) ||
-              IsContenteditable(node));
-    }
-    node.AddConsoleMessage(mojom::blink::ConsoleMessageSource::kRecommendation,
-                           mojom::blink::ConsoleMessageLevel::kError,
-                           GetMessageForReason(issue_reason));
+    Document& document = select_->GetDocument();
+    AuditsIssue::ReportElementAccessibilityIssue(
+        &document, node.GetDomNodeId(), issue_reason,
+        /* has_disallowed_attributes = */ HasTabIndexAttribute(node) ||
+            IsContenteditable(node));
     RecordIssueByType(issue_reason);
   }
-}
-
-String SelectMutationObserver::GetMessageForReason(
-    SelectElementAccessibilityIssueReason issue_reason) {
-  switch (issue_reason) {
-    case SelectElementAccessibilityIssueReason::kDisallowedSelectChild:
-      return FormatElementMessage(
-          "<select>", "a ",
-          "an <optgroup> with a <legend> element or <option> elements");
-    case SelectElementAccessibilityIssueReason::kDisallowedOptGroupChild:
-      return FormatElementMessage("<optgroup>", "an ",
-                                  "the <legend> or <option> elements");
-    case SelectElementAccessibilityIssueReason::kNonPhrasingContentOptionChild:
-      return "Non-phrasing content was found within an <option> element. The "
-             "<option> element allows only non-interactive phrasing content, "
-             "text, and <div> elements as its children. The semantics of "
-             "non-phrasing content elements do not make sense as children of "
-             "an <option>, and such semantics will largely be ignored by "
-             "assistive technology since they are inappropriate in this "
-             "context. Consider removing or changing such elements to one of "
-             "the allowed phrasing content elements.";
-    case SelectElementAccessibilityIssueReason::kInteractiveContentOptionChild:
-      return FormatInteractiveElementMessage("<option>", "an ", g_empty_string);
-    case SelectElementAccessibilityIssueReason::kInteractiveContentLegendChild:
-      return FormatInteractiveElementMessage(
-          "<legend>", "a ",
-          "Interactive elements are not allowed children of a <legend> "
-          "element when used within an <optgroup> element. ");
-    case SelectElementAccessibilityIssueReason::kValidChild:
-    default:
-      NOTREACHED();
-  }
-}
-
-String SelectMutationObserver::FormatElementMessage(const String& element,
-                                                    const String& article,
-                                                    const String& example) {
-  return "An element which is not allowed in the content model of the " +
-         element + " element was found within " + article + element +
-         " element. These elements will not consistently be accessible to "
-         "people navigating by keyboard or using assistive technology. If "
-         "using disallowed elements for layout structure and styling, "
-         "consider using the allowed <div> element instead. Any text "
-         "existing within the " +
-         element +
-         " element should either be removed or relocated to a valid element "
-         "that allows text descendants, e.g., " +
-         example + ".";
-}
-
-String SelectMutationObserver::FormatInteractiveElementMessage(
-    const String& element,
-    const String& article,
-    const String& context) {
-  return "An interactive element which is not allowed in the content model "
-         "of the " +
-         element + " element was found within " + article + element +
-         " element. " + context +
-         "These elements will not consistently be accessible to people "
-         "navigating by keyboard or using assistive technology.";
 }
 
 bool SelectMutationObserver::IsAllowedInteractiveElement(Node& node) {
@@ -244,20 +139,6 @@ bool SelectMutationObserver::IsAllowedInteractiveElement(Node& node) {
     const Node* parent = node.parentNode();
     return parent && IsA<HTMLSelectElement>(*parent) &&
            !ElementTraversal::PreviousSibling(node);
-  }
-  if (RuntimeEnabledFeatures::SelectAccessibilityReparentInputEnabled() || RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled()) {
-    // <select>s are allowed to have one <input> before the options. We should
-    // probably find a way to figure out if the <input> is actually placed
-    // before the <option>s or not.
-
-    if (auto* input = DynamicTo<HTMLInputElement>(node)) {
-      if (input->IsTextField()) {
-        select_->AddDescendantTextInput(input);
-      }
-      if (input == select_->FirstDescendantTextInput()) {
-        return true;
-      }
-    }
   }
   // If the node isn't a <button> but it is an interactive element, we return
   // false as interactive elements are disallowed.
@@ -275,39 +156,39 @@ bool SelectMutationObserver::IsInteractiveElement(const Node& node) {
 }
 
 void SelectMutationObserver::RecordIssueByType(
-    SelectElementAccessibilityIssueReason issue_reason) {
+    ElementAccessibilityIssueReason issue_reason) {
   switch (issue_reason) {
-    case SelectElementAccessibilityIssueReason::kDisallowedSelectChild:
+    case ElementAccessibilityIssueReason::kDisallowedSelectChild:
       UseCounter::Count(select_->GetDocument(),
                         WebFeature::kDisallowedSelectChild);
       break;
-    case SelectElementAccessibilityIssueReason::kDisallowedOptGroupChild:
+    case ElementAccessibilityIssueReason::kDisallowedOptGroupChild:
       UseCounter::Count(select_->GetDocument(),
                         WebFeature::kDisallowedOptGroupChild);
       break;
-    case SelectElementAccessibilityIssueReason::kNonPhrasingContentOptionChild:
+    case ElementAccessibilityIssueReason::kNonPhrasingContentOptionChild:
       UseCounter::Count(select_->GetDocument(),
                         WebFeature::kNonPhrasingContentOptionChild);
       break;
-    case SelectElementAccessibilityIssueReason::kInteractiveContentOptionChild:
+    case ElementAccessibilityIssueReason::kInteractiveContentOptionChild:
       UseCounter::Count(select_->GetDocument(),
                         WebFeature::kInteractiveContentOptionChild);
       break;
-    case SelectElementAccessibilityIssueReason::kInteractiveContentLegendChild:
+    case ElementAccessibilityIssueReason::kInteractiveContentLegendChild:
       UseCounter::Count(select_->GetDocument(),
                         WebFeature::kInteractiveContentLegendChild);
       break;
-    case SelectElementAccessibilityIssueReason::kValidChild:
+    case ElementAccessibilityIssueReason::kValidChild:
     default:
       NOTREACHED();
   }
 }
 
-SelectElementAccessibilityIssueReason SelectMutationObserver::CheckForIssue(
+ElementAccessibilityIssueReason SelectMutationObserver::CheckForIssue(
     const Node& descendant) {
   if (descendant.getNodeType() == Node::kCommentNode ||
       IsAutonomousCustomElement(descendant)) {
-    return SelectElementAccessibilityIssueReason::kValidChild;
+    return ElementAccessibilityIssueReason::kValidChild;
   }
   // Get the parent of the descendant.
   const Node* parent = descendant.parentNode();
@@ -318,21 +199,21 @@ SelectElementAccessibilityIssueReason SelectMutationObserver::CheckForIssue(
   }
   if (!IsA<HTMLElement>(*parent)) {
     if (parent->IsSVGElement()) {
-      return SelectElementAccessibilityIssueReason::kValidChild;
+      return ElementAccessibilityIssueReason::kValidChild;
     }
-    return SelectElementAccessibilityIssueReason::kDisallowedSelectChild;
+    return ElementAccessibilityIssueReason::kDisallowedSelectChild;
   }
   if (IsA<HTMLSelectElement>(*parent)) {
     if (IsAllowedDescendantOfSelect(descendant, *parent)) {
-      return SelectElementAccessibilityIssueReason::kValidChild;
+      return ElementAccessibilityIssueReason::kValidChild;
     }
-    return SelectElementAccessibilityIssueReason::kDisallowedSelectChild;
+    return ElementAccessibilityIssueReason::kDisallowedSelectChild;
   }
   if (IsA<HTMLOptGroupElement>(*parent)) {
     if (IsAllowedDescendantOfOptgroup(descendant, *parent)) {
-      return SelectElementAccessibilityIssueReason::kValidChild;
+      return ElementAccessibilityIssueReason::kValidChild;
     }
-    return SelectElementAccessibilityIssueReason::kDisallowedOptGroupChild;
+    return ElementAccessibilityIssueReason::kDisallowedOptGroupChild;
   }
   if (IsA<HTMLOptionElement>(*parent) ||
       IsA<HTMLSelectedContentElement>(*parent) ||
@@ -350,30 +231,22 @@ SelectElementAccessibilityIssueReason SelectMutationObserver::CheckForIssue(
   }
   if (IsA<HTMLButtonElement>(*parent)) {
     if (IsAllowedDescendantOfButton(descendant)) {
-      return SelectElementAccessibilityIssueReason::kValidChild;
+      return ElementAccessibilityIssueReason::kValidChild;
     }
-    return SelectElementAccessibilityIssueReason::kDisallowedSelectChild;
+    return ElementAccessibilityIssueReason::kDisallowedSelectChild;
   }
   if (IsA<HTMLLegendElement>(*parent)) {
     if (IsAllowedPhrasingContent(descendant) &&
         !HasTabIndexAttribute(descendant) && !IsContenteditable(descendant)) {
-      return SelectElementAccessibilityIssueReason::kValidChild;
+      return ElementAccessibilityIssueReason::kValidChild;
     }
-    return SelectElementAccessibilityIssueReason::
-        kInteractiveContentLegendChild;
+    return ElementAccessibilityIssueReason::kInteractiveContentLegendChild;
   }
-  return SelectElementAccessibilityIssueReason::kDisallowedSelectChild;
+  return ElementAccessibilityIssueReason::kDisallowedSelectChild;
 }
 
 bool SelectMutationObserver::IsAllowedDescendantOfSelect(const Node& descendant,
                                                          const Node& parent) {
-  if (RuntimeEnabledFeatures::SelectAccessibilityReparentInputEnabled() || RuntimeEnabledFeatures::SelectAccessibilityNestedInputEnabled()) {
-    // <select>s are allowed to have one text <input>, although it should be
-    // placed before any of the <option>s.
-    if (select_->FirstDescendantTextInput() == descendant) {
-      return true;
-    }
-  }
   // <button> has to be the first direct descendant of the <select>.
   return (IsA<HTMLButtonElement>(descendant) &&
           IsA<HTMLSelectElement>(parent) &&
@@ -405,22 +278,21 @@ bool SelectMutationObserver::IsAllowedDescendantOfButton(
     const Node& descendant) {
   return IsA<HTMLSelectedContentElement>(descendant) ||
          CheckDescedantOfOption(descendant) ==
-             SelectElementAccessibilityIssueReason::kValidChild;
+             ElementAccessibilityIssueReason::kValidChild;
 }
 
-SelectElementAccessibilityIssueReason
-SelectMutationObserver::CheckDescedantOfOption(const Node& descendant) {
+ElementAccessibilityIssueReason SelectMutationObserver::CheckDescedantOfOption(
+    const Node& descendant) {
   if (!IsA<HTMLDivElement>(descendant) &&
       !IsAllowedPhrasingContent(descendant) &&
       !IsAutonomousCustomElement(descendant)) {
-    return SelectElementAccessibilityIssueReason::
-        kNonPhrasingContentOptionChild;
+    return ElementAccessibilityIssueReason::kNonPhrasingContentOptionChild;
   }
   // Check tabindex and contenteditable attributes of the descendant as well.
   if (!HasTabIndexAttribute(descendant) && !IsContenteditable(descendant)) {
-    return SelectElementAccessibilityIssueReason::kValidChild;
+    return ElementAccessibilityIssueReason::kValidChild;
   }
-  return SelectElementAccessibilityIssueReason::kInteractiveContentOptionChild;
+  return ElementAccessibilityIssueReason::kInteractiveContentOptionChild;
 }
 
 bool SelectMutationObserver::HasTabIndexAttribute(const Node& node) {
@@ -440,7 +312,7 @@ bool SelectMutationObserver::IsContenteditable(const Node& node) {
   return false;
 }
 
-SelectElementAccessibilityIssueReason
+ElementAccessibilityIssueReason
 SelectMutationObserver::TraverseAncestorsAndCheckDescendant(
     const Node& descendant) {
   // As we've already checked the descendant's parent, we can directly look at
@@ -454,20 +326,20 @@ SelectMutationObserver::TraverseAncestorsAndCheckDescendant(
     }
     if (IsA<HTMLOptGroupElement>(*ancestor)) {
       if (IsAllowedDescendantOfOptgroup(descendant, *parent)) {
-        return SelectElementAccessibilityIssueReason::kValidChild;
+        return ElementAccessibilityIssueReason::kValidChild;
       }
-      return SelectElementAccessibilityIssueReason::kDisallowedOptGroupChild;
+      return ElementAccessibilityIssueReason::kDisallowedOptGroupChild;
     }
     if (IsA<HTMLSelectElement>(*ancestor) &&
         IsAllowedDescendantOfSelect(descendant, *parent)) {
-      return SelectElementAccessibilityIssueReason::kValidChild;
+      return ElementAccessibilityIssueReason::kValidChild;
     }
     if (IsA<HTMLButtonElement>(*ancestor) &&
         IsAllowedDescendantOfButton(descendant)) {
-      return SelectElementAccessibilityIssueReason::kValidChild;
+      return ElementAccessibilityIssueReason::kValidChild;
     }
   }
-  return SelectElementAccessibilityIssueReason::kDisallowedSelectChild;
+  return ElementAccessibilityIssueReason::kDisallowedSelectChild;
 }
 
 bool SelectMutationObserver::IsWhitespaceOrEmpty(const Node& node) {

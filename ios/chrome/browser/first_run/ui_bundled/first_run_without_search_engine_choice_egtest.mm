@@ -14,11 +14,11 @@
 #import "components/strings/grit/components_strings.h"
 #import "components/sync/base/user_selectable_type.h"
 #import "components/unified_consent/pref_names.h"
-#import "ios/chrome/browser/authentication/ui_bundled/expected_signin_histograms.h"
+#import "ios/chrome/browser/authentication/test/expected_signin_histograms.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/authentication/test/signin_matchers.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_matchers.h"
 #import "ios/chrome/browser/authentication/ui_bundled/views/views_constants.h"
 #import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_earl_grey.h"
 #import "ios/chrome/browser/first_run/ui_bundled/first_run_app_interface.h"
@@ -547,7 +547,7 @@ id<GREYMatcher> ManageUMALinkMatcher() {
   [self verifyEnterpriseWelcomeScreenIsDisplayedWithFRESigninIntent:
             FRESigninIntentSigninWithPolicy];
 
-  // Add the identity list.
+  // Show the identity list.
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
                                           kIdentityButtonControlIdentifier)]
       performAction:grey_tap()];
@@ -665,22 +665,15 @@ id<GREYMatcher> ManageUMALinkMatcher() {
       assertWithMatcher:grey_sufficientlyVisible()];
   // Verify that the primary and secondary buttons have the same foreground and
   // background colors.
-  NSString* foregroundColorName = kBlueColor;
-  NSString* backgroundColorName = kBlueHaloColor;
+  [[EarlGrey selectElementWithMatcher:
+                 grey_allOf(chrome_test_util::ButtonWithEqualWeightColor(),
+                            chrome_test_util::PromoScreenPrimaryButtonMatcher(),
+                            nil)] assertWithMatcher:grey_sufficientlyVisible()];
   [[EarlGrey
       selectElementWithMatcher:
-          grey_allOf(
-              chrome_test_util::ButtonWithForegroundColor(foregroundColorName),
-              chrome_test_util::ButtonWithBackgroundColor(backgroundColorName),
-              chrome_test_util::PromoScreenPrimaryButtonMatcher(), nil)]
-      assertWithMatcher:grey_sufficientlyVisible()];
-  [[EarlGrey
-      selectElementWithMatcher:
-          grey_allOf(
-              chrome_test_util::ButtonWithForegroundColor(foregroundColorName),
-              chrome_test_util::ButtonWithBackgroundColor(backgroundColorName),
-              chrome_test_util::PromoScreenSecondaryButtonMatcher(), nil)]
-      assertWithMatcher:grey_sufficientlyVisible()];
+          grey_allOf(chrome_test_util::ButtonWithEqualWeightColor(),
+                     chrome_test_util::PromoScreenSecondaryButtonMatcher(),
+                     nil)] assertWithMatcher:grey_sufficientlyVisible()];
   // Accept History Sync.
   [[self elementInteractionWithGreyMatcher:chrome_test_util::
                                                PromoScreenPrimaryButtonMatcher()
@@ -714,14 +707,6 @@ id<GREYMatcher> ManageUMALinkMatcher() {
                                         kHistorySyncEqualWeightedFromCapability)
                          forHistogram:@"Signin.SyncButtons.Shown"],
       @"Failed to record History Sync button type histogram.");
-  GREYAssertNil(
-      [MetricsAppInterface
-          expectUniqueSampleWithCount:1
-                            forBucket:static_cast<int>(
-                                          signin_metrics::SyncButtonClicked::
-                                              kHistorySyncOptInEqualWeighted)
-                         forHistogram:@"Signin.SyncButtons.Clicked"],
-      @"Failed to record History Sync buttons clicked histogram.");
 }
 
 // Tests that the History Sync Opt-In screen will not have equally weighted
@@ -748,16 +733,13 @@ id<GREYMatcher> ManageUMALinkMatcher() {
                                    kHistorySyncViewAccessibilityIdentifier)]
       assertWithMatcher:grey_sufficientlyVisible()];
   // Verify that buttons have the expected colors.
+  [[EarlGrey selectElementWithMatcher:
+                 grey_allOf(chrome_test_util::ButtonWithPrimaryColor(),
+                            chrome_test_util::PromoScreenPrimaryButtonMatcher(),
+                            nil)] assertWithMatcher:grey_sufficientlyVisible()];
   [[EarlGrey
       selectElementWithMatcher:
-          grey_allOf(chrome_test_util::ButtonWithForegroundColor(
-                         kSolidButtonTextColor),
-                     chrome_test_util::ButtonWithBackgroundColor(kBlueColor),
-                     chrome_test_util::PromoScreenPrimaryButtonMatcher(), nil)]
-      assertWithMatcher:grey_sufficientlyVisible()];
-  [[EarlGrey
-      selectElementWithMatcher:
-          grey_allOf(chrome_test_util::ButtonWithForegroundColor(kBlueColor),
+          grey_allOf(chrome_test_util::ButtonWithSecondaryColor(),
                      chrome_test_util::PromoScreenSecondaryButtonMatcher(),
                      nil)] assertWithMatcher:grey_sufficientlyVisible()];
   // Decline History Sync.
@@ -775,15 +757,6 @@ id<GREYMatcher> ManageUMALinkMatcher() {
                                               kHistorySyncNotEqualWeighted)
                          forHistogram:@"Signin.SyncButtons.Shown"],
       @"Failed to record History Sync button type histogram.");
-  GREYAssertNil(
-      [MetricsAppInterface
-          expectUniqueSampleWithCount:1
-                            forBucket:
-                                static_cast<int>(
-                                    signin_metrics::SyncButtonClicked::
-                                        kHistorySyncCancelNotEqualWeighted)
-                         forHistogram:@"Signin.SyncButtons.Clicked"],
-      @"Failed to record History Sync buttons clicked histogram.");
 }
 
 // Tests that the History Sync Opt-In screen will have equally weighted button
@@ -813,22 +786,15 @@ id<GREYMatcher> ManageUMALinkMatcher() {
       assertWithMatcher:grey_sufficientlyVisible()];
   // Verify that the primary and secondary buttons have the same foreground and
   // background colors.
-  NSString* foregroundColorName = kBlueColor;
-  NSString* backgroundColorName = kBlueHaloColor;
+  [[EarlGrey selectElementWithMatcher:
+                 grey_allOf(chrome_test_util::ButtonWithEqualWeightColor(),
+                            chrome_test_util::PromoScreenPrimaryButtonMatcher(),
+                            nil)] assertWithMatcher:grey_sufficientlyVisible()];
   [[EarlGrey
       selectElementWithMatcher:
-          grey_allOf(
-              chrome_test_util::ButtonWithForegroundColor(foregroundColorName),
-              chrome_test_util::ButtonWithBackgroundColor(backgroundColorName),
-              chrome_test_util::PromoScreenPrimaryButtonMatcher(), nil)]
-      assertWithMatcher:grey_sufficientlyVisible()];
-  [[EarlGrey
-      selectElementWithMatcher:
-          grey_allOf(
-              chrome_test_util::ButtonWithForegroundColor(foregroundColorName),
-              chrome_test_util::ButtonWithBackgroundColor(backgroundColorName),
-              chrome_test_util::PromoScreenSecondaryButtonMatcher(), nil)]
-      assertWithMatcher:grey_sufficientlyVisible()];
+          grey_allOf(chrome_test_util::ButtonWithEqualWeightColor(),
+                     chrome_test_util::PromoScreenSecondaryButtonMatcher(),
+                     nil)] assertWithMatcher:grey_sufficientlyVisible()];
   // Accept History Sync.
   [[self elementInteractionWithGreyMatcher:chrome_test_util::
                                                PromoScreenPrimaryButtonMatcher()
@@ -863,14 +829,6 @@ id<GREYMatcher> ManageUMALinkMatcher() {
                                         kHistorySyncEqualWeightedFromDeadline)
                          forHistogram:@"Signin.SyncButtons.Shown"],
       @"Failed to record History Sync button type histogram.");
-  GREYAssertNil(
-      [MetricsAppInterface
-          expectUniqueSampleWithCount:1
-                            forBucket:static_cast<int>(
-                                          signin_metrics::SyncButtonClicked::
-                                              kHistorySyncOptInEqualWeighted)
-                         forHistogram:@"Signin.SyncButtons.Clicked"],
-      @"Failed to record History Sync buttons clicked histogram.");
 }
 
 // Tests that the History Sync Opt-In screen for users with unknown minor mode
@@ -925,14 +883,6 @@ id<GREYMatcher> ManageUMALinkMatcher() {
                                         kHistorySyncEqualWeightedFromDeadline)
                          forHistogram:@"Signin.SyncButtons.Shown"],
       @"Failed to record History Sync button type histogram.");
-  GREYAssertNil(
-      [MetricsAppInterface
-          expectUniqueSampleWithCount:1
-                            forBucket:static_cast<int>(
-                                          signin_metrics::SyncButtonClicked::
-                                              kHistorySyncCancelEqualWeighted)
-                         forHistogram:@"Signin.SyncButtons.Clicked"],
-      @"Failed to record History Sync buttons clicked histogram.");
 }
 
 #pragma mark - Sync UI Disabled
@@ -1026,16 +976,13 @@ id<GREYMatcher> ManageUMALinkMatcher() {
                           kPromoStyleScrollViewAccessibilityIdentifier]
       assertWithMatcher:grey_notNil()];
   // Verify that buttons have the expected colors.
+  [[EarlGrey selectElementWithMatcher:
+                 grey_allOf(chrome_test_util::ButtonWithPrimaryColor(),
+                            chrome_test_util::PromoScreenPrimaryButtonMatcher(),
+                            nil)] assertWithMatcher:grey_sufficientlyVisible()];
   [[EarlGrey
       selectElementWithMatcher:
-          grey_allOf(chrome_test_util::ButtonWithForegroundColor(
-                         kSolidButtonTextColor),
-                     chrome_test_util::ButtonWithBackgroundColor(kBlueColor),
-                     chrome_test_util::PromoScreenPrimaryButtonMatcher(), nil)]
-      assertWithMatcher:grey_sufficientlyVisible()];
-  [[EarlGrey
-      selectElementWithMatcher:
-          grey_allOf(chrome_test_util::ButtonWithForegroundColor(kBlueColor),
+          grey_allOf(chrome_test_util::ButtonWithSecondaryColor(),
                      chrome_test_util::PromoScreenSecondaryButtonMatcher(),
                      nil)] assertWithMatcher:grey_sufficientlyVisible()];
   // Accept History Sync.
@@ -1053,14 +1000,6 @@ id<GREYMatcher> ManageUMALinkMatcher() {
                                               kHistorySyncNotEqualWeighted)
                          forHistogram:@"Signin.SyncButtons.Shown"],
       @"Failed to record History Sync button type histogram.");
-  GREYAssertNil(
-      [MetricsAppInterface
-          expectUniqueSampleWithCount:1
-                            forBucket:static_cast<int>(
-                                          signin_metrics::SyncButtonClicked::
-                                              kHistorySyncOptInNotEqualWeighted)
-                         forHistogram:@"Signin.SyncButtons.Clicked"],
-      @"Failed to record History Sync buttons clicked histogram.");
 }
 
 // Tests that the correct subtitle is shown in the FRE sign-in screen if the

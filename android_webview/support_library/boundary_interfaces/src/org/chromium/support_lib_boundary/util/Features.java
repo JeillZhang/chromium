@@ -112,7 +112,7 @@ public class Features {
     /**
      * @deprecated Feature was renamed to WEB_MESSAGE_ARRAY_BUFFER. Do not reuse feature name.
      */
-    @Deprecated()
+    @Deprecated
     public static final String WEB_MESSAGE_GET_MESSAGE_PAYLOAD = "WEB_MESSAGE_GET_MESSAGE_PAYLOAD";
 
     // JsReplyProxy.postMessageWithPayload
@@ -215,13 +215,17 @@ public class Features {
     /**
      * @deprecated Feature was never launched. Do not reuse feature name.
      */
-    @Deprecated()
+    @Deprecated
     public static final String REQUESTED_WITH_HEADER_CONTROL = "REQUESTED_WITH_HEADER_CONTROL";
 
     // WebSettingsCompat.setRequestedWithHeaderAllowList
     // WebSettingsCompat.getRequestedWithHeaderAllowList
     // ServiceWorkerWebSettingsCompat.setRequestedWithHeaderAllowList
     // ServiceWorkerWebSettingsCompat.getRequestedWithHeaderAllowList
+    /**
+     * @deprecated API has been disabled since the XRW origin trial ended.
+     */
+    @Deprecated
     public static final String REQUESTED_WITH_HEADER_ALLOW_LIST =
             "REQUESTED_WITH_HEADER_ALLOW_LIST";
 
@@ -260,7 +264,7 @@ public class Features {
     public static final String MULTI_PROFILE = "MULTI_PROFILE";
 
     // WebSettingsCompat.enableRestrictSensitiveWebContent
-    @Deprecated()
+    @Deprecated
     public static final String RESTRICT_SENSITIVE_WEB_CONTENT = "RESTRICT_SENSITIVE_WEB_CONTENT";
 
     // WebSettingsCompat.setUserAgentMetadataFromMap
@@ -298,10 +302,13 @@ public class Features {
 
     // WebViewCompat.startUpWebView
     public static final String ASYNC_WEBVIEW_STARTUP = "ASYNC_WEBVIEW_STARTUP";
+    // WebViewStartUpResult.getAsyncStartUpLocations
+    public static final String ASYNC_WEBVIEW_STARTUP_ASYNC_STARTUP_LOCATIONS =
+            "ASYNC_WEBVIEW_STARTUP_ASYNC_STARTUP_LOCATIONS";
 
     // WebViewCompat.prerenderUrl
     // WebViewCompat.clearPrerender
-    public static final String PRERENDER_WITH_URL = "PRERENDER_URL_V2";
+    public static final String PRERENDER_WITH_URL = "PRERENDER_URL_V3";
 
     // WebStorageCompat.deleteBrowsingData
     // WebStorageCompat.deleteBrowsingDataForSite
@@ -342,6 +349,18 @@ public class Features {
     public static final String WEB_VIEW_NAVIGATION_CLIENT_BASIC_USAGE =
             "WEB_VIEW_NAVIGATION_CLIENT_BASIC_USAGE";
 
+    // WebView.addWebViewNavigationListener
+    // WebView.removeWebViewNavigationListener
+    //
+    // WebViewNavigationListener.onNavigationStarted()
+    // WebViewNavigationListener.onNavigationRedirected()
+    // WebViewNavigationListener.onNavigationCompleted()
+    // WebViewNavigationListener.onPageDeleted()
+    // WebViewNavigationListener.onPageLoadEventFired()
+    // WebViewNavigationListener.onPageDOMContentLoadedEventFired()
+    // WebViewNavigationListener.onFirstContentfulPaint()
+    public static final String WEB_VIEW_NAVIGATION_LISTENER_V1 = "WEB_VIEW_NAVIGATION_LISTENER_V1";
+
     // SupportLibWebViewChromium weakly reference WebView
     public static final String PROVIDER_WEAKLY_REF_WEBVIEW = "PROVIDER_WEAKLY_REF_WEBVIEW";
 
@@ -363,4 +382,47 @@ public class Features {
 
     // Profile.warmUpRendererProcess
     public static final String WARM_UP_RENDERER_PROCESS = "WARM_UP_RENDERER_PROCESS";
+
+    // Profile.setExtraHeaderForOrigins
+    // Profile.hasExtraHeaderForOrigins
+    // Profile.clearExtraHeaderForOrigins(String)
+    // Profile.clearAllExtraHeadersForOrigins
+    /**
+     * @deprecated to be replaced by {@link #CUSTOM_REQUEST_HEADERS}
+     */
+    @Deprecated public static final String EXTRA_HEADER_FOR_ORIGINS = "EXTRA_HEADER_FOR_ORIGINS";
+
+    // WebSettingsCompat.setBackForwardCacheSettings
+    // WebSettingsCompat.getBackForwardCacheSettings
+    public static final String BACK_FORWARD_CACHE_SETTINGS = "BACK_FORWARD_CACHE_SETTINGS";
+
+    // WebSettingsCompat.getBackForwardCacheSettings
+    // BackForwardCacheSettings.setTimeoutInSec
+    // BackForwardCacheSettings.setMaxPagesInCache
+    // BackForwardCacheSettings.getTimeoutInSec
+    // BackForwardCacheSettings.getMaxPagesInCache
+    public static final String BACK_FORWARD_CACHE_SETTINGS_V2 = "BACK_FORWARD_CACHE_SETTINGS_V2";
+
+    // Profile.preconnect
+    public static final String PRECONNECT = "PRECONNECT";
+
+    // WebSettingsCompat#setHyperlinkContextMenuItems
+    public static final String HYPERLINK_CONTEXT_MENU_ITEMS = "HYPERLINK_CONTEXT_MENU_ITEMS";
+
+    // Page.isPrerendering
+    public static final String PAGE_IS_PRERENDERING = "PAGE_IS_PRERENDERING";
+
+    // Profile.addCustomHeader
+    // Profile.clearAllCustomHeaders
+    // Profile.clearCustomHeader
+    // Profile.getCustomHeaders
+    // Profile.hasCustomHeader
+    public static final String CUSTOM_REQUEST_HEADERS = "CUSTOM_REQUEST_HEADERS";
+
+    // WebViewCompat#setRendererLibraryPrefetchMode
+    // WebViewCompat#getRendererLibraryPrefetchMode
+    public static final String RENDERER_LIBRARY_PREFETCH_MODE = "RENDERER_LIBRARY_PREFETCH_MODE";
+
+    // Profile.addQuicHints
+    public static final String ADD_QUIC_HINTS_V1 = "ADD_QUIC_HINTS_V1";
 }

@@ -22,9 +22,12 @@
 #include "components/payments/content/android/jni_payment_app.h"
 #include "components/payments/content/android/payment_request_spec.h"
 #include "components/payments/content/payment_app_service.h"
-#include "components/payments/content/payment_manifest_web_data_service.h"
 #include "components/payments/content/payment_request_spec.h"
+#include "components/payments/content/web_payments_web_data_service.h"
+#include "components/payments/core/payment_prefs.h"
+#include "components/prefs/pref_service.h"
 #include "components/url_formatter/elide_url.h"
+#include "components/user_prefs/user_prefs.h"
 #include "components/webauthn/android/internal_authenticator_android.h"
 #include "components/webdata_services/web_data_service_wrapper_factory.h"
 #include "content/public/browser/browser_context.h"
@@ -118,9 +121,9 @@ void JNI_PaymentAppServiceBridge_Create(
 
   std::string top_origin = ConvertJavaStringToUTF8(jtop_origin);
 
-  scoped_refptr<payments::PaymentManifestWebDataService> web_data_service =
+  scoped_refptr<payments::WebPaymentsWebDataService> web_data_service =
       webdata_services::WebDataServiceWrapperFactory::
-          GetPaymentManifestWebDataServiceForBrowserContext(
+          GetWebPaymentsWebDataServiceForBrowserContext(
               render_frame_host->GetBrowserContext(),
               ServiceAccessType::EXPLICIT_ACCESS);
 
@@ -190,7 +193,7 @@ PaymentAppServiceBridge* PaymentAppServiceBridge::Create(
     const GURL& top_origin,
     base::WeakPtr<PaymentRequestSpec> spec,
     const std::string& twa_package_name,
-    scoped_refptr<PaymentManifestWebDataService> web_data_service,
+    scoped_refptr<WebPaymentsWebDataService> web_data_service,
     bool is_off_the_record,
     base::WeakPtr<CSPChecker> csp_checker,
     CanMakePaymentCalculatedCallback can_make_payment_calculated_callback,
@@ -275,13 +278,28 @@ PaymentAppServiceBridge::CreateInternalAuthenticator() const {
              : nullptr;
 }
 
-scoped_refptr<PaymentManifestWebDataService>
-PaymentAppServiceBridge::GetPaymentManifestWebDataService() const {
-  return payment_manifest_web_data_service_;
+scoped_refptr<WebPaymentsWebDataService>
+PaymentAppServiceBridge::GetWebPaymentsWebDataService() const {
+  return web_payments_web_data_service_;
 }
 
 bool PaymentAppServiceBridge::IsOffTheRecord() const {
   return is_off_the_record_;
+}
+
+bool PaymentAppServiceBridge::PrefsCanMakePayment() const {
+  auto* rfh = content::RenderFrameHost::FromID(frame_routing_id_);
+  if (!rfh) {
+    return false;
+  }
+
+  auto* context = rfh->GetBrowserContext();
+  if (!context) {
+    return false;
+  }
+
+  PrefService* prefs = user_prefs::UserPrefs::Get(context);
+  return prefs && prefs->GetBoolean(payments::kCanMakePaymentEnabled);
 }
 
 base::WeakPtr<ContentPaymentRequestDelegate>
@@ -356,7 +374,7 @@ PaymentAppServiceBridge::PaymentAppServiceBridge(
     const GURL& top_origin,
     base::WeakPtr<PaymentRequestSpec> spec,
     const std::string& twa_package_name,
-    scoped_refptr<PaymentManifestWebDataService> web_data_service,
+    scoped_refptr<WebPaymentsWebDataService> web_data_service,
     bool is_off_the_record,
     base::WeakPtr<CSPChecker> csp_checker,
     CanMakePaymentCalculatedCallback can_make_payment_calculated_callback,
@@ -375,7 +393,7 @@ PaymentAppServiceBridge::PaymentAppServiceBridge(
       frame_security_origin_(render_frame_host->GetLastCommittedOrigin()),
       spec_(spec),
       twa_package_name_(twa_package_name),
-      payment_manifest_web_data_service_(web_data_service),
+      web_payments_web_data_service_(web_data_service),
       is_off_the_record_(is_off_the_record),
       csp_checker_(csp_checker),
       can_make_payment_calculated_callback_(

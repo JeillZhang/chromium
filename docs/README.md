@@ -72,6 +72,7 @@ used when committed.
 *   [iOS Build Instructions](ios/build_instructions.md) - iOS target (on a MacOS
     host)
 *   [Gerrit Guide](gerrit_guide.md) - Setup Gerrit access
+*   [Gerrit ReAuth](gerrit_reauth.md) - Gerrit ReAuth guide
 *   [Chrome OS Build Instructions](chromeos_build_instructions.md) - Chrome OS
 *   [Linux Chromium ARM Recipes](linux/chromium_arm.md) - Recipes for building
     Chromium for ARM on Linux.
@@ -174,7 +175,8 @@ used when committed.
     build, fork, integration of stock Chromium, or are building ChromiumOS (for
     login).
 *   [User Education](../components/user_education/README.md) - Create
-    in-product help (IPH) and tutorials to call out Chromium features
+    in-product help (IPH) and tutorials to call out Chromium features.
+*   [User-Agent](./user_agent/README.md) - User-Agent and User-Agent Client Hints.
 
 ### Testing
 *   [Running and Debugging Web Tests](testing/web_tests.md)
@@ -198,7 +200,6 @@ used when committed.
 *   [Test Descriptions](testing/test_descriptions.md) - Unit test targets that can be
     built, with associated descriptions.
 *   [Fuzz Testing](../testing/libfuzzer/README.md) - Fuzz testing in Chromium.
-*   [IPC Fuzzer](testing/ipc_fuzzer.md) - Fuzz testing of Chromium IPC interfaces.
 *   [Running Chrome tests with AddressSanitizer (asan) and LeakSanitizer (lsan)](testing/linux_running_asan_tests.md) -
     Run Chrome tests with ASAN and LSAN builds to detect addressability issues and memory leaks.
 *   [Code Coverage](testing/code_coverage.md) - Code coverage for Chromium.

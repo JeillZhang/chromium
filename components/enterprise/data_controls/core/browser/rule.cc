@@ -104,7 +104,8 @@ policy::PolicyErrorPath CreateErrorPath(
 // the currently enabled features. If you have a Finch flag controlling whether
 // a type of restriction should be applied or not, check it here.
 bool IgnoreRestriction(Rule::Restriction restriction) {
-  return false;
+  return restriction == Rule::Restriction::kFileDownload &&
+      !base::FeatureList::IsEnabled(kEnableDownloadDataControls);
 }
 
 }  // namespace
@@ -319,6 +320,7 @@ Rule::Restriction Rule::StringToRestriction(const std::string& restriction) {
           {kRestrictionPrivacyScreen, Restriction::kPrivacyScreen},
           {kRestrictionScreenShare, Restriction::kScreenShare},
           {kRestrictionFiles, Restriction::kFiles},
+          {kRestrictionFileDownload, Restriction::kFileDownload},
       });
 
   static_assert(
@@ -372,6 +374,8 @@ const char* Rule::RestrictionToString(Restriction restriction) {
       return kRestrictionScreenShare;
     case Restriction::kFiles:
       return kRestrictionFiles;
+    case Restriction::kFileDownload:
+      return kRestrictionFileDownload;
   }
 }
 
@@ -495,20 +499,52 @@ bool Rule::AddUnsupportedAttributeErrors(
   static const base::NoDestructor<
       base::flat_map<Rule::Restriction, std::set<std::string_view>>>
       kSupportedAttributes({
-          {Restriction::kClipboard,
-           {AttributesCondition::kKeyOsClipboard, AttributesCondition::kKeyUrls,
-            AttributesCondition::kKeyIncognito,
-            AttributesCondition::kKeyOtherProfile,
+          {
+              Restriction::kClipboard,
+              {
+                  AttributesCondition::kKeyOsClipboard,
+                  AttributesCondition::kKeyUrls,
+                  AttributesCondition::kKeyIncognito,
+                  AttributesCondition::kKeyOtherProfile,
 #if BUILDFLAG(IS_CHROMEOS)
-            AttributesCondition::kKeyComponents,
+                  AttributesCondition::kKeyComponents,
 #endif  // BUILDFLAG(IS_CHROMEOS)
-            kKeyAnd, kKeyOr, kKeyNot, kKeySources, kKeyDestinations}},
-          {Restriction::kScreenshot,
-           {AttributesCondition::kKeyUrls, AttributesCondition::kKeyIncognito,
+                  kKeyAnd,
+                  kKeyOr,
+                  kKeyNot,
+                  kKeySources,
+                  kKeyDestinations,
+              },
+          },
+          {
+              Restriction::kScreenshot,
+              {
+                  AttributesCondition::kKeyUrls,
+                  AttributesCondition::kKeyIncognito,
 #if BUILDFLAG(IS_CHROMEOS)
-            AttributesCondition::kKeyComponents,
+                  AttributesCondition::kKeyComponents,
 #endif  // BUILDFLAG(IS_CHROMEOS)
-            kKeyAnd, kKeyOr, kKeyNot, kKeySources}},
+                  kKeyAnd,
+                  kKeyOr,
+                  kKeyNot,
+                  kKeySources,
+              },
+          },
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
+          {
+              Restriction::kFileDownload,
+              {
+                  AttributesCondition::kKeyUrls,
+                  AttributesCondition::kKeyIncognito,
+                  kKeyAnd,
+                  kKeyOr,
+                  kKeyNot,
+                  kKeySources,
+              },
+          },
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
+        // BUILDFLAG(IS_CHROMEOS)
       });
 
   bool valid = true;
@@ -555,11 +591,37 @@ bool Rule::AddUnsupportedRestrictionErrors(
   static const base::NoDestructor<
       base::flat_map<Rule::Restriction, std::set<Rule::Level>>>
       kSupportedRestrictions({
-          {Restriction::kClipboard,
-           {Level::kNotSet, Level::kReport, Level::kWarn, Level::kBlock}},
+          {
+              Restriction::kClipboard,
+              {
+                  Level::kNotSet,
+                  Level::kReport,
+                  Level::kWarn,
+                  Level::kBlock,
+              },
+          },
 #if BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
-          {Restriction::kScreenshot, {Level::kNotSet, Level::kBlock}},
+          {
+              Restriction::kScreenshot,
+              {
+                  Level::kNotSet,
+                  Level::kBlock,
+              },
+          },
 #endif  // BUILDFLAG(ENTERPRISE_SCREENSHOT_PROTECTION)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
+    BUILDFLAG(IS_CHROMEOS)
+          {
+              Restriction::kFileDownload,
+              {
+                  Level::kNotSet,
+                  Level::kReport,
+                  Level::kWarn,
+                  Level::kBlock,
+              },
+          },
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
+        // BUILDFLAG(IS_CHROMEOS)
       });
 
   bool valid = true;

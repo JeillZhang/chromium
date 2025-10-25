@@ -15,6 +15,7 @@
 
 #include "base/base64.h"
 #include "base/containers/contains.h"
+#include "base/containers/to_vector.h"
 #include "base/feature_list.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
@@ -28,6 +29,7 @@
 #include "components/autofill/core/browser/form_structure_sectioning_util.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
 #include "components/autofill/core/browser/metrics/log_event.h"
+#include "components/autofill/core/browser/proto/server.pb.h"
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_internals/log_message.h"
 #include "components/autofill/core/common/autofill_internals/logging_scope.h"
@@ -76,6 +78,19 @@ FieldPrediction::Source ToSafeFieldPredictionSource(
       break;
   }
   return result;
+}
+
+[[nodiscard]] bool IsValidFormatString(FormatString_Type type,
+                                       std::u16string_view value) {
+  switch (type) {
+    case FormatString_Type_DATE:
+      return data_util::IsValidDateFormat(value);
+    case FormatString_Type_AFFIX:
+      return data_util::IsValidAffixFormat(value);
+    case FormatString_Type_FLIGHT_NUMBER:
+      return data_util::IsValidFlightNumberFormat(value);
+  }
+  return false;
 }
 
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
@@ -354,6 +369,64 @@ void PopulateRandomizedFieldMetadata(
   }
 }
 
+// Populates the three-bit hashes for a given `form`.
+void PopulateThreeBitHashedFormMetadata(
+    const FormStructure& form,
+    ThreeBitHashedFormMetadata* form_metadata) {
+  if (!form.id_attribute().empty()) {
+    form_metadata->set_id(StrToHash3Bit(form.id_attribute()));
+  }
+  if (!form.name_attribute().empty()) {
+    form_metadata->set_name(StrToHash3Bit(form.name_attribute()));
+  }
+
+  if (!form.button_titles().empty()) {
+    std::string concatenated_button_titles = base::StrCat(
+        base::ToVector(form.button_titles(), [](const ButtonTitleInfo& info) {
+          return base::UTF16ToUTF8(info.first);
+        }));
+    form_metadata->set_button_titles_concatenated(
+        StrToHash3Bit(concatenated_button_titles));
+  }
+}
+
+// Populates the three-bit hashes for a single field.
+void PopulateThreeBitHashedFieldMetadata(
+    const AutofillField& field,
+    ThreeBitHashedFieldMetadata* field_metadata) {
+  if (!field.id_attribute().empty()) {
+    field_metadata->set_id(StrToHash3Bit(field.id_attribute()));
+  }
+  if (!field.name_attribute().empty()) {
+    field_metadata->set_name(StrToHash3Bit(field.name_attribute()));
+  }
+  field_metadata->set_type(
+      StrToHash3Bit(FormControlTypeToString(field.form_control_type())));
+  if (!field.label().empty()) {
+    field_metadata->set_label(StrToHash3Bit(field.label()));
+  }
+  if (!field.aria_label().empty()) {
+    field_metadata->set_aria_label(StrToHash3Bit(field.aria_label()));
+  }
+  if (!field.aria_description().empty()) {
+    field_metadata->set_aria_description(
+        StrToHash3Bit(field.aria_description()));
+  }
+  if (!field.placeholder().empty()) {
+    field_metadata->set_placeholder(StrToHash3Bit(field.placeholder()));
+  }
+  if (!field.initial_value().empty()) {
+    field_metadata->set_initial_value(StrToHash3Bit(field.initial_value()));
+  }
+  if (!field.autocomplete_attribute().empty()) {
+    field_metadata->set_autocomplete(
+        StrToHash3Bit(field.autocomplete_attribute()));
+  }
+  if (!field.pattern().empty()) {
+    field_metadata->set_pattern(StrToHash3Bit(field.pattern()));
+  }
+}
+
 // Encodes the fields of `upload_fields` in the in-out parameter `upload`.
 // Helper function for EncodeUploadRequest().
 void EncodeFormFieldsForUpload(
@@ -371,7 +444,9 @@ void EncodeFormFieldsForUpload(
     }
     // Do not upload fields that were filled with a fallback type, as this would
     // introduce unnecessary noise in the field votes.
-    if (field->WasAutofilledWithFallback()) {
+    if (field->WasAutofilledWithFallback() &&
+        !base::FeatureList::IsEnabled(
+            features::kAutofillUploadManualFallbackFieldsToServer)) {
       continue;
     }
 
@@ -397,21 +472,19 @@ void EncodeFormFieldsForUpload(
     // TODO(crbug.com/40286837): Understand and document why the type is
     // relevant.
     if (!field->initial_value().empty() &&
-        ((field->Type().GetStorableType() != NO_SERVER_DATA &&
-          field->Type().GetStorableType() != UNKNOWN_TYPE) ||
+        (!field->Type().GetTypes().contains_any(
+             {NO_SERVER_DATA, UNKNOWN_TYPE}) ||
          !field->possible_types().empty())) {
       added_field->set_initial_value_changed(field->initial_value() !=
                                              field->value());
     }
 
     if (field_options) {
-      for (const std::u16string& format_string :
-           field_options->format_strings) {
-        DCHECK(data_util::IsValidDateFormat(format_string));
+      for (const auto& [type, string] : field_options->format_strings) {
+        DCHECK(IsValidFormatString(type, string));
         auto* added_format_string = added_field->add_format_string();
-        added_format_string->set_type(FormatString_Type_DATE);
-        added_format_string->set_format_string(
-            base::UTF16ToUTF8(format_string));
+        added_format_string->set_type(type);
+        added_format_string->set_format_string(base::UTF16ToUTF8(string));
       }
     }
 
@@ -425,6 +498,11 @@ void EncodeFormFieldsForUpload(
       PopulateRandomizedFieldMetadata(
           *encoder, form, *field,
           added_field->mutable_randomized_field_metadata());
+    }
+
+    if (base::FeatureList::IsEnabled(features::kAutofillServerUploadMoreData)) {
+      PopulateThreeBitHashedFieldMetadata(
+          *field, added_field->mutable_three_bit_hashed_field_metadata());
     }
 
     if (field_options) {
@@ -466,16 +544,25 @@ void EncodeFormForQuery(const FormStructure& form,
   // `form`).
   auto AddFormIf =
       [&](const std::vector<std::unique_ptr<AutofillField>>& fields,
-          FormSignature form, FormSignature alternative_signature,
+          FormSignature form_signature, FormSignature alternative_signature,
           auto necessary_condition) mutable {
-        if (!processed_forms.insert(form).second) {
+        if (!processed_forms.insert(form_signature).second) {
           return;
         }
 
         AutofillPageQueryRequest::Form* query_form = query.add_forms();
-        query_form->set_signature(form.value());
+        query_form->set_signature(form_signature.value());
         query_form->set_alternative_signature(alternative_signature.value());
-        queried_form_signatures.push_back(form);
+
+        if (base::FeatureList::IsEnabled(
+                features::kAutofillServerExperimentalSignatures)) {
+          query_form->set_structural_signature(
+              form.structural_form_signature().value());
+          PopulateThreeBitHashedFormMetadata(
+              form, query_form->mutable_three_bit_hashed_form_metadata());
+        }
+
+        queried_form_signatures.push_back(form_signature);
 
         for (const auto& field : fields) {
           if (IsCheckable(field->check_status()) ||
@@ -486,6 +573,12 @@ void EncodeFormForQuery(const FormStructure& form,
           AutofillPageQueryRequest::Form::Field* added_field =
               query_form->add_fields();
           added_field->set_signature(field->GetFieldSignature().value());
+
+          if (base::FeatureList::IsEnabled(
+                  features::kAutofillServerExperimentalSignatures)) {
+            PopulateThreeBitHashedFieldMetadata(
+                *field, added_field->mutable_three_bit_hashed_field_metadata());
+          }
         }
       };
 
@@ -622,6 +715,9 @@ std::optional<FieldSuggestion> GetFieldSuggestion(
       alternative_field_suggestion};
   base::optional_ref<FieldSuggestion> preferred_field_suggestion =
       *std::ranges::max_element(suggestions, {}, get_suggestion_priority);
+  if (!preferred_field_suggestion) {
+    return std::nullopt;
+  }
 
   // Add predictions for PasswordManager from `iframe_field_suggestions` if
   // `field_suggestion` is missing them. This is only relevant for
@@ -633,9 +729,7 @@ std::optional<FieldSuggestion> GetFieldSuggestion(
     MergePasswordManagerPredictions(*iframe_field_suggestion,
                                     *preferred_field_suggestion);
   }
-  return preferred_field_suggestion.has_value()
-             ? std::optional(std::move(*preferred_field_suggestion))
-             : std::nullopt;
+  return std::move(*preferred_field_suggestion);
 }
 
 // Builds a map from a pair of (form_signature, field_signature) to all the
@@ -703,7 +797,7 @@ base::flat_set<FormSignature> GetFormsForWhichToRunAiModel(
 void MaybeMergeServerPredictions(
     std::vector<FieldPrediction>& server_predictions) {
   const auto server_types =
-      DenseSet<FieldType>(server_predictions, [](const FieldPrediction& pred) {
+      FieldTypeSet(server_predictions, [](const FieldPrediction& pred) {
         return ToSafeFieldType(pred.type(), UNKNOWN_TYPE);
       });
 
@@ -753,13 +847,19 @@ std::vector<AutofillUploadContents> EncodeUploadRequest(
   upload.set_client_version(
       std::string(version_info::GetProductNameAndVersionForUserAgent()));
   upload.set_form_signature(form.form_signature().value());
-  upload.set_secondary_form_signature(
-      form.alternative_form_signature().value());
+  if (base::FeatureList::IsEnabled(
+          features::kAutofillUseStructuralSignatureInsteadOfSecondary)) {
+    upload.set_structural_form_signature(
+        form.structural_form_signature().value());
+  } else {
+    upload.set_secondary_form_signature(
+        form.alternative_form_signature().value());
+  }
   upload.set_autofill_used(false);
   upload.set_data_present(data_present);
   upload.set_has_form_tag(form.is_form_element());
-  if (!form.current_page_language()->empty() && options.encoder) {
-    upload.set_language(form.current_page_language().value());
+  if (!options.current_page_language->empty() && options.encoder) {
+    upload.set_language(options.current_page_language.value());
   }
 
   if (options.form_associations.last_address_form_submitted) {
@@ -796,6 +896,11 @@ std::vector<AutofillUploadContents> EncodeUploadRequest(
   if (options.encoder) {
     PopulateRandomizedFormMetadata(*options.encoder, form,
                                    upload.mutable_randomized_form_metadata());
+  }
+
+  if (base::FeatureList::IsEnabled(features::kAutofillServerUploadMoreData)) {
+    PopulateThreeBitHashedFormMetadata(
+        form, upload.mutable_three_bit_hashed_form_metadata());
   }
 
   std::vector<AutofillField*> upload_fields(form.fields().size());
@@ -944,7 +1049,7 @@ void ProcessServerPredictionsQueryResponse(
           field_suggestion->predictions().end()};
       MaybeMergeServerPredictions(server_predictions);
       field->set_server_predictions(std::move(server_predictions));
-      if (heuristic_type != field->Type().GetStorableType()) {
+      if (!field->Type().GetTypes().contains(heuristic_type)) {
         query_response_overrode_heuristics = true;
       }
       if (field_suggestion->has_password_requirements()) {
@@ -952,15 +1057,14 @@ void ProcessServerPredictionsQueryResponse(
             field_suggestion->password_requirements());
       }
       if (field_suggestion->has_format_string()) {
-        switch (field_suggestion->format_string().type()) {
-          case FormatString_Type_DATE:
-            field->set_format_string_unless_overruled(
-                base::UTF8ToUTF16(
-                    field_suggestion->format_string().format_string()),
-                AutofillField::FormatStringSource::kServer);
-            break;
-          default:
-            break;
+        std::u16string format_string_value = base::UTF8ToUTF16(
+            field_suggestion->format_string().format_string());
+        if (IsValidFormatString(field_suggestion->format_string().type(),
+                                format_string_value)) {
+          field->set_format_string_unless_overruled(
+              AutofillFormatString(format_string_value,
+                                   field_suggestion->format_string().type()),
+              AutofillFormatStringSource::kServer);
         }
       }
       ++field_rank_map[field->GetFieldSignature()];

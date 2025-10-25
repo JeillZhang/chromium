@@ -5,12 +5,12 @@
 package org.chromium.chrome.browser.bookmarks;
 
 import android.content.res.Resources;
-import android.os.Build;
 
 import com.google.common.primitives.UnsignedLongs;
 
 import org.chromium.base.Callback;
 import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.Contract;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.commerce.PriceTrackingUtils;
@@ -40,6 +40,7 @@ public class PowerBookmarkUtils {
     private static @Nullable PowerBookmarkMeta sPowerBookmarkMetaForTesting;
 
     /** Returns whether the given meta is a shopping list item. */
+    @Contract("_, null -> false")
     public static boolean isShoppingListItem(
             ShoppingService shoppingService, @Nullable PowerBookmarkMeta meta) {
         return CommerceFeatureUtils.isShoppingListEligible(shoppingService)
@@ -63,7 +64,7 @@ public class PowerBookmarkUtils {
 
         ShoppingService.ProductInfo info = service.getAvailableProductInfoForUrl(tab.getUrl());
 
-        return info != null && info.productClusterId.isPresent();
+        return info != null && info.productClusterId != null;
     }
 
     /**
@@ -135,7 +136,7 @@ public class PowerBookmarkUtils {
                             null,
                             Snackbar.TYPE_NOTIFICATION,
                             Snackbar.UMA_PRICE_TRACKING_FAILURE);
-            snackbar.setSingleLine(false);
+            snackbar.setDefaultLines(false);
             snackbarManager.showSnackbar(snackbar);
             callback.onResult(false);
             return;
@@ -186,16 +187,14 @@ public class PowerBookmarkUtils {
                                                                 .price_tracking_error_snackbar_action),
                                                 null);
                     }
-                    snackbar.setSingleLine(false);
+                    snackbar.setDefaultLines(false);
                     snackbarManager.showSnackbar(snackbar);
                     callback.onResult(success);
                 };
         // Make sure the notification channel is initialized when the user tracks a product.
         // TODO(crbug.com/40245507): Add a SubscriptionsObserver in the PriceDropNotificationManager
         // and initialize the channel there.
-        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            priceDropNotificationManager.createNotificationChannel();
-        }
+        priceDropNotificationManager.createNotificationChannel();
         PriceTrackingUtils.setPriceTrackingStateForBookmark(
                 profile, bookmarkId.getId(), enabled, wrapperCallback);
     }

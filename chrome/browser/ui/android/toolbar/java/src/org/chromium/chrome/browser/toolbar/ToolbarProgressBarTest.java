@@ -14,6 +14,7 @@ import android.animation.Animator;
 import android.content.res.Resources;
 import android.graphics.Color;
 import android.graphics.drawable.ClipDrawable;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.LayerDrawable;
 import android.view.View;
@@ -134,6 +135,7 @@ public class ToolbarProgressBarTest {
 
     /** Test that the progress bar indeterminate animation completely traverses the screen. */
     @Test
+    @Features.DisableFeatures(ChromeFeatureList.ANDROID_ANIMATED_PROGRESS_BAR_IN_BROWSER)
     @Feature({"Android-Progress-Bar"})
     @SmallTest
     public void testProgressBarCompletion_indeterminateAnimation() throws TimeoutException {
@@ -144,7 +146,7 @@ public class ToolbarProgressBarTest {
 
         // Wait for a visibility change.
         mShadowLooper.idle();
-        verify(mMockProgressBarObserver, times(1)).onVisibilityChanged();
+        verify(mMockProgressBarObserver, times(1)).onCompositedLayersVisibilityChanged();
 
         mProgressBar.startIndeterminateAnimationForTesting();
         mProgressBar.setProgress(0.5f);
@@ -173,7 +175,7 @@ public class ToolbarProgressBarTest {
         // Wait for a visibility change now that progress has completed.
         mShadowLooper.runToEndOfTasks();
 
-        verify(mMockProgressBarObserver, times(2)).onVisibilityChanged();
+        verify(mMockProgressBarObserver, times(2)).onCompositedLayersVisibilityChanged();
         assertFalse("Indeterminate animation should not be running.", progressAnimator.isRunning());
         assertFalse("Progress bar should not be visible.", isProgressBarVisible());
     }
@@ -188,7 +190,7 @@ public class ToolbarProgressBarTest {
 
         // Wait for a visibility change.
         mShadowLooper.idle();
-        verify(mMockProgressBarObserver).onVisibilityChanged();
+        verify(mMockProgressBarObserver).onCompositedLayersVisibilityChanged();
         assertTrue("Progress bar should be visible.", isProgressBarVisible());
 
         // Ensure progress updates reached 50%.
@@ -210,11 +212,12 @@ public class ToolbarProgressBarTest {
 
         // Ensure that visibility changed now that progress has completed.
         assertFalse("Progress bar should not be visible.", isProgressBarVisible());
-        verify(mMockProgressBarObserver, times(2)).onVisibilityChanged();
+        verify(mMockProgressBarObserver, times(2)).onCompositedLayersVisibilityChanged();
     }
 
     /** Test that the progress bar ends immediately if #finish(...) is called with delay = false. */
     @Test
+    @Features.DisableFeatures(ChromeFeatureList.ANDROID_ANIMATED_PROGRESS_BAR_IN_BROWSER)
     @Feature({"Android-Progress-Bar"})
     @SmallTest
     public void testProgressBarCompletion_indeterminateAnimation_noDelay() throws TimeoutException {
@@ -225,7 +228,7 @@ public class ToolbarProgressBarTest {
 
         // Wait for a visibility change.
         mShadowLooper.idle();
-        verify(mMockProgressBarObserver).onVisibilityChanged();
+        verify(mMockProgressBarObserver).onCompositedLayersVisibilityChanged();
         assertTrue("Progress bar should be visible.", isProgressBarVisible());
 
         mProgressBar.startIndeterminateAnimationForTesting();
@@ -252,6 +255,7 @@ public class ToolbarProgressBarTest {
      * animation is running.
      */
     @Test
+    @Features.DisableFeatures(ChromeFeatureList.ANDROID_ANIMATED_PROGRESS_BAR_IN_BROWSER)
     @Feature({"Android-Progress-Bar"})
     @SmallTest
     public void testProgressBarReset_indeterminateAnimation() throws TimeoutException {
@@ -261,7 +265,7 @@ public class ToolbarProgressBarTest {
         assertFalse("Indeterminate animation should not be running.", progressAnimator.isRunning());
         // Wait for a visibility change.
         mShadowLooper.idle();
-        verify(mMockProgressBarObserver).onVisibilityChanged();
+        verify(mMockProgressBarObserver).onCompositedLayersVisibilityChanged();
 
         mProgressBar.startIndeterminateAnimationForTesting();
         mProgressBar.setProgress(0.5f);
@@ -293,7 +297,9 @@ public class ToolbarProgressBarTest {
         mProgressBar.setAlpha(1.0f);
         mProgressBar.onAndroidControlsVisibilityChanged(View.INVISIBLE);
 
-        assertEquals(View.INVISIBLE, mProgressBar.getVisibility());
+        // The progress bar should stay visible when the android controls disappears, otherwise
+        // the progress bar disappears on scroll.
+        assertEquals(View.VISIBLE, mProgressBar.getVisibility());
         assertEquals(View.INVISIBLE, mProgressBarAnimatingView.getVisibility());
 
         mProgressBar.onAndroidControlsVisibilityChanged(View.VISIBLE);
@@ -319,19 +325,14 @@ public class ToolbarProgressBarTest {
     @Feature({"Android-Progress-Bar"})
     public void testProgressBarColors_TransparentTheme() {
         mProgressBar.setThemeColor(Color.TRANSPARENT, /* isIncognito = */ false);
-        int foregroundColor = mProgressBar.getForegroundColor();
-        int backgroundColor = mProgressBar.getBackgroundColor();
         mProgressBar.setAnimatingView(mProgressBarAnimatingView);
 
         assertEquals(
-                "Foreground color does not match color.",
-                foregroundColor,
+                "Foreground color does not match expected color.",
+                SemanticColorUtils.getProgressBarForeground(mActivity),
                 mProgressBar.getForegroundColor());
-        assertEquals(
-                "Background color does not match color.",
-                backgroundColor,
-                mProgressBar.getBackgroundColor());
     }
+
 
     @Test
     @Feature({"Android-Progress-Bar"})
@@ -380,6 +381,10 @@ public class ToolbarProgressBarTest {
                 "Background color does not match expected color.",
                 SemanticColorUtils.getProgressBarTrackColor(mActivity),
                 mProgressBar.getBackgroundColor());
+
+        int gapBackgroundColor = ((ColorDrawable) mProgressBar.getBackground()).getColor();
+        assertEquals("Gap color doesn't match the toolbar color.", mThemeColor,
+                gapBackgroundColor);
     }
 
     @Test

@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.ui.appmenu;
 
 import androidx.annotation.IntDef;
+import androidx.annotation.Nullable;
 
 import org.chromium.build.annotations.NullMarked;
 
@@ -22,10 +23,12 @@ public interface AppMenuHandler {
         AppMenuItemType.STANDARD,
         AppMenuItemType.TITLE_BUTTON,
         AppMenuItemType.BUTTON_ROW,
+        AppMenuItemType.MENU_ITEM_WITH_SUBMENU,
+        AppMenuItemType.SUBMENU_HEADER,
         AppMenuItemType.DIVIDER
     })
     @Retention(RetentionPolicy.SOURCE)
-    public @interface AppMenuItemType {
+    @interface AppMenuItemType {
         /** Regular Android menu item that contains a title and an icon if icon is specified. */
         int STANDARD = 0;
 
@@ -41,14 +44,20 @@ public interface AppMenuHandler {
          */
         int BUTTON_ROW = 2;
 
+        /** Menu item that when contains submenus. */
+        int MENU_ITEM_WITH_SUBMENU = 3;
+
+        /** The header for submenus when submenus are displayed in drilldown. */
+        int SUBMENU_HEADER = 4;
+
         /** A divider item to distinguish between menu item groupings. */
-        int DIVIDER = 3;
+        int DIVIDER = 5;
 
         /**
          * The number of menu item types specified above. If you add a menu item type you MUST
          * increment this.
          */
-        int NUM_ENTRIES = 4;
+        int NUM_ENTRIES = 6;
     }
 
     /**
@@ -59,24 +68,17 @@ public interface AppMenuHandler {
 
     /**
      * Removes the observer from the App Menu.
+     *
      * @param observer Observer that should no longer be notified about App Menu changes.
      */
     void removeObserver(AppMenuObserver observer);
 
     /**
-     * Notifies the menu that the contents of the menu item specified by {@code menuRowId} have
-     * changed.  This should be called if icons, titles, etc. are changing for a particular menu
-     * item while the menu is open.
-     * @param menuRowId The id of the menu item to change.  This must be a row id and not a child
-     *                  id.
-     */
-    void menuItemContentChanged(int menuRowId);
-
-    /**
-     * Calls attention to this menu and a particular item in it.  The menu will only stay
-     * highlighted for one menu usage.  After that the highlight will be cleared.
+     * Calls attention to this menu and a particular item in it. The menu will only stay highlighted
+     * for one menu usage. After that the highlight will be cleared.
+     *
      * @param highlightItemId The id of a menu item to highlight or {@code null} to turn off the
-     *                        highlight.
+     *     highlight.
      */
     void setMenuHighlight(Integer highlightItemId);
 
@@ -106,6 +108,15 @@ public interface AppMenuHandler {
      */
     AppMenuButtonHelper createAppMenuButtonHelper();
 
-    /** Call to cause a redraw when an item in the app menu changes. */
-    void invalidateAppMenu();
+    /**
+     * @return {@link AppMenuPropertiesDelegate} that builds the menu list.
+     */
+    AppMenuPropertiesDelegate getMenuPropertiesDelegate();
+
+    /**
+     * Sets the content description text for the app menu view.
+     *
+     * @param desc Content description.
+     */
+    void setContentDescription(@Nullable String desc);
 }

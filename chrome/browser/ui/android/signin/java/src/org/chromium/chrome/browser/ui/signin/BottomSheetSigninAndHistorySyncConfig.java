@@ -5,13 +5,12 @@
 package org.chromium.chrome.browser.ui.signin;
 
 import androidx.annotation.IntDef;
-import androidx.annotation.StringRes;
 
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerBottomSheetStrings;
 import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncConfig;
-import org.chromium.components.signin.base.CoreAccountId;
+import org.chromium.google_apis.gaia.CoreAccountId;
 
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -62,16 +61,18 @@ public final class BottomSheetSigninAndHistorySyncConfig {
     public final @WithAccountSigninMode int withAccountSigninMode;
     public final @HistorySyncConfig.OptInMode int historyOptInMode;
     public final @Nullable CoreAccountId selectedCoreAccountId;
+    public final boolean shouldShowSigninSnackbar;
 
     /** Builder for {@link BottomSheetSigninAndHistorySyncConfig}. */
     public static class Builder {
         private final AccountPickerBottomSheetStrings mBottomSheetStrings;
-        private @StringRes int mHistorySyncTitleId;
-        private @StringRes int mHistorySyncSubtitleId;
+        private final String mHistorySyncTitle;
+        private final String mHistorySyncSubtitle;
         private final @NoAccountSigninMode int mNoAccountSigninMode;
         private final @WithAccountSigninMode int mWithAccountSigninMode;
         private final @HistorySyncConfig.OptInMode int mHistoryOptInMode;
         private @Nullable CoreAccountId mSelectedCoreAccountId;
+        private boolean mShouldShowSigninSnackbar;
 
         /**
          * Constructor of the Builder.
@@ -83,16 +84,22 @@ public final class BottomSheetSigninAndHistorySyncConfig {
          *     there are 1+ accounts on the device.
          * @param historyOptInMode Whether the history opt-in should be always, optionally or never
          *     shown.
+         * @param historySyncTitle the history sync screen title.
+         * @param historySyncSubtitle the history sync screen subtitle.
          */
         public Builder(
                 AccountPickerBottomSheetStrings bottomSheetStrings,
                 @NoAccountSigninMode int noAccountSigninMode,
                 @WithAccountSigninMode int withAccountSigninMode,
-                @HistorySyncConfig.OptInMode int historyOptInMode) {
+                @HistorySyncConfig.OptInMode int historyOptInMode,
+                String historySyncTitle,
+                String historySyncSubtitle) {
             mBottomSheetStrings = bottomSheetStrings;
             mNoAccountSigninMode = noAccountSigninMode;
             mWithAccountSigninMode = withAccountSigninMode;
             mHistoryOptInMode = historyOptInMode;
+            mHistorySyncTitle = historySyncTitle;
+            mHistorySyncSubtitle = historySyncSubtitle;
         }
 
         /**
@@ -105,39 +112,27 @@ public final class BottomSheetSigninAndHistorySyncConfig {
         }
 
         /**
-         * Set the resource ID for the string to use as the history sync screen title.
-         *
-         * @param historySyncTitleId the resource ID of the history sync screen title.
+         * @param shouldShowSigninSnackbar If true, a snackbar will be shown after a successful
+         *     sign-in, informing the user they have signed and allows the user to undo the sign-in
+         *     by clicking the "Undo" button.
          */
-        public Builder historySyncTitleId(@StringRes int historySyncTitleId) {
-            assert historySyncTitleId != 0;
-            mHistorySyncTitleId = historySyncTitleId;
-            return this;
-        }
-
-        /**
-         * Set the resource ID for the string to use as the history sync screen subtitle.
-         *
-         * @param historySyncSubtitleId the resource ID of the history sync screen subtitle.
-         */
-        public Builder historySyncSubtitleId(@StringRes int historySyncSubtitleId) {
-            assert historySyncSubtitleId != 0;
-            mHistorySyncSubtitleId = historySyncSubtitleId;
+        public Builder shouldShowSigninSnackbar(boolean shouldShowSigninSnackbar) {
+            mShouldShowSigninSnackbar = shouldShowSigninSnackbar;
             return this;
         }
 
         public BottomSheetSigninAndHistorySyncConfig build() {
             final HistorySyncConfig historySyncConfig =
                     new HistorySyncConfig(
-                            /* titleId= */ mHistorySyncTitleId,
-                            /* subtitleId= */ mHistorySyncSubtitleId);
+                            /* title= */ mHistorySyncTitle, /* subtitle= */ mHistorySyncSubtitle);
             return new BottomSheetSigninAndHistorySyncConfig(
                     mBottomSheetStrings,
                     historySyncConfig,
                     mNoAccountSigninMode,
                     mWithAccountSigninMode,
                     mHistoryOptInMode,
-                    mSelectedCoreAccountId);
+                    mSelectedCoreAccountId,
+                    mShouldShowSigninSnackbar);
         }
     }
 
@@ -147,7 +142,8 @@ public final class BottomSheetSigninAndHistorySyncConfig {
             @NoAccountSigninMode int noAccountSigninMode,
             @WithAccountSigninMode int withAccountSigninMode,
             @HistorySyncConfig.OptInMode int historyOptInMode,
-            @Nullable CoreAccountId selectedCoreAccountId) {
+            @Nullable CoreAccountId selectedCoreAccountId,
+            boolean shouldShowSigninSnackbar) {
         assert bottomSheetStrings != null;
         assert historySyncConfig != null;
 
@@ -157,6 +153,7 @@ public final class BottomSheetSigninAndHistorySyncConfig {
         this.withAccountSigninMode = withAccountSigninMode;
         this.historyOptInMode = historyOptInMode;
         this.selectedCoreAccountId = selectedCoreAccountId;
+        this.shouldShowSigninSnackbar = shouldShowSigninSnackbar;
     }
 
     @Override
@@ -172,7 +169,8 @@ public final class BottomSheetSigninAndHistorySyncConfig {
                 && noAccountSigninMode == other.noAccountSigninMode
                 && withAccountSigninMode == other.withAccountSigninMode
                 && historyOptInMode == other.historyOptInMode
-                && Objects.equals(selectedCoreAccountId, other.selectedCoreAccountId);
+                && Objects.equals(selectedCoreAccountId, other.selectedCoreAccountId)
+                && shouldShowSigninSnackbar == other.shouldShowSigninSnackbar;
     }
 
     @Override
@@ -183,6 +181,7 @@ public final class BottomSheetSigninAndHistorySyncConfig {
                 noAccountSigninMode,
                 withAccountSigninMode,
                 historyOptInMode,
-                selectedCoreAccountId);
+                selectedCoreAccountId,
+                shouldShowSigninSnackbar);
     }
 }

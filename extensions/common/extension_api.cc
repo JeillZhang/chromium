@@ -16,7 +16,6 @@
 #include "base/containers/contains.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/lazy_instance.h"
 #include "base/strings/span_printf.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -39,7 +38,8 @@ const char* const kChildKinds[] = {"functions", "events"};
 
 base::Value::Dict LoadSchemaDictionary(const std::string& name,
                                        std::string_view schema) {
-  auto result = base::JSONReader::ReadAndReturnValueWithError(schema);
+  auto result = base::JSONReader::ReadAndReturnValueWithError(
+      schema, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
 
   // Tracking down http://crbug.com/121424
   char buf[128];
@@ -85,23 +85,19 @@ const base::Value::Dict* GetSchemaChild(const base::Value::Dict& schema_node,
   return nullptr;
 }
 
-struct ExtensionAPIStatic {
-  ExtensionAPIStatic() : api(ExtensionAPI::CreateWithDefaultConfiguration()) {}
-  std::unique_ptr<ExtensionAPI> api;
-};
-
-base::LazyInstance<ExtensionAPIStatic>::Leaky g_extension_api_static =
-    LAZY_INSTANCE_INITIALIZER;
-
-// May override |g_extension_api_static| for a test.
+// May override `ExtensionAPI::GetSharedInstance()` for a test.
 ExtensionAPI* g_shared_instance_for_test = nullptr;
 
 }  // namespace
 
 // static
 ExtensionAPI* ExtensionAPI::GetSharedInstance() {
-  return g_shared_instance_for_test ? g_shared_instance_for_test
-                                    : g_extension_api_static.Get().api.get();
+  if (g_shared_instance_for_test) {
+    return g_shared_instance_for_test;
+  }
+  static ExtensionAPI* shared_instance =
+      ExtensionAPI::CreateWithDefaultConfiguration();
+  return shared_instance;
 }
 
 // static

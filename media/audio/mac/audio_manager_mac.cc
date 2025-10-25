@@ -41,16 +41,34 @@
 #include "media/audio/audio_device_description.h"
 #include "media/audio/audio_features.h"
 #include "media/audio/mac/audio_loopback_input_mac.h"
+#include "media/audio/mac/avfoundation_output_stream.h"
 #include "media/audio/mac/core_audio_util_mac.h"
 #include "media/audio/mac/screen_capture_kit_swizzler.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/channel_layout.h"
 #include "media/base/limits.h"
-#include "media/base/mac/audio_latency_mac.h"
 #include "media/base/media_switches.h"
 
 namespace media {
+namespace {
+bool IsCatapLoopbackAudioEnabledForDevice(const std::string& device_id) {
+  // TODO(https://crbug.com/425902990): Remove check of
+  // `kLoopbackWithMuteDeviceIdCast` once CatapAudioInputStream is launched
+  // for both Cast and getDisplayMedia.
+  if (!IsMacCatapSystemLoopbackCaptureSupported()) {
+    return false;
+  }
+
+  if (device_id == AudioDeviceDescription::kLoopbackWithMuteDeviceIdCast) {
+    return base::FeatureList::IsEnabled(kMacCatapLoopbackAudioForCast);
+  }
+  if (device_id == AudioDeviceDescription::kLoopbackAllDevicesId) {
+    return base::FeatureList::IsEnabled(kSystemLoopbackAsAecReference);
+  }
+  return base::FeatureList::IsEnabled(kMacCatapLoopbackAudioForScreenShare);
+}
+}  // namespace
 
 // Maximum number of output streams that can be open simultaneously.
 static const int kMaxOutputStreams = 50;
@@ -226,33 +244,28 @@ AudioDeviceID AudioManagerMac::GetAudioDeviceIdByUId(
   return audio_device_id;
 }
 
-static bool GetDefaultDevice(AudioDeviceID* device, bool input) {
+bool AudioManagerMac::GetDefaultInputDevice(AudioDeviceID* input_device) {
   DCHECK(AudioManager::Get()->GetTaskRunner()->BelongsToCurrentThread());
-  CHECK(device);
-
-  // Obtain the AudioDeviceID of the default input or output AudioDevice.
-  AudioObjectPropertyAddress pa;
-  pa.mSelector = input ? kAudioHardwarePropertyDefaultInputDevice
-                       : kAudioHardwarePropertyDefaultOutputDevice;
-  pa.mScope = kAudioObjectPropertyScopeGlobal;
-  pa.mElement = kAudioObjectPropertyElementMain;
-
-  UInt32 size = sizeof(*device);
-  OSStatus result = AudioObjectGetPropertyData(kAudioObjectSystemObject, &pa, 0,
-                                               0, &size, device);
-  if ((result != kAudioHardwareNoError) || (*device == kAudioDeviceUnknown)) {
-    DLOG(ERROR) << "Error getting default AudioDevice.";
+  CHECK(input_device);
+  std::optional<AudioDeviceID> device =
+      core_audio_mac::GetDefaultDevice(/*input=*/true);
+  if (!device) {
     return false;
   }
+  *input_device = *device;
   return true;
 }
 
-bool AudioManagerMac::GetDefaultInputDevice(AudioDeviceID* input_device) {
-  return GetDefaultDevice(input_device, true);
-}
-
 bool AudioManagerMac::GetDefaultOutputDevice(AudioDeviceID* output_device) {
-  return GetDefaultDevice(output_device, false);
+  DCHECK(AudioManager::Get()->GetTaskRunner()->BelongsToCurrentThread());
+  CHECK(output_device);
+  std::optional<AudioDeviceID> device =
+      core_audio_mac::GetDefaultDevice(/*input=*/false);
+  if (!device) {
+    return false;
+  }
+  *output_device = *device;
+  return true;
 }
 
 // Returns the total number of channels on a device; regardless of what the
@@ -456,6 +469,9 @@ static bool GetOutputDeviceChannelsAndLayout(AudioUnit audio_unit,
   return true;
 }
 
+// TODO(crbug.com/447640763): Remove after M145 if nothing explodes.
+BASE_FEATURE(kAudioPowerMonitoring, base::FEATURE_DISABLED_BY_DEFAULT);
+
 class AudioManagerMac::AudioPowerObserver : public base::PowerSuspendObserver {
  public:
   AudioPowerObserver()
@@ -491,6 +507,10 @@ class AudioManagerMac::AudioPowerObserver : public base::PowerSuspendObserver {
 
   bool ShouldDeferStreamStart() const {
     DCHECK(thread_checker_.CalledOnValidThread());
+    if (!base::FeatureList::IsEnabled(kAudioPowerMonitoring)) {
+      return false;
+    }
+
     // Start() should be deferred if the system is in the middle of a suspend or
     // has recently started the process of resuming.
     return is_suspending_ || base::TimeTicks::Now() < earliest_start_time_;
@@ -669,7 +689,7 @@ AudioParameters AudioManagerMac::GetInputStreamParameters(
     const std::string& device_id) {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
   if (AudioDeviceDescription::IsLoopbackDevice(device_id)) {
-    if (IsMacCatapSystemAudioLoopbackCaptureEnabled()) {
+    if (IsCatapLoopbackAudioEnabledForDevice(device_id)) {
       return AudioParameters(AudioParameters::AUDIO_PCM_LOW_LATENCY,
                              ChannelLayoutConfig::Stereo(), kLoopbackSampleRate,
                              kCatapLoopbackDefaultFramesPerBuffer);
@@ -824,6 +844,16 @@ AudioOutputStream* AudioManagerMac::MakeLowLatencyOutputStream(
     current_sample_rate_ = params.sample_rate();
   }
 
+  // Use AVFoundationOutputStream for kPlayback audio output streams as it is
+  // able to tell the OS to use Spatial Audio.
+  if (base::FeatureList::IsEnabled(features::kMacAVFoundationPlayback) &&
+      params.latency_tag() == AudioLatency::Type::kPlayback) {
+    DVLOG(1) << __func__ << ": Creating AVFoundationOutputStream for "
+             << ChannelLayoutToString(params.channel_layout()) << " layout.";
+    auto* stream = new AVFoundationOutputStream(this, params, device_id);
+    return stream;
+  }
+
   AUHALStream* stream = new AUHALStream(this, params, device, log_callback);
   output_streams_.insert(stream);
   return stream;
@@ -841,26 +871,12 @@ std::string AudioManagerMac::GetDefaultInputDeviceID() {
 
 std::string AudioManagerMac::GetDefaultDeviceID(bool is_input) {
   DCHECK(GetTaskRunner()->BelongsToCurrentThread());
-  AudioDeviceID device_id = kAudioObjectUnknown;
-  if (!GetDefaultDevice(&device_id, is_input)) {
+  std::optional<AudioDeviceID> device_id =
+      core_audio_mac::GetDefaultDevice(is_input);
+  if (!device_id) {
     return std::string();
   }
-
-  const AudioObjectPropertyAddress property_address = {
-      kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal,
-      kAudioObjectPropertyElementMain};
-  CFStringRef device_uid = NULL;
-  UInt32 size = sizeof(device_uid);
-  OSStatus status = AudioObjectGetPropertyData(device_id, &property_address, 0,
-                                               NULL, &size, &device_uid);
-  if (status != kAudioHardwareNoError || !device_uid) {
-    return std::string();
-  }
-
-  std::string ret(base::SysCFStringRefToUTF8(device_uid));
-  CFRelease(device_uid);
-
-  return ret;
+  return core_audio_mac::GetDeviceUniqueID(*device_id).value_or(std::string());
 }
 
 AudioInputStream* AudioManagerMac::MakeLinearInputStream(
@@ -882,12 +898,11 @@ AudioInputStream* AudioManagerMac::MakeLowLatencyInputStream(
   DCHECK_EQ(AudioParameters::AUDIO_PCM_LOW_LATENCY, params.format());
 
   if (AudioDeviceDescription::IsLoopbackDevice(device_id)) {
-    if (IsMacCatapSystemAudioLoopbackCaptureEnabled()) {
+    if (IsCatapLoopbackAudioEnabledForDevice(device_id)) {
       return CreateCatapAudioInputStream(
           params, device_id, log_callback,
           base::BindOnce(&AudioManagerBase::ReleaseInputStream,
-                         base::Unretained(this)),
-          GetDefaultOutputDeviceID());
+                         base::Unretained(this)));
     }
 
     screen_capture_kit_swizzler_ = SwizzleScreenCaptureKit();
@@ -962,7 +977,15 @@ AudioParameters AudioManagerMac::GetPreferredOutputStreamParameters(
   // work correctly.
   int output_channels = input_params.channels();
   ChannelLayout output_channel_layout = input_params.channel_layout();
-  if (!has_valid_input_params || output_channels > hardware_channels) {
+  // The AVFoundation backend can handle multichannel audio and perform mixing
+  // itself. In this case, we can pass the original layout to the OS instead of
+  // downmixing. This is only done for playback streams.
+  const bool use_avf_streams =
+      base::FeatureList::IsEnabled(features::kMacAVFoundationPlayback) &&
+      input_params.latency_tag() == AudioLatency::Type::kPlayback;
+
+  if (!has_valid_input_params ||
+      (output_channels > hardware_channels && !use_avf_streams)) {
     output_channels = hardware_channels;
     output_channel_layout = hardware_channel_layout;
   }
@@ -1468,6 +1491,23 @@ AudioDeviceID AudioManagerMac::FindFirstOutputSubdevice(
   }
 
   return kAudioObjectUnknown;
+}
+
+// static
+int AudioManagerMac::GetMinAudioBufferSizeMacOS(int min_buffer_size,
+                                                int sample_rate) {
+  int buffer_size = min_buffer_size;
+  if (sample_rate > 48000) {
+    // The default buffer size is too small for higher sample rates and may lead
+    // to glitching.  Adjust upwards by multiples of the default size.
+    if (sample_rate <= 96000) {
+      buffer_size = 2 * limits::kMinAudioBufferSize;
+    } else if (sample_rate <= 192000) {
+      buffer_size = 4 * limits::kMinAudioBufferSize;
+    }
+  }
+  DCHECK_EQ(limits::kMaxWebAudioBufferSize % buffer_size, 0);
+  return buffer_size;
 }
 
 OSStatus AudioManagerMac::GetInputDeviceStreamFormat(

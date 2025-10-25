@@ -13,7 +13,7 @@
 #include "base/test/test_future.h"
 #include "chrome/browser/ai/ai_test_utils.h"
 #include "chrome/browser/optimization_guide/mock_optimization_guide_keyed_service.h"
-#include "components/optimization_guide/core/mock_optimization_guide_model_executor.h"
+#include "components/optimization_guide/core/model_execution/test/mock_on_device_capability.h"
 #include "components/optimization_guide/core/optimization_guide_proto_util.h"
 #include "components/optimization_guide/core/optimization_guide_switches.h"
 #include "components/optimization_guide/core/optimization_guide_util.h"
@@ -113,13 +113,13 @@ class AIRewriterTest : public AITestUtils::AITestBase {
     MockCreateRewriterClient mock_create_rewriter_client;
     base::RunLoop run_loop;
     EXPECT_CALL(mock_create_rewriter_client, OnResult(_))
-        .WillOnce(testing::Invoke(
+        .WillOnce(
             [&](mojo::PendingRemote<::blink::mojom::AIRewriter> rewriter) {
               EXPECT_TRUE(rewriter);
               rewriter_remote =
                   mojo::Remote<blink::mojom::AIRewriter>(std::move(rewriter));
               run_loop.Quit();
-            }));
+            });
 
     mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
     ai_manager->CreateRewriter(
@@ -142,28 +142,27 @@ class AIRewriterTest : public AITestUtils::AITestBase {
     expected.set_allocated_options(
         AIRewriter::ToProtoOptions(options).release());
     EXPECT_CALL(session_, ExecuteModel(_, _))
-        .WillOnce(testing::Invoke(
-            [&](const google::protobuf::MessageLite& request,
-                optimization_guide::
-                    OptimizationGuideModelExecutionResultStreamingCallback
-                        callback) {
-              EXPECT_THAT(request, EqualsProto(expected));
-              callback.Run(CreateExecutionResult("Result text",
-                                                 /*is_complete=*/true));
-            }));
+        .WillOnce([&](const google::protobuf::MessageLite& request,
+                      optimization_guide::
+                          OptimizationGuideModelExecutionResultStreamingCallback
+                              callback) {
+          EXPECT_THAT(request, EqualsProto(expected));
+          callback.Run(CreateExecutionResult("Result text",
+                                             /*is_complete=*/true));
+        });
 
     mojo::Remote<blink::mojom::AIRewriter> rewriter_remote;
     {
       MockCreateRewriterClient mock_create_rewriter_client;
       base::RunLoop run_loop;
       EXPECT_CALL(mock_create_rewriter_client, OnResult(_))
-          .WillOnce(testing::Invoke(
+          .WillOnce(
               [&](mojo::PendingRemote<::blink::mojom::AIRewriter> rewriter) {
                 EXPECT_TRUE(rewriter);
                 rewriter_remote =
                     mojo::Remote<blink::mojom::AIRewriter>(std::move(rewriter));
                 run_loop.Quit();
-              }));
+              });
 
       mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
       ai_manager->CreateRewriter(
@@ -175,15 +174,13 @@ class AIRewriterTest : public AITestUtils::AITestBase {
 
     base::RunLoop run_loop;
     EXPECT_CALL(mock_responder, OnStreaming(_))
-        .WillOnce(testing::Invoke([&](const std::string& text) {
-          EXPECT_THAT(text, "Result text");
-        }));
+        .WillOnce(
+            [&](const std::string& text) { EXPECT_THAT(text, "Result text"); });
 
     EXPECT_CALL(mock_responder, OnCompletion(_))
-        .WillOnce(testing::Invoke(
-            [&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
-              run_loop.Quit();
-            }));
+        .WillOnce([&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
+          run_loop.Quit();
+        });
 
     rewriter_remote->Rewrite(kInputString, kContextString,
                              mock_responder.BindNewPipeAndPassRemote());
@@ -197,15 +194,13 @@ TEST_F(AIRewriterTest, CreateRewriterNoService) {
   MockCreateRewriterClient mock_create_rewriter_client;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_create_rewriter_client, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::AIManagerCreateClientError
-                                        error,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::AIManagerCreateClientError error,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         ASSERT_EQ(
             error,
             blink::mojom::AIManagerCreateClientError::kUnableToCreateSession);
         run_loop.Quit();
-      }));
+      });
 
   mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
   ai_manager->CreateRewriter(
@@ -217,10 +212,11 @@ TEST_F(AIRewriterTest, CreateRewriterNoService) {
 TEST_F(AIRewriterTest, CreateRewriterModelNotEligible) {
   SetupMockOptimizationGuideKeyedService();
   EXPECT_CALL(*mock_optimization_guide_keyed_service_, StartSession(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
-              const std::optional<optimization_guide::SessionConfigParams>&
-                  config_params) { return nullptr; }));
+              const optimization_guide::SessionConfigParams& config_params) {
+            return nullptr;
+          });
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               GetOnDeviceModelEligibilityAsync(_, _, _))
       .WillOnce([](auto feature, auto capabilities, auto callback) {
@@ -232,15 +228,13 @@ TEST_F(AIRewriterTest, CreateRewriterModelNotEligible) {
   MockCreateRewriterClient mock_create_rewriter_client;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_create_rewriter_client, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::AIManagerCreateClientError
-                                        error,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::AIManagerCreateClientError error,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         ASSERT_EQ(
             error,
             blink::mojom::AIManagerCreateClientError::kUnableToCreateSession);
         run_loop.Quit();
-      }));
+      });
 
   mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
   ai_manager->CreateRewriter(
@@ -253,21 +247,19 @@ TEST_F(AIRewriterTest, CreateRewriterRetryAfterConfigNotAvailableForFeature) {
   SetupMockOptimizationGuideKeyedService();
   // StartSession must be called twice.
   EXPECT_CALL(*mock_optimization_guide_keyed_service_, StartSession(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
-              const std::optional<optimization_guide::SessionConfigParams>&
-                  config_params) {
+              const optimization_guide::SessionConfigParams& config_params) {
             // Returns a nullptr for the first call.
             return nullptr;
-          }))
-      .WillOnce(testing::Invoke(
+          })
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
-              const std::optional<optimization_guide::SessionConfigParams>&
-                  config_params) {
+              const optimization_guide::SessionConfigParams& config_params) {
             // Returns a MockSession for the second call.
             return std::make_unique<
                 testing::NiceMock<optimization_guide::MockSession>>(&session_);
-          }));
+          });
 
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               GetOnDeviceModelEligibilityAsync(_, _, _))
@@ -283,32 +275,31 @@ TEST_F(AIRewriterTest, CreateRewriterRetryAfterConfigNotAvailableForFeature) {
   base::RunLoop run_loop_for_add_observer;
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               AddOnDeviceModelAvailabilityChangeObserver(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
               optimization_guide::OnDeviceModelAvailabilityObserver* observer) {
             availability_observer = observer;
             run_loop_for_add_observer.Quit();
-          }));
+          });
 
   EXPECT_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::MultimodalMessageReadView request_metadata,
               optimization_guide::OptimizationGuideModelSizeInTokenCallback
                   callback) {
             std::move(callback).Run(
                 blink::mojom::kWritingAssistanceMaxInputTokenSize);
-          }));
+          });
 
   mojo::Remote<blink::mojom::AIRewriter> rewriter_remote;
   MockCreateRewriterClient mock_create_rewriter_client;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_create_rewriter_client, OnResult(_))
-      .WillOnce(testing::Invoke(
-          [&](mojo::PendingRemote<::blink::mojom::AIRewriter> rewriter) {
-            // Create rewriter should succeed.
-            EXPECT_TRUE(rewriter);
-            run_loop.Quit();
-          }));
+      .WillOnce([&](mojo::PendingRemote<::blink::mojom::AIRewriter> rewriter) {
+        // Create rewriter should succeed.
+        EXPECT_TRUE(rewriter);
+        run_loop.Quit();
+      });
 
   mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
   ai_manager->CreateRewriter(
@@ -337,21 +328,19 @@ TEST_F(AIRewriterTest, CreateRewriterContextLimitExceededError) {
   SetupMockSession();
 
   EXPECT_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [](optimization_guide::MultimodalMessageReadView request_metadata,
              optimization_guide::OptimizationGuideModelSizeInTokenCallback
                  callback) {
             std::move(callback).Run(
                 blink::mojom::kWritingAssistanceMaxInputTokenSize + 1);
-          }));
+          });
 
   MockCreateRewriterClient mock_create_rewriter_client;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_create_rewriter_client, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::AIManagerCreateClientError
-                                        error,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::AIManagerCreateClientError error,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         ASSERT_EQ(
             error,
             blink::mojom::AIManagerCreateClientError::kInitialInputTooLarge);
@@ -361,7 +350,7 @@ TEST_F(AIRewriterTest, CreateRewriterContextLimitExceededError) {
         ASSERT_EQ(quota_error_info->quota,
                   blink::mojom::kWritingAssistanceMaxInputTokenSize);
         run_loop.Quit();
-      }));
+      });
 
   mojo::Remote<blink::mojom::AIManager> ai_manager = GetAIManagerRemote();
   ai_manager->CreateRewriter(
@@ -374,10 +363,11 @@ TEST_F(AIRewriterTest, CreateRewriterAbortAfterConfigNotAvailableForFeature) {
   SetupMockOptimizationGuideKeyedService();
 
   EXPECT_CALL(*mock_optimization_guide_keyed_service_, StartSession(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
-              const std::optional<optimization_guide::SessionConfigParams>&
-                  config_params) { return nullptr; }));
+              const optimization_guide::SessionConfigParams& config_params) {
+            return nullptr;
+          });
 
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               GetOnDeviceModelEligibilityAsync(_, _, _))
@@ -394,20 +384,20 @@ TEST_F(AIRewriterTest, CreateRewriterAbortAfterConfigNotAvailableForFeature) {
   base::RunLoop run_loop_for_remove_observer;
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               AddOnDeviceModelAvailabilityChangeObserver(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
               optimization_guide::OnDeviceModelAvailabilityObserver* observer) {
             availability_observer = observer;
             run_loop_for_add_observer.Quit();
-          }));
+          });
   EXPECT_CALL(*mock_optimization_guide_keyed_service_,
               RemoveOnDeviceModelAvailabilityChangeObserver(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::ModelBasedCapabilityKey feature,
               optimization_guide::OnDeviceModelAvailabilityObserver* observer) {
             EXPECT_EQ(availability_observer, observer);
             run_loop_for_remove_observer.Quit();
-          }));
+          });
 
   auto mock_create_rewriter_client =
       std::make_unique<MockCreateRewriterClient>();
@@ -477,6 +467,21 @@ TEST_F(AIRewriterTest, CanCreateUnIsLanguagesSupported) {
                                              callback.Get());
 }
 
+TEST_F(AIRewriterTest, ToProtoOptionsLanguagesSupported) {
+  // Rewriter proto expects base language display names in English.
+  std::vector<std::pair<std::string, std::string>> languages = {
+      {"en", "English"},  {"en-us", "English"},  {"en-uk", "English"},
+      {"es", "Spanish"},  {"es-sp", "Spanish"},  {"es-mx", "Spanish"},
+      {"ja", "Japanese"}, {"ja-jp", "Japanese"}, {"ja-foo", "Japanese"},
+  };
+  blink::mojom::AIRewriterCreateOptionsPtr options = GetDefaultOptions();
+  for (const auto& language : languages) {
+    options->output_language = AILanguageCode::New(language.first);
+    const auto proto_options = AIRewriter::ToProtoOptions(options);
+    EXPECT_EQ(proto_options->output_language(), language.second);
+  }
+}
+
 TEST_F(AIRewriterTest, RewriteDefault) {
   SetupMockOptimizationGuideKeyedService();
   SetupMockSession();
@@ -520,20 +525,18 @@ TEST_F(AIRewriterTest, InputLimitExceededError) {
   auto rewriter_remote = GetAIRewriterRemote();
 
   EXPECT_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [](optimization_guide::MultimodalMessageReadView request_metadata,
              optimization_guide::OptimizationGuideModelSizeInTokenCallback
                  callback) {
             std::move(callback).Run(
                 blink::mojom::kWritingAssistanceMaxInputTokenSize + 1);
-          }));
+          });
   AITestUtils::MockModelStreamingResponder mock_responder;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_responder, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::ModelStreamingResponseStatus
-                                        status,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::ModelStreamingResponseStatus status,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         EXPECT_EQ(
             status,
             blink::mojom::ModelStreamingResponseStatus::kErrorInputTooLarge);
@@ -543,7 +546,7 @@ TEST_F(AIRewriterTest, InputLimitExceededError) {
         ASSERT_EQ(quota_error_info->quota,
                   blink::mojom::kWritingAssistanceMaxInputTokenSize);
         run_loop.Quit();
-      }));
+      });
 
   rewriter_remote->Rewrite(kInputString, kContextString,
                            mock_responder.BindNewPipeAndPassRemote());
@@ -554,33 +557,29 @@ TEST_F(AIRewriterTest, ModelExecutionError) {
   SetupMockOptimizationGuideKeyedService();
   SetupMockSession();
   EXPECT_CALL(session_, ExecuteModel(_, _))
-      .WillOnce(testing::Invoke(
-          [](const google::protobuf::MessageLite& request,
-             optimization_guide::
-                 OptimizationGuideModelExecutionResultStreamingCallback
-                     callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
-            callback.Run(CreateExecutionErrorResult(
-                optimization_guide::OptimizationGuideModelExecutionError::
-                    FromModelExecutionError(
-                        optimization_guide::
-                            OptimizationGuideModelExecutionError::
-                                ModelExecutionError::kPermissionDenied)));
-          }));
+      .WillOnce([](const google::protobuf::MessageLite& request,
+                   optimization_guide::
+                       OptimizationGuideModelExecutionResultStreamingCallback
+                           callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
+        callback.Run(CreateExecutionErrorResult(
+            optimization_guide::OptimizationGuideModelExecutionError::
+                FromModelExecutionError(
+                    optimization_guide::OptimizationGuideModelExecutionError::
+                        ModelExecutionError::kPermissionDenied)));
+      });
 
   auto rewriter_remote = GetAIRewriterRemote();
   AITestUtils::MockModelStreamingResponder mock_responder;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_responder, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::ModelStreamingResponseStatus
-                                        status,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::ModelStreamingResponseStatus status,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         EXPECT_EQ(
             status,
             blink::mojom::ModelStreamingResponseStatus::kErrorPermissionDenied);
         run_loop.Quit();
-      }));
+      });
 
   rewriter_remote->Rewrite(kInputString, kContextString,
                            mock_responder.BindNewPipeAndPassRemote());
@@ -591,32 +590,27 @@ TEST_F(AIRewriterTest, RewriteMultipleResponse) {
   SetupMockOptimizationGuideKeyedService();
   SetupMockSession();
   EXPECT_CALL(session_, ExecuteModel(_, _))
-      .WillOnce(testing::Invoke(
-          [](const google::protobuf::MessageLite& request,
-             optimization_guide::
-                 OptimizationGuideModelExecutionResultStreamingCallback
-                     callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
-            callback.Run(
-                CreateExecutionResult("Result ", /*is_complete=*/false));
-            callback.Run(CreateExecutionResult("text",
-                                               /*is_complete=*/true));
-          }));
+      .WillOnce([](const google::protobuf::MessageLite& request,
+                   optimization_guide::
+                       OptimizationGuideModelExecutionResultStreamingCallback
+                           callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
+        callback.Run(CreateExecutionResult("Result ", /*is_complete=*/false));
+        callback.Run(CreateExecutionResult("text",
+                                           /*is_complete=*/true));
+      });
 
   auto rewriter_remote = GetAIRewriterRemote();
   AITestUtils::MockModelStreamingResponder mock_responder;
   base::RunLoop run_loop;
   EXPECT_CALL(mock_responder, OnStreaming(_))
-      .WillOnce(testing::Invoke(
-          [&](const std::string& text) { EXPECT_THAT(text, "Result "); }))
-      .WillOnce(testing::Invoke(
-          [&](const std::string& text) { EXPECT_THAT(text, "text"); }));
+      .WillOnce([&](const std::string& text) { EXPECT_THAT(text, "Result "); })
+      .WillOnce([&](const std::string& text) { EXPECT_THAT(text, "text"); });
 
   EXPECT_CALL(mock_responder, OnCompletion(_))
-      .WillOnce(testing::Invoke(
-          [&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
-            run_loop.Quit();
-          }));
+      .WillOnce([&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
+        run_loop.Quit();
+      });
 
   rewriter_remote->Rewrite(kInputString, kContextString,
                            mock_responder.BindNewPipeAndPassRemote());
@@ -627,40 +621,36 @@ TEST_F(AIRewriterTest, MultipleRewrite) {
   SetupMockOptimizationGuideKeyedService();
   SetupMockSession();
   EXPECT_CALL(session_, ExecuteModel(_, _))
-      .WillOnce(testing::Invoke(
-          [](const google::protobuf::MessageLite& request,
-             optimization_guide::
-                 OptimizationGuideModelExecutionResultStreamingCallback
-                     callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
-            callback.Run(CreateExecutionResult("Result text",
-                                               /*is_complete=*/true));
-          }))
-      .WillOnce(testing::Invoke(
-          [](const google::protobuf::MessageLite& request,
-             optimization_guide::
-                 OptimizationGuideModelExecutionResultStreamingCallback
-                     callback) {
-            auto expect = GetExecuteRequest("test context 2", "input string 2");
-            EXPECT_THAT(request, EqualsProto(expect));
-            callback.Run(CreateExecutionResult("Result text 2",
-                                               /*is_complete=*/true));
-          }));
+      .WillOnce([](const google::protobuf::MessageLite& request,
+                   optimization_guide::
+                       OptimizationGuideModelExecutionResultStreamingCallback
+                           callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
+        callback.Run(CreateExecutionResult("Result text",
+                                           /*is_complete=*/true));
+      })
+      .WillOnce([](const google::protobuf::MessageLite& request,
+                   optimization_guide::
+                       OptimizationGuideModelExecutionResultStreamingCallback
+                           callback) {
+        auto expect = GetExecuteRequest("test context 2", "input string 2");
+        EXPECT_THAT(request, EqualsProto(expect));
+        callback.Run(CreateExecutionResult("Result text 2",
+                                           /*is_complete=*/true));
+      });
 
   auto rewriter_remote = GetAIRewriterRemote();
   {
     AITestUtils::MockModelStreamingResponder mock_responder;
     base::RunLoop run_loop;
     EXPECT_CALL(mock_responder, OnStreaming(_))
-        .WillOnce(testing::Invoke([&](const std::string& text) {
-          EXPECT_THAT(text, "Result text");
-        }));
+        .WillOnce(
+            [&](const std::string& text) { EXPECT_THAT(text, "Result text"); });
 
     EXPECT_CALL(mock_responder, OnCompletion(_))
-        .WillOnce(testing::Invoke(
-            [&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
-              run_loop.Quit();
-            }));
+        .WillOnce([&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
+          run_loop.Quit();
+        });
 
     rewriter_remote->Rewrite(kInputString, kContextString,
                              mock_responder.BindNewPipeAndPassRemote());
@@ -670,15 +660,14 @@ TEST_F(AIRewriterTest, MultipleRewrite) {
     AITestUtils::MockModelStreamingResponder mock_responder;
     base::RunLoop run_loop;
     EXPECT_CALL(mock_responder, OnStreaming(_))
-        .WillOnce(testing::Invoke([&](const std::string& text) {
+        .WillOnce([&](const std::string& text) {
           EXPECT_THAT(text, "Result text 2");
-        }));
+        });
 
     EXPECT_CALL(mock_responder, OnCompletion(_))
-        .WillOnce(testing::Invoke(
-            [&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
-              run_loop.Quit();
-            }));
+        .WillOnce([&](blink::mojom::ModelExecutionContextInfoPtr context_info) {
+          run_loop.Quit();
+        });
 
     rewriter_remote->Rewrite("input string 2", "test context 2",
                              mock_responder.BindNewPipeAndPassRemote());
@@ -693,15 +682,14 @@ TEST_F(AIRewriterTest, ResponderDisconnected) {
   optimization_guide::OptimizationGuideModelExecutionResultStreamingCallback
       streaming_callback;
   EXPECT_CALL(session_, ExecuteModel(_, _))
-      .WillOnce(testing::Invoke(
-          [&](const google::protobuf::MessageLite& request,
-              optimization_guide::
-                  OptimizationGuideModelExecutionResultStreamingCallback
-                      callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
-            streaming_callback = std::move(callback);
-            run_loop_for_callback.Quit();
-          }));
+      .WillOnce([&](const google::protobuf::MessageLite& request,
+                    optimization_guide::
+                        OptimizationGuideModelExecutionResultStreamingCallback
+                            callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
+        streaming_callback = std::move(callback);
+        run_loop_for_callback.Quit();
+      });
 
   auto rewriter_remote = GetAIRewriterRemote();
   std::unique_ptr<AITestUtils::MockModelStreamingResponder> mock_responder =
@@ -727,29 +715,26 @@ TEST_F(AIRewriterTest, RewriterDisconnected) {
   optimization_guide::OptimizationGuideModelExecutionResultStreamingCallback
       streaming_callback;
   EXPECT_CALL(session_, ExecuteModel(_, _))
-      .WillOnce(testing::Invoke(
-          [&](const google::protobuf::MessageLite& request,
-              optimization_guide::
-                  OptimizationGuideModelExecutionResultStreamingCallback
-                      callback) {
-            EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
-            streaming_callback = std::move(callback);
-            run_loop_for_callback.Quit();
-          }));
+      .WillOnce([&](const google::protobuf::MessageLite& request,
+                    optimization_guide::
+                        OptimizationGuideModelExecutionResultStreamingCallback
+                            callback) {
+        EXPECT_THAT(request, EqualsProto(GetExecuteRequest()));
+        streaming_callback = std::move(callback);
+        run_loop_for_callback.Quit();
+      });
 
   auto rewriter_remote = GetAIRewriterRemote();
   AITestUtils::MockModelStreamingResponder mock_responder;
   base::RunLoop run_loop_for_response;
   EXPECT_CALL(mock_responder, OnError(_, _))
-      .WillOnce(testing::Invoke([&](blink::mojom::ModelStreamingResponseStatus
-                                        status,
-                                    blink::mojom::QuotaErrorInfoPtr
-                                        quota_error_info) {
+      .WillOnce([&](blink::mojom::ModelStreamingResponseStatus status,
+                    blink::mojom::QuotaErrorInfoPtr quota_error_info) {
         EXPECT_EQ(
             status,
             blink::mojom::ModelStreamingResponseStatus::kErrorSessionDestroyed);
         run_loop_for_response.Quit();
-      }));
+      });
 
   rewriter_remote->Rewrite(kInputString, kContextString,
                            mock_responder.BindNewPipeAndPassRemote());
@@ -775,10 +760,10 @@ TEST_F(AIRewriterTest, MeasureUsage) {
   auto rewriter_remote = GetAIRewriterRemote();
 
   EXPECT_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::MultimodalMessageReadView request_metadata,
               optimization_guide::OptimizationGuideModelSizeInTokenCallback
-                  callback) { std::move(callback).Run(expected_usage); }));
+                  callback) { std::move(callback).Run(expected_usage); });
   base::test::TestFuture<std::optional<uint32_t>> future;
   rewriter_remote->MeasureUsage(kInputString, kContextString,
                                 future.GetCallback());
@@ -791,10 +776,10 @@ TEST_F(AIRewriterTest, MeasureUsageFails) {
   auto rewriter_remote = GetAIRewriterRemote();
 
   EXPECT_CALL(session_, GetExecutionInputSizeInTokens(_, _))
-      .WillOnce(testing::Invoke(
+      .WillOnce(
           [&](optimization_guide::MultimodalMessageReadView request_metadata,
               optimization_guide::OptimizationGuideModelSizeInTokenCallback
-                  callback) { std::move(callback).Run(std::nullopt); }));
+                  callback) { std::move(callback).Run(std::nullopt); });
   base::test::TestFuture<std::optional<uint32_t>> future;
   rewriter_remote->MeasureUsage(kInputString, kContextString,
                                 future.GetCallback());

@@ -266,7 +266,7 @@ static std::unique_ptr<TextResourceDecoder> CreateResourceTextDecoder(
   if (!text_encoding_name.empty()) {
     return std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
         TextResourceDecoderOptions::kPlainTextContent,
-        WTF::TextEncoding(text_encoding_name)));
+        TextEncoding(text_encoding_name)));
   }
   if (MIMETypeRegistry::IsXMLMIMEType(mime_type)) {
     TextResourceDecoderOptions options(TextResourceDecoderOptions::kXMLContent);
@@ -275,17 +275,17 @@ static std::unique_ptr<TextResourceDecoder> CreateResourceTextDecoder(
   }
   if (EqualIgnoringASCIICase(mime_type, "text/html")) {
     return std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
-        TextResourceDecoderOptions::kHTMLContent, UTF8Encoding()));
+        TextResourceDecoderOptions::kHTMLContent, Utf8Encoding()));
   }
   if (MIMETypeRegistry::IsSupportedJavaScriptMIMEType(mime_type) ||
       MIMETypeRegistry::IsJSONMimeType(mime_type)) {
     return std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
-        TextResourceDecoderOptions::kPlainTextContent, UTF8Encoding()));
+        TextResourceDecoderOptions::kPlainTextContent, Utf8Encoding()));
   }
   if (MIMETypeRegistry::IsPlainTextMIMEType(mime_type)) {
     return std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
         TextResourceDecoderOptions::kPlainTextContent,
-        WTF::TextEncoding("ISO-8859-1")));
+        TextEncoding("ISO-8859-1")));
   }
   return nullptr;
 }
@@ -341,13 +341,13 @@ bool InspectorPageAgent::SegmentedBufferContent(
   String text_content;
   std::unique_ptr<TextResourceDecoder> decoder =
       CreateResourceTextDecoder(mime_type, text_encoding_name);
-  WTF::TextEncoding encoding(text_encoding_name);
+  TextEncoding encoding(text_encoding_name);
 
   const SegmentedBuffer::DeprecatedFlatData flat_buffer(buffer);
   const auto byte_buffer = base::as_byte_span(flat_buffer);
   if (decoder) {
     text_content = decoder->Decode(byte_buffer);
-    text_content = WTF::StrCat({text_content, decoder->Flush()});
+    text_content = StrCat({text_content, decoder->Flush()});
   } else if (encoding.IsValid()) {
     text_content = encoding.Decode(byte_buffer);
   }
@@ -603,7 +603,11 @@ protocol::Response InspectorPageAgent::addScriptToEvaluateOnNewDocument(
     // Runtime.enable that forces main context creation. In this case, we would
     // not normally evaluate the script, but we should.
     for (LocalFrame* frame : *inspected_frames_) {
-      EvaluateScriptOnNewDocument(*frame, *identifier);
+      // Don't evaluate scripts on provisional frames:
+      // https://crbug.com/390710982
+      if (!frame->IsProvisional()) {
+        EvaluateScriptOnNewDocument(*frame, *identifier);
+      }
     }
   }
 
@@ -793,7 +797,7 @@ void InspectorPageAgent::getResourceContent(
   }
   inspector_resource_content_loader_->EnsureResourcesContentLoaded(
       resource_content_loader_client_id_,
-      WTF::BindOnce(
+      BindOnce(
           &InspectorPageAgent::GetResourceContentAfterResourcesContentLoaded,
           WrapPersistent(this), frame_id, url, std::move(callback)));
 }
@@ -888,11 +892,10 @@ void InspectorPageAgent::searchInResource(
   }
   inspector_resource_content_loader_->EnsureResourcesContentLoaded(
       resource_content_loader_client_id_,
-      WTF::BindOnce(
-          &InspectorPageAgent::SearchContentAfterResourcesContentLoaded,
-          WrapPersistent(this), frame_id, url, query,
-          optional_case_sensitive.value_or(false),
-          optional_is_regex.value_or(false), std::move(callback)));
+      BindOnce(&InspectorPageAgent::SearchContentAfterResourcesContentLoaded,
+               WrapPersistent(this), frame_id, url, query,
+               optional_case_sensitive.value_or(false),
+               optional_is_regex.value_or(false), std::move(callback)));
 }
 
 protocol::Response InspectorPageAgent::setBypassCSP(bool enabled) {
@@ -1559,7 +1562,7 @@ std::unique_ptr<protocol::Page::Frame> InspectorPageAgent::BuildObjectForFrame(
           .setGatedAPIFeatures(CreateGatedAPIFeaturesArray(frame->DomWindow()))
           .build();
   if (url.HasFragmentIdentifier()) {
-    frame_object->setUrlFragment(WTF::StrCat({"#", url.FragmentIdentifier()}));
+    frame_object->setUrlFragment(StrCat({"#", url.FragmentIdentifier()}));
   }
   Frame* parent_frame = frame->Tree().Parent();
   if (parent_frame) {
@@ -1620,7 +1623,7 @@ InspectorPageAgent::BuildObjectForResourceTree(LocalFrame* frame) {
             .setContentSize(cached_resource->GetResponse().DecodedBodyLength())
             .build();
     std::optional<base::Time> last_modified =
-        cached_resource->GetResponse().LastModified(*frame->GetDocument());
+        cached_resource->GetResponse().LastModified();
     if (last_modified) {
       resource_object->setLastModified(
           last_modified.value().InSecondsFSinceUnixEpoch());

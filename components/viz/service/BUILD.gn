@@ -147,8 +147,6 @@ viz_component("service") {
     "display_embedder/compositor_gpu_thread.h",
     "display_embedder/image_context_impl.cc",
     "display_embedder/image_context_impl.h",
-    "display_embedder/in_process_gpu_memory_buffer_manager.cc",
-    "display_embedder/in_process_gpu_memory_buffer_manager.h",
     "display_embedder/output_presenter.h",
     "display_embedder/output_presenter_gl.cc",
     "display_embedder/output_presenter_gl.h",
@@ -174,6 +172,8 @@ viz_component("service") {
     "display_embedder/skia_output_surface_impl_on_gpu.h",
     "display_embedder/skia_output_surface_impl_on_gpu_debug_capture.cc",
     "display_embedder/skia_output_surface_impl_on_gpu_debug_capture.h",
+    "display_embedder/skia_output_surface_shared_image_interface.cc",
+    "display_embedder/skia_output_surface_shared_image_interface.h",
     "display_embedder/skia_render_copy_results.cc",
     "display_embedder/skia_render_copy_results.h",
     "display_embedder/software_output_surface.cc",
@@ -232,6 +232,8 @@ viz_component("service") {
     "hit_test/hit_test_manager.h",
     "input/input_manager.cc",
     "input/input_manager.h",
+    "input/input_on_viz_state_processing_result.cc",
+    "input/input_on_viz_state_processing_result.h",
     "input/peak_gpu_memory_tracker_impl.cc",
     "input/peak_gpu_memory_tracker_impl.h",
     "input/render_input_router_delegate_impl.cc",
@@ -293,25 +295,25 @@ viz_component("service") {
     "//components/input:mojom",
     "//components/startup_metric_utils",
 
-    # Note that dependency on //gpu/ipc/client is for GpuMemoryBufferImpl. This
+    # Note that dependency on //gpu/ipc/client is for MappableBuffer. This
     # dependency should not be in public_deps.
-    "//components/version_info:version_info",
+    "//components/version_info",
     "//components/viz/client",
     "//components/viz/common",
     "//gpu/command_buffer/client",
     "//gpu/config",
     "//gpu/ipc/client",
-    "//gpu/ipc/common:common",
+    "//gpu/ipc/common",
     "//gpu/ipc/common:surface_handle_type",
     "//gpu/ipc/service",
-    "//gpu/skia_bindings:skia_bindings",
+    "//gpu/skia_bindings",
     "//gpu/vulkan:buildflags",
     "//media",
     "//media:media_buildflags",
     "//media/capture:capture_lib",
     "//media/mojo/services",
     "//services/metrics/public/mojom",
-    "//services/tracing/public/cpp:cpp",
+    "//services/tracing/public/cpp",
     "//services/viz/privileged/mojom",
     "//services/webnn:webnn_service",
     "//services/webnn/public/mojom",
@@ -362,7 +364,7 @@ viz_component("service") {
       "//media/mojo/services",
     ]
 
-    if (use_v4l2_codec || use_vaapi) {
+    if (use_linux_video_acceleration) {
       deps += [ "//chromeos/ash/experiences/arc/video_accelerator" ]
     }
   }
@@ -635,7 +637,15 @@ viz_source_set("unit_tests") {
     "hit_test/hit_test_aggregator_unittest.cc",
     "input/mock_input_manager.cc",
     "input/mock_input_manager.h",
+    "layers/layer_context_impl_animation_unittest.cc",
+    "layers/layer_context_impl_base_unittest.cc",
+    "layers/layer_context_impl_base_unittest.h",
+    "layers/layer_context_impl_layer_tree_unittest.cc",
+    "layers/layer_context_impl_property_trees_unittest.cc",
+    "layers/layer_context_impl_tiling_unittest.cc",
     "layers/layer_context_impl_unittest.cc",
+    "layers/layer_context_impl_view_transition_unittest.cc",
+    "main/viz_compositor_thread_runner_impl_unittest.cc",
     "main/viz_main_impl_unittest.cc",
     "performance_hint/boost_manager_unittest.cc",
     "surfaces/referenced_surface_tracker_unittest.cc",
@@ -658,7 +668,7 @@ viz_source_set("unit_tests") {
     "//components/viz/client",
     "//components/viz/common",
     "//components/viz/host",
-    "//components/viz/service/main:main",
+    "//components/viz/service/main",
     "//components/viz/test:test_suite",
     "//components/viz/test:test_support",
     "//gpu/command_buffer/client",
@@ -676,6 +686,7 @@ viz_source_set("unit_tests") {
     "//third_party/libyuv",
     "//ui/display/types",
     "//ui/gfx:test_support",
+    "//ui/gfx/animation/keyframe",
     "//ui/gl",
   ]
 
@@ -760,7 +771,7 @@ viz_source_set("perf_tests") {
     "//cc",
     "//cc:test_support",
     "//cc/base",
-    "//components/viz/client:client",
+    "//components/viz/client",
     "//components/viz/test:test_support",
     "//testing/gtest",
     "//testing/perf",

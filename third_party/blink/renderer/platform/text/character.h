@@ -150,7 +150,7 @@ class PLATFORM_EXPORT Character {
   // `MaybeHanKerningClose` but has more cases where it returns `true` for other
   // characters.
   static bool MaybeHanKerningOpenOrCloseFast(UChar32 character) {
-    return IsInRange(character, kLeftSingleQuotationMarkCharacter, 0x301F) ||
+    return IsInRange(character, uchar::kLeftSingleQuotationMark, 0x301F) ||
            IsInRange(character, 0xFF08, 0xFF60);
   }
   static bool MayNeedEastAsianSpacing(UChar32);
@@ -158,34 +158,34 @@ class PLATFORM_EXPORT Character {
   // Collapsible white space characters defined in CSS:
   // https://drafts.csswg.org/css-text-3/#collapsible-white-space
   static bool IsCollapsibleSpace(UChar c) {
-    return c == kSpaceCharacter || c == kNewlineCharacter ||
-           c == kTabulationCharacter || c == kCarriageReturnCharacter;
+    return c == uchar::kSpace || c == uchar::kLineFeed || c == uchar::kTab ||
+           c == uchar::kCarriageReturn;
   }
-  static bool IsLineFeed(UChar c) { return c == kNewlineCharacter; }
+  static bool IsLineFeed(UChar c) { return c == uchar::kLineFeed; }
   template <typename CharacterType>
   static bool IsOtherSpaceSeparator(CharacterType c) {
-    return c == kIdeographicSpaceCharacter;
+    return c == uchar::kIdeographicSpace;
   }
   static bool TreatAsSpace(UChar32 c) {
-    return c == kSpaceCharacter || c == kTabulationCharacter ||
-           c == kNewlineCharacter || c == kNoBreakSpaceCharacter;
+    return c == uchar::kSpace || c == uchar::kTab || c == uchar::kLineFeed ||
+           c == uchar::kNoBreakSpace;
   }
   static bool TreatAsZeroWidthSpace(UChar32 c) {
     return TreatAsZeroWidthSpaceInComplexScript(c) ||
-           c == kZeroWidthNonJoinerCharacter || c == kZeroWidthJoinerCharacter;
+           c == uchar::kZeroWidthNonJoiner || c == uchar::kZeroWidthJoiner;
   }
   static bool TreatAsZeroWidthSpaceInComplexScriptLegacy(UChar32 c) {
-    return c == kFormFeedCharacter || c == kCarriageReturnCharacter ||
-           c == kSoftHyphenCharacter || c == kZeroWidthSpaceCharacter ||
-           (c >= kLeftToRightMarkCharacter && c <= kRightToLeftMarkCharacter) ||
-           (c >= kLeftToRightEmbedCharacter &&
-            c <= kRightToLeftOverrideCharacter) ||
-           c == kZeroWidthNoBreakSpaceCharacter ||
-           c == kObjectReplacementCharacter;
+    return c == uchar::kFormFeed || c == uchar::kCarriageReturn ||
+           c == uchar::kSoftHyphen || c == uchar::kZeroWidthSpace ||
+           (c >= uchar::kLeftToRightMark && c <= uchar::kRightToLeftMark) ||
+           (c >= uchar::kLeftToRightEmbedding &&
+            c <= uchar::kRightToLeftOverride) ||
+           c == uchar::kZeroWidthNoBreakSpace ||
+           c == uchar::kObjectReplacementCharacter;
   }
   static bool TreatAsZeroWidthSpaceInComplexScript(UChar32 c) {
-    if (c == kFormFeedCharacter || c == kCarriageReturnCharacter ||
-        c == kObjectReplacementCharacter) {
+    if (c == uchar::kFormFeed || c == uchar::kCarriageReturn ||
+        c == uchar::kObjectReplacementCharacter) {
       return true;
     }
     return IsDefaultIgnorable(c);
@@ -193,7 +193,7 @@ class PLATFORM_EXPORT Character {
   // https://unicode.org/reports/tr44/#Default_Ignorable_Code_Point
   static bool IsDefaultIgnorable(UChar32 c) {
     if (c < 0x0100) {
-      return c == kSoftHyphenCharacter;
+      return c == uchar::kSoftHyphen;
     }
     return u_hasBinaryProperty(c, UCHAR_DEFAULT_IGNORABLE_CODE_POINT);
   }
@@ -208,12 +208,16 @@ class PLATFORM_EXPORT Character {
   // Returns true if the character has a Emoji property.
   // See http://www.unicode.org/Public/emoji/3.0/emoji-data.txt
   static bool IsEmoji(UChar32);
+  // Reserved ranges in blocks largely associated with emoji characters. This
+  // allows handling future Emoji code points.
+  static bool IsEmojiReserved(UChar32);
+  static bool IsEmojiIncludingReserved(UChar32);
   // Default presentation style according to:
   // http://www.unicode.org/reports/tr51/#Presentation_Style
   static bool IsEmojiTextDefault(UChar32);
   static bool IsEmojiEmojiDefault(UChar32);
   static bool IsEmojiModifierBase(UChar32);
-  static inline bool IsEmojiKeycapBase(UChar32 ch) {
+  static constexpr bool IsEmojiKeycapBase(UChar32 ch) {
     return (ch >= '0' && ch <= '9') || ch == '#' || ch == '*';
   }
   static bool IsRegionalIndicator(UChar32);
@@ -285,7 +289,7 @@ class PLATFORM_EXPORT Character {
 inline bool Character::MaybeBidiRtlUtf16(base::StrictNumeric<UChar> ch) {
   return ch >= 0x0590 &&
          // `InlineItemsBuilder` may emit U+200B Zero Width Space.
-         ch != kZeroWidthSpaceCharacter &&
+         ch != uchar::kZeroWidthSpace &&
          // General Punctuation such as curly quotes.
          !IsInRange(ch, 0x2010, 0x2029) &&
          // CJK etc., up to Surrogate Pairs.
@@ -297,7 +301,7 @@ inline bool Character::MaybeBidiRtlUtf16(base::StrictNumeric<UChar> ch) {
 inline bool Character::MaybeBidiRtl(UChar32 ch) {
   return ch >= 0x0590 &&
          // `InlineItemsBuilder` may emit U+200B Zero Width Space.
-         ch != kZeroWidthSpaceCharacter &&
+         ch != uchar::kZeroWidthSpace &&
          // General Punctuation such as curly quotes.
          !IsInRange(ch, 0x2010, 0x2029) &&
          // CJK etc., up to Surrogate Pairs.
@@ -321,7 +325,7 @@ inline bool Character::IsEastAsianWidthFullwidth(UChar32 ch) {
   // All EAW=F characters are in the "Halfwidth and Fullwidth forms" block,
   // except U+3000 IDEOGRAPHIC SPACE.
   // https://util.unicode.org/UnicodeJsps/list-unicodeset.jsp?a=[:ea=F:]
-  return ch == kIdeographicSpaceCharacter ||
+  return ch == uchar::kIdeographicSpace ||
          (IsBlockHalfwidthAndFullwidthForms(ch) &&
           EastAsianWidth(ch) == UEastAsianWidth::U_EA_FULLWIDTH);
 }
@@ -329,7 +333,7 @@ inline bool Character::IsEastAsianWidthFullwidth(UChar32 ch) {
 inline bool Character::MayNeedEastAsianSpacing(UChar32 ch) {
   // `EastAsianSpacingType::kWide` may need the spacing. U+02C7 is the minimum
   // code point of `kWide`.
-  return ch >= 0x02C7 && ch != kObjectReplacementCharacter &&
+  return ch >= 0x02C7 && ch != uchar::kObjectReplacementCharacter &&
          // U+2000-206F General Punctuation has rather popular characters, such
          // as ZWSP and curly quotation marks. Exclude the largest range of
          // non-`kWide` that include them.

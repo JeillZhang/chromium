@@ -13,6 +13,7 @@
 
 const non_isolated_policies = [
   'accelerometer',
+  'aria-notify',
   'attribution-reporting',
   'autoplay',
   'browsing-topics',
@@ -47,6 +48,7 @@ const non_isolated_policies = [
   'cross-origin-isolated',
   'deferred-fetch',
   'deferred-fetch-minimal',
+  'digital-credentials-get',
   'display-capture',
   'encrypted-media',
   'fullscreen',
@@ -61,9 +63,11 @@ const non_isolated_policies = [
   'keyboard-map',
   'language-detector',
   'local-fonts',
+  'local-network-access',
   'magnetometer',
   'microphone',
   'midi',
+  'on-device-speech-recognition',
   'otp-credentials',
   'payment',
   'picture-in-picture',
@@ -72,7 +76,6 @@ const non_isolated_policies = [
   'private-state-token-redemption',
   'publickey-credentials-create',
   'publickey-credentials-get',
-  'rewriter',
   'run-ad-auction',
   'screen-wake-lock',
   'serial',
@@ -85,11 +88,11 @@ const non_isolated_policies = [
   'unload',
   'usb',
   'window-management',
-  'writer',
   'xr-spatial-tracking',
 ]
 
 const isolated_policies = [
+  'controlled-frame',
   'direct-sockets',
   'direct-sockets-private',
   'usb-unrestricted',

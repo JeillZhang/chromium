@@ -22,7 +22,6 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.recyclerview.widget.RecyclerView.OnScrollListener;
 
 import org.chromium.base.Callback;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.supplier.UnownedUserDataSupplier;
 import org.chromium.base.version_info.VersionInfo;
 import org.chromium.build.annotations.MonotonicNonNull;
@@ -62,6 +61,7 @@ import org.chromium.components.browser_ui.bottomsheet.EmptyBottomSheetObserver;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.displaystyle.UiConfig;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager.ScrimClient;
 import org.chromium.components.embedder_support.view.ContentView;
 import org.chromium.components.url_formatter.UrlFormatter;
 import org.chromium.content_public.browser.LoadUrlParams;
@@ -78,9 +78,10 @@ import org.chromium.url.GURL;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
- * Sets up the Coordinator for Cormorant Creator surface.  It is based on the doc at
+ * Sets up the Coordinator for Cormorant Creator surface. It is based on the doc at
  * https://chromium.googlesource.com/chromium/src/+/HEAD/docs/ui/android/mvc_simple_list_tutorial.md
  */
 @NullMarked
@@ -401,7 +402,8 @@ public class CreatorCoordinator
 
     /** Set up the bottom sheet for this activity. */
     private void initBottomSheet() {
-        mScrimManager = new ScrimManager(mActivity, mCreatorViewGroup);
+        mScrimManager =
+                new ScrimManager(mActivity, mCreatorViewGroup, ScrimClient.CREATOR_COORDINATOR);
 
         mBottomSheetContainer = new FrameLayout(mActivity);
         mBottomSheetContainer.setId(R.id.creator_content_preview_bottom_sheet);

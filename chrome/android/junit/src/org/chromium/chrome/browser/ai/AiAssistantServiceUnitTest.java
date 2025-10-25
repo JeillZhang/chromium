@@ -20,11 +20,14 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import static org.robolectric.Shadows.shadowOf;
 
+import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 
+import androidx.test.core.app.ApplicationProvider;
 import androidx.test.ext.junit.rules.ActivityScenarioRule;
 
 import com.google.common.util.concurrent.Futures;
@@ -46,7 +49,6 @@ import org.robolectric.android.util.concurrent.PausedExecutorService;
 import org.robolectric.annotation.Config;
 import org.robolectric.annotation.LooperMode;
 import org.robolectric.annotation.LooperMode.Mode;
-import org.robolectric.shadows.ShadowApplication;
 import org.robolectric.shadows.ShadowLooper;
 import org.robolectric.shadows.ShadowToast;
 
@@ -80,7 +82,6 @@ import org.chromium.ui.widget.ToastManager;
 import org.chromium.url.JUnitTestGURLs;
 
 import java.util.HashMap;
-import java.util.Optional;
 
 /** Unit tests for {@link AiAssistantService}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -229,7 +230,9 @@ public class AiAssistantServiceUnitTest {
                     service.showAi(activity, mTab);
                     ShadowLooper.idleMainLooper();
                     // Assert no intent was sent.
-                    assertNull(ShadowApplication.getInstance().getNextStartedActivity());
+                    assertNull(
+                            shadowOf((Application) ApplicationProvider.getApplicationContext())
+                                    .getNextStartedActivity());
                     // Assert system provider wasn't called.
                     verify(mSystemAiProvider, never()).launch(any(), any());
                     // Toast should be shown instead.
@@ -260,7 +263,9 @@ public class AiAssistantServiceUnitTest {
                     service.showAi(activity, mTab);
                     ShadowLooper.idleMainLooper();
                     // Assert no intent was sent.
-                    assertNull(ShadowApplication.getInstance().getNextStartedActivity());
+                    assertNull(
+                            shadowOf((Application) ApplicationProvider.getApplicationContext())
+                                    .getNextStartedActivity());
                     // Assert system provider wasn't called.
                     verify(mSystemAiProvider, never()).launch(any(), any());
                     // Toast should be shown instead.
@@ -562,10 +567,10 @@ public class AiAssistantServiceUnitTest {
     private void setInnerTextExtractionResult(String result) {
         doAnswer(
                         invocationOnMock -> {
-                            Callback<Optional<String>> callback =
-                                    (Callback<Optional<String>>)
+                            Callback<String> callback =
+                                    (Callback<String>)
                                             invocationOnMock.getArgument(1, Callback.class);
-                            callback.onResult(Optional.of(result));
+                            callback.onResult(result);
                             return null;
                         })
                 .when(mInnerTextNatives)
@@ -607,7 +612,9 @@ public class AiAssistantServiceUnitTest {
     }
 
     private LaunchRequest assertVoiceActivityStartedWithLaunchRequest() {
-        var startedIntent = ShadowApplication.getInstance().getNextStartedActivity();
+        var startedIntent =
+                shadowOf((Application) ApplicationProvider.getApplicationContext())
+                        .getNextStartedActivity();
         var launchRequestBytes =
                 startedIntent.getByteArrayExtra(AiAssistantService.EXTRA_LAUNCH_REQUEST);
         assertEquals(Intent.ACTION_VOICE_COMMAND, startedIntent.getAction());

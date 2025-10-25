@@ -13,7 +13,9 @@
 #include "base/check_op.h"
 #include "base/command_line.h"
 #include "base/containers/flat_set.h"
+#include "base/debug/dump_without_crashing.h"
 #include "base/functional/bind.h"
+#include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/trace_event/trace_event.h"
@@ -48,7 +50,7 @@
 #include "ui/events/platform/platform_event_source.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/vector2d.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #include "ui/gfx/path_win.h"
 #include "ui/views/corewm/tooltip_aura.h"
 #include "ui/views/views_features.h"
@@ -90,7 +92,7 @@ void UpdateMouseLockRegion(aura::Window* window, bool locked) {
   }
 
   RECT window_rect =
-      display::Screen::GetScreen()
+      display::Screen::Get()
           ->DIPToScreenRectInWindow(window, window->GetBoundsInScreen())
           .ToRECT();
   window_rect.left += kMouseCaptureRegionBorder;
@@ -149,15 +151,18 @@ aura::Window* DesktopWindowTreeHostWin::GetContentWindowForHWND(HWND hwnd) {
 void DesktopWindowTreeHostWin::StartTouchDrag(gfx::Point screen_point) {
   // Send a mouse down and mouse move before do drag drop runs its own event
   // loop. This is required for ::DoDragDrop to start the drag.
-  ui::SendMouseEvent(screen_point, MOUSEEVENTF_LEFTDOWN);
-  ui::SendMouseEvent(screen_point, MOUSEEVENTF_MOVE);
+  ui::SendMouseEvent(screen_point,
+                     (MOUSEEVENTF_LEFTDOWN | MOUSEEVENTF_VIRTUALDESK));
+  ui::SendMouseEvent(screen_point,
+                     (MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK));
   in_touch_drag_ = true;
 }
 
 void DesktopWindowTreeHostWin::FinishTouchDrag(gfx::Point screen_point) {
   if (in_touch_drag_) {
     in_touch_drag_ = false;
-    ui::SendMouseEvent(screen_point, MOUSEEVENTF_LEFTUP);
+    ui::SendMouseEvent(screen_point,
+                       (MOUSEEVENTF_LEFTUP | MOUSEEVENTF_VIRTUALDESK));
   }
 }
 
@@ -191,7 +196,23 @@ void DesktopWindowTreeHostWin::Init(const Widget::InitParams& params) {
       display::win::GetScreenWin()->DIPToScreenRect(nullptr, params.bounds);
   message_handler_->Init(parent_hwnd, pixel_bounds);
 
-  UpdateWUCBackdrop(params.background_color);
+  if (ShouldAddDWMBackdrop()) {
+    DWM_SYSTEMBACKDROP_TYPE backdrop = DWMSBT_MAINWINDOW;
+    HRESULT hr = DwmSetWindowAttribute(GetHWND(), DWMWA_SYSTEMBACKDROP_TYPE,
+                                       &backdrop, sizeof(backdrop));
+    if (FAILED(hr)) {
+      // If DwmSetWindowAttribute fails, it indicates that there was a problem
+      // setting the system backdrop type. In this state, the backdrop is not
+      // applied, and the worst that can happen is a transparent window appears
+      // while the GPU process is being started.
+      LOG(ERROR) << "Failed to set DWM system backdrop type: "
+                 << logging::SystemErrorCodeToString(
+                        static_cast<logging::SystemErrorCode>(hr));
+    }
+  }
+
+  UpdateBackdropColorMode();
+
   CreateCompositor(params.force_software_compositing);
   OnAcceleratedWidgetAvailable();
   InitHost();
@@ -226,15 +247,11 @@ void DesktopWindowTreeHostWin::OnActiveWindowChanged(bool active) {}
 
 void DesktopWindowTreeHostWin::OnWidgetInitDone() {}
 
-void DesktopWindowTreeHostWin::OnWidgetThemeChanged(
-    ui::ColorProviderKey::ColorMode color_mode,
-    std::optional<SkColor> background_color) {
-  UpdateWUCBackdrop(background_color);
-  if (background_color) {
-    ClearBackgroundPaintBrush();
-    background_paint_brush_ =
-        CreateSolidBrush(skia::SkColorToCOLORREF(*background_color));
-  }
+void DesktopWindowTreeHostWin::SetBackgroundColor(SkColor background_color) {
+  UpdateBackdropColorMode();
+  ClearBackgroundPaintBrush();
+  background_paint_brush_ =
+      CreateSolidBrush(skia::SkColorToCOLORREF(background_color));
 }
 
 std::unique_ptr<corewm::Tooltip> DesktopWindowTreeHostWin::CreateTooltip() {
@@ -274,6 +291,19 @@ void DesktopWindowTreeHostWin::CloseNow() {
 
 aura::WindowTreeHost* DesktopWindowTreeHostWin::AsWindowTreeHost() {
   return this;
+}
+
+DesktopWindowTreeHost::WindowTreeHosts
+DesktopWindowTreeHostWin::GetOwnedWindowTreeHosts() {
+  WindowTreeHosts window_tree_hosts;
+  std::vector<HWND> owned_hwns = message_handler_->GetOwnedWindows();
+  for (HWND hwnd : owned_hwns) {
+    if (aura::WindowTreeHost* host =
+            aura::WindowTreeHost::GetForAcceleratedWidget(hwnd)) {
+      window_tree_hosts.insert(host);
+    }
+  }
+  return window_tree_hosts;
 }
 
 void DesktopWindowTreeHostWin::Show(ui::mojom::WindowShowState show_state,
@@ -531,8 +561,7 @@ void DesktopWindowTreeHostWin::SetVisibilityChangedAnimationsEnabled(
   }
 }
 
-std::unique_ptr<NonClientFrameView>
-DesktopWindowTreeHostWin::CreateNonClientFrameView() {
+std::unique_ptr<FrameView> DesktopWindowTreeHostWin::CreateFrameView() {
   return (ShouldUseNativeFrame() && native_widget_delegate_)
              ? std::make_unique<NativeFrameView>(
                    native_widget_delegate_->AsWidget())
@@ -967,6 +996,22 @@ gfx::NativeViewAccessible DesktopWindowTreeHostWin::GetNativeViewAccessible() {
   return nullptr;
 }
 
+gfx::NativeViewAccessible
+DesktopWindowTreeHostWin::GetParentNativeViewAccessible() {
+  views::Widget* widget = GetWidget();
+  if (!widget) {
+    return nullptr;
+  }
+
+  views::Widget* parent_widget = widget->parent();
+  if (!parent_widget) {
+    return nullptr;
+  }
+
+  views::View* parent_root = parent_widget->GetRootView();
+  return parent_root ? parent_root->GetNativeViewAccessible() : nullptr;
+}
+
 void DesktopWindowTreeHostWin::HandleActivationChanged(bool active) {
   // This can be invoked from HWNDMessageHandler::Init(), at which point we're
   // not in a good state and need to ignore it.
@@ -1175,31 +1220,39 @@ void DesktopWindowTreeHostWin::HandleTouchEvent(ui::TouchEvent* event) {
     return;
   }
   if (in_touch_drag_) {
-    POINT event_point;
-    event_point.x = event->location().x();
-    event_point.y = event->location().y();
+    POINT event_point(event->location().x(), event->location().y());
     ::ClientToScreen(GetHWND(), &event_point);
     gfx::Point screen_point(event_point);
     // When dragging, Windows requires that touch pointer events are translated
     // to mouse pointer events. The drag controller (`DesktopDragDropClientWin`)
     // will manage gesture states until a drop happens.
     if (event->type() == ui::EventType::kTouchMoved) {
-      ui::SendMouseEvent(screen_point, MOUSEEVENTF_MOVE);
+      ui::SendMouseEvent(screen_point,
+                         (MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK));
     } else if (event->type() == ui::EventType::kTouchReleased) {
       FinishTouchDrag(screen_point);
     }
     return;
   }
-  // TODO(crbug.com/40312079) Calling ::SetCursorPos for
-  // ui::EventType::kTouchPressed events here would fix web ui tab strip drags
-  // when the cursor is not over the Chrome window - The TODO is to figure out
-  // if that's reasonable, since it would change the cursor pos on every touch
-  // event. Or figure out if there is a less intrusive way of fixing the cursor
-  // position. If we can do that, we can remove the call to ::SetCursorPos in
-  // DesktopDragDropClientWin::StartDragAndDrop. Note that calling SetCursorPos
-  // at the start of StartDragAndDrop breaks touch drag and drop, so it has to
-  // be called some time before we get to StartDragAndDrop.
-
+  if (event->type() == ui::EventType::kTouchPressed) {
+    display::Screen* screen = display::Screen::Get();
+    CHECK(screen);
+    aura::Window* window =
+        screen->GetWindowAtScreenPoint(screen->GetCursorScreenPoint());
+    bool touch_drag_cursor_sync =
+        base::FeatureList::IsEnabled(features::kEnableTouchDragCursorSync);
+    // If a window is not found at the cursor's screen point, then the mouse is
+    // outside of the browser's window and we need to sync the pointer to enable
+    // drag and drop. Setting the cursor to the touch location doesn't move the
+    // mouse pointer. If the user has their mouse outside of the window when
+    // this sync happens, when they move their mouse again it will show up in
+    // it's original location.
+    if (touch_drag_cursor_sync && !window) {
+      POINT event_point(event->location().x(), event->location().y());
+      ::ClientToScreen(GetHWND(), &event_point);
+      ::SetCursorPos(event_point.x, event_point.y);
+    }
+  }
   // Currently we assume the window that has capture gets touch events too.
   aura::WindowTreeHost* host =
       aura::WindowTreeHost::GetForAcceleratedWidget(GetCapture());
@@ -1337,7 +1390,7 @@ void DesktopWindowTreeHostWin::SetBoundsInDIP(const gfx::Rect& bounds) {
   // details.
   aura::Window* root = nullptr;
   const gfx::Rect bounds_in_pixels =
-      display::Screen::GetScreen()->DIPToScreenRectInWindow(
+      display::Screen::Get()->DIPToScreenRectInWindow(
           root, AdjustedContentBounds(bounds));
   AsWindowTreeHost()->SetBoundsInPixels(bounds_in_pixels);
 }
@@ -1367,6 +1420,17 @@ bool DesktopWindowTreeHostWin::AreScreenshotsAllowed() {
   }
 
   return true;
+}
+
+void DesktopWindowTreeHostWin::ClientDestroyedWidget() {
+  if (native_widget_delegate_) {
+    // Send an explicit visibility change event when the delegate is reset. This
+    // ensures delegate's visibility state is updated appropriately before the
+    // delegate pointer is nullified.
+    native_widget_delegate_->OnNativeWidgetVisibilityChanged(false);
+    native_widget_delegate_ = nullptr;
+  }
+  DesktopWindowTreeHost::ClientDestroyedWidget();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1403,7 +1467,7 @@ bool DesktopWindowTreeHostWin::IsModalWindowActive() const {
 
 void DesktopWindowTreeHostWin::CheckForMonitorChange() {
   display::Display nearest_display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(window());
+      display::Screen::Get()->GetDisplayNearestWindow(window());
   if (nearest_display == last_nearest_display_) {
     return;
   }
@@ -1452,34 +1516,40 @@ void DesktopWindowTreeHostWin::UpdateAllowScreenshots() {
                            allow_screenshots_ ? WDA_NONE : WDA_MONITOR);
 }
 
-void DesktopWindowTreeHostWin::UpdateWUCBackdrop(std::optional<SkColor> color) {
-  // If the Redirection Surface is removed, there needs to be a replacement
-  // "background" of the Chromium window. Create a Windows.Ui.Composition
-  // backdrop and apply it to the window. If the frame is system drawn, it means
-  // that the window controls are rendered by Windows. In that case, they would
-  // be covered by the WUC backdrop, so only create the backdrop when frame mode
-  // is not `FrameMode::SYSTEM_DRAWN`. If the backdrop already exists, we need
-  // to check whether to keep it before updating it.
-  if (GetFrameMode() == FrameMode::SYSTEM_DRAWN) {
-    wuc_backdrop_.reset();
+void DesktopWindowTreeHostWin::UpdateBackdropColorMode() {
+  // Update backdrop theme using DWMWA_USE_IMMERSIVE_DARK_MODE.
+  if (!ShouldAddDWMBackdrop()) {
     return;
   }
 
-  if (GetWidget() &&
-      ((message_handler_->window_ex_style() & WS_EX_NOREDIRECTIONBITMAP) ==
-       WS_EX_NOREDIRECTIONBITMAP) &&
-      !message_handler_->is_translucent()) {
-    // Ensure that the hwnd has been created.
-    CHECK(GetHWND());
-
-    // Apply backdrop to the window.
-    if (!wuc_backdrop_) {
-      wuc_backdrop_ = std::make_unique<gfx::WUCBackdrop>(GetHWND());
-    }
-
-    wuc_backdrop_->UpdateBackdropColor(color.value_or(
-        GetWidget()->GetColorProvider()->GetColor(ui::kColorFrameActive)));
+  // Ensure that the backdrop honors the OS dark mode setting.
+  BOOL use_dark_mode =
+      GetWidget()->GetColorMode() == ui::ColorProviderKey::ColorMode::kDark;
+  HRESULT hr = DwmSetWindowAttribute(GetHWND(), DWMWA_USE_IMMERSIVE_DARK_MODE,
+                                     &use_dark_mode, sizeof(use_dark_mode));
+  if (FAILED(hr)) {
+    // If DwmSetWindowAttribute fails, it indicates that there was a problem
+    // setting dark mode for the window. In this state, the mode change is not
+    // applied and the backdrop will remain in its previous state.
+    LOG(ERROR) << "Failed to set DWM immersive dark mode: "
+               << logging::SystemErrorCodeToString(
+                      static_cast<logging::SystemErrorCode>(hr));
   }
+}
+
+bool DesktopWindowTreeHostWin::ShouldAddDWMBackdrop() {
+  // If the Redirection Surface is removed, there needs to be a replacement
+  // "background" of the Chromium window. `DWM_SYSTEMBACKDROP_TYPE` tells DWM
+  // to blur the contents behind the chromium window to yield a translucent
+  // "frosted glass" effect. This will show whenever the GPU crashes or is not
+  // ready by the time the window updates size or shape. Translucent windows
+  // do not need a backdrop as it would show up in unexpected ways - i.e. a
+  // gutter. Additionally, ensure that this effect is only applied to top level
+  // windows since child windows are not supported.
+  return ((message_handler_->window_ex_style() & WS_EX_NOREDIRECTIONBITMAP) ==
+          WS_EX_NOREDIRECTIONBITMAP) &&
+         !message_handler_->is_translucent() &&
+         (GetHWND() == GetAncestor(GetHWND(), GA_ROOT));
 }
 
 void DesktopWindowTreeHostWin::ClearBackgroundPaintBrush() {

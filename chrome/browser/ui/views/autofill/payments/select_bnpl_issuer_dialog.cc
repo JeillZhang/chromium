@@ -18,6 +18,7 @@
 #include "chrome/browser/ui/views/autofill/payments/payments_view_util.h"
 #include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/common/webui_url_constants.h"
+#include "components/autofill/core/browser/payments/bnpl_util.h"
 #include "components/autofill/core/browser/ui/payments/select_bnpl_issuer_dialog_controller.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/tabs/public/tab_interface.h"
@@ -162,7 +163,9 @@ void SelectBnplIssuerDialog::AddedToWidget() {
       std::make_unique<TitleWithIconAfterLabelView>(
           title, TitleWithIconAfterLabelView::Icon::GOOGLE_PAY));
   SetAccessibleWindowRole(ax::mojom::Role::kDialog);
-  SetAccessibleTitle(title);
+  SetAccessibleTitle(l10n_util::GetStringFUTF16(
+      IDS_AUTOFILL_BNPL_SELECT_PROVIDER_TITLE_DESCRIPTION, title,
+      l10n_util::GetStringUTF16(IDS_AUTOFILL_GOOGLE_PAY_LOGO_ACCESSIBLE_NAME)));
 }
 
 void SelectBnplIssuerDialog::OnSettingsLinkClicked() {

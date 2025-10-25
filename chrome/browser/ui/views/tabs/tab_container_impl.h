@@ -23,6 +23,7 @@
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/animation/bounds_animator.h"
 #include "ui/views/animation/bounds_animator_observer.h"
+#include "ui/views/controls/image_view.h"
 #include "ui/views/mouse_watcher.h"
 #include "ui/views/paint_info.h"
 #include "ui/views/view.h"
@@ -129,6 +130,8 @@ class TabContainerImpl : public TabContainer,
   TabGroupViews* GetGroupViews(tab_groups::TabGroupId group_id) const override;
   const std::map<tab_groups::TabGroupId, std::unique_ptr<TabGroupViews>>&
   get_group_views_for_testing() const override;
+  std::map<tab_groups::TabGroupId, TabGroupHeader*> GetGroupHeaders()
+      const override;
 
   gfx::Rect GetIdealBounds(int model_index) const override;
   gfx::Rect GetIdealBounds(tab_groups::TabGroupId group) const override;
@@ -160,6 +163,15 @@ class TabContainerImpl : public TabContainer,
   // views::BoundsAnimatorObserver:
   void OnBoundsAnimatorProgressed(views::BoundsAnimator* animator) override;
   void OnBoundsAnimatorDone(views::BoundsAnimator* animator) override;
+
+  const std::vector<ZOrderableTabContainerElement>& GetZOrderCacheForTesting()
+      const {
+    return z_ordered_children_cache_;
+  }
+
+  // Used to simulate PaintChildren in unittests which is the only time in which
+  // the production containers should check/update the zorder.
+  void UpdateZOrderCacheForTesting();
 
  private:
   // Used during a drop session of a url. Tracks the position of the drop as
@@ -331,6 +343,12 @@ class TabContainerImpl : public TabContainer,
 
   bool IsValidModelIndex(int model_index) const;
 
+  void MarkZOrderCacheDirty() { z_order_cache_dirty_ = true; }
+
+  // Recalculates the zorder cache if dirty.
+  // (see implementation of PaintChildren)
+  void UpdateZOrderCacheIfDirty();
+
   std::map<tab_groups::TabGroupId, std::unique_ptr<TabGroupViews>> group_views_;
 
   // There is a one-to-one mapping between each of the
@@ -393,6 +411,9 @@ class TabContainerImpl : public TabContainer,
   bool in_tab_close_ = false;
 
   base::RepeatingCallback<int()> available_width_callback_;
+
+  std::vector<ZOrderableTabContainerElement> z_ordered_children_cache_;
+  bool z_order_cache_dirty_ = true;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TABS_TAB_CONTAINER_IMPL_H_

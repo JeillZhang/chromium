@@ -194,7 +194,7 @@ TEST_F(TabletModeMultitaskMenuTest, SwipeDownTargetArea) {
   DismissMenu(GetMultitaskMenu());
 
   // Start swipe down from the bottom of the target area.
-  GenerateScroll(window->bounds().CenterPoint().x(), 15, kMenuDragPoint);
+  GenerateScroll(window->bounds().CenterPoint().x(), 5, kMenuDragPoint);
   ASSERT_TRUE(GetMultitaskMenu());
   DismissMenu(GetMultitaskMenu());
 
@@ -457,7 +457,7 @@ TEST_F(TabletModeMultitaskMenuTest, HalfButtonFunctionality) {
   ASSERT_EQ(chromeos::WindowStateType::kPrimarySnapped,
             WindowState::Get(window.get())->GetStateType());
   const gfx::Rect work_area_bounds =
-      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+      display::Screen::Get()->GetPrimaryDisplay().work_area();
   EXPECT_EQ(work_area_bounds.width() * 0.5f,
             window->GetBoundsInScreen().width() +
                 kSplitviewDividerShortSideLength / 2);
@@ -484,7 +484,7 @@ TEST_F(TabletModeMultitaskMenuTest, PartialButtonFunctionality) {
   ASSERT_EQ(chromeos::WindowStateType::kPrimarySnapped,
             WindowState::Get(window.get())->GetStateType());
   const gfx::Rect work_area_bounds =
-      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+      display::Screen::Get()->GetPrimaryDisplay().work_area();
   const int divider_delta = kSplitviewDividerShortSideLength / 2;
   EXPECT_EQ(std::round(work_area_bounds.width() * chromeos::kTwoThirdSnapRatio),
             window->bounds().width() + divider_delta);
@@ -520,7 +520,7 @@ TEST_F(TabletModeMultitaskMenuTest, AdjustedMenuBounds) {
 
   // Test that the menu fits on the 1/3 window on the right.
   const gfx::Rect work_area =
-      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+      display::Screen::Get()->GetPrimaryDisplay().work_area();
   EXPECT_EQ(std::round(work_area.width() * chromeos::kOneThirdSnapRatio),
             window2->bounds().width() + kSplitviewDividerShortSideLength / 2);
   ShowMultitaskMenu(*window2);
@@ -539,13 +539,13 @@ TEST_F(TabletModeMultitaskMenuTest, AdjustedMenuBounds) {
 TEST_F(TabletModeMultitaskMenuTest, WindowMinimumSizes) {
   UpdateDisplay("800x600");
   aura::test::TestWindowDelegate delegate;
-  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithDelegate(
-      &delegate, /*id=*/-1, gfx::Rect(800, 600)));
+  std::unique_ptr<aura::Window> window(
+      CreateTestWindowInShell({.delegate = &delegate, .bounds = {800, 600}}));
   wm::ActivateWindow(window.get());
   EXPECT_TRUE(WindowState::Get(window.get())->CanMaximize());
 
   const gfx::Rect work_area_bounds =
-      display::Screen::GetScreen()->GetPrimaryDisplay().work_area();
+      display::Screen::Get()->GetPrimaryDisplay().work_area();
 
   // Set the min width to 0.4 of the work area. Since 1/3 < minWidth <= 1/2,
   // only the 1/3 option is disabled.
@@ -619,8 +619,8 @@ TEST_F(TabletModeMultitaskMenuTest, HiddenButtons) {
   // A window with a minimum size of 600x600 will not be snappable or
   // floatable.
   aura::test::TestWindowDelegate window_delegate;
-  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithDelegate(
-      &window_delegate, /*id=*/-1, gfx::Rect(700, 700)));
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShell(
+      {.delegate = &window_delegate, .bounds = {700, 700}}));
   window_delegate.set_minimum_size(gfx::Size(600, 600));
   wm::ActivateWindow(window.get());
 
@@ -936,8 +936,7 @@ TEST_F(TabletModeMultitaskMenuTest, BlockSwipeDown) {
 
   // Start slightly off the edge.
   const gfx::Point starting_point(
-      display::Screen::GetScreen()->GetPrimaryDisplay().bounds().width() / 2,
-      3);
+      display::Screen::Get()->GetPrimaryDisplay().bounds().width() / 2, 3);
   {
     // Emulate swipe down by touches.
 

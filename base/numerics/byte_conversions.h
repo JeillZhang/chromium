@@ -13,10 +13,9 @@
 #include <type_traits>
 
 #include "base/numerics/basic_ops_impl.h"
-#include "build/build_config.h"
 
 // Chromium only builds and runs on Little Endian machines.
-static_assert(ARCH_CPU_LITTLE_ENDIAN);
+static_assert(std::endian::native == std::endian::little);
 
 namespace base {
 
@@ -24,7 +23,7 @@ namespace base {
 // TODO(pkasting): Once C++23 is available, replace with std::byteswap.
 template <class T>
   requires(std::is_integral_v<T>)
-inline constexpr T ByteSwap(T value) {
+[[nodiscard]] inline constexpr T ByteSwap(T value) {
   return internal::SwapBytes(value);
 }
 

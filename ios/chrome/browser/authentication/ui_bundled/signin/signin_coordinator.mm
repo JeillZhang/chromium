@@ -31,6 +31,8 @@
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/show_signin_command.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
+#import "ios/chrome/browser/signin/model/authentication_service.h"
+#import "ios/chrome/browser/signin/model/authentication_service_factory.h"
 #import "ios/chrome/browser/signin/model/chrome_account_manager_service_factory.h"
 
 using signin_metrics::AccessPoint;
@@ -47,6 +49,12 @@ using signin_metrics::PromoAction;
                                    (signin_metrics::AccessPoint)accessPoint {
   self = [super initWithBaseViewController:viewController browser:browser];
   if (self) {
+    CHECK(browser);
+    CHECK_EQ(browser->type(), Browser::Type::kRegular,
+             base::NotFatalUntil::M145);
+    auto* authService =
+        AuthenticationServiceFactory::GetForProfile(self.profile);
+    CHECK(authService->SigninEnabled(), base::NotFatalUntil::M146);
     _contextStyle = contextStyle;
     _accessPoint = accessPoint;
     _creationTimeTicks = base::TimeTicks::Now();
@@ -65,6 +73,9 @@ using signin_metrics::PromoAction;
                                            browser:(Browser*)browser
                                 baseViewController:
                                     (UIViewController*)baseViewController {
+  AuthenticationService* authenticationService =
+      AuthenticationServiceFactory::GetForProfile(browser->GetProfile());
+  CHECK(authenticationService->SigninEnabled(), base::NotFatalUntil::M146);
   SigninCoordinator* signinCoordinator;
   switch (command.operation) {
     case AuthenticationOperation::kResignin: {
@@ -137,7 +148,8 @@ using signin_metrics::PromoAction;
                                                browser:browser
                                           contextStyle:command.contextStyle
                                            accessPoint:command.accessPoint
-                                           promoAction:command.promoAction];
+                                           promoAction:command.promoAction
+                                          showSnackbar:command.showSnackbar];
       break;
     }
   }
@@ -171,16 +183,16 @@ using signin_metrics::PromoAction;
 }
 
 + (SigninCoordinator*)
-    upgradeSigninPromoCoordinatorWithBaseViewController:
+    fullscreenSigninPromoCoordinatorWithBaseViewController:
         (UIViewController*)viewController
-                                                browser:(Browser*)browser
-                                           contextStyle:
-                                               (SigninContextStyle)contextStyle
-                      changeProfileContinuationProvider:
-                          (const ChangeProfileContinuationProvider&)
-                              changeProfileContinuationProvider {
+                                                   browser:(Browser*)browser
+                                              contextStyle:(SigninContextStyle)
+                                                               contextStyle
+                         changeProfileContinuationProvider:
+                             (const ChangeProfileContinuationProvider&)
+                                 changeProfileContinuationProvider {
   CHECK(changeProfileContinuationProvider);
-  AccessPoint accessPoint = AccessPoint::kSigninPromo;
+  AccessPoint accessPoint = AccessPoint::kFullscreenSigninPromo;
   PromoAction promoAction = PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO;
   return [[TwoScreensSigninCoordinator alloc]
       initWithBaseViewController:viewController
@@ -197,6 +209,7 @@ using signin_metrics::PromoAction;
                                         browser:(Browser*)browser
                                    contextStyle:(SigninContextStyle)contextStyle
                                     accessPoint:(AccessPoint)accessPoint
+                                 prefilledEmail:(NSString*)email
                            continuationProvider:
                                (const ChangeProfileContinuationProvider&)
                                    continuationProvider {
@@ -210,6 +223,7 @@ using signin_metrics::PromoAction;
                      accessPoint:accessPoint
                      promoAction:PromoAction::PROMO_ACTION_NO_SIGNIN_PROMO
                     signinIntent:AddAccountSigninIntent::kAddAccount
+                  prefilledEmail:email
             continuationProvider:continuationProvider];
 }
 
@@ -236,6 +250,7 @@ using signin_metrics::PromoAction;
                      accessPoint:accessPoint
                      promoAction:promoAction
                     signinIntent:AddAccountSigninIntent::kPrimaryAccountReauth
+                  prefilledEmail:nil
             continuationProvider:continuationProvider];
 }
 
@@ -262,6 +277,7 @@ using signin_metrics::PromoAction;
                      accessPoint:accessPoint
                      promoAction:promoAction
                     signinIntent:AddAccountSigninIntent::kResignin
+                  prefilledEmail:nil
             continuationProvider:continuationProvider];
 }
 
@@ -326,12 +342,14 @@ using signin_metrics::PromoAction;
                                      accessPoint:(signin_metrics::AccessPoint)
                                                      accessPoint
                                      promoAction:(signin_metrics::PromoAction)
-                                                     promoAction {
+                                                     promoAction
+                                    showSnackbar:(BOOL)showSnackbar {
   return [[HistorySyncSigninCoordinator alloc]
       initWithBaseViewController:viewController
                          browser:browser
                     contextStyle:contextStyle
-                     accessPoint:accessPoint];
+                     accessPoint:accessPoint
+                    showSnackbar:showSnackbar];
 }
 
 #pragma mark - SigninCoordinator
@@ -369,6 +387,14 @@ using signin_metrics::PromoAction;
   // `self.signinCompletion` needs to be set to nil before calling it.
   self.signinCompletion = nil;
   signinCompletion(signinResult, completionIdentity);
+}
+
+#pragma mark - BuggyAuthenticationViewOwner
+
+- (BOOL)viewWillPersist {
+  // Subclasses must implement this property. See the description in the header
+  // file for its implementation.
+  NOTREACHED();
 }
 
 @end

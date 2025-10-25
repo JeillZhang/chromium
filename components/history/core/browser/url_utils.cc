@@ -2,15 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "components/history/core/browser/url_utils.h"
 
 #include <algorithm>
 
+#include "base/compiler_specific.h"
 #include "base/strings/string_util.h"
 #include "url/gurl.h"
 
@@ -42,8 +38,8 @@ bool CanonicalURLStringCompare(const std::string& s1, const std::string& s2) {
   const std::string::value_type* ch1 = s1.c_str();
   const std::string::value_type* ch2 = s2.c_str();
   while (*ch1 && *ch2 && *ch1 == *ch2) {
-    ++ch1;
-    ++ch2;
+    UNSAFE_TODO(++ch1);
+    UNSAFE_TODO(++ch2);
   }
   int pri_diff = GetURLCharPriority(*ch1) - GetURLCharPriority(*ch2);
   // We want false to be returned if `pri_diff` > 0.
@@ -51,8 +47,8 @@ bool CanonicalURLStringCompare(const std::string& s1, const std::string& s2) {
 }
 
 bool HaveSameSchemeHostAndPort(const GURL&url1, const GURL& url2) {
-  return url1.scheme_piece() == url2.scheme_piece() &&
-         url1.host_piece() == url2.host_piece() && url1.port() == url2.port();
+  return url1.scheme() == url2.scheme() && url1.host() == url2.host() &&
+         url1.GetPort() == url2.GetPort();
 }
 
 bool IsPathPrefix(const std::string& p1, const std::string& p2) {
@@ -92,7 +88,7 @@ GURL ToggleHTTPAndHTTPS(const GURL& url) {
 }
 
 std::string HostForTopHosts(const GURL& url) {
-  std::string host = url.host();
+  std::string host = url.GetHost();
   if (base::StartsWith(host, "www.", base::CompareCase::SENSITIVE))
     host.assign(host, 4, std::string::npos);
   return host;

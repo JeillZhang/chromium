@@ -15,6 +15,7 @@
 #include <utility>
 
 #include "base/containers/span.h"
+#include "base/containers/to_vector.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
@@ -30,9 +31,9 @@
 #include "base/strings/string_view_util.h"
 #include "base/synchronization/lock.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/trace_event/trace_event.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "crypto/ec_private_key.h"
 #include "crypto/openssl_util.h"
 #include "net/base/features.h"
 #include "net/base/ip_address.h"
@@ -40,7 +41,6 @@
 #include "net/base/net_errors.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/trace_constants.h"
-#include "net/base/tracing.h"
 #include "net/base/url_util.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verifier.h"
@@ -53,6 +53,7 @@
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_values.h"
 #include "net/ssl/cert_compression.h"
+#include "net/ssl/openssl_ssl_util.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_cipher_suite_names.h"
 #include "net/ssl/ssl_connection_status_flags.h"
@@ -310,6 +311,23 @@ std::vector<uint8_t> SSLClientSocketImpl::GetECHRetryConfigs() {
   // serialized ECHConfigList.
   return UNSAFE_BUFFERS(
       std::vector<uint8_t>(retry_configs, retry_configs + retry_configs_len));
+}
+
+std::vector<std::vector<uint8_t>>
+SSLClientSocketImpl::GetServerTrustAnchorIDsForRetry() {
+  const uint8_t* available_trust_anchor_ids;
+  size_t available_trust_anchor_ids_len;
+  SSL_get0_peer_available_trust_anchors(ssl_.get(), &available_trust_anchor_ids,
+                                        &available_trust_anchor_ids_len);
+  // SAFETY:
+  // https://commondatastorage.googleapis.com/chromium-boringssl-docs/ssl.h.html#SSL_get0_peer_available_trust_anchors
+  // says `available_trust_anchor_ids` and `available_trust_anchor_ids_len`
+  // define a buffer containing a list of Trust Anchor IDs in wire format
+  // (length-prefixed non-empty strings);
+  base::SpanReader<const uint8_t> reader(
+      UNSAFE_BUFFERS(base::span<const uint8_t>(
+          available_trust_anchor_ids, available_trust_anchor_ids_len)));
+  return ParseServerTrustAnchorIDs(&reader);
 }
 
 int SSLClientSocketImpl::ExportKeyingMaterial(
@@ -658,15 +676,24 @@ int SSLClientSocketImpl::Init() {
     return ERR_UNEXPECTED;
   }
 
-  if (context_->config().post_quantum_key_agreement_enabled) {
-    const uint16_t kGroups[] = {SSL_GROUP_X25519_MLKEM768, SSL_GROUP_X25519,
-                                SSL_GROUP_SECP256R1, SSL_GROUP_SECP384R1};
-    if (!SSL_set1_group_ids(ssl_.get(), kGroups, std::size(kGroups))) {
-      return ERR_UNEXPECTED;
-    }
+  const std::vector<uint16_t> supported_groups =
+      context_->config().GetSupportedGroups();
+  if (!SSL_set1_group_ids(ssl_.get(), supported_groups.data(),
+                          supported_groups.size())) {
+    return ERR_UNEXPECTED;
+  }
+  const std::vector<uint16_t> key_shares =
+      context_->config().GetSupportedGroups(/*key_shares_only=*/true);
+  if (!key_shares.empty() &&
+      !SSL_set1_client_key_shares(ssl_.get(), key_shares.data(),
+                                  key_shares.size())) {
+    return ERR_UNEXPECTED;
   }
 
   if (IsCachingEnabled()) {
+    initial_session_cache_generation_number_ =
+        context_->ssl_client_session_cache()->generation_number();
+
     bssl::UniquePtr<SSL_SESSION> session =
         context_->ssl_client_session_cache()->Lookup(
             GetSessionCacheKey(/*dest_ip_addr=*/std::nullopt));
@@ -711,27 +738,12 @@ int SSLClientSocketImpl::Init() {
 
   SSL_set_early_data_enabled(ssl_.get(), ssl_config_.early_data_enabled);
 
-  // OpenSSL defaults some options to on, others to off. To avoid ambiguity,
-  // set everything we care about to an absolute value.
-  SslSetClearMask options;
-  options.ConfigureFlag(SSL_OP_NO_COMPRESSION, true);
+  // TODO(crbug.com/41393419): Make this option not a no-op in BoringSSL and
+  // then disable it.
+  SSL_set_options(ssl_.get(), SSL_OP_LEGACY_SERVER_CONNECT);
 
-  // TODO(joth): Set this conditionally, see http://crbug.com/55410
-  options.ConfigureFlag(SSL_OP_LEGACY_SERVER_CONNECT, true);
-
-  SSL_set_options(ssl_.get(), options.set_mask);
-  SSL_clear_options(ssl_.get(), options.clear_mask);
-
-  // Same as above, this time for the SSL mode.
-  SslSetClearMask mode;
-
-  mode.ConfigureFlag(SSL_MODE_RELEASE_BUFFERS, true);
-  mode.ConfigureFlag(SSL_MODE_CBC_RECORD_SPLITTING, true);
-
-  mode.ConfigureFlag(SSL_MODE_ENABLE_FALSE_START, true);
-
-  SSL_set_mode(ssl_.get(), mode.set_mask);
-  SSL_clear_mode(ssl_.get(), mode.clear_mask);
+  SSL_set_mode(ssl_.get(),
+               SSL_MODE_CBC_RECORD_SPLITTING | SSL_MODE_ENABLE_FALSE_START);
 
   // Use BoringSSL defaults, but disable 3DES and HMAC-SHA1 ciphers in ECDSA.
   // These are the remaining CBC-mode ECDSA ciphers.
@@ -833,12 +845,19 @@ int SSLClientSocketImpl::Init() {
   SSL_set_permute_extensions(ssl_.get(), 1);
 
   // Configure BoringSSL to send Trust Anchor IDs, if provided.
-  if (!ssl_config_.trust_anchor_ids.empty()) {
-    if (!SSL_set1_requested_trust_anchors(
-            ssl_.get(), ssl_config_.trust_anchor_ids.data(),
-            ssl_config_.trust_anchor_ids.size())) {
-      return ERR_UNEXPECTED;
-    }
+  if (ssl_config_.trust_anchor_ids.has_value() &&
+      !SSL_set1_requested_trust_anchors(ssl_.get(),
+                                        ssl_config_.trust_anchor_ids->data(),
+                                        ssl_config_.trust_anchor_ids->size())) {
+    return ERR_UNEXPECTED;
+  }
+
+  // The compliance policy must be the last thing configured in order to have
+  // defined behavior.
+  if (context_->config().tls13_cipher_prefer_aes_256 &&
+      !SSL_set_compliance_policy(ssl_.get(),
+                                 ssl_compliance_policy_cnsa_202407)) {
+    return ERR_UNEXPECTED;
   }
 
   return OK;
@@ -1470,6 +1489,25 @@ void SSLClientSocketImpl::RetryAllOperations() {
     DoWriteCallback(rv_write);
 }
 
+// static
+std::vector<std::vector<uint8_t>>
+SSLClientSocketImpl::ParseServerTrustAnchorIDs(
+    base::SpanReader<const uint8_t>* reader) {
+  std::vector<std::vector<uint8_t>> trust_anchor_ids;
+  while (reader->remaining() > 0) {
+    uint8_t len;
+    if (!reader->ReadU8BigEndian(len) || len < 1u) {
+      return {};
+    }
+    std::optional<base::span<const uint8_t>> bytes = reader->Read(len);
+    if (!bytes) {
+      return {};
+    }
+    trust_anchor_ids.emplace_back(base::ToVector(*bytes));
+  }
+  return trust_anchor_ids;
+}
+
 int SSLClientSocketImpl::ClientCertRequestCallback(SSL* ssl) {
   DCHECK(ssl == ssl_.get());
 
@@ -1499,28 +1537,31 @@ int SSLClientSocketImpl::ClientCertRequestCallback(SSL* ssl) {
       return -1;
     }
 
-    if (!SetSSLChainAndKey(ssl_.get(), client_cert_.get(), nullptr,
-                           &SSLContext::kPrivateKeyMethod)) {
-      OpenSSLPutNetError(FROM_HERE, ERR_SSL_CLIENT_AUTH_CERT_BAD_FORMAT);
-      return -1;
-    }
+    std::vector<CRYPTO_BUFFER*> cert_chain =
+        GetCertChainRawVector(*client_cert_);
 
     std::vector<uint16_t> preferences =
         client_private_key_->GetAlgorithmPreferences();
     // If the key supports rsa_pkcs1_sha256, automatically add support for
     // rsa_pkcs1_sha256_legacy, for use with TLS 1.3. We convert here so that
     // not every `SSLPrivateKey` needs to implement it explicitly.
-    if (base::FeatureList::IsEnabled(features::kLegacyPKCS1ForTLS13) &&
-        base::Contains(preferences, SSL_SIGN_RSA_PKCS1_SHA256)) {
+    if (base::Contains(preferences, SSL_SIGN_RSA_PKCS1_SHA256)) {
       preferences.push_back(SSL_SIGN_RSA_PKCS1_SHA256_LEGACY);
     }
-    SSL_set_signing_algorithm_prefs(ssl_.get(), preferences.data(),
-                                    preferences.size());
+
+    if (!ConfigureSSLCredential(
+            ssl_.get(), ConfigureSSLCredentialParams{
+                            .cert_chain = cert_chain,
+                            .private_key = &SSLContext::kPrivateKeyMethod,
+                            .signing_algorithm_prefs = preferences,
+                        })) {
+      OpenSSLPutNetError(FROM_HERE, ERR_SSL_CLIENT_AUTH_CERT_BAD_FORMAT);
+      return -1;
+    }
 
     net_log_.AddEventWithIntParams(
         NetLogEventType::SSL_CLIENT_CERT_PROVIDED, "cert_count",
-        base::checked_cast<int>(1 +
-                                client_cert_->intermediate_buffers().size()));
+        base::checked_cast<int>(client_cert_->cert_buffers().size()));
     return 1;
   }
 #endif  // !BUILDFLAG(ENABLE_CLIENT_CERTIFICATES)
@@ -1551,7 +1592,8 @@ int SSLClientSocketImpl::NewSessionCallback(SSL_SESSION* session) {
   // OpenSSL optionally passes ownership of |session|. Returning one signals
   // that this function has claimed it.
   context_->ssl_client_session_cache()->Insert(
-      GetSessionCacheKey(ip_addr), bssl::UniquePtr<SSL_SESSION>(session));
+      initial_session_cache_generation_number_, GetSessionCacheKey(ip_addr),
+      bssl::UniquePtr<SSL_SESSION>(session));
   return 1;
 }
 
@@ -1604,8 +1646,7 @@ ssl_private_key_result_t SSLClientSocketImpl::PrivateKeySignCallback(
 
   // Map rsa_pkcs1_sha256_legacy back to rsa_pkcs1_sha256. We convert it here,
   // so that not every `SSLPrivateKey` needs to implement it explicitly.
-  if (base::FeatureList::IsEnabled(features::kLegacyPKCS1ForTLS13) &&
-      algorithm == SSL_SIGN_RSA_PKCS1_SHA256_LEGACY) {
+  if (algorithm == SSL_SIGN_RSA_PKCS1_SHA256_LEGACY) {
     algorithm = SSL_SIGN_RSA_PKCS1_SHA256;
   }
 

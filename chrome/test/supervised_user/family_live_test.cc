@@ -38,6 +38,11 @@
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "url/gurl.h"
 
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+#include "chrome/browser/ui/signin/signin_view_controller.h"
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+
 namespace supervised_user {
 namespace {
 
@@ -250,7 +255,7 @@ void FamilyLiveTest::TearDownOnMainThread() {
     // notify this client. Explicit sign-out is critical, otherwise server-side
     // data structures can still think that the current client should receive
     // sync updates.
-    user->browser().signin_view_controller()->ShowGaiaLogoutTab(
+    user->browser().GetFeatures().signin_view_controller()->ShowGaiaLogoutTab(
         signin_metrics::SourceForRefreshTokenOperation::
             kUserMenu_SignOutAllAccounts);
   }
@@ -303,7 +308,7 @@ GURL FamilyLiveTest::GetRoutedUrl(std::string_view url_spec) const {
   GURL url(url_spec);
 
   for (std::string_view enabled_host : extra_enabled_hosts_) {
-    if (url.host() == enabled_host) {
+    if (url.GetHost() == enabled_host) {
       return url;
     }
   }
@@ -312,11 +317,12 @@ GURL FamilyLiveTest::GetRoutedUrl(std::string_view url_spec) const {
 
 InteractiveFamilyLiveTest::InteractiveFamilyLiveTest(
     FamilyLiveTest::RpcMode rpc_mode)
-    : InteractiveBrowserTestT<FamilyLiveTest>(rpc_mode) {}
+    : InteractiveBrowserTestMixin<FamilyLiveTest>(rpc_mode) {}
 InteractiveFamilyLiveTest::InteractiveFamilyLiveTest(
     FamilyLiveTest::RpcMode rpc_mode,
     const std::vector<std::string_view>& extra_enabled_hosts)
-    : InteractiveBrowserTestT<FamilyLiveTest>(rpc_mode, extra_enabled_hosts) {}
+    : InteractiveBrowserTestMixin<FamilyLiveTest>(rpc_mode,
+                                                  extra_enabled_hosts) {}
 
 ui::test::internal::InteractiveTestPrivate::MultiStep
 InteractiveFamilyLiveTest::WaitForStateSeeding(
@@ -336,7 +342,9 @@ InteractiveFamilyLiveTest::WaitForStateSeeding(
                  id,
                  [&]() {
                    SyncServiceFactory::GetForProfile(&browser_user.profile())
-                       ->TriggerRefresh(syncer::DataTypeSet::All());
+                       ->TriggerRefresh(
+                           syncer::SyncService::TriggerRefreshSource::kUnknown,
+                           syncer::DataTypeSet::All());
                    return state.Check(browser_user.GetServices());
                  },
                  /*polling_interval=*/base::Seconds(2)),

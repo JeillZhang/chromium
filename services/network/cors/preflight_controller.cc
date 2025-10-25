@@ -20,6 +20,7 @@
 #include "net/base/network_isolation_key.h"
 #include "net/cookies/site_for_cookies.h"
 #include "net/http/http_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "net/log/net_log.h"
 #include "net/log/net_log_source.h"
 #include "net/log/net_log_with_source.h"
@@ -397,14 +398,12 @@ std::optional<CorsErrorStatus> CheckPreflightResult(
 
 }  // namespace
 
-const char kPreflightErrorHistogramName[] = "Net.Cors.PreflightCheckError2";
-const char kPreflightWarningHistogramName[] = "Net.Cors.PreflightCheckWarning";
-
 class PreflightController::PreflightLoader final {
  public:
   PreflightLoader(
       PreflightController* controller,
       CompletionCallback completion_callback,
+      int32_t request_id,
       const ResourceRequest& request,
       WithTrustedHeaderClient with_trusted_header_client,
       NonWildcardRequestHeadersSupport non_wildcard_request_headers_support,
@@ -451,22 +450,12 @@ class PreflightController::PreflightLoader final {
     }
     loader_ =
         SimpleURLLoader::Create(std::move(preflight_request), annotation_tag);
+    loader_->SetRequestID(request_id);
     uint32_t options = mojom::kURLLoadOptionAsCorsPreflight;
     if (with_trusted_header_client) {
       options |= mojom::kURLLoadOptionUseHeaderClient;
     }
     loader_->SetURLLoaderFactoryOptions(options);
-
-    // When private network access preflights are sent in warning mode, we
-    // should not wait around forever for a response. Certain servers never
-    // respond, and that should not fail the overall request. Instead, we should
-    // wait a short while then move on. See also https://crbug.com/1299382.
-    if (private_network_access_behavior_ ==
-            PrivateNetworkAccessPreflightBehavior::kWarnWithTimeout &&
-        base::FeatureList::IsEnabled(
-            features::kPrivateNetworkAccessPreflightShortTimeout)) {
-      loader_->SetTimeoutDuration(base::Milliseconds(200));
-    }
   }
 
   PreflightLoader(const PreflightLoader&) = delete;
@@ -559,76 +548,7 @@ class PreflightController::PreflightLoader final {
       detected_error_status = std::move(check_error_status);
     }
 
-    // Check if we need user permission to access the private network. This
-    // only happens if we skipped the mixed content check before sending the
-    // preflight.
-    const bool needs_permission =
-        client_security_state_ &&
-        PrivateNetworkAccessChecker::NeedPermission(
-            original_request_.url,
-            client_security_state_->is_web_secure_context,
-            original_request_.required_ip_address_space);
-
-    if (!needs_permission) {
-      FinishHandleResponseHeader(net_error, std::move(detected_error_status),
-                                 std::move(result));
-      return;
-    }
-
-    // Check if it is valid to show the permission prompt, which means:
-    // * The target IP address space shouldn't be unknown or public.
-    // * The preflight response contains `Private-Network-Access-Id` and
-    // `Private-Network-Access-Name` headers to claim its identity.
-    // * Able to access permission in the browser process from
-    // URLLoaderNetworkService.
-    std::optional<std::string> id =
-        GetHeaderString(head.headers, header_names::kPrivateNetworkDeviceId);
-    std::optional<std::string> name =
-        GetHeaderString(head.headers, header_names::kPrivateNetworkDeviceName);
-
-    // TODO(crbug.com/40272755): `target_ip_address_space` should be
-    // checked in `CorsURLLoaderFactory`. Remove the following bit after that.
-    if (!url_loader_network_service_observer_ ||
-        original_request_.target_ip_address_space ==
-            mojom::IPAddressSpace::kUnknown ||
-        original_request_.target_ip_address_space ==
-            mojom::IPAddressSpace::kPublic) {
-      FinishHandleResponseHeader(
-          net::ERR_FAILED,
-          CorsErrorStatus(
-              mojom::CorsError::kPrivateNetworkAccessPermissionUnavailable),
-          std::move(result));
-      return;
-    }
-
-    // Ask for private network access permission.
-    // base::Unretained() is safe because once HandleResponseHeader is called,
-    // PreflightController will at least keep alive until completion being
-    // called as a result of HandlePrivateNetworkAccessPermissionResult being
-    // called.
-    (*url_loader_network_service_observer_)
-        .OnPrivateNetworkAccessPermissionRequired(
-            std::move(original_request_.url),
-            std::move(head.remote_endpoint.address()), id, name,
-            base::BindOnce(
-                &PreflightLoader::HandlePrivateNetworkAccessPermissionResult,
-                base::Unretained(this), net_error,
-                std::move(detected_error_status), std::move(result)));
-    permission_state_ = PermissionState::kRequested;
-  }
-
-  void HandlePrivateNetworkAccessPermissionResult(
-      net::Error net_error,
-      std::optional<CorsErrorStatus> detected_error_status,
-      std::unique_ptr<PreflightResult> result,
-      bool permission_granted) {
-    if (!permission_granted) {
-      net_error = net::ERR_FAILED;
-      detected_error_status = CorsErrorStatus(
-          mojom::CorsError::kPrivateNetworkAccessPermissionDenied);
-    }
-    FinishHandleResponseHeader(std::move(net_error),
-                               std::move(detected_error_status),
+    FinishHandleResponseHeader(net_error, std::move(detected_error_status),
                                std::move(result));
   }
 
@@ -786,6 +706,7 @@ PreflightController::~PreflightController() = default;
 
 void PreflightController::PerformPreflightCheck(
     CompletionCallback callback,
+    int32_t request_id,
     const ResourceRequest& request,
     WithTrustedHeaderClient with_trusted_header_client,
     NonWildcardRequestHeadersSupport non_wildcard_request_headers_support,
@@ -820,11 +741,11 @@ void PreflightController::PerformPreflightCheck(
   }
 
   auto emplaced_pair = loaders_.emplace(std::make_unique<PreflightLoader>(
-      this, std::move(callback), request, with_trusted_header_client,
-      non_wildcard_request_headers_support, private_network_access_behavior,
-      tainted, annotation_tag, network_isolation_key,
-      std::move(client_security_state), devtools_observer, net_log,
-      acam_preflight_spec_conformant,
+      this, std::move(callback), request_id, request,
+      with_trusted_header_client, non_wildcard_request_headers_support,
+      private_network_access_behavior, tainted, annotation_tag,
+      network_isolation_key, std::move(client_security_state),
+      devtools_observer, net_log, acam_preflight_spec_conformant,
       std::move(url_loader_network_service_observer), preflight_mode));
   (*emplaced_pair.first)->Request(loader_factory);
 }

@@ -45,6 +45,7 @@ from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime
 from typing import (
+    ByteString,
     Collection,
     Iterator,
     List,
@@ -56,9 +57,6 @@ from typing import (
     Tuple,
     get_args,
 )
-
-import six
-from six.moves import zip_longest
 
 from urllib.parse import urljoin
 
@@ -81,7 +79,6 @@ from blinkpy.w3c.wpt_manifest import (
     WPTManifest,
     MANIFEST_NAME,
 )
-from blinkpy.web_tests.layout_package.bot_test_expectations import BotTestExpectationsFactory
 from blinkpy.web_tests.models.test_configuration import TestConfiguration
 from blinkpy.web_tests.models.test_run_results import TestRunException
 from blinkpy.web_tests.models.typ_types import (
@@ -273,7 +270,7 @@ class Port(object):
         ('win11', 'x86_64'),
         ('linux', 'x86_64'),
         ('fuchsia', 'x86_64'),
-        ('ios18-simulator', 'x86_64'),
+        ('ios26-simulator', 'x86_64'),
         ('android', 'x86_64'),
         ('webview', 'x86_64'),
     )
@@ -289,7 +286,7 @@ class Port(object):
             'mac15',
             'mac15-arm64',
         ],
-        'ios': ['ios18-simulator'],
+        'ios': ['ios26-simulator'],
         'win': ['win10.20h2', 'win11-arm64', 'win11'],
         'linux': ['linux'],
         'fuchsia': ['fuchsia'],
@@ -2214,12 +2211,10 @@ class Port(object):
         Once blinkpy runs under python3, this can be removed in favour of
         callers using sys.executable.
         """
-        if six.PY3:
-            # Prefer sys.executable when the current script runs under python3.
-            # The current script might be running with vpython3 and in that case
-            # using the same executable will share the same virtualenv.
-            return sys.executable
-        return 'python3'
+        # Prefer sys.executable when the current script runs under python3.
+        # The current script might be running with vpython3 and in that case
+        # using the same executable will share the same virtualenv.
+        return sys.executable
 
     def get_option(self, name, default_value=None):
         return getattr(self._options, name, default_value)
@@ -2573,8 +2568,7 @@ class Port(object):
         return intentional_syntax_error in output
 
     def http_server_supports_ipv6(self):
-        # Apache < 2.4 on win32 does not support IPv6.
-        return not self.host.platform.is_win()
+        return True
 
     def stop_http_server(self):
         """Shuts down the http server if it is running."""
@@ -2703,35 +2697,6 @@ class Port(object):
                     raise
 
         return expectations
-
-    def bot_expectations(self):
-        if not self.get_option('ignore_flaky_tests'):
-            return {}
-
-        full_port_name = self.determine_full_port_name(
-            self.host, self._options, self.port_name)
-        builder_category = self.get_option('ignore_builder_category', 'layout')
-        step_names = ['blink_web_tests', 'blink_wpt_tests']
-        retval = {}
-        for step_name in step_names:
-            factory = BotTestExpectationsFactory(self.host.builders, step_name)
-            # FIXME: This only grabs release builder's flakiness data. If we're running debug,
-            # when we should grab the debug builder's data.
-            expectations = factory.expectations_for_port(full_port_name,
-                                                         builder_category)
-
-            if not expectations:
-                continue
-
-            ignore_mode = self.get_option('ignore_flaky_tests')
-            if ignore_mode == 'very-flaky' or ignore_mode == 'maybe-flaky':
-                retval.update(expectations.flakes_by_path(ignore_mode == 'very-flaky'))
-            elif ignore_mode == 'unexpected':
-                retval.update(expectations.unexpected_results_by_path())
-            else:
-                _log.warning("Unexpected ignore mode: '%s'.", ignore_mode)
-
-        return retval
 
     def default_expectations_files(self):
         """Returns a list of paths to expectations files that apply by default.
@@ -2941,7 +2906,13 @@ class Port(object):
             return True
         return False
 
-    def _get_crash_log(self, name, pid, stdout, stderr, newer_than):
+    def get_crash_log(
+        self,
+        name: Optional[str],
+        pid: Optional[str],
+        stdout: ByteString,
+        stderr: ByteString,
+    ) -> Tuple[ByteString, str, Optional[str]]:
         if self.output_contains_sanitizer_messages(stderr):
             # Running the symbolizer script can take a lot of memory, so we need to
             # serialize access to it across all the concurrently running drivers.
@@ -2973,12 +2944,12 @@ class Port(object):
         if stdout:
             stdout_lines = stdout.decode('utf8', 'replace').splitlines()
         else:
-            stdout_lines = [u'<empty>']
+            stdout_lines = ['<empty>']
 
         if stderr:
             stderr_lines = stderr.decode('utf8', 'replace').splitlines()
         else:
-            stderr_lines = [u'<empty>']
+            stderr_lines = ['<empty>']
 
         return (stderr,
                 ('crash log for %s (pid %s):\n%s\n%s\n' %

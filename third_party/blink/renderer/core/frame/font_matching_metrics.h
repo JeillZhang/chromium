@@ -33,7 +33,7 @@ struct IdentifiableTokenKey {
   IdentifiableTokenKey() : is_empty_value(true) {}
   explicit IdentifiableTokenKey(const IdentifiableToken& token)
       : token(token) {}
-  explicit IdentifiableTokenKey(WTF::HashTableDeletedValueType)
+  explicit IdentifiableTokenKey(HashTableDeletedValueType)
       : is_deleted_value(true) {}
 
   bool IsHashTableDeletedValue() const { return is_deleted_value; }
@@ -42,18 +42,15 @@ struct IdentifiableTokenKey {
     return token == other.token && is_deleted_value == other.is_deleted_value &&
            is_empty_value == other.is_empty_value;
   }
-  bool operator!=(const IdentifiableTokenKey& other) const {
-    return !(*this == other);
-  }
 };
 
 // A helper that defines the hash function and the invalid 'empty value' that
 // HashMap should use internally.
 struct IdentifiableTokenKeyHashTraits
-    : WTF::SimpleClassHashTraits<IdentifiableTokenKey> {
+    : SimpleClassHashTraits<IdentifiableTokenKey> {
   static unsigned GetHash(const IdentifiableTokenKey& key) {
-    return WTF::GetHash(key.token.ToUkmMetricValue()) ^
-           WTF::GetHash((key.is_deleted_value << 1) + key.is_empty_value);
+    return blink::GetHash(key.token.ToUkmMetricValue()) ^
+           blink::GetHash((key.is_deleted_value << 1) + key.is_empty_value);
   }
   static const bool kEmptyValueIsZero = false;
   static IdentifiableTokenKey EmptyValue() { return IdentifiableTokenKey(); }
@@ -94,12 +91,6 @@ class FontMatchingMetrics {
   // successfully match.
   void ReportFailedLocalFontMatch(const AtomicString& font_name);
 
-  // Reports for each shaped emoji segment the number of total clusters and the
-  // number of clusters that either contain a .notdef/tofu glyph or that is
-  // shaped as multiple glyphs, which means the emoji displays incorrectly.
-  void ReportEmojiSegmentGlyphCoverage(unsigned num_clusters,
-                                       unsigned num_broken_clusters);
-
   // Called on page unload and forces metrics to be flushed.
   void PublishAllMetrics();
 
@@ -110,11 +101,6 @@ class FontMatchingMetrics {
   // Publishes the font lookup events. Recorded on document shutdown/worker
   // destruction and every minute, as long as additional lookups are occurring.
   void PublishIdentifiabilityMetrics();
-
-  // Publishes the ratio of correctly shaped to incorrectly shaped emoji
-  // segments during the lifetime of this metrics recorder, which usually is
-  // coupled to the lifetime of a document or WorkerGlobalContext.
-  void PublishEmojiGlyphMetrics();
 
  private:
   void IdentifiabilityMetricsTimerFired(TimerBase*);
@@ -136,9 +122,6 @@ class FontMatchingMetrics {
       bool font_exists);
 
   TokenToTokenHashMap local_font_existence_by_unique_or_family_name_;
-
-  uint64_t total_emoji_clusters_shaped_ = 0;
-  uint64_t total_broken_emoji_clusters_ = 0;
 
   ukm::UkmRecorder* const ukm_recorder_;
   const ukm::SourceId source_id_;

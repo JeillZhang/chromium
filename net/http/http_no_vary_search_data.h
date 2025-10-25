@@ -65,12 +65,27 @@ class NET_EXPORT_PRIVATE HttpNoVarySearchData {
   // HttpNoVarySearchData objects can be used as a key in a map.
   std::strong_ordering operator<=>(const HttpNoVarySearchData& rhs) const;
 
+  // Returns true if urls `a` and `b` have the same base URL and their queries
+  // are equivalent according to the rules stored in this class.
   bool AreEquivalent(const GURL& a, const GURL& b) const;
+
+  // Returns a canonicalized version of the query part of `url` based on the
+  // rules stored in this class. This has the
+  // property that `AreEquivalent(a, b)` is true if and only if
+  // `RemoveQueryAndFragment(a) == RemoveQueryAndFragment(b)` and
+  // `CanonicalizeQuery(a) == CanonicalizeQuery(b)`. The return value is a
+  // UTF-8 string (not necessarily ASCII) and may end in significant whitespace.
+  std::string CanonicalizeQuery(const GURL& url) const;
 
   const base::flat_set<std::string>& no_vary_params() const;
   const base::flat_set<std::string>& vary_params() const;
   bool vary_on_key_order() const;
   bool vary_by_default() const;
+
+  // Direct access to the two AreEquivalent() implementations for tests and
+  // benchmarking.
+  bool AreEquivalentOldImplForTesting(const GURL& a, const GURL& b) const;
+  bool AreEquivalentNewImplForTesting(const GURL& a, const GURL& b) const;
 
  private:
   friend struct PickleTraits<HttpNoVarySearchData>;
@@ -80,6 +95,13 @@ class NET_EXPORT_PRIVATE HttpNoVarySearchData {
   static base::expected<HttpNoVarySearchData,
                         HttpNoVarySearchData::ParseErrorEnum>
   ParseNoVarySearchDictionary(const structured_headers::Dictionary& dict);
+
+  // The old implementation of AreEquivalent() using UrlSearchParams.
+  // TODO(https://crbug.com/444335347): Remove this.
+  bool AreEquivalentOldImpl(const GURL& a, const GURL& b) const;
+
+  // The new implementation of AreEquivalent() using UrlSearchParamsView.
+  bool AreEquivalentNewImpl(const GURL& a, const GURL& b) const;
 
   // LINT.IfChange(MagicNumber)
 
@@ -119,6 +141,15 @@ struct NET_EXPORT_PRIVATE PickleTraits<HttpNoVarySearchData> {
       base::PickleIterator& iter);
 
   static size_t PickleSize(const HttpNoVarySearchData& value);
+};
+
+class
+    NET_EXPORT_PRIVATE ScopedHttpNoVarySearchDataEquivalentImplementationOverrideForTesting {
+ public:
+  ScopedHttpNoVarySearchDataEquivalentImplementationOverrideForTesting(
+      bool use_new_implementation,
+      bool check_result);
+  ~ScopedHttpNoVarySearchDataEquivalentImplementationOverrideForTesting();
 };
 
 }  // namespace net

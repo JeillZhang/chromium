@@ -8,6 +8,9 @@
 #include <memory>
 
 #include "build/build_config.h"
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 class Browser;
 class BrowserWindowInterface;
@@ -20,6 +23,7 @@ class TabInterface;
 
 namespace extensions {
 
+class Extension;
 class ExtensionViewHost;
 
 // A utility class to make ExtensionViewHosts for UI views that are backed
@@ -46,6 +50,7 @@ class ExtensionViewHostFactory {
   // appropriate SiteInstance (and therefore process) based on the URL and
   // profile.
   static std::unique_ptr<ExtensionViewHost> CreateSidePanelHost(
+      const Extension& extension,
       const GURL& url,
       BrowserWindowInterface* browser,
       tabs::TabInterface* tab_interface);

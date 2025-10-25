@@ -17,6 +17,7 @@
 #include "content/public/browser/media_keys_listener_manager.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/event_router.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/command.h"
 #include "extensions/common/extension_id.h"
 #include "extensions/common/extension_set.h"
@@ -26,6 +27,8 @@
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/ui/ash/media_client/media_client_impl.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace {
 
@@ -80,7 +83,8 @@ void ExtensionKeybindingRegistry::AddExtensionKeybindings(
     const ui::Accelerator& accelerator = command.second.accelerator();
 
     if (!IsAcceleratorRegistered(accelerator)) {
-      if (!RegisterAccelerator(accelerator)) {
+      if (!RegisterAccelerator(accelerator, extension->id(),
+                               command.second.command_name())) {
         continue;
       }
     }
@@ -144,6 +148,11 @@ void ExtensionKeybindingRegistry::RemoveExtensionKeybinding(
   }
 }
 
+bool ExtensionKeybindingRegistry::ShouldIgnoreCommand(
+    const std::string& command) const {
+  return Command::IsActionRelatedCommand(command);
+}
+
 void ExtensionKeybindingRegistry::Init() {
   ExtensionRegistry* registry = ExtensionRegistry::Get(browser_context_);
   if (!registry)
@@ -156,10 +165,6 @@ void ExtensionKeybindingRegistry::Init() {
   }
 }
 
-bool ExtensionKeybindingRegistry::ShouldIgnoreCommand(
-    const std::string& command) const {
-  return Command::IsActionRelatedCommand(command);
-}
 
 bool ExtensionKeybindingRegistry::NotifyEventTargets(
     const ui::Accelerator& accelerator) {
@@ -294,7 +299,7 @@ void ExtensionKeybindingRegistry::OnExtensionUnloaded(
 
 void ExtensionKeybindingRegistry::OnExtensionCommandAdded(
     const ExtensionId& extension_id,
-    const Command& command) {
+    const std::string& command_name) {
   const Extension* extension = ExtensionRegistry::Get(browser_context_)
                                    ->enabled_extensions()
                                    .GetByID(extension_id);
@@ -310,12 +315,12 @@ void ExtensionKeybindingRegistry::OnExtensionCommandAdded(
   if (extension->location() == mojom::ManifestLocation::kComponent)
     return;
 
-  AddExtensionKeybindings(extension, command.command_name());
+  AddExtensionKeybindings(extension, command_name);
 }
 
 void ExtensionKeybindingRegistry::OnExtensionCommandRemoved(
     const ExtensionId& extension_id,
-    const Command& command) {
+    const std::string& command_name) {
   const Extension* extension = ExtensionRegistry::Get(browser_context_)
                                    ->enabled_extensions()
                                    .GetByID(extension_id);
@@ -325,7 +330,7 @@ void ExtensionKeybindingRegistry::OnExtensionCommandRemoved(
   if (!extension || !ExtensionMatchesFilter(extension))
     return;
 
-  RemoveExtensionKeybinding(extension, command.command_name());
+  RemoveExtensionKeybinding(extension, command_name);
 }
 
 void ExtensionKeybindingRegistry::OnCommandServiceDestroying() {

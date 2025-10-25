@@ -12,6 +12,7 @@
 #include "ui/base/models/image_model.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/image/image_skia.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "components/infobars/android/jni_headers/ConfirmInfoBar_jni.h"
@@ -64,8 +65,7 @@ ScopedJavaLocalRef<jobject> ConfirmInfoBar::CreateRenderInfoBar(
       message_text, link_text, ok_button_text, cancel_button_text);
 }
 
-void ConfirmInfoBar::OnLinkClicked(JNIEnv* env,
-                                   const JavaParamRef<jobject>& obj) {
+void ConfirmInfoBar::OnLinkClicked(JNIEnv* env) {
   if (!owner()) {
     return;  // We're closing; don't call anything, it might access the owner.
   }

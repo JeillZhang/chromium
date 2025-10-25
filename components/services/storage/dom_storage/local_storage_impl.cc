@@ -35,15 +35,18 @@
 #include "base/trace_event/memory_dump_manager.h"
 #include "build/build_config.h"
 #include "components/services/storage/dom_storage/async_dom_storage_database.h"
+#include "components/services/storage/dom_storage/dom_storage_batch_operation_leveldb.h"
 #include "components/services/storage/dom_storage/dom_storage_constants.h"
 #include "components/services/storage/dom_storage/dom_storage_database.h"
-#include "components/services/storage/dom_storage/features.h"
 #include "components/services/storage/dom_storage/local_storage_database.pb.h"
 #include "components/services/storage/dom_storage/storage_area_impl.h"
 #include "components/services/storage/public/cpp/constants.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "storage/common/database/database_identifier.h"
+#include "storage/common/database/db_status.h"
+#include "storage/common/database/leveldb_status_helper.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
+#include "url/gurl.h"
 
 namespace storage {
 
@@ -71,7 +74,7 @@ namespace {
 // Temporary alias as this code moves incrementally into the storage namespace.
 using StorageAreaImpl = StorageAreaImpl;
 
-static const int kDaysInTenYears = 10 * 365;
+static const int kStaleBucketCutoffInDays = 400;
 
 constexpr std::string_view kVersionKey = "VERSION";
 const uint8_t kMetaPrefix[] = {'M', 'E', 'T', 'A'};
@@ -145,7 +148,7 @@ void SuccessResponse(base::OnceClosure callback, bool success) {
   std::move(callback).Run();
 }
 
-void IgnoreStatus(base::OnceClosure callback, leveldb::Status status) {
+void IgnoreStatus(base::OnceClosure callback, DbStatus status) {
   std::move(callback).Run();
 }
 
@@ -167,20 +170,19 @@ DomStorageDatabase::Key MakeStorageKeyPrefix(
 
 void DeleteStorageKeys(AsyncDomStorageDatabase* database,
                        std::vector<blink::StorageKey> storage_keys,
-                       base::OnceCallback<void(leveldb::Status)> callback) {
+                       base::OnceCallback<void(DbStatus)> callback) {
   database->RunDatabaseTask(
       base::BindOnce(
           [](std::vector<blink::StorageKey> storage_keys,
-             const DomStorageDatabase& db) {
-            leveldb::WriteBatch batch;
+             DomStorageDatabase& db) {
+            std::unique_ptr<DomStorageBatchOperationLevelDB> batch =
+                db.CreateBatchOperation();
             for (const auto& storage_key : storage_keys) {
-              db.DeletePrefixed(MakeStorageKeyPrefix(storage_key), &batch);
-              batch.Delete(
-                  leveldb_env::MakeSlice(CreateAccessMetaDataKey(storage_key)));
-              batch.Delete(
-                  leveldb_env::MakeSlice(CreateWriteMetaDataKey(storage_key)));
+              batch->DeletePrefixed(MakeStorageKeyPrefix(storage_key));
+              batch->Delete(CreateAccessMetaDataKey(storage_key));
+              batch->Delete(CreateWriteMetaDataKey(storage_key));
             }
-            return db.Commit(&batch);
+            return batch->Commit();
           },
           storage_keys),
       std::move(callback));
@@ -243,20 +245,19 @@ class LocalStorageImpl::StorageAreaHolder final
     }
     context_->database_->RunDatabaseTask(
         base::BindOnce(
-            [](const blink::StorageKey& storage_key,
-               const DomStorageDatabase& db) {
-              leveldb::WriteBatch batch;
+            [](const blink::StorageKey& storage_key, DomStorageDatabase& db) {
+              std::unique_ptr<DomStorageBatchOperationLevelDB> batch =
+                  db.CreateBatchOperation();
               storage::LocalStorageAreaAccessMetaData data;
               data.set_last_accessed(base::Time::Now().ToInternalValue());
               const std::string serialized_data = data.SerializeAsString();
-              batch.Put(
-                  leveldb_env::MakeSlice(CreateAccessMetaDataKey(storage_key)),
-                  leveldb_env::MakeSlice(DomStorageDatabase::Value(
-                      serialized_data.begin(), serialized_data.end())));
-              return db.Commit(&batch);
+              batch->Put(CreateAccessMetaDataKey(storage_key),
+                         DomStorageDatabase::Value(serialized_data.begin(),
+                                                   serialized_data.end()));
+              return batch->Commit();
             },
             storage_key_),
-        base::BindOnce([](leveldb::Status status) {
+        base::BindOnce([](DbStatus status) {
           base::UmaHistogramBoolean(
               "LocalStorage.AccessMetaDataUpdateAtShutdown", status.ok());
         }));
@@ -316,9 +317,7 @@ class LocalStorageImpl::StorageAreaHolder final
     }
   }
 
-  void DidCommit(leveldb::Status status) override {
-    context_->OnCommitResult(status);
-  }
+  void DidCommit(DbStatus status) override { context_->OnCommitResult(status); }
   void Bind(mojo::PendingReceiver<blink::mojom::StorageArea> receiver) {
     has_bindings_ = true;
     storage_area()->Bind(std::move(receiver));
@@ -337,21 +336,26 @@ class LocalStorageImpl::StorageAreaHolder final
 LocalStorageImpl::LocalStorageImpl(
     const base::FilePath& storage_root,
     scoped_refptr<base::SequencedTaskRunner> task_runner,
+    DestructLocalStorageCallback destruct_callback,
     mojo::PendingReceiver<mojom::LocalStorageControl> receiver)
-    : directory_(storage_root.empty() ? storage_root
+    : destruct_callback_(std::move(destruct_callback)),
+      directory_(storage_root.empty() ? storage_root
                                       : storage_root.Append(kLocalStoragePath)),
       database_task_runner_(base::ThreadPool::CreateSequencedTaskRunner(
           {base::MayBlock(), base::WithBaseSyncPrimitives(),
            base::TaskShutdownBehavior::BLOCK_SHUTDOWN})),
       memory_dump_id_(base::StringPrintf("LocalStorage/0x%" PRIXPTR,
-                                         reinterpret_cast<uintptr_t>(this))),
-      is_low_end_device_(base::SysInfo::IsLowEndDevice()) {
+                                         reinterpret_cast<uintptr_t>(this))) {
   base::trace_event::MemoryDumpManager::GetInstance()
       ->RegisterDumpProviderWithSequencedTaskRunner(
           this, "LocalStorage", task_runner, MemoryDumpProvider::Options());
 
-  if (receiver)
+  if (receiver) {
     control_receiver_.Bind(std::move(receiver));
+    control_receiver_.set_disconnect_handler(
+        base::BindOnce(&LocalStorageImpl::OnReceiverDisconnected,
+                       weak_ptr_factory_.GetWeakPtr()));
+  }
 }
 
 void LocalStorageImpl::BindStorageArea(
@@ -396,7 +400,7 @@ void LocalStorageImpl::DeleteStorage(const blink::StorageKey& storage_key,
     DeleteStorageKeys(
         database_.get(), {storage_key},
         base::BindOnce([](base::OnceClosure callback,
-                          leveldb::Status) { std::move(callback).Run(); },
+                          DbStatus) { std::move(callback).Run(); },
                        std::move(callback)));
   } else {
     std::move(callback).Run();
@@ -431,18 +435,6 @@ void LocalStorageImpl::Flush() {
 
   for (const auto& it : areas_)
     it.second->storage_area()->ScheduleImmediateCommit();
-}
-
-void LocalStorageImpl::NeedsFlushForTesting(
-    NeedsFlushForTestingCallback callback) {
-  if (connection_state_ != CONNECTION_FINISHED) {
-    std::move(callback).Run(false);
-    return;
-  }
-
-  std::move(callback).Run(std::ranges::any_of(areas_, [](const auto& iter) {
-    return iter.second->storage_area()->has_changes_to_commit();
-  }));
 }
 
 void LocalStorageImpl::FlushStorageKeyForTesting(
@@ -530,7 +522,8 @@ void LocalStorageImpl::PurgeUnusedAreasIfNeeded() {
 
   // No purge is needed.
   if (total_cache_size <= kMaxLocalStorageCacheSize &&
-      areas_.size() <= kMaxLocalStorageAreaCount && !is_low_end_device_) {
+      areas_.size() <= kMaxLocalStorageAreaCount &&
+      !base::SysInfo::IsLowEndDevice()) {
     return;
   }
 
@@ -588,6 +581,13 @@ bool LocalStorageImpl::OnMemoryDump(
   return true;
 }
 
+base::FilePath LocalStorageImpl::GetStoragePath() const {
+  if (directory_.empty()) {
+    return directory_;
+  }
+  return directory_.DirName();
+}
+
 void LocalStorageImpl::SetDatabaseOpenCallbackForTesting(
     base::OnceClosure callback) {
   RunWhenConnected(std::move(callback));
@@ -606,13 +606,11 @@ void LocalStorageImpl::ForceFakeOpenStorageAreaForTesting(
 LocalStorageImpl::~LocalStorageImpl() {
   DCHECK_EQ(connection_state_, CONNECTION_SHUTDOWN);
   // ShutDown() should run before this destructor and clear `areas_`. If this
-  // didn't occur, collect a crash dump to help diagnose the issue.
-  // TODO(crbug.com/396030877): Remove this DWOC and workaround once the issue
-  // is resolved.
+  // didn't occur, as a workaround, we clear the `areas_`to avoid a UaF crash
+  // in the StorageAreaHolder d'tor which tries to access `this`'s state.
+  // TODO(crbug.com/396030877): Remove this workaround once the issue is
+  // resolved.
   if (!areas_.empty()) {
-    base::debug::DumpWithoutCrashing();
-    // Clear `areas_`to avoid a UaF crash in the StorageAreaHolder d'tor which
-    // tries to access `this`'s state.
     areas_.clear();
   }
   base::trace_event::MemoryDumpManager::GetInstance()->UnregisterDumpProvider(
@@ -668,10 +666,8 @@ void LocalStorageImpl::InitiateConnection(bool in_memory_only) {
                      weak_ptr_factory_.GetWeakPtr()));
 }
 
-void LocalStorageImpl::OnDatabaseOpened(leveldb::Status status) {
-  base::UmaHistogramEnumeration("LocalStorage.DatabaseOpen",
-                                leveldb_env::GetLevelDBStatusUMAValue(status),
-                                leveldb_env::LEVELDB_STATUS_MAX);
+void LocalStorageImpl::OnDatabaseOpened(DbStatus status) {
+  LogLevelDBStatusHistogram("LocalStorage.DatabaseOpen", status);
 
   if (!status.ok()) {
     // If we failed to open the database, try to delete and recreate the
@@ -684,9 +680,9 @@ void LocalStorageImpl::OnDatabaseOpened(leveldb::Status status) {
   if (database_) {
     database_->RunDatabaseTask(
         base::BindOnce(
-            [](const std::vector<uint8_t>& key, const DomStorageDatabase& db) {
+            [](const std::vector<uint8_t>& key, DomStorageDatabase& db) {
               DomStorageDatabase::Value value;
-              leveldb::Status status = db.Get(key, &value);
+              DbStatus status = db.Get(key, &value);
               return std::make_tuple(status, std::move(value));
             },
             std::vector<uint8_t>(kVersionKey.begin(), kVersionKey.end())),
@@ -698,7 +694,7 @@ void LocalStorageImpl::OnDatabaseOpened(leveldb::Status status) {
   OnConnectionFinished();
 }
 
-void LocalStorageImpl::OnGotDatabaseVersion(leveldb::Status status,
+void LocalStorageImpl::OnGotDatabaseVersion(DbStatus status,
                                             DomStorageDatabase::Value value) {
   if (status.IsNotFound()) {
     // New database, nothing more to do. Current version will get written
@@ -783,7 +779,7 @@ void LocalStorageImpl::DeleteAndRecreateDatabase() {
 
   // Destroy database, and try again.
   if (!in_memory_) {
-    DomStorageDatabase::Destroy(
+    DomStorageDatabaseFactory::Destroy(
         directory_, kLocalStorageLeveldbName, database_task_runner_,
         base::BindOnce(&LocalStorageImpl::OnDBDestroyed,
                        weak_ptr_factory_.GetWeakPtr(), recreate_in_memory));
@@ -794,8 +790,7 @@ void LocalStorageImpl::DeleteAndRecreateDatabase() {
   }
 }
 
-void LocalStorageImpl::OnDBDestroyed(bool recreate_in_memory,
-                                     leveldb::Status status) {
+void LocalStorageImpl::OnDBDestroyed(bool recreate_in_memory, DbStatus status) {
   // We're essentially ignoring the status here. Even if destroying failed we
   // still want to go ahead and try to recreate.
   InitiateConnection(recreate_in_memory);
@@ -829,7 +824,7 @@ void LocalStorageImpl::RetrieveStorageUsage(GetUsageCallback callback) {
     std::move(callback).Run(std::move(result));
   } else {
     database_->RunDatabaseTask(
-        base::BindOnce([](const DomStorageDatabase& db) {
+        base::BindOnce([](DomStorageDatabase& db) {
           std::vector<DomStorageDatabase::KeyValuePair> data;
           db.GetPrefixed(base::span(kWriteMetaPrefix), &data);
           return data;
@@ -895,15 +890,9 @@ void LocalStorageImpl::OnGotStorageUsageForShutdown(
         info->last_modified < base::Time::Now()) {
       int days_since_last_modified =
           (base::Time::Now() - info->last_modified).InDays();
-      if (days_since_last_modified > 400) {
-        base::UmaHistogramCustomCounts(
-            "LocalStorage.DaysSinceLastModified400DaysGT",
-            days_since_last_modified, 401, kDaysInTenYears, 100);
-      } else {
-        base::UmaHistogramCustomCounts(
-            "LocalStorage.DaysSinceLastModified400DaysLTE",
-            days_since_last_modified, 1, 400, 100);
-      }
+      base::UmaHistogramCustomCounts("LocalStorage.DaysSinceLastModified",
+                                     days_since_last_modified, 1,
+                                     kStaleBucketCutoffInDays, 100);
     }
     // Delete the storage if its origin matches one of the origins to purge, or
     // if it is third-party and the top-level site is same-site with one of
@@ -927,7 +916,7 @@ void LocalStorageImpl::OnGotStorageUsageForShutdown(
   }
 }
 
-void LocalStorageImpl::OnStorageKeysDeleted(leveldb::Status status) {
+void LocalStorageImpl::OnStorageKeysDeleted(DbStatus status) {
   OnShutdownComplete();
 }
 
@@ -951,7 +940,7 @@ void LocalStorageImpl::GetStatistics(size_t* total_cache_size,
   }
 }
 
-void LocalStorageImpl::OnCommitResult(leveldb::Status status) {
+void LocalStorageImpl::OnCommitResult(DbStatus status) {
   DCHECK(connection_state_ == CONNECTION_FINISHED ||
          connection_state_ == CONNECTION_SHUTDOWN)
       << connection_state_;
@@ -985,7 +974,7 @@ void LocalStorageImpl::DeleteStaleStorageAreas() {
     return;
   }
   database_->RunDatabaseTask(
-      base::BindOnce([](const DomStorageDatabase& db) {
+      base::BindOnce([](DomStorageDatabase& db) {
         std::vector<DomStorageDatabase::KeyValuePair> data;
         db.GetPrefixed(base::span(kMetaPrefix), &data);
         return data;
@@ -1059,7 +1048,8 @@ void LocalStorageImpl::OnGotMetaDataToDeleteStaleStorageAreas(
       // If the storage area is currently loaded it must not be cleared.
       continue;
     }
-    if ((base::Time::Now() - accessed_or_modified_time) >= base::Days(400)) {
+    if ((base::Time::Now() - accessed_or_modified_time) >=
+        base::Days(kStaleBucketCutoffInDays)) {
       // If the storage area has not been accessed or modified within 400 days
       // it can be cleared.
       stale_storage_keys.push_back(storage_key);
@@ -1081,7 +1071,7 @@ void LocalStorageImpl::OnGotMetaDataToDeleteStaleStorageAreas(
   DeleteStorageKeys(
       database_.get(), stale_storage_keys,
       base::BindOnce(
-          [](size_t keys_deleted, leveldb::Status status) {
+          [](size_t keys_deleted, DbStatus status) {
             base::UmaHistogramBoolean(
                 "LocalStorage.StaleStorageAreasDeletedOnStartupSuccess",
                 status.ok());
@@ -1092,6 +1082,10 @@ void LocalStorageImpl::OnGotMetaDataToDeleteStaleStorageAreas(
             }
           },
           stale_storage_keys.size()));
+}
+
+void LocalStorageImpl::OnReceiverDisconnected() {
+  std::move(destruct_callback_).Run(this);
 }
 
 }  // namespace storage

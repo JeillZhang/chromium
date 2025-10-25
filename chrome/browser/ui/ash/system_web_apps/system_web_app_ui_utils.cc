@@ -39,6 +39,7 @@
 #include "chromeos/ash/components/scalable_iph/scalable_iph.h"
 #include "chromeos/ash/components/scalable_iph/scalable_iph_factory.h"
 #include "components/services/app_service/public/cpp/app_launch_util.h"
+#include "components/user_manager/user.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/display/scoped_display_for_new_windows.h"
@@ -338,8 +339,17 @@ BrowserDelegate* FindSystemWebAppBrowser(Profile* profile,
     return nullptr;
   }
 
-  return BrowserController::GetInstance()->FindWebApp(*user, app_id.value(),
-                                                      browser_type);
+  return BrowserController::GetInstance()->FindWebApp(
+      user->GetAccountId(), app_id.value(), browser_type);
+}
+
+int CountSystemWebAppBrowsers(Profile* profile, SystemWebAppType app_type) {
+  auto* const provider = SystemWebAppManager::GetWebAppProvider(profile);
+  const std::optional<webapps::AppId> app_id =
+      GetAppIdForSystemWebApp(profile, app_type);
+  return provider && app_id.has_value()
+             ? provider->ui_manager().GetNumWindowsForApp(app_id.value())
+             : 0;
 }
 
 bool IsSystemWebApp(Browser* browser) {

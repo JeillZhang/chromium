@@ -16,6 +16,10 @@ const char kForcePermissionPolicyUnloadDefaultEnabled[] =
 
 // These mappings only apply to the host resolver.
 const char kHostResolverRules[] = "host-resolver-rules";
+// Deprecated alias for backwards compatibility, now does the same thing as
+// --host-resolver-rules which should be used instead.
+// TODO(crbug.com/40070729): consider removing in some future release.
+const char kHostRules[] = "host-rules";
 
 // A set of public key hashes for which to ignore certificate-related errors.
 //
@@ -118,7 +122,8 @@ const char kUseRelatedWebsiteSet[] = "use-related-website-set";
 //   ip-address := see `net::ParseURLHostnameToAddress()` for details
 //   port := integer in the [0-65535] range
 //
-// Any invalid entries in the comma-separated list are ignored.
+// Any invalid entries in the comma-separated list are ignored. If the port
+// specified is 0, all ports for the given ip-address will be overridden.
 //
 // See also the design doc:
 // https://docs.google.com/document/d/1-umCGylIOuSG02k9KGDwKayt3bzBXtGwVlCQHHkIcnQ/edit#

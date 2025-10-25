@@ -3,7 +3,7 @@ use proc_macro2::{Ident, Span};
 use std::hash::{Hash, Hasher};
 use syn::Token;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq, Hash)]
 pub(crate) enum ImplKey<'a> {
     RustBox(NamedImplKey<'a>),
     RustVec(NamedImplKey<'a>),
@@ -13,16 +13,15 @@ pub(crate) enum ImplKey<'a> {
     CxxVector(NamedImplKey<'a>),
 }
 
-#[derive(Copy, Clone)]
 pub(crate) struct NamedImplKey<'a> {
-    #[allow(dead_code)] // only used by cxxbridge-macro, not cxx-build
+    #[cfg_attr(not(proc_macro), expect(dead_code))]
     pub begin_span: Span,
     pub rust: &'a Ident,
-    #[allow(dead_code)] // only used by cxxbridge-macro, not cxx-build
+    #[cfg_attr(not(proc_macro), expect(dead_code))]
     pub lt_token: Option<Token![<]>,
-    #[allow(dead_code)] // only used by cxxbridge-macro, not cxx-build
+    #[cfg_attr(not(proc_macro), expect(dead_code))]
     pub gt_token: Option<Token![>]>,
-    #[allow(dead_code)] // only used by cxxbridge-macro, not cxx-build
+    #[cfg_attr(not(proc_macro), expect(dead_code))]
     pub end_span: Span,
 }
 

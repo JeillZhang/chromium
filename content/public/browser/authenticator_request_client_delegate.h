@@ -14,7 +14,9 @@
 
 #include "base/containers/span.h"
 #include "base/functional/callback_forward.h"
+#include "base/scoped_observation.h"
 #include "build/build_config.h"
+#include "components/password_manager/core/common/credential_manager_types.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/web_authentication_request_proxy.h"
 #include "device/fido/authenticator_get_assertion_response.h"
@@ -25,7 +27,6 @@
 #include "device/fido/fido_transport_protocol.h"
 #include "device/fido/fido_types.h"
 #include "device/fido/public_key_credential_descriptor.h"
-#include "third_party/blink/public/mojom/credentialmanagement/credential_manager.mojom.h"
 #include "url/gurl.h"
 
 namespace device {
@@ -40,6 +41,24 @@ class Origin;
 }
 
 namespace content {
+
+// LINT.IfChange
+// Reasons why a WebAuthn get() request with `mediation: "immediate"` was
+// rejected by the browser before showing any UI.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class ImmediateMediationRejectionReason {
+  // The request was in an incognito/off-the-record profile.
+  kIncognito = 0,
+  // The request was rate-limited for the origin.
+  kRateLimited = 1,
+  // No credentials were found for the request.
+  kNoCredentials = 2,
+  // The request timed out before the UI could be shown.
+  kTimeout = 3,
+  kMaxValue = kTimeout,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/webauthn/enums.xml)
 
 // AuthenticatorRequestClientDelegate is an interface that lets embedders
 // customize the lifetime of a single WebAuthn API request in the //content
@@ -265,17 +284,10 @@ class CONTENT_EXPORT AuthenticatorRequestClientDelegate
           callback);
 
   // device::FidoRequestHandlerBase::Observer:
+  void StartObserving(device::FidoRequestHandlerBase* request_handler) override;
+  void StopObserving(device::FidoRequestHandlerBase* request_handler) override;
   void OnTransportAvailabilityEnumerated(
       device::FidoRequestHandlerBase::TransportAvailabilityInfo data) override;
-  // If true, the request handler will defer dispatch of its request onto the
-  // given authenticator to the embedder. The embedder needs to call
-  // |StartAuthenticatorRequest| when it wants to initiate request dispatch.
-  //
-  // This method is invoked before |FidoAuthenticatorAdded|, and may be
-  // invoked multiple times for the same authenticator. Depending on the
-  // result, the request handler might decide not to make the authenticator
-  // available, in which case it never gets passed to
-  // |FidoAuthenticatorAdded|.
   bool EmbedderControlsAuthenticatorDispatch(
       const device::FidoAuthenticator& authenticator) override;
   void BluetoothAdapterStatusChanged(

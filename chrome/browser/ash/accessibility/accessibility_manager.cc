@@ -22,9 +22,11 @@
 #include "ash/public/cpp/accessibility_controller_enums.h"
 #include "ash/public/cpp/accessibility_focus_ring_controller.h"
 #include "ash/public/cpp/accessibility_focus_ring_info.h"
+#include "ash/public/cpp/new_window_delegate.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
 #include "ash/webui/settings/public/constants/routes_util.h"
+#include "base/check_deref.h"
 #include "base/command_line.h"
 #include "base/containers/flat_map.h"
 #include "base/files/file_util.h"
@@ -36,6 +38,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/notimplemented.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
@@ -52,7 +55,6 @@
 #include "chrome/browser/ash/accessibility/dictation.h"
 #include "chrome/browser/ash/accessibility/magnification_manager.h"
 #include "chrome/browser/ash/accessibility/select_to_speak_event_handler_delegate_impl.h"
-#include "chrome/browser/ash/accessibility/service/accessibility_service_client.h"
 #include "chrome/browser/ash/policy/enrollment/enrollment_requisition_manager.h"
 #include "chrome/browser/ash/profiles/profile_helper.h"
 #include "chrome/browser/browser_process.h"
@@ -62,7 +64,6 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/keyboard/chrome_keyboard_controller_client.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
-#include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/api/accessibility_private.h"
@@ -77,8 +78,10 @@
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
 #include "chromeos/ash/components/dbus/upstart/upstart_client.h"
 #include "chromeos/ash/components/language_packs/language_pack_manager.h"
+#include "chromeos/ash/experiences/settings_ui/settings_app_manager.h"
 #include "chromeos/constants/devicetype.h"
 #include "chromeos/dbus/power/power_manager_client.h"
+#include "components/application_locale_storage/application_locale_storage.h"
 #include "components/language/core/browser/pref_names.h"
 #include "components/live_caption/pref_names.h"
 #include "components/prefs/pref_member.h"
@@ -421,9 +424,12 @@ AccessibilityStatusEventDetails::AccessibilityStatusEventDetails(
 // AccessibilityManager
 
 // static
-void AccessibilityManager::Initialize() {
+void AccessibilityManager::Initialize(
+    PrefService* local_state,
+    const ApplicationLocaleStorage* application_locale_storage) {
   CHECK(g_accessibility_manager == nullptr);
-  g_accessibility_manager = new AccessibilityManager();
+  g_accessibility_manager =
+      new AccessibilityManager(local_state, application_locale_storage);
 }
 
 // static
@@ -444,7 +450,11 @@ void AccessibilityManager::ShowAccessibilityHelp() {
                    GURL(chrome::kChromeAccessibilityHelpURL));
 }
 
-AccessibilityManager::AccessibilityManager() {
+AccessibilityManager::AccessibilityManager(
+    PrefService* local_state,
+    const ApplicationLocaleStorage* application_locale_storage)
+    : local_state_(CHECK_DEREF(local_state)),
+      application_locale_storage_(CHECK_DEREF(application_locale_storage)) {
   session_observation_.Observe(session_manager::SessionManager::Get());
 
   on_app_terminating_subscription_ =
@@ -509,19 +519,6 @@ AccessibilityManager::AccessibilityManager() {
     manager->Initialize(static_cast<int>(Sound::kVolumeAdjust),
                         bundle.GetRawDataResource(IDR_SOUND_VOLUME_ADJUST_WAV),
                         media::AudioCodec::kPCM);
-  }
-  if (::features::IsAccessibilityServiceEnabled()) {
-    // We create an AccessibilityServiceClient even if the build flag is not
-    // set, because this allows tests with the AccessibilityServiceClient to
-    // run.
-    accessibility_service_client_ =
-        std::make_unique<AccessibilityServiceClient>();
-#if !BUILDFLAG(ENABLE_ACCESSIBILITY_SERVICE)
-    LOG(WARNING) << "Constructing an AccessibilityServiceClient for "
-                    "AccessibilityManager, but Chrome was not built with the "
-                    "Accessibility Service. Did you mean to add "
-                    "`enable_accessibility_service=true` to your gn args?";
-#endif  // !BUILDFLAG(ENABLE_ACCESSIBILITY_SERVICE)
   }
 
   base::FilePath resources_path;
@@ -797,7 +794,7 @@ void AccessibilityManager::OnSpokenFeedbackChanged() {
       prefs::kAccessibilitySpokenFeedbackEnabled);
 
   if (IsUserBrowserContext(profile_)) {
-    user_manager::KnownUser known_user(g_browser_process->local_state());
+    user_manager::KnownUser known_user(&local_state_.get());
     known_user.SetBooleanPref(
         multi_user_util::GetAccountIdFromProfile(profile_),
         kUserSpokenFeedbackEnabled, enabled);
@@ -827,9 +824,6 @@ void AccessibilityManager::OnSpokenFeedbackChanged() {
   } else {
     screen_reader_mode_.reset();
   }
-
-  if (accessibility_service_client_)
-    accessibility_service_client_->SetChromeVoxEnabled(enabled);
 
   AccessibilityStatusEventDetails details(
       AccessibilityNotificationType::kToggleSpokenFeedback, enabled);
@@ -1012,7 +1006,7 @@ void AccessibilityManager::EnableFaceGaze(bool enabled) {
 }
 
 bool AccessibilityManager::IsFaceGazeEnabled() const {
-  return ::features::IsAccessibilityFaceGazeEnabled() && profile_ &&
+  return profile_ &&
          profile_->GetPrefs()->GetBoolean(prefs::kAccessibilityFaceGazeEnabled);
 }
 
@@ -1089,15 +1083,6 @@ void AccessibilityManager::OnAccessibilityCommonChanged(
   if ((pref_count != 0 && enabled) || (pref_count == 0 && !enabled))
     return;
 
-  if (accessibility_service_client_) {
-    if (pref_name == prefs::kDockedMagnifierEnabled ||
-        pref_name == prefs::kAccessibilityScreenMagnifierEnabled) {
-      accessibility_service_client_->SetMagnifierEnabled(enabled);
-    } else if (pref_name == prefs::kAccessibilityAutoclickEnabled) {
-      accessibility_service_client_->SetAutoclickEnabled(enabled);
-    }
-  }
-
   if (enabled) {
     accessibility_common_enabled_features_.insert(pref_name);
     if (!accessibility_common_extension_loader_->loaded()) {
@@ -1116,12 +1101,6 @@ void AccessibilityManager::RequestAutoclickScrollableBoundsForPoint(
     const gfx::Point& point_in_screen) {
   if (!profile_)
     return;
-
-  if (::features::IsAccessibilityServiceEnabled()) {
-    accessibility_service_client_->RequestScrollableBoundsForPoint(
-        point_in_screen);
-    return;
-  }
 
   extensions::EventRouter* event_router =
       extensions::EventRouter::Get(profile_);
@@ -1289,10 +1268,6 @@ void AccessibilityManager::OnDictationChanged(bool triggered_by_user) {
   const bool enabled =
       pref_service->GetBoolean(prefs::kAccessibilityDictationEnabled);
 
-  if (accessibility_service_client_) {
-    accessibility_service_client_->SetDictationEnabled(enabled);
-  }
-
   if (enabled &&
       pref_service->GetString(prefs::kAccessibilityDictationLocale).empty()) {
     // Dictation was turned on but the language pref isn't set yet. Determine if
@@ -1325,7 +1300,8 @@ void AccessibilityManager::OnDictationChanged(bool triggered_by_user) {
     // push back SODA deletion each time start-up occurs with dictation
     // disabled.
     speech::SodaInstaller::GetInstance()->SetUninstallTimer(
-        pref_service, g_browser_process->local_state());
+        &local_state_.get(),
+        pref_service->GetString(prefs::kAccessibilityDictationLocale));
   }
 
   if (!enabled)
@@ -1402,7 +1378,7 @@ void AccessibilityManager::ShowDictationLanguageUpgradedNudge(
   // Show the nudge, then set the pref to indicate that it has been shown
   // for this particular locale.
   AccessibilityController::Get()->ShowDictationLanguageUpgradedNudge(
-      dictation_locale, g_browser_process->GetApplicationLocale());
+      dictation_locale, application_locale_storage_->Get());
   ScopedDictPrefUpdate update(profile_->GetPrefs(),
                               prefs::kAccessibilityDictationLocaleOfflineNudge);
   update->Set(dictation_locale, true);
@@ -1488,9 +1464,6 @@ void AccessibilityManager::OnSelectToSpeakChanged() {
   if (select_to_speak_enabled_ == enabled)
     return;
 
-  if (accessibility_service_client_)
-    accessibility_service_client_->SetSelectToSpeakEnabled(enabled);
-
   select_to_speak_enabled_ = enabled;
 
   AccessibilityStatusEventDetails details(
@@ -1569,9 +1542,6 @@ void AccessibilityManager::OnSwitchAccessChanged() {
 
   if (switch_access_enabled_ == enabled)
     return;
-
-  if (accessibility_service_client_)
-    accessibility_service_client_->SetSwitchAccessEnabled(enabled);
 
   switch_access_enabled_ = enabled;
 
@@ -1694,7 +1664,7 @@ void AccessibilityManager::OnActiveOutputNodeChanged() {
     return;
   }
 
-  user_manager::KnownUser known_user(g_browser_process->local_state());
+  user_manager::KnownUser known_user(&local_state_.get());
   const auto account_ids = known_user.GetKnownAccountIds();
   for (const auto& account_id : account_ids) {
     if (known_user.FindBoolPath(account_id, kUserSpokenFeedbackEnabled)
@@ -1817,16 +1787,14 @@ void AccessibilityManager::SetProfile(Profile* profile) {
                        base::Unretained(this)));
     }
 
-    if (::features::IsAccessibilityFaceGazeEnabled()) {
-      pref_change_registrar_->Add(
-          prefs::kAccessibilityFaceGazeEnabled,
-          base::BindRepeating(&AccessibilityManager::OnFaceGazeChanged,
-                              base::Unretained(this)));
-    }
+    pref_change_registrar_->Add(
+        prefs::kAccessibilityFaceGazeEnabled,
+        base::BindRepeating(&AccessibilityManager::OnFaceGazeChanged,
+                            base::Unretained(this)));
 
     local_state_pref_change_registrar_ =
         std::make_unique<PrefChangeRegistrar>();
-    local_state_pref_change_registrar_->Init(g_browser_process->local_state());
+    local_state_pref_change_registrar_->Init(&local_state_.get());
     local_state_pref_change_registrar_->Add(
         language::prefs::kApplicationLocale,
         base::BindRepeating(&AccessibilityManager::OnLocaleChanged,
@@ -1840,10 +1808,6 @@ void AccessibilityManager::SetProfile(Profile* profile) {
       extension_registry_observations_.AddObservation(registry);
 
     profile_observation_.Observe(profile);
-  }
-
-  if (accessibility_service_client_) {
-    accessibility_service_client_->SetProfile(profile);
   }
 
   bool had_profile = (profile_ != nullptr);
@@ -1865,9 +1829,7 @@ void AccessibilityManager::SetProfile(Profile* profile) {
   for (const std::string& feature : kAccessibilityCommonFeatures)
     OnAccessibilityCommonChanged(feature);
 
-  if (::features::IsAccessibilityFaceGazeEnabled()) {
-    OnAccessibilityCommonChanged(prefs::kAccessibilityFaceGazeEnabled);
-  }
+  OnAccessibilityCommonChanged(prefs::kAccessibilityFaceGazeEnabled);
 
   // Dictation is not in kAccessibilityCommonFeatures because it needs to
   // be handled in OnDictationChanged also. OnDictationChanged will call to
@@ -2047,10 +2009,7 @@ void AccessibilityManager::UpdateChromeOSAccessibilityHistograms() {
   base::UmaHistogramBoolean(
       "Accessibility.CrosSpokenFeedback.BrailleDisplayConnected",
       IsBrailleDisplayConnected());
-  if (::features::IsAccessibilityFaceGazeEnabled()) {
-    base::UmaHistogramBoolean("Accessibility.CrosFaceGaze",
-                              IsFaceGazeEnabled());
-  }
+  base::UmaHistogramBoolean("Accessibility.CrosFaceGaze", IsFaceGazeEnabled());
   base::UmaHistogramBoolean("Accessibility.CrosAlwaysShowScrollbar",
                             IsAlwaysShowScrollbarsEnabled());
 }
@@ -2324,8 +2283,10 @@ void AccessibilityManager::LoadEnhancedNetworkTts() {
 
   auto* component_loader = extensions::ComponentLoader::Get(profile_);
 
-  if (component_loader->Exists(extension_misc::kEnhancedNetworkTtsExtensionId))
+  if (component_loader->ExistsOrPendingAdd(
+          extension_misc::kEnhancedNetworkTtsExtensionId)) {
     return;
+  }
 
   base::FilePath resources_path;
   if (!base::PathService::Get(chrome::DIR_RESOURCES, &resources_path)) {
@@ -2349,7 +2310,8 @@ void AccessibilityManager::LoadEnhancedNetworkTts() {
       extension_misc::kEnhancedNetworkTtsExtensionId, manifest_filename,
       guest_manifest_filename,
       base::BindOnce(&AccessibilityManager::PostLoadEnhancedNetworkTts,
-                     base::Unretained(this)));
+                     base::Unretained(this)),
+      {});
 }
 
 void AccessibilityManager::UnloadEnhancedNetworkTts() {
@@ -2435,10 +2397,12 @@ void AccessibilityManager::OpenSettingsSubpage(const std::string& subpage) {
   // TODO(chrome-a11y-core): we can't open a settings page when you're on the
   // signin profile, but maybe we should notify the user and explain why?
   Profile* profile = AccessibilityManager::Get()->profile();
-  if (!ash::ProfileHelper::IsSigninProfile(profile) &&
+  if (IsUserBrowserContext(profile) &&
       chromeos::settings::IsOSSettingsSubPage(subpage)) {
-    chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(profile,
-                                                                 subpage);
+    ash::SettingsAppManager::Get()->Open(
+        CHECK_DEREF(
+            BrowserContextHelper::Get()->GetUserByBrowserContext(profile)),
+        {.sub_page = subpage});
     if (open_settings_subpage_observer_for_test_) {
       open_settings_subpage_observer_for_test_.Run();
     }
@@ -2516,7 +2480,7 @@ bool AccessibilityManager::GetStartupSoundEnabled() const {
   if (user_list.empty())
     return false;
 
-  user_manager::KnownUser known_user(g_browser_process->local_state());
+  user_manager::KnownUser known_user(&local_state_.get());
   // |user_list| is sorted by last log in date. Take the most recent user to
   // log in.
   return known_user
@@ -2528,7 +2492,7 @@ void AccessibilityManager::SetStartupSoundEnabled(bool value) const {
   if (!profile_)
     return;
 
-  user_manager::KnownUser known_user(g_browser_process->local_state());
+  user_manager::KnownUser known_user(&local_state_.get());
   known_user.SetBooleanPref(multi_user_util::GetAccountIdFromProfile(profile_),
                             kUserStartupSoundEnabled, value);
 }
@@ -2544,7 +2508,7 @@ const std::string AccessibilityManager::GetBluetoothBrailleDisplayAddress()
   if (user_list.empty())
     return std::string();
 
-  user_manager::KnownUser known_user(g_browser_process->local_state());
+  user_manager::KnownUser known_user(&local_state_.get());
   // |user_list| is sorted by last log in date. Take the most recent user to
   // log in.
   const std::string* val = known_user.FindStringPath(
@@ -2558,7 +2522,7 @@ void AccessibilityManager::UpdateBluetoothBrailleDisplayAddress(
   if (!profile_)
     return;
 
-  user_manager::KnownUser known_user(g_browser_process->local_state());
+  user_manager::KnownUser known_user(&local_state_.get());
   known_user.SetStringPref(multi_user_util::GetAccountIdFromProfile(profile_),
                            kUserBluetoothBrailleDisplayAddress, address);
   RestartBrltty(address);
@@ -2823,12 +2787,12 @@ void AccessibilityManager::MaybeInstallSoda(const std::string& locale) {
 
   if (!soda_observation_.IsObservingSource(soda_installer))
     soda_observation_.Observe(soda_installer);
-  soda_installer->Init(profile_->GetPrefs(), g_browser_process->local_state());
+  soda_installer->Init(profile_->GetPrefs(), &local_state_.get());
 
   // If the installer was already initialized the language code might not have
   // started installing. Try again.
   if (!soda_installer->IsSodaDownloading(language_code))
-    soda_installer->InstallLanguage(locale, g_browser_process->local_state());
+    soda_installer->InstallLanguage(locale, &local_state_.get());
 
   // Reset whether failed notification was shown. This ensures it is only shown
   // at most once per download attempt.
@@ -2936,7 +2900,7 @@ void AccessibilityManager::UpdateDictationNotification() {
   // Get the display name of |locale| in the application locale.
   const std::u16string display_name = l10n_util::GetDisplayNameForLocale(
       /*locale=*/locale,
-      /*display_locale=*/g_browser_process->GetApplicationLocale(),
+      /*display_locale=*/application_locale_storage_->Get(),
       /*is_ui=*/true);
 
   bool soda_installed = false;
@@ -2994,7 +2958,7 @@ speech::LanguageCode AccessibilityManager::GetDictationLanguageCode() {
 void AccessibilityManager::InstallFaceGazeAssets(
     InstallFaceGazeAssetsCallback callback) {
   DCHECK(!callback.is_null());
-  if (!::features::IsAccessibilityFaceGazeEnabled() || !IsFaceGazeEnabled()) {
+  if (!IsFaceGazeEnabled()) {
     std::move(callback).Run(std::nullopt);
     return;
   }
@@ -3205,7 +3169,7 @@ void AccessibilityManager::SendSyntheticMouseEvent(
     gfx::Point location_in_screen,
     bool use_rewriters) {
   const display::Display& display =
-      display::Screen::GetScreen()->GetDisplayNearestPoint(location_in_screen);
+      display::Screen::Get()->GetDisplayNearestPoint(location_in_screen);
   auto* host = ash::GetWindowTreeHostForDisplay(display.id());
   if (!host) {
     return;

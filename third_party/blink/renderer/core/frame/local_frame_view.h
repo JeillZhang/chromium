@@ -82,6 +82,10 @@ namespace ui {
 class Cursor;
 }
 
+namespace viz {
+class FrameTimingDetails;
+}
+
 namespace blink {
 class AXObjectCache;
 class ChromeClient;
@@ -183,7 +187,6 @@ class CORE_EXPORT LocalFrameView final
     can_have_scrollbars_ = can_have_scrollbars;
   }
   bool CanHaveScrollbars() const { return can_have_scrollbars_; }
-  bool VisualViewportSuppliesScrollbars();
 
   void SetLayoutOverflowSize(const gfx::Size&);
 
@@ -382,7 +385,8 @@ class CORE_EXPORT LocalFrameView final
   // detached frame and need special handling of the frame.
   // Frame throttling is not allowed by default. Normally we don't want to
   // throttle frames for printing.
-  void UpdateLifecyclePhasesForPrinting();
+  // Returns whether the lifecycle was successfully updated to pre-paint clean.
+  bool UpdateLifecyclePhasesForPrinting();
 
   // Computes the style, layout, and compositing inputs lifecycle stages if
   // needed. After calling this method, all frames will be in a lifecycle state
@@ -415,7 +419,7 @@ class CORE_EXPORT LocalFrameView final
   // disallows layout invalidation within the containing scope. If layout
   // invalidation takes place while the scoper is active a DCHECK will be
   // triggered.
-  class InvalidationDisallowedScope {
+  class CORE_EXPORT InvalidationDisallowedScope {
     STACK_ALLOCATED();
 
    public:
@@ -467,7 +471,7 @@ class CORE_EXPORT LocalFrameView final
   void DestroyPaginationLayout();
 
   // Updates the fragment anchor element based on URL's fragment identifier.
-  // Updates corresponding ':target' CSS pseudo class on the anchor element.
+  // Updates corresponding ':target' CSS pseudo-class on the anchor element.
   // If |should_scroll| is passed it can be used to prevent scrolling/focusing
   // while still performing all related side-effects like setting :target (used
   // for e.g. in history restoration to override the scroll offset). The scroll
@@ -501,13 +505,8 @@ class CORE_EXPORT LocalFrameView final
   void AddAnimatingScrollableArea(PaintLayerScrollableArea*);
   void RemoveAnimatingScrollableArea(PaintLayerScrollableArea*);
 
-  // Used when ScrollableAreaOptimization is disabled.
-  void AddUserScrollableArea(PaintLayerScrollableArea&);
-  void RemoveUserScrollableArea(PaintLayerScrollableArea&);
-  // Used when ScrollableAreaOptimization is enabled.
   void AddScrollableArea(PaintLayerScrollableArea&);
   // Removes the scrollable area from all scrollable area sets/maps.
-  // Used regardless of ScrollableAreaOptimization.
   void RemoveScrollableArea(PaintLayerScrollableArea&);
   const ScrollableAreaMap& ScrollableAreas() const { return scrollable_areas_; }
 
@@ -729,7 +728,7 @@ class CORE_EXPORT LocalFrameView final
   void SetVisualViewportOrOverlayNeedsRepaint();
   bool VisualViewportOrOverlayNeedsRepaintForTesting() const;
 
-  LayoutUnit CaretWidth() const;
+  LayoutUnit BarCaretWidth() const;
 
   size_t PaintFrameCount() const { return paint_frame_count_; }
 
@@ -790,7 +789,7 @@ class CORE_EXPORT LocalFrameView final
   void EnqueueStartOfLifecycleTask(base::OnceClosure);
 
   // For testing way to steal the start-of-lifecycle tasks.
-  WTF::Vector<base::OnceClosure> TakeStartOfLifecycleTasksForTest() {
+  Vector<base::OnceClosure> TakeStartOfLifecycleTasksForTest() {
     return std::move(start_of_lifecycle_tasks_);
   }
 
@@ -844,7 +843,11 @@ class CORE_EXPORT LocalFrameView final
       ScrollMarkerGroupPseudoElement* scroll_marker_group);
   void ExecutePendingScrollMarkerSelectionUpdates();
 
-  void RecordNaturalDimensions();
+  // True if the recorded value has changed.
+  bool RecordNaturalDimensions();
+
+  void RequestSameDocumentNavigationPresentationTime(
+      base::OnceCallback<void(const viz::FrameTimingDetails&)>);
 
  protected:
   void FrameRectsChanged(const gfx::Rect&) override;
@@ -1029,12 +1032,19 @@ class CORE_EXPORT LocalFrameView final
 
   void ForAllRemoteFrameViews(base::FunctionRef<void(RemoteFrameView&)>);
 
-  bool UpdateViewportIntersectionsForSubtree(
+  // Recomputes the values returned by HasActiveIntersectionObservations() and
+  // NeedsOcclusionTracking().
+  void UpdateIntersectionObserverStatus() override;
+  bool HasActiveIntersectionObservations() const override;
+  bool NeedsOcclusionTracking() const override;
+  void UpdateViewportIntersectionsForSubtree(
       unsigned parent_flags,
       ComputeIntersectionsContext&) override;
   void DeliverSynchronousIntersectionObservations();
 
-  bool RunScrollSnapshotClientSteps();
+  // https://drafts.csswg.org/cssom-view/#post-layout-snapshot
+  bool RunSnapshotPostLayoutStateSteps();
+
   bool ShouldDeferLayoutSnap() const;
 
   bool NotifyResizeObservers();
@@ -1051,7 +1061,8 @@ class CORE_EXPORT LocalFrameView final
   // again before proceeding.
   bool RunPostLayoutIntersectionObserverSteps();
   // This is a recursive helper for determining intersection observations which
-  // need to happen in post-layout.
+  // need to happen in post-layout. Returns true if there are any active
+  // post-layout observations.
   void ComputePostLayoutIntersections(unsigned parent_flags,
                                       ComputeIntersectionsContext&);
 
@@ -1075,7 +1086,7 @@ class CORE_EXPORT LocalFrameView final
 
   // Append view transition requests from this view into the given vector.
   void AppendViewTransitionRequests(
-      WTF::Vector<std::unique_ptr<ViewTransitionRequest>>&);
+      Vector<std::unique_ptr<ViewTransitionRequest>>&);
 
   bool AnyFrameIsPrintingOrPaintingPreview();
 
@@ -1125,8 +1136,7 @@ class CORE_EXPORT LocalFrameView final
   // Needed for calculating scroll anchoring.
   ScrollableAreaSet scroll_anchoring_scrollable_areas_;
   ScrollableAreaSet animating_scrollable_areas_;
-  // All scrollable areas in the frame's document,
-  // or user-scrollable ones if ScrollableAreaOptimization is disabled.
+  // All scrollable areas in the frame's document.
   ScrollableAreaMap scrollable_areas_;
   ScrollableAreaSet scrollable_areas_with_scroll_node_;
 
@@ -1183,6 +1193,12 @@ class CORE_EXPORT LocalFrameView final
 #endif
 
   IntersectionObservationState intersection_observation_state_;
+  // True if this FrameView or any descendant FrameView has active
+  // IntersectionObservers.
+  bool has_active_intersection_observations_ = false;
+  // True if this FrameView or any descendant FrameView has active
+  // IntersectionObservers for which observer->trackVisibility() is true.
+  bool needs_occlusion_tracking_ = false;
   gfx::Vector2dF accumulated_scroll_delta_since_last_intersection_update_;
   // Used only if the frame is the local root.
   HeapTaskRunnerTimer<LocalFrameView> delayed_intersection_timer_;
@@ -1258,7 +1274,7 @@ class CORE_EXPORT LocalFrameView final
   std::unique_ptr<StickyAdDetector> sticky_ad_detector_;
 
   // These tasks will be run at the beginning of the next lifecycle.
-  WTF::Vector<base::OnceClosure> start_of_lifecycle_tasks_;
+  Vector<base::OnceClosure> start_of_lifecycle_tasks_;
 
   // Filter used for inverting the document background for forced darkening.
   std::unique_ptr<DarkModeFilter> dark_mode_filter_;
@@ -1299,9 +1315,19 @@ class CORE_EXPORT LocalFrameView final
   Member<GCedHeapHashMap<Member<ScrollMarkerGroupPseudoElement>, bool>>
       pending_scroll_marker_selection_updates_;
 
+  // This is a callback requested when a same document navigation was committed.
+  // We only record this once (if RecordSameDocumentPresentationTimeOnce is
+  // enabled). We do this within the lifecycle before the commit step.
+  base::OnceCallback<void(const viz::FrameTimingDetails&)>
+      same_document_presentation_time_callback_;
+
 #if DCHECK_IS_ON()
   bool is_updating_descendant_dependent_flags_;
   bool is_updating_layout_;
+#endif
+
+#if BUILDFLAG(IS_ANDROID)
+  bool needs_accessibility_xr_hit_test_update_ = false;
 #endif
 
   FRIEND_TEST_ALL_PREFIXES(FrameThrottlingTest, ForAllThrottledLocalFrameViews);

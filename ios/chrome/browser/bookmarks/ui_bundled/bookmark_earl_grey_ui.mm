@@ -14,6 +14,7 @@
 #import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_ui_constants.h"
 #import "ios/chrome/browser/popup_menu/ui_bundled/popup_menu_constants.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
+#import "ios/chrome/browser/shared/public/snackbar/snackbar_constants.h"
 #import "ios/chrome/browser/shared/ui/table_view/table_view_constants.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
@@ -46,6 +47,7 @@ using chrome_test_util::EditButton;
 using chrome_test_util::MoveButton;
 using chrome_test_util::OpenLinkInIncognitoButton;
 using chrome_test_util::OpenLinkInNewTabButton;
+using chrome_test_util::SearchBar;
 using chrome_test_util::ShareButton;
 using chrome_test_util::TabGridEditButton;
 using chrome_test_util::TappableBookmarkNodeWithLabel;
@@ -252,16 +254,18 @@ id<GREYMatcher> SearchIconButton() {
 }
 
 - (void)closeUndoSnackbarAndWait {
-  id<GREYMatcher> snackbar_matcher =
-      grey_accessibilityID(@"MDCSnackbarMessageTitleAutomationIdentifier");
+  id<GREYMatcher> snackbar_matcher = chrome_test_util::SnackbarViewMatcher();
   [[EarlGrey selectElementWithMatcher:snackbar_matcher]
       performAction:grey_tap()];
   // Wait until it's gone.
   ConditionBlock condition = ^{
     NSError* error = nil;
-    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(@"Undo")]
-        assertWithMatcher:grey_notVisible()
-                    error:&error];
+    [[EarlGrey
+        selectElementWithMatcher:
+            grey_allOf(grey_accessibilityID(kSnackbarButtonAccessibilityId),
+                       grey_accessibilityLabel(l10n_util::GetNSString(
+                           IDS_IOS_BOOKMARK_NEW_UNDO_BUTTON_TITLE)),
+                       nil)] assertWithMatcher:grey_notVisible() error:&error];
     return error == nil;
   };
   EG_TEST_HELPER_ASSERT_TRUE(base::test::ios::WaitUntilConditionOrTimeout(
@@ -305,9 +309,9 @@ id<GREYMatcher> SearchIconButton() {
       performAction:grey_tap()];
 
   // Tap on Open All.
-  [[EarlGrey
-      selectElementWithMatcher:ButtonWithAccessibilityLabelId(buttonLabelId)]
-      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::AlertItemWithAccessibilityLabelId(
+                     buttonLabelId)] performAction:grey_tap()];
 }
 
 - (void)verifyContextMenuForSingleURLWithEditEnabled:(BOOL)editEnabled {
@@ -362,21 +366,25 @@ id<GREYMatcher> SearchIconButton() {
   id<GREYMatcher> matcher =
       editEnabled ? grey_sufficientlyVisible()
                   : grey_accessibilityTrait(UIAccessibilityTraitNotEnabled);
-  [[EarlGrey selectElementWithMatcher:ButtonWithAccessibilityLabelId(
-                                          IDS_IOS_BOOKMARK_CONTEXT_MENU_EDIT)]
+
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+                     IDS_IOS_BOOKMARK_CONTEXT_MENU_EDIT)]
       assertWithMatcher:matcher];
 
-  [[EarlGrey
-      selectElementWithMatcher:ButtonWithAccessibilityLabelId(
-                                   IDS_IOS_CONTENT_CONTEXT_OPENLINKNEWTAB)]
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+                     IDS_IOS_CONTENT_CONTEXT_OPENLINKNEWTAB)]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   [[EarlGrey selectElementWithMatcher:
-                 ButtonWithAccessibilityLabelId(
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
                      IDS_IOS_CONTENT_CONTEXT_OPENLINKNEWINCOGNITOTAB)]
       assertWithMatcher:grey_sufficientlyVisible()];
 
-  [[EarlGrey selectElementWithMatcher:ContextMenuCopyButton()]
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+                     IDS_IOS_CONTENT_CONTEXT_COPY)]
       assertWithMatcher:grey_sufficientlyVisible()];
 }
 
@@ -423,10 +431,12 @@ id<GREYMatcher> SearchIconButton() {
 
 - (void)verifyContextBarInDefaultStateWithSelectEnabled:(BOOL)selectEnabled
                                        newFolderEnabled:(BOOL)newFolderEnabled {
-  // Verify the context bar is shown.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          kBookmarksHomeUIToolbarIdentifier)]
-      assertWithMatcher:grey_notNil()];
+  if (!iOS26_OR_ABOVE()) {
+    // Verify the context bar is shown.
+    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                            kBookmarksHomeUIToolbarIdentifier)]
+        assertWithMatcher:grey_notNil()];
+  }
 
   // Verify context bar shows enabled "New Folder" and enabled "Select".
   [[EarlGrey selectElementWithMatcher:ContextBarLeadingButtonWithLabel(
@@ -454,10 +464,12 @@ id<GREYMatcher> SearchIconButton() {
 }
 
 - (void)verifyContextBarInEditMode {
-  // Verify the context bar is shown.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          kBookmarksHomeUIToolbarIdentifier)]
-      assertWithMatcher:grey_notNil()];
+  if (!iOS26_OR_ABOVE()) {
+    // Verify the context bar is shown.
+    [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                            kBookmarksHomeUIToolbarIdentifier)]
+        assertWithMatcher:grey_notNil()];
+  }
 
   [[EarlGrey
       selectElementWithMatcher:ContextBarCenterButtonWithLabel(
@@ -526,8 +538,7 @@ id<GREYMatcher> SearchIconButton() {
 
   // The search bar should not be visible when the illustrated empty state is
   // shown.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityTrait(
-                                          UIAccessibilityTraitSearchField)]
+  [[EarlGrey selectElementWithMatcher:SearchBar()]
       assertWithMatcher:grey_nil()];
 }
 
@@ -592,9 +603,9 @@ id<GREYMatcher> SearchIconButton() {
                                    [BookmarkEarlGreyUI contextBarMoreString])]
       performAction:grey_tap()];
 
-  [[EarlGrey
-      selectElementWithMatcher:ButtonWithAccessibilityLabelId(menuButtonId)]
-      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+                     menuButtonId)] performAction:grey_tap()];
 
   // Verify that the edit page (editor) is present.
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(editorId)]
@@ -682,9 +693,10 @@ id<GREYMatcher> SearchIconButton() {
       selectElementWithMatcher:ContextBarCenterButtonWithLabel(
                                    [BookmarkEarlGreyUI contextBarMoreString])]
       performAction:grey_tap()];
-  [[EarlGrey
-      selectElementWithMatcher:ButtonWithAccessibilityLabelId(menuButtonId)]
-      performAction:grey_tap()];
+
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::ActionSheetItemWithAccessibilityLabelId(
+                     menuButtonId)] performAction:grey_tap()];
 
   // Verify that the editor is present.
   [[EarlGrey selectElementWithMatcher:grey_accessibilityID(editorId)]

@@ -14,24 +14,31 @@
 #include <vector>
 
 #include "base/memory/stack_allocated.h"
+#include "base/types/optional_ref.h"
 #include "base/values.h"
 #include "content/browser/devtools/devtools_device_request_prompt_info.h"
 #include "content/browser/devtools/devtools_throttle_handle.h"
+#include "content/browser/devtools/protocol/emulation_handler.h"
+#include "content/browser/devtools/render_frame_devtools_agent_host.h"
 #include "content/browser/interest_group/devtools_enums.h"
 #include "content/browser/preloading/prefetch/prefetch_status.h"
 #include "content/browser/preloading/prerender/prerender_final_status.h"
-#include "content/browser/renderer_host/back_forward_cache_impl.h"
-#include "content/browser/renderer_host/frame_tree.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/certificate_request_result_type.h"
+#include "content/public/browser/frame_tree_node_id.h"
 #include "content/public/browser/global_routing_id.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "net/cookies/cookie_setting_override.h"
 #include "net/filter/source_stream_type.h"
 #include "services/network/public/cpp/url_loader_completion_status.h"
+#include "services/network/public/mojom/cookie_manager.mojom-forward.h"
+#include "services/network/public/mojom/network_context.mojom-forward.h"
 #include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/network/public/mojom/url_response_head.mojom-forward.h"
+#include "third_party/blink/public/common/page/drag_operation.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom-forward.h"
 #include "third_party/blink/public/mojom/devtools/inspector_issue.mojom-forward.h"
+#include "third_party/blink/public/mojom/drag/drag.mojom-forward.h"
 #include "third_party/blink/public/mojom/navigation/navigation_params.mojom-forward.h"
 #include "third_party/blink/public/mojom/speculation_rules/speculation_rules.mojom-forward.h"
 
@@ -46,6 +53,8 @@ struct UserAgentMetadata;
 }
 
 namespace net {
+class HttpResponseHeaders;
+class SiteForCookies;
 class SSLInfo;
 class X509Certificate;
 struct WebTransportError;
@@ -53,6 +62,11 @@ struct WebTransportError;
 
 namespace network {
 class URLLoaderFactoryBuilder;
+
+namespace mojom {
+class NetworkContextParams;
+class URLResponseHeadDevToolsInfo;
+}  // namespace mojom
 }  // namespace network
 
 namespace download {
@@ -63,11 +77,15 @@ class DownloadUrlParameters;
 
 namespace content {
 class BackForwardCacheCanStoreDocumentResult;
+class BackForwardCacheCanStoreTreeResult;
 class BrowserContext;
 class DevToolsAgentHostImpl;
 class FencedFrame;
+class FrameTree;
 class FrameTreeNode;
 class NavigationRequest;
+class NavigationThrottleRegistry;
+class RenderFrameHost;
 class RenderFrameHostImpl;
 class RenderProcessHost;
 class SharedWorkerHost;
@@ -75,6 +93,7 @@ class ServiceWorkerContextWrapper;
 class SignedExchangeEnvelope;
 class StoragePartition;
 class WebContents;
+struct DropData;
 struct PrerenderMismatchedHeaders;
 
 struct SignedExchangeError;
@@ -85,6 +104,14 @@ class InspectorIssue;
 
 namespace devtools_instrumentation {
 
+// Struct which holds output parameters for functions such as
+// `ApplyEmulationOverrides`.
+// TODO(robertlin): Make `ApplyNetworkRequestOverrides` use this struct as well.
+struct DevtoolsOverriddenOutputParams {
+  bool user_agent_overridden = false;
+  bool accept_language_overridden = false;
+};
+
 // Applies network request overrides to the auction worklet's network
 // request. Will set `network_instrumentation_enabled` to true if there is a
 // network handler listening. Also handles whether cache is disabled or not.
@@ -92,11 +119,12 @@ void ApplyAuctionNetworkRequestOverrides(FrameTreeNode* frame_tree_node,
                                          network::ResourceRequest* request,
                                          bool* network_instrumentation_enabled);
 
-// If this function caused the User-Agent header to be overridden,
-// `devtools_user_agent_overridden` will be set to true; otherwise, it will be
-// set to false. If this function caused the Accept-Language header to be
-// overridden, `devtools_accept_language_overridden` will be set to true;
-// otherwise, it will be set to false.
+// If this function overrides the `User-Agent` header value, it sets
+// `devtools_user_agent_overridden` to true; otherwise, false. If
+// this function overrides the `Accept-Language` header, it sets
+// `devtools_accept_language_overridden` to true; otherwise, false. If
+// this function overrides the `Referrer` header, it sets `referrer_override` to
+// the new Referrer header value.
 void ApplyNetworkRequestOverrides(
     FrameTreeNode* frame_tree_node,
     blink::mojom::BeginNavigationParams* begin_params,
@@ -104,7 +132,16 @@ void ApplyNetworkRequestOverrides(
     std::optional<std::vector<net::SourceStreamType>>*
         devtools_accepted_stream_types,
     bool* devtools_user_agent_overridden,
-    bool* devtools_accept_language_overridden);
+    bool* devtools_accept_language_overridden,
+    GURL* referrer_override);
+
+// If this function overrides the `User-Agent` header, it sets the returned
+// `user_agent_overridden` to true; otherwise, false. If this function overrides
+// the `Accept-Language` header, it sets the returned
+// `accept_language_overridden` to true; otherwise, false.
+DevtoolsOverriddenOutputParams ApplyEmulationOverrides(
+    DevToolsAgentHostImpl* agent_host,
+    net::HttpRequestHeaders* headers);
 
 // Returns true if devtools want |*override_out| to be used.
 // (A true return and |*override_out| being nullopt means no user agent client
@@ -293,6 +330,7 @@ void DidActivatePrerender(const NavigationRequest& nav_request,
 void DidUpdatePrerenderStatus(
     FrameTreeNodeId initiator_frame_tree_node_id,
     const base::UnguessableToken& initiator_devtools_navigation_token,
+    blink::mojom::SpeculationAction action,
     const GURL& prerender_url,
     std::optional<blink::mojom::SpeculationTargetHint> target_hint,
     const base::UnguessableToken& preload_pipeline_id,
@@ -395,9 +433,9 @@ void ReportCookieIssue(
 //
 // DevTools must be attached, otherwise issues reported through
 // |ReportBrowserInitiatedIssue| are lost.
-void CONTENT_EXPORT
-ReportBrowserInitiatedIssue(RenderFrameHostImpl* frame,
-                            protocol::Audits::InspectorIssue* issue);
+void CONTENT_EXPORT ReportBrowserInitiatedIssue(
+    RenderFrameHostImpl* frame,
+    std::unique_ptr<protocol::Audits::InspectorIssue> issue);
 
 // Produces an inspector issue and sends it to the client with
 // |ReportBrowserInitiatedIssue|.
@@ -473,8 +511,10 @@ void DidShowFedCmDialog(RenderFrameHost& render_frame_host);
 void DidCloseFedCmDialog(RenderFrameHost& render_frame_host);
 
 // Fires Network Handler to capture FedCM request and response events.
-void WillSendFedCmNetworkRequest(FrameTreeNodeId frame_tree_node_id,
-                                 const network::ResourceRequest& request);
+void WillSendFedCmNetworkRequest(
+    FrameTreeNodeId frame_tree_node_id,
+    const network::ResourceRequest& request,
+    const std::optional<std::string>& request_body = std::nullopt);
 void DidReceiveFedCmNetworkResponse(
     FrameTreeNodeId frame_tree_node_id,
     const std::string& devtools_request_id,

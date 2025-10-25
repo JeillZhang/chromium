@@ -96,11 +96,16 @@ class ContextualPanelTabHelper
   void WasShown(web::WebState* web_state) override;
   void WasHidden(web::WebState* web_state) override;
 
+  // Invalidates the provided `configuration` from the cached list.
+  void InvalidateContextualPanelItemConfiguration(
+      ContextualPanelItemConfiguration* configuration);
+
  protected:
   // Protected to allow test overriding.
   ContextualPanelTabHelper(
       web::WebState* web_state,
-      std::map<ContextualPanelItemType, raw_ptr<ContextualPanelModel>> models);
+      std::map<ContextualPanelItemType,
+               raw_ptr<ContextualPanelModel, DanglingUntriaged>> models);
 
  private:
   friend class web::WebStateUserData<ContextualPanelTabHelper>;
@@ -131,6 +136,9 @@ class ContextualPanelTabHelper
   // Query all the individual models for their data.
   void QueryModels();
 
+  // Updates item configurations to match model responses.
+  void UpdateItemConfigurations();
+
   // Do any necessary work after all requests are completed or time out.
   void AllRequestsFinished();
 
@@ -158,7 +166,9 @@ class ContextualPanelTabHelper
   std::optional<EntrypointMetricsData> metrics_data_ = std::nullopt;
 
   // Map of the models this tab helper should query for possible panels.
-  std::map<ContextualPanelItemType, raw_ptr<ContextualPanelModel>> models_;
+  std::map<ContextualPanelItemType,
+           raw_ptr<ContextualPanelModel, DanglingUntriaged>>
+      models_;
 
   // The time the current request began.
   base::Time request_start_time_;

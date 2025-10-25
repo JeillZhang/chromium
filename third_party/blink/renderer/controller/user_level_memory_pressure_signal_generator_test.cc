@@ -71,7 +71,7 @@ class DummyMainThreadScheduler : public MainThreadScheduler {
   void RemoveRAILModeObserver(RAILModeObserver const* observer) override {}
 
   void ForEachMainThreadIsolate(
-      base::RepeatingCallback<void(v8::Isolate* isolate)> callback) override {}
+      base::FunctionRef<void(v8::Isolate* isolate)>) override {}
 
   v8::Isolate* Isolate() override { return nullptr; }
 
@@ -101,9 +101,12 @@ class DummyMainThreadScheduler : public MainThreadScheduler {
   void SetRendererBackgroundedForTesting(bool) override {}
 };
 
-class UserLevelMemoryPressureSignalGeneratorTest : public testing::Test {
+class UserLevelMemoryPressureSignalGeneratorTest
+    : public testing::Test,
+      public base::MemoryPressureListener {
  public:
   UserLevelMemoryPressureSignalGeneratorTest() = default;
+  ~UserLevelMemoryPressureSignalGeneratorTest() override = default;
 
   void SetUp() override {
     test_task_runner_ = base::MakeRefCounted<base::TestMockTimeTaskRunner>();
@@ -114,18 +117,14 @@ class UserLevelMemoryPressureSignalGeneratorTest : public testing::Test {
     // If SequencedTaskRunner::HasCurrentDefault() returns true, async
     // OnMemoryPressure() is available, but the test environment seems not
     // to initialize it.
-    memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
-        FROM_HERE,
-        WTF::BindRepeating(
-            [](base::MemoryPressureListener::MemoryPressureLevel) {}),
-        WTF::BindRepeating(
-            &UserLevelMemoryPressureSignalGeneratorTest::OnSyncMemoryPressure,
-            base::Unretained(this)));
+    memory_pressure_listener_registration_ =
+        std::make_unique<base::SyncMemoryPressureListenerRegistration>(
+            base::MemoryPressureListenerTag::kTest, this);
     base::MemoryPressureListener::SetNotificationsSuppressed(false);
     memory_pressure_count_ = 0;
   }
 
-  void TearDown() override { memory_pressure_listener_.reset(); }
+  void TearDown() override { memory_pressure_listener_registration_.reset(); }
 
   void AdvanceClock(base::TimeDelta delta) {
     DCHECK(!delta.is_negative());
@@ -143,11 +142,12 @@ class UserLevelMemoryPressureSignalGeneratorTest : public testing::Test {
  protected:
   scoped_refptr<base::TestMockTimeTaskRunner> test_task_runner_;
   DummyMainThreadScheduler dummy_scheduler_;
-  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
+  std::unique_ptr<base::SyncMemoryPressureListenerRegistration>
+      memory_pressure_listener_registration_;
   unsigned memory_pressure_count_ = 0;
 
  private:
-  void OnSyncMemoryPressure(base::MemoryPressureListener::MemoryPressureLevel) {
+  void OnMemoryPressure(base::MemoryPressureLevel) override {
     ++memory_pressure_count_;
   }
 };
@@ -480,9 +480,9 @@ TEST_F(UserLevelMemoryPressureSignalGeneratorTest,
 
   test_task_runner_->PostDelayedTask(
       FROM_HERE,
-      WTF::BindOnce(
+      BindOnce(
           &UserLevelMemoryPressureSignalGenerator::RequestMemoryPressureSignal,
-          WTF::UnretainedWrapper(generator.get())),
+          UnretainedWrapper(generator.get())),
       kInertInterval);
 
   EXPECT_CALL(*generator, Generate(_)).Times(2);

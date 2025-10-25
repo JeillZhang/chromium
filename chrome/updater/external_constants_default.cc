@@ -4,9 +4,12 @@
 
 #include "chrome/updater/external_constants_default.h"
 
+#include <cstdint>
 #include <optional>
+#include <string_view>
 #include <vector>
 
+#include "base/base64.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -20,6 +23,13 @@
 
 namespace updater {
 namespace {
+
+constexpr std::optional<std::vector<uint8_t>> GetCrxPublicKeyHash() {
+  if constexpr (std::string_view(CRX_PKHASH).empty()) {
+    return std::nullopt;
+  }
+  return base::Base64Decode(CRX_PKHASH);
+}
 
 class DefaultExternalConstants : public ExternalConstants {
  public:
@@ -50,6 +60,10 @@ class DefaultExternalConstants : public ExternalConstants {
     return crx_file::VerifierFormat::CRX3_WITH_PUBLISHER_PROOF;
   }
 
+  std::optional<std::vector<uint8_t>> CrxPublicKeyHash() const override {
+    return GetCrxPublicKeyHash();
+  }
+
   base::Value::Dict DictPolicies() const override {
     return base::Value::Dict();
   }
@@ -70,12 +84,16 @@ class DefaultExternalConstants : public ExternalConstants {
     return kMinimumEventLoggingCooldown;
   }
 
-  std::optional<std::string> GetEventLoggingPermissionProvider()
-      const override {
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && BUILDFLAG(IS_MAC)
-    return BROWSER_NAME_STRING;
-#elif BUILDFLAG(GOOGLE_CHROME_BRANDING) && BUILDFLAG(IS_WIN)
-    return BROWSER_APP_ID;
+  std::optional<EventLoggingPermissionProvider>
+  GetEventLoggingPermissionProvider() const override {
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING) && \
+    (BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC))
+    return EventLoggingPermissionProvider{
+        .app_id = BROWSER_APPID,
+#if BUILDFLAG(IS_MAC)
+        .directory_name = BROWSER_NAME_STRING,
+#endif
+    };
 #else
     return std::nullopt;
 #endif

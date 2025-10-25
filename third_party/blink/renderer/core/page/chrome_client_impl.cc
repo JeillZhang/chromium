@@ -344,6 +344,11 @@ bool ChromeClientImpl::AcceptsLoadDrops() const {
   return web_view_->GetRendererPreferences().can_accept_load_drops;
 }
 
+std::optional<bool> ChromeClientImpl::GetWebRTCPostQuantumKeyAgreement() const {
+  CHECK(web_view_);
+  return web_view_->GetRendererPreferences().webrtc_post_quantum_key_agreement;
+}
+
 Page* ChromeClientImpl::CreateWindowDelegate(
     LocalFrame* frame,
     const FrameLoadRequest& r,
@@ -642,6 +647,11 @@ const display::ScreenInfo& ChromeClientImpl::GetScreenInfo(
 const display::ScreenInfos& ChromeClientImpl::GetScreenInfos(
     LocalFrame& frame) const {
   return frame.GetWidgetForLocalRoot()->GetScreenInfos();
+}
+
+const display::ScreenInfo& ChromeClientImpl::GetOriginalScreenInfo(
+    LocalFrame& frame) const {
+  return frame.GetWidgetForLocalRoot()->GetOriginalScreenInfo();
 }
 
 float ChromeClientImpl::InputEventsScaleForEmulation() const {
@@ -1083,22 +1093,12 @@ void ChromeClientImpl::RequestDecode(LocalFrame* frame,
   widget->RequestDecode(image, std::move(callback), speculative);
 }
 
-bool ChromeClientImpl::SpeculativeDecodeRequestInFlight(
-    LocalFrame* frame) const {
-  return frame->GetWidgetForLocalRoot()->SpeculativeDecodeRequestInFlight();
-}
-
 void ChromeClientImpl::NotifyPresentationTime(LocalFrame& frame,
                                               ReportTimeCallback callback) {
   FrameWidget* widget = frame.GetWidgetForLocalRoot();
   if (!widget)
     return;
   widget->NotifyPresentationTime(std::move(callback));
-}
-
-void ChromeClientImpl::RequestBeginMainFrameNotExpected(LocalFrame& frame,
-                                                        bool request) {
-  frame.GetWidgetForLocalRoot()->RequestBeginMainFrameNotExpected(request);
 }
 
 int ChromeClientImpl::GetLayerTreeId(LocalFrame& frame) {
@@ -1207,6 +1207,16 @@ void ChromeClientImpl::SetShouldThrottleFrameRate(bool flag,
   }
 
   widget->SetShouldThrottleFrameRate(flag);
+}
+
+void ChromeClientImpl::RequestMainFrameOnCompositorAnimation(
+    LocalFrame& frame,
+    cc::PropertyChangeForcesCommitCriteria
+        property_change_forces_commit_criteria) {
+  WebFrameWidgetImpl* widget =
+      WebLocalFrameImpl::FromFrame(frame)->LocalRootFrameWidget();
+  widget->RequestMainFrameOnCompositorAnimation(
+      property_change_forces_commit_criteria);
 }
 
 void ChromeClientImpl::SetHasScrollEventHandlers(LocalFrame* frame,
@@ -1419,6 +1429,10 @@ void ChromeClientImpl::DidUpdateBrowserControls() const {
   web_view_->DidUpdateBrowserControls();
 }
 
+void ChromeClientImpl::DidUpdateLoadProgress(float progress) {
+  web_view_->DidUpdateLoadProgress(progress);
+}
+
 void ChromeClientImpl::DidUpdateMaxSafeAreaInsets(
     const gfx::InsetsF& max_safe_area_insets) const {
   DCHECK(web_view_);
@@ -1547,8 +1561,8 @@ gfx::Rect ChromeClientImpl::AdjustWindowRectForDisplay(
   return window;
 }
 
-void ChromeClientImpl::OnFirstContentfulPaint() {
-  web_view_->OnFirstContentfulPaint();
+void ChromeClientImpl::OnFirstContentfulPaint(const base::TimeDelta& duration) {
+  web_view_->OnFirstContentfulPaint(duration);
 }
 
 }  // namespace blink

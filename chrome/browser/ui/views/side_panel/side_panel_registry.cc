@@ -46,20 +46,15 @@ SidePanelEntry* SidePanelRegistry::GetEntryForKey(
   return it == entries_.end() ? nullptr : it->get();
 }
 
-void SidePanelRegistry::ResetActiveEntry() {
-  if (active_entry_.has_value()) {
-    last_active_entry_ = active_entry_;
-    active_entry_.reset();
-  }
+void SidePanelRegistry::ResetActiveEntryFor(SidePanelEntry::PanelType type) {
+  active_entries_[type].reset();
 }
 
-void SidePanelRegistry::ResetLastActiveEntry() {
-  last_active_entry_.reset();
-}
-
-void SidePanelRegistry::ClearCachedEntryViews() {
+void SidePanelRegistry::ClearCachedEntryViews(SidePanelEntry::PanelType type) {
   for (auto const& entry : entries_) {
-    if (!active_entry_.has_value() || entry.get() != active_entry_.value()) {
+    if (entry->type() == type &&
+        (!active_entries_[type].has_value() ||
+         entry.get() != active_entries_[type].value())) {
       entry.get()->ClearCachedView();
     }
   }
@@ -94,34 +89,19 @@ bool SidePanelRegistry::Deregister(const SidePanelEntry::Key& key) {
 
   entry->RemoveObserver(this);
   entry->set_scope(nullptr);
-  if (active_entry_.has_value() &&
-      entry->key() == active_entry_.value()->key()) {
-    active_entry_.reset();
-  }
-  if (last_active_entry_.has_value() &&
-      entry->key() == last_active_entry_.value()->key()) {
-    last_active_entry_.reset();
+  if (active_entries_[entry->type()].has_value() &&
+      entry->key() == active_entries_[entry->type()].value()->key()) {
+    active_entries_[entry->type()].reset();
   }
 
   // TODO(https://crbug.com/360163254): This is nullptr in
   // BrowserWithTestWindowTest. When the test suite goes away the nullptr check
   // can be removed.
   if (auto* coordinator = GetCoordinator()) {
-    auto unique_key = coordinator->current_key();
-    // If the entry is showing with the same key.
-    if (unique_key && unique_key->key == key) {
-      tabs::TabInterface* const* tab_ptr =
-          std::get_if<tabs::TabInterface*>(&owner_);
-      tabs::TabInterface* tab = tab_ptr ? *tab_ptr : nullptr;
-      // And it's for the active tab/window registry.
-      const bool is_for_window_coordinator = !unique_key->tab_handle && !tab;
-      const bool is_for_active_tab =
-          unique_key->tab_handle && tab &&
-          tab->GetHandle() == *unique_key->tab_handle;
-      // Synchronously close.
-      if (is_for_window_coordinator || is_for_active_tab) {
-        coordinator->Close(/*suppress_animations=*/true);
-      }
+    bool for_tab = get_scope_type() == SidePanelEntryScope::ScopeType::kTab;
+    // If the entry with the same key and scope is showing, synchronously close.
+    if (coordinator->IsSidePanelEntryShowing(key, for_tab)) {
+      coordinator->Close(/*suppress_animations=*/true);
     }
   }
 
@@ -134,11 +114,16 @@ bool SidePanelRegistry::Deregister(const SidePanelEntry::Key& key) {
 }
 
 void SidePanelRegistry::SetActiveEntry(SidePanelEntry* entry) {
-  active_entry_ = entry;
+  active_entries_[entry->type()] = entry;
+}
+
+std::optional<SidePanelEntry*> SidePanelRegistry::GetActiveEntryFor(
+    SidePanelEntry::PanelType type) {
+  return active_entries_[type];
 }
 
 void SidePanelRegistry::OnEntryShown(SidePanelEntry* entry) {
-  active_entry_ = entry;
+  active_entries_[entry->type()] = entry;
 }
 
 const tabs::TabInterface& SidePanelRegistry::GetTabInterface() const {

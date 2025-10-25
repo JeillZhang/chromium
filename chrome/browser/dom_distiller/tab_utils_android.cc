@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/dom_distiller/tab_utils.h"
+
 #include <string>
 
+#include "base/android/callback_android.h"
 #include "base/android/jni_string.h"
-#include "chrome/browser/dom_distiller/tab_utils.h"
+#include "base/functional/bind.h"
+#include "base/functional/callback.h"
+#include "base/functional/function_ref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/dom_distiller/core/experiments.h"
 #include "components/navigation_interception/intercept_navigation_delegate.h"
@@ -23,12 +28,22 @@ using base::android::ScopedJavaLocalRef;
 
 namespace android {
 
-void JNI_DomDistillerTabUtils_DistillCurrentPageAndView(
+void JNI_DomDistillerTabUtils_DistillCurrentPageAndViewIfSuccessful(
     JNIEnv* env,
-    const JavaParamRef<jobject>& j_web_contents) {
+    const JavaParamRef<jobject>& j_web_contents,
+    const JavaParamRef<jobject>& j_callback) {
   content::WebContents* web_contents =
       content::WebContents::FromJavaWebContents(j_web_contents);
-  ::DistillCurrentPageAndView(web_contents);
+  ::DistillCurrentPageAndViewIfSuccessful(
+      web_contents,
+      base::BindOnce(
+          [](const jni_zero::ScopedJavaGlobalRef<jobject>& callback,
+             bool success) {
+            if (callback) {
+              base::android::RunBooleanCallbackAndroid(callback, success);
+            }
+          },
+          jni_zero::ScopedJavaGlobalRef<jobject>(j_callback)));
 }
 
 void JNI_DomDistillerTabUtils_DistillCurrentPage(
@@ -57,7 +72,7 @@ std::u16string JNI_DomDistillerTabUtils_GetFormattedUrlFromOriginalDistillerUrl(
 
   if (url.spec().length() > content::kMaxURLDisplayChars)
     url = url.IsStandard() ? url.DeprecatedGetOriginAsURL()
-                           : GURL(url.scheme() + ":");
+                           : GURL(url.GetScheme() + ":");
 
   // Note that we can't unescape spaces here, because if the user copies this
   // and pastes it into another program, that program may think the URL ends at
@@ -82,6 +97,28 @@ void JNI_DomDistillerTabUtils_SetInterceptNavigationDelegate(
       web_contents,
       std::make_unique<navigation_interception::InterceptNavigationDelegate>(
           env, delegate));
+}
+
+void JNI_DomDistillerTabUtils_RunReadabilityHeuristicsOnWebContents(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& j_web_contents,
+    const JavaParamRef<jobject>& j_callback) {
+  base::OnceCallback<void(bool)> callback =
+      base::BindOnce(&base::android::RunBooleanCallbackAndroid,
+                     base::android::ScopedJavaGlobalRef<jobject>(j_callback));
+  content::WebContents* web_contents =
+      content::WebContents::FromJavaWebContents(j_web_contents);
+  ::RunReadabilityHeuristicsOnWebContents(web_contents, std::move(callback));
+}
+
+void JNI_DomDistillerTabUtils_OverrideDefaultZoomForReaderModePage(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& j_source_web_contents,
+    const JavaParamRef<jstring>& j_distiller_url) {
+  content::WebContents* source_web_contents =
+      content::WebContents::FromJavaWebContents(j_source_web_contents);
+  GURL url(base::android::ConvertJavaStringToUTF8(env, j_distiller_url));
+  ::OverrideDefaultZoomForReaderModePage(source_web_contents, url);
 }
 
 }  // namespace android

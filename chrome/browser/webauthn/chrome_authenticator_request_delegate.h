@@ -21,7 +21,8 @@
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/webauthn/authenticator_request_dialog_model.h"
-#include "chrome/browser/webauthn/password_credential_controller.h"
+#include "chrome/browser/webauthn/password_credential_fetcher.h"
+#include "chrome/browser/webauthn/password_credential_ui_controller.h"
 #include "components/trusted_vault/trusted_vault_connection.h"
 #include "content/public/browser/authenticator_request_client_delegate.h"
 #include "content/public/browser/global_routing_id.h"
@@ -72,9 +73,6 @@ class ChromeAuthenticatorRequestDelegate
     virtual void Created(ChromeAuthenticatorRequestDelegate* delegate) {}
 
     virtual void OnDestroy(ChromeAuthenticatorRequestDelegate* delegate) {}
-
-    virtual std::vector<std::unique_ptr<device::cablev2::Pairing>>
-    GetCablePairingsFromSyncedDevices();
 
     virtual void OnTransportAvailabilityEnumerated(
         ChromeAuthenticatorRequestDelegate* delegate,
@@ -181,6 +179,8 @@ class ChromeAuthenticatorRequestDelegate
           callback) override;
 
   // device::FidoRequestHandlerBase::Observer:
+  void StartObserving(device::FidoRequestHandlerBase* request_handler) override;
+  void StopObserving(device::FidoRequestHandlerBase* request_handler) override;
   void OnTransportAvailabilityEnumerated(
       device::FidoRequestHandlerBase::TransportAvailabilityInfo data) override;
   bool EmbedderControlsAuthenticatorDispatch(
@@ -203,11 +203,11 @@ class ChromeAuthenticatorRequestDelegate
   void OnStartOver() override;
   void OnModelDestroyed(AuthenticatorRequestDialogModel* model) override;
   void OnCancelRequest() override;
-  void OnManageDevicesClicked() override;
 
-
-  void SetPasswordControllerForTesting(
-      std::unique_ptr<PasswordCredentialController> controller);
+  void SetPasswordUIControllerForTesting(
+      std::unique_ptr<PasswordCredentialUIController> controller);
+  void SetPasswordFetcherForTesting(
+      std::unique_ptr<PasswordCredentialFetcher> fetcher);
 
   // GetRenderFrameHost returns a pointer to the RenderFrameHost that was given
   // to the constructor.
@@ -221,8 +221,6 @@ class ChromeAuthenticatorRequestDelegate
   FRIEND_TEST_ALL_PREFIXES(ChromeAuthenticatorRequestDelegatePrivateTest,
                            ShouldCreateInICloudKeychain);
 
-  class EnclaveManagerObserver;
-
   content::BrowserContext* GetBrowserContext() const;
   Profile* profile() const;
 
@@ -233,7 +231,7 @@ class ChromeAuthenticatorRequestDelegate
   // `immediate_not_found_callback_` to notify the renderer.
   bool MaybeHandleImmediateMediation(
       const device::FidoRequestHandlerBase::TransportAvailabilityInfo& data,
-      const PasswordCredentialController::PasswordCredentials& passwords);
+      const PasswordCredentialFetcher::PasswordCredentials& passwords);
 
   // Barriers showing the UI while waiting for
   // - password credentials,
@@ -243,7 +241,10 @@ class ChromeAuthenticatorRequestDelegate
 
   void MaybeShowUI(
       device::FidoRequestHandlerBase::TransportAvailabilityInfo tai,
-      PasswordCredentialController::PasswordCredentials passwords);
+      PasswordCredentialFetcher::PasswordCredentials passwords);
+  void FinishMaybeShowUI(
+      PasswordCredentialFetcher::PasswordCredentials passwords,
+      device::FidoRequestHandlerBase::TransportAvailabilityInfo tai);
 
   std::optional<device::FidoTransportProtocol> GetLastTransportUsed() const;
 
@@ -254,13 +255,17 @@ class ChromeAuthenticatorRequestDelegate
   // information that will be broadcast by the device.
   bool ShouldPermitCableExtension(const url::Origin& origin);
 
-  void OnInvalidatedCablePairing(
-      std::unique_ptr<device::cablev2::Pairing> failed_pairing);
   void OnCableEvent(device::cablev2::Event event);
 
-  // Adds GPM passkeys matching |rp_id| to |passkeys|.
+  // Adds GPM passkeys matching |rp_id| to |tai|.
   void GetPhoneContactableGpmPasskeysForRpId(
-      std::vector<device::DiscoverableCredentialMetadata>* passkeys);
+      device::FidoRequestHandlerBase::TransportAvailabilityInfo tai,
+      base::OnceCallback<void(
+          device::FidoRequestHandlerBase::TransportAvailabilityInfo)> callback);
+  void DoGetPhoneContactableGpmPasskeysForRpId(
+      device::FidoRequestHandlerBase::TransportAvailabilityInfo tai,
+      base::OnceCallback<void(
+          device::FidoRequestHandlerBase::TransportAvailabilityInfo)> callback);
 
   // Update `tai` to remove credentials that aren't applicable to this request.
   void FilterRecognizedCredentials(
@@ -306,7 +311,7 @@ class ChromeAuthenticatorRequestDelegate
 #endif
 
   void OnPasswordCredentialsReceived(
-      PasswordCredentialController::PasswordCredentials credentials);
+      PasswordCredentialFetcher::PasswordCredentials credentials);
 
   void UpdateModelForTransportAvailability(
       const device::FidoRequestHandlerBase::TransportAvailabilityInfo& tai);
@@ -322,6 +327,10 @@ class ChromeAuthenticatorRequestDelegate
   PasswordSelectedCallback password_selected_callback_;
   device::FidoRequestHandlerBase::RequestCallback request_callback_;
   base::OnceClosure cancel_ui_timeout_callback_;
+
+  base::ScopedObservation<device::FidoRequestHandlerBase,
+                          device::FidoRequestHandlerBase::Observer>
+      request_handler_observation_{this};
 
   // The number of credential types that have been requested to be displayed.
   int credential_types_ =
@@ -343,7 +352,8 @@ class ChromeAuthenticatorRequestDelegate
 
   std::unique_ptr<GPMEnclaveController> enclave_controller_;
 
-  std::unique_ptr<PasswordCredentialController> password_controller_;
+  std::unique_ptr<PasswordCredentialUIController> password_ui_controller_;
+  std::unique_ptr<PasswordCredentialFetcher> password_fetcher_;
 
   // Stores the TransportAvailabilityInfo while we're waiting for the enclave
   // state to load from the disk.
@@ -352,7 +362,7 @@ class ChromeAuthenticatorRequestDelegate
 
   // Stores the password credentials while waiting for enclave state, transport
   // availability info to be ready.
-  std::unique_ptr<PasswordCredentialController::PasswordCredentials>
+  std::unique_ptr<PasswordCredentialFetcher::PasswordCredentials>
       pending_password_credentials_;
 
   base::WeakPtrFactory<ChromeAuthenticatorRequestDelegate> weak_ptr_factory_{

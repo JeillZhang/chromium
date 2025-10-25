@@ -14,8 +14,8 @@
 #include "components/payments/content/browser_binding/browser_bound_key_store.h"
 #include "components/payments/content/browser_binding/fake_browser_bound_key.h"
 #include "components/payments/content/browser_binding/fake_browser_bound_key_store.h"
-#include "components/payments/content/mock_payment_manifest_web_data_service.h"
-#include "components/payments/content/payment_manifest_web_data_service.h"
+#include "components/payments/content/mock_web_payments_web_data_service.h"
+#include "components/payments/content/web_payments_web_data_service.h"
 #include "components/payments/core/features.h"
 #include "components/webauthn/core/browser/internal_authenticator.h"
 #include "components/webauthn/core/browser/mock_internal_authenticator.h"
@@ -63,13 +63,14 @@ static const int32_t kAnotherAlgorithmIdentifier = 2;
 // service under test.
 class SecurePaymentConfirmationServiceTestBase {
  public:
-  SecurePaymentConfirmationServiceTestBase() {
-    web_contents_ = web_contents_factory_.CreateWebContents(&context_);
-  }
+  SecurePaymentConfirmationServiceTestBase() = default;
 
  protected:
   void InitializeSecurePaymentConfirmationService(
-      bool with_authenticator = true) {
+      bool with_authenticator = true,
+      bool is_off_the_record = false) {
+    context_.set_is_off_the_record(is_off_the_record);
+    web_contents_ = web_contents_factory_.CreateWebContents(&context_);
     CHECK(!mock_internal_authenticator_);
     CHECK(!spc_service_);
 
@@ -81,16 +82,17 @@ class SecurePaymentConfirmationServiceTestBase {
         new SecurePaymentConfirmationService(
             *web_contents_->GetPrimaryMainFrame(),
             /*receiver=*/std::move(receiver), mock_web_data_service_,
-            with_authenticator ? CreateMockInternalAuthenticator() : nullptr));
+            with_authenticator ? CreateMockInternalAuthenticator() : nullptr,
+            /*browser_bound_key_store_keychain_access_group=*/""));
   }
 
   content::BrowserTaskEnvironment task_environment_;
   content::TestBrowserContext context_;
   content::TestWebContentsFactory web_contents_factory_;
   raw_ptr<content::WebContents> web_contents_;
-  scoped_refptr<payments::MockPaymentManifestWebDataService>
+  scoped_refptr<payments::MockWebPaymentsWebDataService>
       mock_web_data_service_ =
-          base::MakeRefCounted<MockPaymentManifestWebDataService>();
+          base::MakeRefCounted<MockWebPaymentsWebDataService>();
   // The `spc_service_` must be deleted after `mock_internal_authenticator_`, as
   // it owns the underlying std::unique_ptr.
   std::unique_ptr<SecurePaymentConfirmationService,
@@ -261,8 +263,9 @@ class SecurePaymentConfirmationServiceCredentialTest
         blink::features::kSecurePaymentConfirmationBrowserBoundKeys);
   }
 
-  void SetUp() override {
-    InitializeSecurePaymentConfirmationService();
+  void SetUpTest(bool is_off_the_record) {
+    InitializeSecurePaymentConfirmationService(/*with_authenticator=*/true,
+                                               is_off_the_record);
     auto passkey_browser_binder = std::make_unique<PasskeyBrowserBinder>(
         fake_browser_bound_key_store_, mock_web_data_service_);
     passkey_browser_binder->SetRandomBytesAsVectorCallbackForTesting(
@@ -369,6 +372,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 TEST_P(SecurePaymentConfirmationServiceCredentialTest,
        MakePaymentCredentialAddsBrowserBoundKey) {
+  SetUpTest(/*is_off_the_record=*/false);
   fake_browser_bound_key_store_->PutFakeKey(GetParam().fake_key);
   ::blink::mojom::PublicKeyCredentialCreationOptionsPtr creation_options =
       GetPublicKeyCredentialCreationOptions();
@@ -381,7 +385,8 @@ TEST_P(SecurePaymentConfirmationServiceCredentialTest,
 
   EXPECT_CALL(*mock_web_data_service_,
               SetBrowserBoundKey(fake_credential_id_, fake_relying_party_id_,
-                                 GetParam().fake_key.GetIdentifier(), _));
+                                 GetParam().fake_key.GetIdentifier(),
+                                 /*last_used=*/Eq(std::nullopt), _));
   ::blink::mojom::PaymentOptionsPtr actual_payment_options;
   EXPECT_CALL(*mock_internal_authenticator_, SetPaymentOptions(_))
       .Times(1)
@@ -415,7 +420,7 @@ TEST_P(SecurePaymentConfirmationServiceCredentialTest,
 
 TEST_P(SecurePaymentConfirmationServiceCredentialTest,
        MakePaymentCredentialDoesNotAddBrowserBoundKeyWhenOffTheRecord) {
-  context_.set_is_off_the_record(true);
+  SetUpTest(/*is_off_the_record=*/true);
   fake_browser_bound_key_store_->PutFakeKey(GetParam().fake_key);
   ::blink::mojom::PublicKeyCredentialCreationOptionsPtr creation_options =
       GetPublicKeyCredentialCreationOptions();

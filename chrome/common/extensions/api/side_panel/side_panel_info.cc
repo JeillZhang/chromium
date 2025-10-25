@@ -32,6 +32,13 @@ std::unique_ptr<SidePanelInfo> ParseFromDictionary(const Extension& extension,
           extension.manifest()->available_values(), manifest_keys, *error)) {
     return nullptr;
   }
+
+  if (!extension.GetResourceURL(manifest_keys.side_panel.default_path)
+           .is_valid()) {
+    *error = errors::kSidePanelManifestDefaultPathInvalid;
+    return nullptr;
+  }
+
   auto info = std::make_unique<SidePanelInfo>();
   info->default_path = std::move(manifest_keys.side_panel.default_path);
   return info;
@@ -80,16 +87,12 @@ bool SidePanelManifestHandler::Validate(
     std::string* error,
     std::vector<InstallWarning>* warnings) const {
   std::string path = SidePanelInfo::GetDefaultPath(&extension);
-  GURL side_panel_url = extension.ResolveExtensionURL(path);
-  if (!side_panel_url.is_valid()) {
-    *error = errors::kSidePanelManifestDefaultPathError;
-    return false;
-  }
-
+  GURL side_panel_url = extension.GetResourceURL(path);
+  CHECK(side_panel_url.is_valid());  // Validated in ParseFromDictionary.
   base::FilePath path_file =
       file_util::ExtensionURLToAbsoluteFilePath(extension, side_panel_url);
   if (path_file.empty() || !base::PathExists(path_file)) {
-    *error = errors::kSidePanelManifestDefaultPathError;
+    *error = errors::kSidePanelManifestDefaultPathDoesNotExist;
     return false;
   }
 

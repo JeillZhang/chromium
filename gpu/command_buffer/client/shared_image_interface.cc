@@ -7,12 +7,12 @@
 #include <GLES2/gl2.h>
 
 #include "base/functional/callback_helpers.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/process/memory.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
-#include "ui/gfx/buffer_format_util.h"
 
 #if BUILDFLAG(IS_WIN)
 #include "ui/gfx/win/d3d_shared_fence.h"
@@ -36,10 +36,9 @@ void SharedImageInterface::CreateSharedMemoryRegionFromSIInfo(
       << si_info.meta.format.ToString();
 #endif
 
-  gfx::BufferFormat buffer_format =
-      viz::SinglePlaneSharedImageFormatToBufferFormat(si_info.meta.format);
-  const size_t buffer_size =
-      gfx::BufferSizeForBufferFormat(si_info.meta.size, buffer_format);
+  const size_t buffer_size = viz::SharedMemorySizeForSharedImageFormat(
+                                 si_info.meta.format, si_info.meta.size)
+                                 .value();
   auto shared_memory_region =
       base::UnsafeSharedMemoryRegion::Create(buffer_size);
 
@@ -59,7 +58,31 @@ void SharedImageInterface::CreateSharedMemoryRegionFromSIInfo(
   handle = gfx::GpuMemoryBufferHandle(std::move(shared_memory_region));
   handle.offset = 0;
   handle.stride = static_cast<int32_t>(
-      gfx::RowSizeForBufferFormat(si_info.meta.size.width(), buffer_format, 0));
+      viz::SharedMemoryRowSizeForSharedImageFormat(
+          si_info.meta.format, /*plane=*/0, si_info.meta.size.width())
+          .value());
+}
+
+gpu::SharedImageUsageSet SharedImageInterface::GetCpuSIUsage(
+    gfx::BufferUsage buffer_usage) {
+  switch (buffer_usage) {
+    case gfx::BufferUsage::GPU_READ:
+    case gfx::BufferUsage::SCANOUT:
+    case gfx::BufferUsage::SCANOUT_FRONT_RENDERING:
+    case gfx::BufferUsage::SCANOUT_VDA_WRITE:
+    case gfx::BufferUsage::PROTECTED_SCANOUT:
+    case gfx::BufferUsage::PROTECTED_SCANOUT_VDA_WRITE:
+      return gpu::SharedImageUsageSet();
+    case gfx::BufferUsage::SCANOUT_VEA_CPU_READ:
+      return gpu::SHARED_IMAGE_USAGE_CPU_READ;
+    case gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE:
+    case gfx::BufferUsage::SCANOUT_CPU_READ_WRITE:
+    case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE:
+    case gfx::BufferUsage::CAMERA_AND_CPU_READ_WRITE:
+    case gfx::BufferUsage::VEA_READ_CAMERA_AND_CPU_READ_WRITE:
+      return gpu::SHARED_IMAGE_USAGE_CPU_READ |
+             gpu::SHARED_IMAGE_USAGE_CPU_WRITE_ONLY;
+  }
 }
 
 SharedImageInterface::SwapChainSharedImages::SwapChainSharedImages(

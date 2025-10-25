@@ -10,7 +10,6 @@ import android.text.TextUtils;
 import org.chromium.base.Token;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
-import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiMetricsHelper.TabGroupCreationDialogResultAction;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiMetricsHelper.TabGroupCreationFinalSelections;
@@ -37,16 +36,15 @@ public class TabGroupCreationDialogManager {
     }
 
     private class TabGroupCreationDialogController implements Controller {
-        private final int mRootId;
+        private final Token mTabGroupId;
         private final TabGroupModelFilter mTabGroupModelFilter;
 
         private TabGroupCreationDialogController(
-                Token tabGroupId, TabGroupModelFilter tabGroupModelFilter) {
+                @Nullable Token tabGroupId, TabGroupModelFilter tabGroupModelFilter) {
             assert tabGroupId != null;
+            assert tabGroupModelFilter.tabGroupExists(tabGroupId);
 
-            mRootId = tabGroupModelFilter.getRootIdFromTabGroupId(tabGroupId);
-            assert mRootId != Tab.INVALID_TAB_ID;
-
+            mTabGroupId = tabGroupId;
             mTabGroupModelFilter = tabGroupModelFilter;
         }
 
@@ -66,20 +64,24 @@ public class TabGroupCreationDialogManager {
 
         @Override
         public void onDismiss(PropertyModel model, @DialogDismissalCause int dismissalCause) {
+            boolean stillExists = mTabGroupModelFilter.tabGroupExists(mTabGroupId);
+
             final @TabGroupColorId int defaultColorId =
                     mTabGroupVisualDataDialogManager.getDefaultColorId();
             final @TabGroupColorId int currentColorId =
                     mTabGroupVisualDataDialogManager.getCurrentColorId();
             boolean didChangeColor = currentColorId != defaultColorId;
-            mTabGroupModelFilter.setTabGroupColor(mRootId, currentColorId);
+            if (stillExists) {
+                mTabGroupModelFilter.setTabGroupColor(mTabGroupId, currentColorId);
+            }
 
             // Only save the group title input text if it has been changed from the suggested
             // initial title and if it is not empty.
             String initialGroupTitle = mTabGroupVisualDataDialogManager.getInitialGroupTitle();
             String inputGroupTitle = mTabGroupVisualDataDialogManager.getCurrentGroupTitle();
             boolean didChangeTitle = !Objects.equals(initialGroupTitle, inputGroupTitle);
-            if (didChangeTitle && !TextUtils.isEmpty(inputGroupTitle)) {
-                mTabGroupModelFilter.setTabGroupTitle(mRootId, inputGroupTitle);
+            if (didChangeTitle && !TextUtils.isEmpty(inputGroupTitle) && stillExists) {
+                mTabGroupModelFilter.setTabGroupTitle(mTabGroupId, inputGroupTitle);
             }
 
             recordDialogSelectionHistogram(didChangeColor, didChangeTitle);
@@ -95,7 +97,7 @@ public class TabGroupCreationDialogManager {
                         TabGroupCreationDialogResultAction.DISMISSED_OTHER);
             }
 
-            mTabGroupVisualDataDialogManager.hideDialog();
+            mTabGroupVisualDataDialogManager.onHideDialog();
             if (mOnTabGroupCreation != null) {
                 mOnTabGroupCreation.run();
             }
@@ -128,7 +130,7 @@ public class TabGroupCreationDialogManager {
      * @param tabGroupId The destination tab group id of the new tab group that has been created.
      * @param filter The current TabGroupModelFilter that this group is created on.
      */
-    public void showDialog(Token tabGroupId, TabGroupModelFilter filter) {
+    public void showDialog(@Nullable Token tabGroupId, TabGroupModelFilter filter) {
         mTabGroupCreationDialogController =
                 new TabGroupCreationDialogController(tabGroupId, filter);
         mTabGroupVisualDataDialogManager.showDialog(

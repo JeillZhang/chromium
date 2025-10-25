@@ -4,26 +4,27 @@
 
 package org.chromium.chrome.browser.signin;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+import static org.chromium.build.NullUtil.assumeNonNull;
+
 import android.accounts.AccountManager;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.View;
 import android.view.Window;
-
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import org.chromium.base.IntentUtils;
 import org.chromium.base.Promise;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.OneshotSupplierImpl;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.device_lock.DeviceLockActivityLauncherImpl;
 import org.chromium.chrome.browser.firstrun.FirstRunActivityBase;
@@ -64,6 +65,7 @@ import org.chromium.ui.modaldialog.ModalDialogManager.ModalDialogType;
  * by the history sync opt-in. This is why the dependency on {@link
  * FullscreenSigninAndHistorySyncActivityBase} is needed.
  */
+@NullMarked
 public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySyncActivityBase
         implements BottomSheetSigninAndHistorySyncCoordinator.Delegate,
                 FullscreenSigninAndHistorySyncCoordinator.Delegate {
@@ -76,10 +78,10 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
 
     private final OneshotSupplierImpl<Profile> mProfileSupplier = new OneshotSupplierImpl<>();
     // TODO(crbug.com/349787455): Move this to FirstRunActivityBase.
-    private final Promise<Void> mNativeInitializationPromise = new Promise<>();
+    private final Promise<@Nullable Void> mNativeInitializationPromise = new Promise<>();
 
     private boolean mIsFullscreenPromo;
-    private SigninAndHistorySyncCoordinator mCoordinator;
+    private @Nullable SigninAndHistorySyncCoordinator mCoordinator;
 
     // Set to true when the add account activity is started, and is not persisted in saved instance
     // state. Therefore when onActivityResultWithNavitve is called with the add account activity's
@@ -105,12 +107,16 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
                 intent.getIntExtra(ARGUMENT_ACCESS_POINT, SigninAccessPoint.MAX_VALUE);
         assert signinAccessPoint <= SigninAccessPoint.MAX_VALUE : "Cannot find SigninAccessPoint!";
 
+        ActivityWindowAndroid windowAndroid = getWindowAndroid();
+        assert windowAndroid != null;
+        Bundle bundle = intent.getBundleExtra(ARGUMENT_CONFIG);
+        assert bundle != null;
+
         if (intent.getBooleanExtra(ARGUMENT_IS_FULLSCREEN_SIGNIN, false)) {
             updateSystemUiForFullscreenSignin();
 
             FullscreenSigninAndHistorySyncConfig config =
-                    SigninAndHistorySyncBundleHelper.getFullscreenConfig(
-                            intent.getBundleExtra(ARGUMENT_CONFIG));
+                    SigninAndHistorySyncBundleHelper.getFullscreenConfig(bundle);
             mIsFullscreenPromo = true;
 
             RecordHistogram.recordTimesHistogram(
@@ -119,9 +125,9 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
 
             mCoordinator =
                     new FullscreenSigninAndHistorySyncCoordinator(
-                            getWindowAndroid(),
+                            windowAndroid,
                             this,
-                            getModalDialogManager(),
+                            assertNonNull(getModalDialogManager()),
                             getProfileProviderSupplier(),
                             PrivacyPreferencesManagerImpl.getInstance(),
                             config,
@@ -142,16 +148,16 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
         setStatusBarColor(Color.TRANSPARENT);
 
         BottomSheetSigninAndHistorySyncConfig config =
-                SigninAndHistorySyncBundleHelper.getBottomSheetConfig(
-                        intent.getBundleExtra(ARGUMENT_CONFIG));
+                SigninAndHistorySyncBundleHelper.getBottomSheetConfig(bundle);
         mCoordinator =
                 new BottomSheetSigninAndHistorySyncCoordinator(
-                        getWindowAndroid(),
+                        windowAndroid,
                         this,
                         this,
                         DeviceLockActivityLauncherImpl.get(),
                         mProfileSupplier,
                         getModalDialogManagerSupplier(),
+                        /* snackbarManager= */ null,
                         config,
                         signinAccessPoint);
 
@@ -178,9 +184,9 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
     protected OneshotSupplier<ProfileProvider> createProfileProvider() {
         ActivityProfileProvider profileProvider =
                 new ActivityProfileProvider(getLifecycleDispatcher()) {
-                    @Nullable
+
                     @Override
-                    protected OtrProfileId createOffTheRecordProfileId() {
+                    protected @Nullable OtrProfileId createOffTheRecordProfileId() {
                         throw new IllegalArgumentException(
                                 "Attempting to access incognito in the sign-in & history sync"
                                         + " opt-in flow");
@@ -189,7 +195,7 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
 
         profileProvider.onAvailable(
                 (provider) -> {
-                    mProfileSupplier.set(profileProvider.get().getOriginalProfile());
+                    mProfileSupplier.set(assumeNonNull(profileProvider.get()).getOriginalProfile());
                 });
         return profileProvider;
     }
@@ -220,9 +226,9 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
      * FullscreenSigninAndHistorySyncCoordinator.Delegate}.
      */
     @Override
-    public void onFlowComplete(@SigninAndHistorySyncCoordinator.Result int result) {
+    public void onFlowComplete(SigninAndHistorySyncCoordinator.Result result) {
         int resultCode =
-                result == SigninAndHistorySyncCoordinator.Result.COMPLETED
+                (result.hasSignedIn || result.hasOptedInHistorySync)
                         ? Activity.RESULT_OK
                         : Activity.RESULT_CANCELED;
         setResult(resultCode);
@@ -252,11 +258,13 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
     @Override
     public void performOnConfigurationChanged(Configuration newConfig) {
         super.performOnConfigurationChanged(newConfig);
+        assumeNonNull(mCoordinator);
         mCoordinator.onConfigurationChange();
     }
 
     @Override
-    public boolean onActivityResultWithNative(int requestCode, int resultCode, Intent data) {
+    public boolean onActivityResultWithNative(
+            int requestCode, int resultCode, @Nullable Intent data) {
         if (super.onActivityResultWithNative(requestCode, resultCode, data)) {
             return true;
         }
@@ -281,6 +289,7 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
 
     @Override
     protected void onDestroy() {
+        assumeNonNull(mCoordinator);
         mCoordinator.destroy();
         super.onDestroy();
     }
@@ -288,12 +297,13 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
     /** Implements {@link FirstRunActivityBase} */
     @Override
     public @BackPressResult int handleBackPress() {
+        assumeNonNull(mCoordinator);
         return mCoordinator.handleBackPress();
     }
 
-    public static @NonNull Intent createIntent(
-            @NonNull Context context,
-            @NonNull BottomSheetSigninAndHistorySyncConfig config,
+    public static Intent createIntent(
+            Context context,
+            BottomSheetSigninAndHistorySyncConfig config,
             @SigninAccessPoint int signinAccessPoint) {
         Intent intent = new Intent(context, SigninAndHistorySyncActivity.class);
         Bundle bundle = SigninAndHistorySyncBundleHelper.getBundle(config);
@@ -302,7 +312,7 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
         return intent;
     }
 
-    public static @NonNull Intent createIntentForFullscreenSignin(
+    public static Intent createIntentForFullscreenSignin(
             Context context,
             FullscreenSigninAndHistorySyncConfig config,
             @SigninAccessPoint int signinAccessPoint) {
@@ -323,6 +333,7 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
         SigninMetricsUtils.logAddAccountStateHistogram(State.REQUESTED);
         AccountManagerFacadeProvider.getInstance()
                 .createAddAccountIntent(
+                        null,
                         intent -> {
                             final ActivityWindowAndroid windowAndroid = getWindowAndroid();
                             if (windowAndroid == null) {
@@ -345,7 +356,7 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
 
     /** Implements {@link FullscreenSigninAndHistorySyncCoordinator.Delegate} */
     @Override
-    public Promise<Void> getNativeInitializationPromise() {
+    public Promise<@Nullable Void> getNativeInitializationPromise() {
         return mNativeInitializationPromise;
     }
 
@@ -367,24 +378,24 @@ public class SigninAndHistorySyncActivity extends FullscreenSigninAndHistorySync
         if (DialogWhenLargeContentLayout.shouldShowAsDialog(this)) {
             // Set status bar and navigation bar to dark if the promo is shown as a dialog.
             setStatusBarColor(Color.BLACK);
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                // Use dark navigation bar.
-                Window window = getWindow();
-                window.setNavigationBarColor(Color.BLACK);
-                window.setNavigationBarDividerColor(Color.BLACK);
-                UiUtils.setNavigationBarIconColor(window.getDecorView().getRootView(), false);
-            }
+            // Use dark navigation bar.
+            Window window = getWindow();
+            window.setNavigationBarColor(Color.BLACK);
+            window.setNavigationBarDividerColor(Color.BLACK);
+            UiUtils.setNavigationBarIconColor(window.getDecorView().getRootView(), false);
         } else {
             // Set the status bar color to the fullsceen sign-in background color.
             setStatusBarColor(SemanticColorUtils.getDefaultBgColor(this));
         }
     }
 
-    private void onAddAccountResult(int resultCode, Intent data) {
+    private void onAddAccountResult(int resultCode, @Nullable Intent data) {
         final String accountEmail =
                 data == null
                         ? null
                         : IntentUtils.safeGetStringExtra(data, AccountManager.KEY_ACCOUNT_NAME);
+
+        assumeNonNull(mCoordinator);
 
         if (resultCode != Activity.RESULT_OK || accountEmail == null) {
             mCoordinator.onAddAccountCanceled();

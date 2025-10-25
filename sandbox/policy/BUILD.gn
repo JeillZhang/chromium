@@ -5,8 +5,7 @@
 import("//build/buildflag_header.gni")
 import("//build/config/cast.gni")
 import("//build/config/sanitizers/sanitizers.gni")
-import("//chromeos/ash/components/assistant/assistant.gni")
-import("//media/gpu/args.gni")
+import("//media/media_options.gni")
 import("//testing/test.gni")
 
 # Most consumers of sandbox::policy should depend on this target.
@@ -26,7 +25,6 @@ component("policy") {
   defines = [ "SANDBOX_POLICY_IMPL" ]
   deps = [
     "//base",
-    "//ppapi/buildflags",
     "//sandbox/policy/mojom",
   ]
   public_deps = [ "//sandbox:common" ]
@@ -38,6 +36,8 @@ component("policy") {
       "linux/bpf_renderer_policy_linux.h",
       "linux/landlock_gpu_policy_android.cc",
       "linux/landlock_gpu_policy_android.h",
+      "linux/landlock_util.cc",
+      "linux/landlock_util.h",
     ]
     deps += [
       "//sandbox:sandbox_buildflags",
@@ -72,8 +72,6 @@ component("policy") {
       "linux/bpf_network_policy_linux.h",
       "linux/bpf_on_device_translation_policy_linux.cc",
       "linux/bpf_on_device_translation_policy_linux.h",
-      "linux/bpf_ppapi_policy_linux.cc",
-      "linux/bpf_ppapi_policy_linux.h",
       "linux/bpf_print_backend_policy_linux.cc",
       "linux/bpf_print_backend_policy_linux.h",
       "linux/bpf_print_compositor_policy_linux.cc",
@@ -88,6 +86,8 @@ component("policy") {
       "linux/bpf_speech_recognition_policy_linux.h",
       "linux/bpf_utility_policy_linux.cc",
       "linux/bpf_utility_policy_linux.h",
+      "linux/landlock_util.cc",
+      "linux/landlock_util.h",
       "linux/sandbox_debug_handling_linux.cc",
       "linux/sandbox_debug_handling_linux.h",
       "linux/sandbox_linux.cc",
@@ -95,7 +95,7 @@ component("policy") {
       "linux/sandbox_seccomp_bpf_linux.cc",
       "linux/sandbox_seccomp_bpf_linux.h",
     ]
-    if (use_linux_video_acceleration) {
+    if (allow_oop_video_decoder) {
       sources += [
         "linux/bpf_hardware_video_decoding_policy_linux.cc",
         "linux/bpf_hardware_video_decoding_policy_linux.h",
@@ -110,6 +110,7 @@ component("policy") {
     ]
     deps += [
       ":chromecast_sandbox_allowlist_buildflags",
+      "//media:media_buildflags",
       "//media/gpu:buildflags",
       "//sandbox:sandbox_buildflags",
       "//sandbox/linux:sandbox_services",
@@ -126,14 +127,6 @@ component("policy") {
       "linux/bpf_tts_policy_linux.cc",
       "linux/bpf_tts_policy_linux.h",
     ]
-    deps += [ "//chromeos/ash/components/assistant:buildflags" ]
-
-    if (enable_cros_libassistant) {
-      sources += [
-        "linux/bpf_libassistant_policy_linux.cc",
-        "linux/bpf_libassistant_policy_linux.h",
-      ]
-    }
   }
   if (is_mac) {
     sources += [
@@ -230,7 +223,6 @@ source_set("tests") {
     ":policy",
     "//base",
     "//base/test:test_support",
-    "//ppapi/buildflags:buildflags",
     "//sandbox/policy/mojom",
     "//testing/gtest",
   ]

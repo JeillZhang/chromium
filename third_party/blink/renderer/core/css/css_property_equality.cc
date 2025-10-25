@@ -214,6 +214,8 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
       return a.BaselineShift() == b.BaselineShift();
     case CSSPropertyID::kBaselineSource:
       return a.BaselineSource() == b.BaselineSource();
+    case CSSPropertyID::kBlockEllipsis:
+      return a.BlockEllipsis() == b.BlockEllipsis();
     case CSSPropertyID::kBorderBottomColor:
       return a.BorderBottomColor() == b.BorderBottomColor() &&
              a.InternalVisitedBorderBottomColor() ==
@@ -269,6 +271,8 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
       return a.BorderTopStyle() == b.BorderTopStyle();
     case CSSPropertyID::kBorderTopWidth:
       return a.BorderTopWidth() == b.BorderTopWidth();
+    case CSSPropertyID::kBorderShape:
+      return base::ValuesEquivalent(a.BorderShape(), b.BorderShape());
     case CSSPropertyID::kBottom:
       return a.Bottom() == b.Bottom();
     case CSSPropertyID::kBoxDecorationBreak:
@@ -315,6 +319,8 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
       return a.GetColumnFill() == b.GetColumnFill();
     case CSSPropertyID::kColumnRuleStyle:
       return a.ColumnRuleStyle() == b.ColumnRuleStyle();
+    case CSSPropertyID::kContinue:
+      return a.Continue() == b.Continue();
     case CSSPropertyID::kRowRuleStyle:
       return a.RowRuleStyle() == b.RowRuleStyle();
     case CSSPropertyID::kColumnSpan:
@@ -379,6 +385,9 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
     case CSSPropertyID::kFontKerning:
       return a.GetFontDescription().GetKerning() ==
              b.GetFontDescription().GetKerning();
+    case CSSPropertyID::kFontLanguageOverride:
+      return a.GetFontDescription().FontLanguageOverride() ==
+             b.GetFontDescription().FontLanguageOverride();
     case CSSPropertyID::kFontOpticalSizing:
       return a.GetFontDescription().FontOpticalSizing() ==
              b.GetFontDescription().FontOpticalSizing();
@@ -463,10 +472,10 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
       return a.GridTemplateRows() == b.GridTemplateRows();
     case CSSPropertyID::kHeight:
       return a.Height() == b.Height();
-    case CSSPropertyID::kInterestTargetShowDelay:
-      return a.InterestTargetShowDelay() == b.InterestTargetShowDelay();
-    case CSSPropertyID::kInterestTargetHideDelay:
-      return a.InterestTargetHideDelay() == b.InterestTargetHideDelay();
+    case CSSPropertyID::kInterestDelayStart:
+      return a.InterestDelayStart() == b.InterestDelayStart();
+    case CSSPropertyID::kInterestDelayEnd:
+      return a.InterestDelayEnd() == b.InterestDelayEnd();
     case CSSPropertyID::kHyphenateCharacter:
       return a.HyphenationString() == b.HyphenationString();
     case CSSPropertyID::kHyphenateLimitChars:
@@ -496,13 +505,11 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
     case CSSPropertyID::kLeft:
       return a.Left() == b.Left();
     case CSSPropertyID::kLetterSpacing:
-      return a.LetterSpacing() == b.LetterSpacing();
+      return a.ComputedLetterSpacing() == b.ComputedLetterSpacing();
     case CSSPropertyID::kLightingColor:
       return a.LightingColor() == b.LightingColor();
     case CSSPropertyID::kLineBreak:
       return a.GetLineBreak() == b.GetLineBreak();
-    case CSSPropertyID::kLineClamp:
-      return a.StandardLineClamp() == b.StandardLineClamp();
     case CSSPropertyID::kLineHeight:
       return a.SpecifiedLineHeight() == b.SpecifiedLineHeight();
     case CSSPropertyID::kTabSize:
@@ -529,20 +536,14 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
       return a.MarkerStartResource() == b.MarkerStartResource();
     case CSSPropertyID::kMaskType:
       return a.MaskType() == b.MaskType();
-    case CSSPropertyID::kMasonryAutoTracks:
-      return a.MasonryAutoTracks() == b.MasonryAutoTracks();
     case CSSPropertyID::kMasonryDirection:
       return a.MasonryDirection() == b.MasonryDirection();
     case CSSPropertyID::kMasonryFill:
       return a.MasonryFill() == b.MasonryFill();
+    case CSSPropertyID::kMaxLines:
+      return a.MaxLines() == b.MaxLines();
     case CSSPropertyID::kItemTolerance:
-      return a.ItemTolerance() == b.ItemTolerance();
-    case CSSPropertyID::kMasonryTemplateTracks:
-      return a.MasonryTemplateTracks() == b.MasonryTemplateTracks();
-    case CSSPropertyID::kMasonryTrackEnd:
-      return a.MasonryTrackEnd() == b.MasonryTrackEnd();
-    case CSSPropertyID::kMasonryTrackStart:
-      return a.MasonryTrackStart() == b.MasonryTrackStart();
+      return a.GetItemTolerance() == b.GetItemTolerance();
     case CSSPropertyID::kMathShift:
       return a.MathShift() == b.MathShift();
     case CSSPropertyID::kMathStyle:
@@ -600,10 +601,15 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
       return a.OverflowX() == b.OverflowX();
     case CSSPropertyID::kOverflowY:
       return a.OverflowY() == b.OverflowY();
+    case CSSPropertyID::kOverscrollArea:
+      return base::ValuesEquivalent(a.OverscrollArea(), b.OverscrollArea());
     case CSSPropertyID::kOverscrollBehaviorX:
       return a.OverscrollBehaviorX() == b.OverscrollBehaviorX();
     case CSSPropertyID::kOverscrollBehaviorY:
       return a.OverscrollBehaviorY() == b.OverscrollBehaviorY();
+    case CSSPropertyID::kOverscrollPosition:
+      return base::ValuesEquivalent(a.OverscrollPosition(),
+                                    b.OverscrollPosition());
     case CSSPropertyID::kPaddingBottom:
       return a.PaddingBottom() == b.PaddingBottom();
     case CSSPropertyID::kPaddingLeft:
@@ -634,12 +640,15 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
       return a.Right() == b.Right();
     case CSSPropertyID::kRubyAlign:
       return a.RubyAlign() == b.RubyAlign();
+    case CSSPropertyID::kRubyOverhang:
+      return a.RubyOverhang() == b.RubyOverhang();
     case CSSPropertyID::kRubyPosition:
       return a.GetRubyPosition() == b.GetRubyPosition();
     case CSSPropertyID::kScrollTargetGroup:
       return a.ScrollTargetGroup() == b.ScrollTargetGroup();
     case CSSPropertyID::kScrollMarkerGroup:
-      return a.ScrollMarkerGroup() == b.ScrollMarkerGroup();
+      return base::ValuesEquivalent(a.GetScrollMarkerGroup(),
+                                    b.GetScrollMarkerGroup());
     case CSSPropertyID::kScrollbarColor:
       return a.ScrollbarColor() == b.ScrollbarColor();
     case CSSPropertyID::kScrollbarGutter:
@@ -698,7 +707,7 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
              a.InternalVisitedStrokePaint().EqualTypeOrColor(
                  b.InternalVisitedStrokePaint());
     case CSSPropertyID::kStrokeDasharray:
-      return a.StrokeDashArray() == b.StrokeDashArray();
+      return base::ValuesEquivalent(a.StrokeDashArray(), b.StrokeDashArray());
     case CSSPropertyID::kStrokeDashoffset:
       return a.StrokeDashOffset() == b.StrokeDashOffset();
     case CSSPropertyID::kStrokeLinecap:
@@ -809,8 +818,8 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
       return a.ColumnGap() == b.ColumnGap();
     case CSSPropertyID::kRowGap:
       return a.RowGap() == b.RowGap();
-    case CSSPropertyID::kGapRulePaintOrder:
-      return a.GapRulePaintOrder() == b.GapRulePaintOrder();
+    case CSSPropertyID::kGapRuleOverlap:
+      return a.GapRuleOverlap() == b.GapRuleOverlap();
     case CSSPropertyID::kColumnRuleBreak:
       return a.ColumnRuleBreak() == b.ColumnRuleBreak();
     case CSSPropertyID::kRowRuleBreak:
@@ -825,6 +834,8 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
                  b.InternalVisitedColumnRuleColor();
     case CSSPropertyID::kRowRuleColor:
       return a.RowRuleColor() == b.RowRuleColor();
+    case CSSPropertyID::kColumnRuleVisibilityItems:
+      return a.ColumnRuleVisibilityItems() == b.ColumnRuleVisibilityItems();
     case CSSPropertyID::kColumnRuleWidth:
       return a.ColumnRuleWidth() == b.ColumnRuleWidth();
     case CSSPropertyID::kRowRuleWidth:
@@ -929,7 +940,7 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
     case CSSPropertyID::kWordBreak:
       return a.WordBreak() == b.WordBreak();
     case CSSPropertyID::kWordSpacing:
-      return a.WordSpacing() == b.WordSpacing();
+      return a.ComputedWordSpacing() == b.ComputedWordSpacing();
     case CSSPropertyID::kD:
       return base::ValuesEquivalent(a.D(), b.D());
     case CSSPropertyID::kCx:
@@ -975,8 +986,15 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
 
     // These properties are not animateable, but perhaps equality should still
     // be defined for them.
+    case CSSPropertyID::kAnimationTrigger:
     case CSSPropertyID::kScrollTimelineAxis:
     case CSSPropertyID::kScrollTimelineName:
+    case CSSPropertyID::kTimelineTriggerName:
+    case CSSPropertyID::kTimelineTriggerRangeStart:
+    case CSSPropertyID::kTimelineTriggerRangeEnd:
+    case CSSPropertyID::kTimelineTriggerExitRangeStart:
+    case CSSPropertyID::kTimelineTriggerExitRangeEnd:
+    case CSSPropertyID::kTimelineTriggerSource:
     case CSSPropertyID::kViewTimelineAxis:
     case CSSPropertyID::kViewTimelineInset:
     case CSSPropertyID::kViewTimelineName:
@@ -1260,9 +1278,18 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
     case CSSPropertyID::kColumns:
     case CSSPropertyID::kContainIntrinsicSize:
     case CSSPropertyID::kContainer:
+    case CSSPropertyID::kCorners:
     case CSSPropertyID::kCornerShape:
+    case CSSPropertyID::kCornerTopShape:
+    case CSSPropertyID::kCornerRightShape:
+    case CSSPropertyID::kCornerBottomShape:
+    case CSSPropertyID::kCornerLeftShape:
+    case CSSPropertyID::kCornerInlineStartShape:
+    case CSSPropertyID::kCornerInlineEndShape:
+    case CSSPropertyID::kCornerBlockStartShape:
+    case CSSPropertyID::kCornerBlockEndShape:
     case CSSPropertyID::kInset:
-    case CSSPropertyID::kInterestTargetDelay:
+    case CSSPropertyID::kInterestDelay:
     case CSSPropertyID::kFlex:
     case CSSPropertyID::kFlexFlow:
     case CSSPropertyID::kFont:
@@ -1274,14 +1301,14 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
     case CSSPropertyID::kGridColumn:
     case CSSPropertyID::kGridRow:
     case CSSPropertyID::kGridTemplate:
+    case CSSPropertyID::kLineClamp:
     case CSSPropertyID::kListStyle:
     case CSSPropertyID::kMargin:
     case CSSPropertyID::kMarker:
     case CSSPropertyID::kMask:
+    case CSSPropertyID::kMasonry:
     case CSSPropertyID::kMasonryFlow:
-    case CSSPropertyID::kMasonryTrack:
     case CSSPropertyID::kOffset:
-    case CSSPropertyID::kOriginTrialTestShorthand:
     case CSSPropertyID::kOutline:
     case CSSPropertyID::kOverflow:
     case CSSPropertyID::kOverscrollBehavior:
@@ -1295,7 +1322,9 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
     case CSSPropertyID::kPositionTry:
     case CSSPropertyID::kRowRule:
     case CSSPropertyID::kRule:
+    case CSSPropertyID::kRuleBreak:
     case CSSPropertyID::kRuleColor:
+    case CSSPropertyID::kRuleOutset:
     case CSSPropertyID::kRuleWidth:
     case CSSPropertyID::kRuleStyle:
     case CSSPropertyID::kScrollMargin:
@@ -1307,11 +1336,13 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
     case CSSPropertyID::kTextEmphasis:
     case CSSPropertyID::kTextSpacing:
     case CSSPropertyID::kTextWrap:
+    case CSSPropertyID::kTimelineTrigger:
     case CSSPropertyID::kTransition:
     case CSSPropertyID::kViewTimeline:
     case CSSPropertyID::kWebkitColumnBreakAfter:
     case CSSPropertyID::kWebkitColumnBreakBefore:
     case CSSPropertyID::kWebkitColumnBreakInside:
+    case CSSPropertyID::kAlternativeWebkitLineClamp:
     case CSSPropertyID::kWebkitMaskBoxImage:
     case CSSPropertyID::kMaskPosition:
     case CSSPropertyID::kWebkitTextStroke:
@@ -1331,17 +1362,8 @@ bool CSSPropertyEquality::PropertiesEqual(const PropertyHandle& property,
     case CSSPropertyID::kAnimationRange:
     case CSSPropertyID::kAnimationRangeEnd:
     case CSSPropertyID::kAnimationRangeStart:
-    case CSSPropertyID::kAnimationTrigger:
-    case CSSPropertyID::kAnimationTriggerRange:
-    case CSSPropertyID::kAnimationTriggerExitRange:
-    case CSSPropertyID::kAnimationTriggerRangeStart:
-    case CSSPropertyID::kAnimationTriggerRangeEnd:
-    case CSSPropertyID::kAnimationTriggerExitRangeStart:
-    case CSSPropertyID::kAnimationTriggerExitRangeEnd:
     case CSSPropertyID::kAnimationTimeline:
     case CSSPropertyID::kAnimationTimingFunction:
-    case CSSPropertyID::kAnimationTriggerType:
-    case CSSPropertyID::kAnimationTriggerTimeline:
     case CSSPropertyID::kContain:
     case CSSPropertyID::kContainerName:
     case CSSPropertyID::kContainerType:

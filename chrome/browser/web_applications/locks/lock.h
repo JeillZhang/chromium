@@ -14,11 +14,16 @@
 #include "base/values.h"
 #include "components/webapps/common/web_app_id.h"
 
+namespace base {
+class Clock;
+}
+
 namespace web_app {
 
 class VisitedManifestManager;
 class WebAppLockManager;
 class WebContentsManager;
+class WebAppOriginAssociationManager;
 struct PartitionedLockHolder;
 
 // Represents a lock in the WebAppProvider system. Locks can be acquired by
@@ -86,10 +91,15 @@ class Lock {
   WebContentsManager& web_contents_manager();
   // This will CHECK-fail if `IsGranted()` returns false.
   VisitedManifestManager& visited_manifest_manager();
+  // Will CHECK-fail if accessed before the lock is granted.
+  WebAppOriginAssociationManager& origin_association_manager();
 
   PartitionedLockHolder& GetLockHolder(base::PassKey<WebAppLockManager>) {
     return *holder_;
   }
+
+  // Convenience method for accessing the clock on the WebAppProvider.
+  base::Clock& clock();
 
  protected:
   Lock();

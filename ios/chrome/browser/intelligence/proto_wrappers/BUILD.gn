@@ -11,13 +11,80 @@ source_set("proto_wrappers") {
   ]
 
   deps = [
+    ":page_context_metrics",
     "//base",
     "//components/optimization_guide:optimization_guide_buildflags",
+    "//components/optimization_guide/core:page_content",
     "//components/optimization_guide/proto:optimization_guide_proto",
+    "//ios/chrome/browser/intelligence/features",
     "//ios/chrome/browser/shared/model/web_state_list",
     "//ios/chrome/browser/snapshots/model",
+    "//ios/public/provider/chrome/browser/bwg:bwg_api",
     "//ios/web/find_in_page",
     "//ios/web/public",
     "//ios/web/public/js_messaging",
+    "//url",
+  ]
+}
+
+source_set("page_context_metrics") {
+  sources = [
+    "page_context_wrapper_metrics.h",
+    "page_context_wrapper_metrics.mm",
+  ]
+  deps = [
+    ":metrics_constants",
+    "//base",
+  ]
+}
+
+source_set("utils") {
+  sources = [
+    "page_context_utils.h",
+    "page_context_utils.mm",
+  ]
+  deps = [
+    "//ios/web/public",
+    "//ios/web/util",
+    "//url",
+  ]
+}
+
+source_set("unit_tests") {
+  testonly = true
+  sources = [
+    "page_context_utils_unittest.mm",
+    "page_context_wrapper_unittest.mm",
+  ]
+  deps = [
+    ":metrics_constants",
+    ":proto_wrappers",
+    ":utils",
+    "//base/test:test_support",
+    "//components/optimization_guide/proto:optimization_guide_proto",
+    "//ios/chrome/browser/intelligence/features",
+    "//ios/chrome/browser/shared/model/profile/test",
+    "//ios/chrome/browser/snapshots/model",
+    "//ios/chrome/browser/snapshots/model:model_swift",
+    "//ios/chrome/browser/snapshots/model:snapshot_source",
+    "//ios/chrome/browser/snapshots/model:test_utils",
+    "//ios/chrome/test:test_support",
+    "//ios/testing:embedded_test_server_support",
+    "//ios/web/find_in_page",
+    "//ios/web/js_messaging:java_script_feature_manager_header",
+    "//ios/web/public/js_messaging",
+    "//ios/web/public/test",
+    "//ios/web/public/test/fakes",
+    "//ios/web/test/fakes",
+    "//net:test_support",
+    "//testing/gtest",
+    "//url",
+  ]
+}
+
+source_set("metrics_constants") {
+  sources = [
+    "metrics_constants.h",
+    "metrics_constants.mm",
   ]
 }

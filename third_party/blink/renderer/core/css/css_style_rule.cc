@@ -108,7 +108,8 @@ void CSSStyleRule::setSelectorText(const ExecutionContext* execution_context,
   if (GCedHeapVector<Member<StyleRuleBase>>* child_rules =
           style_rule_->ChildRules()) {
     for (StyleRuleBase* child_rule : *child_rules) {
-      new_style_rule->AddChildRule(child_rule->Renest(new_style_rule));
+      new_style_rule->AddChildRule(child_rule->Clone(
+          new_style_rule, /*mixin_parameter_bindings=*/nullptr));
     }
   }
   if (parent_contents) {
@@ -239,7 +240,7 @@ unsigned CSSStyleRule::insertRule(const ExecutionContext* execution_context,
     if (index > 0) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kIndexSizeError,
-          WTF::StrCat(
+          StrCat(
               {"the index ", String::Number(index),
                " must be less than or equal to the length of the rule list."}));
       return 0;
@@ -270,8 +271,8 @@ void CSSStyleRule::deleteRule(unsigned index, ExceptionState& exception_state) {
       index >= style_rule_->ChildRules()->size()) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kIndexSizeError,
-        "the index " + String::Number(index) +
-            " is greated than the length of the rule list.");
+        StrCat({"the index ", String::Number(index),
+                " is greated than the length of the rule list."}));
     return;
   }
 

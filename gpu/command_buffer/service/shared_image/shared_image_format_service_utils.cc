@@ -11,7 +11,7 @@
 #include "build/buildflag.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/service/feature_info.h"
-#include "gpu/ipc/common/vulkan_ycbcr_info.h"
+#include "gpu/vulkan/vulkan_ycbcr_info.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_version_info.h"
 
@@ -194,6 +194,31 @@ GLenum GLInternalFormat(viz::SharedImageFormat format, int plane_index) {
 
 }  // namespace
 
+bool IsSizeForBufferHandleValid(const gfx::Size& size,
+                                viz::SharedImageFormat format) {
+  if (format.is_single_plane()) {
+    return true;
+  }
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // Allow odd size for CrOS.
+  // TODO(https://crbug.com/1208788, https://crbug.com/1224781): Merge this
+  // with the path that uses viz::IsOddSizeMultiPlanarBuffersAllowed.
+  return true;
+#else
+  auto [width_scale, height_scale] = format.GetSubsamplingScale();
+  if (size.width() % width_scale &&
+      !viz::IsOddSizeMultiPlanarBuffersAllowed()) {
+    return false;
+  }
+  if (size.height() % height_scale &&
+      !viz::IsOddSizeMultiPlanarBuffersAllowed()) {
+    return false;
+  }
+  return true;
+#endif  // BUILDFLAG(IS_CHROMEOS)
+}
+
 // Wraps functions from shared_image_format_utils.h that are made private with
 // friending to prevent their existing client-side usage (which is an
 // anti-pattern) from growing within a class that
@@ -233,23 +258,6 @@ class SharedImageFormatRestrictedUtilsAccessor {
     }
   }
 };
-
-// This class method is primarily meant to be accessed by gpu service side code
-// with the exception of some client needing access temporarily until the
-// BufferFormat usage is deprecated. This requires usage of below wrapper class
-// to access this method from service side code conveniently.
-class GPU_GLES2_EXPORT SharedImageFormatToBufferFormatRestrictedUtilsAccessor {
- public:
-  static gfx::BufferFormat ToBufferFormat(viz::SharedImageFormat format) {
-    return viz::SharedImageFormatToBufferFormatRestrictedUtils::ToBufferFormat(
-        format);
-  }
-};
-
-gfx::BufferFormat ToBufferFormat(viz::SharedImageFormat format) {
-  return SharedImageFormatToBufferFormatRestrictedUtilsAccessor::ToBufferFormat(
-      format);
-}
 
 SkYUVAInfo::PlaneConfig ToSkYUVAPlaneConfig(viz::SharedImageFormat format) {
   switch (format.plane_config()) {
@@ -480,6 +488,35 @@ VkFormat ToVkFormat(viz::SharedImageFormat format, int plane_index) {
   }
 }
 #endif
+
+#if BUILDFLAG(IS_WIN)
+// Formats supported with no GpuMemoryBufferHandle.
+DXGI_FORMAT ToDXGIFormat(viz::SharedImageFormat format) {
+  if (format == viz::SinglePlaneFormat::kRGBA_F16) {
+    return DXGI_FORMAT_R16G16B16A16_FLOAT;
+  } else if (format == viz::SinglePlaneFormat::kBGRA_8888 ||
+             format == viz::SinglePlaneFormat::kBGRX_8888) {
+    return DXGI_FORMAT_B8G8R8A8_UNORM;
+  } else if (format == viz::SinglePlaneFormat::kRGBA_8888 ||
+             format == viz::SinglePlaneFormat::kRGBX_8888) {
+    return DXGI_FORMAT_R8G8B8A8_UNORM;
+  } else if (format == viz::MultiPlaneFormat::kNV12) {
+    return DXGI_FORMAT_NV12;
+  } else if (format == viz::SinglePlaneFormat::kRGBA_1010102) {
+    return DXGI_FORMAT_R10G10B10A2_UNORM;
+  } else if (format == viz::SinglePlaneFormat::kR_8) {
+    // TOOD(crbug.com/416285370): Remove these single channel format checks.
+    return DXGI_FORMAT_R8_UNORM;
+  } else if (format == viz::SinglePlaneFormat::kRG_88) {
+    return DXGI_FORMAT_R8G8_UNORM;
+  } else if (format == viz::SinglePlaneFormat::kR_16) {
+    return DXGI_FORMAT_R16_UNORM;
+  } else if (format == viz::SinglePlaneFormat::kRG_1616) {
+    return DXGI_FORMAT_R16G16_UNORM;
+  }
+  return DXGI_FORMAT_UNKNOWN;
+}
+#endif  // BUILDFLAG(IS_WIN)
 
 wgpu::TextureFormat ToDawnFormat(viz::SharedImageFormat format) {
   if (format == viz::SinglePlaneFormat::kRGBA_8888 ||

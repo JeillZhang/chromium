@@ -24,6 +24,7 @@
 #include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/web_ui_test_data_source.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/common/page_type.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/test/browser_test_utils.h"
@@ -77,7 +78,9 @@ std::tuple<bool, std::vector<SubTestResult>> ProcessMessagesFromJsTest(
       return std::make_tuple(false, results);
     }
 
-    std::optional<base::Value> msg = base::JSONReader::Read(message);
+    std::optional<base::Value> msg =
+        base::JSONReader::Read(message, base::JSON_PARSE_CHROMIUM_EXTENSIONS,
+                               base::JSON_PARSE_CHROMIUM_EXTENSIONS);
 
     SubTestResult sub_test_result;
     std::string* test_name = msg->GetDict().FindString("fullTitle");

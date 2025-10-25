@@ -13,8 +13,6 @@ namespace prefs {
 
 #if BUILDFLAG(IS_CHROMEOS)
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
-extern const char kForceLogoutUnauthenticatedUserEnabled[];
-COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kAccountIdMigrationState[];
 #endif
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
@@ -38,8 +36,6 @@ extern const char kGoogleServicesLastSyncingUsername[];
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kGoogleServicesLastSignedInUsername[];
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
-extern const char kGoogleServicesSecondLastSyncingGaiaId[];
-COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kGoogleServicesSigninScopedDeviceId[];
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kGoogleServicesSyncingGaiaIdMigratedToSignedIn[];
@@ -56,13 +52,13 @@ COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kRestrictAccountsToPatterns[];
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kSigninAllowedOnDevice[];
+COMPONENT_EXPORT(SIGNIN_SWITCHES)
+extern const char kBrowserSigninPolicy[];
 #endif  // BUILDFLAG(IS_IOS)
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kSignedInWithCredentialProvider[];
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kSigninAllowed[];
-COMPONENT_EXPORT(SIGNIN_SWITCHES)
-extern const char kGaiaCookieLastListAccountsData[];
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kGaiaCookieLastListAccountsBinaryData[];
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
@@ -83,7 +79,8 @@ COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kPrefsThemesSearchEnginesAccountStorageEnabled[];
 COMPONENT_EXPORT(SIGNIN_SWITCHES)
 extern const char kBoundSessionCredentialsEnabled[];
-
+COMPONENT_EXPORT(SIGNIN_SWITCHES)
+extern const char kPrimaryAccountSetAfterSigninMigration[];
 }  // namespace prefs
 
 #endif  // COMPONENTS_SIGNIN_PUBLIC_BASE_SIGNIN_PREF_NAMES_H_

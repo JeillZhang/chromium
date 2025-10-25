@@ -21,7 +21,6 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "build/chromeos_buildflags.h"
-#include "chrome/browser/extensions/account_extension_tracker.h"
 #include "chrome/browser/extensions/api/developer_private/developer_private_api.h"
 #include "chrome/browser/extensions/api/developer_private/inspectable_views_finder.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
@@ -29,7 +28,6 @@
 #include "chrome/browser/extensions/extension_action_test_util.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_with_install.h"
-#include "chrome/browser/extensions/extension_sync_util.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/manifest_v2_experiment_manager.h"
 #include "chrome/browser/extensions/mv2_experiment_stage.h"
@@ -37,10 +35,10 @@
 #include "chrome/browser/extensions/permissions/permissions_updater.h"
 #include "chrome/browser/extensions/permissions/scripting_permissions_modifier.h"
 #include "chrome/browser/extensions/signin_test_util.h"
+#include "chrome/browser/extensions/sync/account_extension_tracker.h"
+#include "chrome/browser/extensions/sync/extension_sync_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
-#include "chrome/browser/supervised_user/supervised_user_extensions_delegate_impl.h"
-#include "chrome/browser/supervised_user/supervised_user_test_util.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/extensions/api/developer_private.h"
@@ -49,16 +47,15 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/crx_file/id_util.h"
 #include "components/signin/public/base/signin_pref_names.h"
-#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_test_environment.h"
 #include "components/signin/public/identity_manager/identity_test_utils.h"
-#include "components/supervised_user/core/common/features.h"
 #include "extensions/browser/blocklist_state.h"
 #include "extensions/browser/disable_reason.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/supervised_user_extensions_delegate.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/api/extension_action/action_info.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -76,6 +73,14 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
+
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+#include "chrome/browser/supervised_user/supervised_user_extensions_delegate_impl.h"
+#include "chrome/browser/supervised_user/supervised_user_test_util.h"
+#include "components/supervised_user/core/common/features.h"
+#endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -120,9 +125,7 @@ std::string SiteControlsToString(
     list.Append(control.ToValue());
   }
 
-  std::string json;
-  CHECK(base::JSONWriter::Write(list, &json));
-  return json;
+  return base::WriteJson(list).value_or("");
 }
 
 }  // namespace
@@ -283,8 +286,8 @@ class ExtensionInfoGeneratorUnitTest : public ExtensionServiceTestWithInstall {
         continue;
       }
       if (*actual_value != expected_value) {
-        base::JSONWriter::Write(expected_value, &expected_string);
-        base::JSONWriter::Write(*actual_value, &actual_string);
+        expected_string = base::WriteJson(expected_value).value_or("");
+        actual_string = base::WriteJson(*actual_value).value_or("");
         EXPECT_EQ(expected_string, actual_string)
             << field.first << paths_details;
       }
@@ -411,6 +414,44 @@ TEST_F(ExtensionInfoGeneratorUnitTest, BasicInfoTest) {
   const api::developer_private::ManifestError& manifest_error =
       info->manifest_errors[0];
   EXPECT_EQ(extension->id(), manifest_error.extension_id);
+
+  // Additional sanity check for service worker background: `canInspect` should
+  // be true for runtime errors from a service worker-based extension, even when
+  // no RenderFrameHost exists.
+  {
+    scoped_refptr<const Extension> sw_extension =
+        ExtensionBuilder("sw_extension")
+            .SetBackgroundContext(
+                ExtensionBuilder::BackgroundContext::SERVICE_WORKER)
+            .SetPath(data_dir())
+            .Build();
+
+    registrar()->AddExtension(sw_extension.get());
+    PermissionsUpdater sw_updater(profile());
+    sw_updater.InitializePermissions(sw_extension.get());
+    sw_updater.GrantActivePermissions(sw_extension.get());
+
+    ErrorConsole* sw_error_console = ErrorConsole::Get(profile());
+    const GURL sw_context_url("http://example.com");
+    // Simulate a service worker runtime error. Use -1 IDs to reflect the lack
+    // of a RenderFrameHost for service workers.
+    sw_error_console->ReportError(std::make_unique<RuntimeError>(
+        sw_extension->id(), false, u"source", u"message",
+        StackTrace(1, StackFrame(1, 1, u"source", u"function")), sw_context_url,
+        logging::LOGGING_ERROR,
+        /*render_frame_id=*/-1,
+        /*render_process_id=*/-1,
+        /*is_from_service_worker=*/true));
+
+    std::unique_ptr<api::developer_private::ExtensionInfo> sw_info =
+        GenerateExtensionInfo(sw_extension->id());
+    ASSERT_TRUE(sw_info);
+    ASSERT_EQ(1u, sw_info->runtime_errors.size());
+    const api::developer_private::RuntimeError& sw_runtime_error =
+        sw_info->runtime_errors[0];
+    EXPECT_TRUE(sw_runtime_error.is_service_worker);
+    EXPECT_TRUE(sw_runtime_error.can_inspect);
+  }
 
   // Test an extension that isn't unpacked.
   manifest_copy.Set("update_url",
@@ -919,16 +960,15 @@ TEST_F(ExtensionInfoGeneratorUnitTest,
   scoped_refptr<const Extension> active_tab_extension =
       CreateExtension("activeTab", base::Value::List().Append("activeTab"),
                       ManifestLocation::kInternal);
+  std::unique_ptr<developer::ExtensionInfo> active_tab_info =
+      GenerateExtensionInfo(active_tab_extension->id());
+  EXPECT_TRUE(active_tab_info->permissions.can_access_site_data);
+
   scoped_refptr<const Extension> debugger_extension =
       CreateExtension("activeTab", base::Value::List().Append("debugger"),
                       ManifestLocation::kInternal);
-
-  std::unique_ptr<developer::ExtensionInfo> active_tab_info =
-      GenerateExtensionInfo(active_tab_extension->id());
   std::unique_ptr<developer::ExtensionInfo> debugger_info =
       GenerateExtensionInfo(debugger_extension->id());
-
-  EXPECT_TRUE(active_tab_info->permissions.can_access_site_data);
   EXPECT_TRUE(debugger_info->permissions.can_access_site_data);
 }
 
@@ -938,7 +978,6 @@ TEST_F(ExtensionInfoGeneratorUnitTest,
        RevokedOptionalNonHostPermissionsInfoTest) {
   scoped_refptr<const Extension> extension =
       ExtensionBuilder("test")
-          .SetManifestVersion(3)
           .AddOptionalAPIPermission("notifications")
           .Build();
   registrar()->AddExtension(extension.get());
@@ -1233,10 +1272,6 @@ TEST_F(ExtensionInfoGeneratorUnitTest, IsPinnedToToolbar) {
 // signed out or signed in with full sync consent (automatically syncs all data
 // types including extensions).
 TEST_F(ExtensionInfoGeneratorUnitTest, UploadAsAccountExtension_FullSync) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(
-      switches::kEnableExtensionsExplicitBrowserSignin);
-
   // Create two extensions: one syncable and one non-syncable.
   const scoped_refptr<const Extension> syncable_extension = CreateExtension(
       "test1", base::Value::List(), ManifestLocation::kInternal);
@@ -1273,13 +1308,10 @@ TEST_F(ExtensionInfoGeneratorUnitTest, UploadAsAccountExtension_FullSync) {
 
 // Same test as above, except test that extensions CAN be uploaded if the user
 // is signed into transport mode with extensions sync enabled.
+// Disabled on ChromeOS since users should not be able to sign into transport
+// mode on ChromeOS.
+#if !BUILDFLAG(IS_CHROMEOS)
 TEST_F(ExtensionInfoGeneratorUnitTest, UploadAsAccountExtension_TransportMode) {
-  // Allow extensions to sync in transport mode.
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitWithFeatures(
-      {switches::kEnableExtensionsExplicitBrowserSignin},
-      /*disabled_features=*/{});
-
   // Sign the user in without full sync with an explicit signin.
   auto identity_test_env_profile_adaptor =
       std::make_unique<IdentityTestEnvironmentProfileAdaptor>(profile());
@@ -1311,6 +1343,7 @@ TEST_F(ExtensionInfoGeneratorUnitTest, UploadAsAccountExtension_TransportMode) {
   info = GenerateExtensionInfo(syncable_extension->id());
   EXPECT_FALSE(info->can_upload_as_account_extension);
 }
+#endif  // !BUILDFLAG(IS_CHROMEOS)
 
 class ExtensionInfoGeneratorWithMV2DeprecationUnitTest
     : public ExtensionInfoGeneratorUnitTest,
@@ -1323,8 +1356,6 @@ class ExtensionInfoGeneratorWithMV2DeprecationUnitTest
     experiment_stage_ = GetParam();
     switch (experiment_stage_) {
       case MV2ExperimentStage::kWarning:
-        enabled_features.push_back(
-            extensions_features::kExtensionManifestV2DeprecationWarning);
         disabled_features.push_back(
             extensions_features::kExtensionManifestV2Disabled);
         disabled_features.push_back(
@@ -1334,23 +1365,11 @@ class ExtensionInfoGeneratorWithMV2DeprecationUnitTest
         enabled_features.push_back(
             extensions_features::kExtensionManifestV2Disabled);
         disabled_features.push_back(
-            extensions_features::kExtensionManifestV2DeprecationWarning);
-        disabled_features.push_back(
-            extensions_features::kExtensionManifestV2Unsupported);
-        break;
-      case MV2ExperimentStage::kNone:
-        disabled_features.push_back(
-            extensions_features::kExtensionManifestV2DeprecationWarning);
-        disabled_features.push_back(
-            extensions_features::kExtensionManifestV2Disabled);
-        disabled_features.push_back(
             extensions_features::kExtensionManifestV2Unsupported);
         break;
       case MV2ExperimentStage::kUnsupported:
         enabled_features.push_back(
             extensions_features::kExtensionManifestV2Unsupported);
-        disabled_features.push_back(
-            extensions_features::kExtensionManifestV2DeprecationWarning);
         disabled_features.push_back(
             extensions_features::kExtensionManifestV2Disabled);
         break;
@@ -1372,14 +1391,11 @@ class ExtensionInfoGeneratorWithMV2DeprecationUnitTest
 INSTANTIATE_TEST_SUITE_P(
     All,
     ExtensionInfoGeneratorWithMV2DeprecationUnitTest,
-    testing::Values(MV2ExperimentStage::kNone,
-                    MV2ExperimentStage::kWarning,
+    testing::Values(MV2ExperimentStage::kWarning,
                     MV2ExperimentStage::kDisableWithReEnable,
                     MV2ExperimentStage::kUnsupported),
     [](const testing::TestParamInfo<MV2ExperimentStage>& info) {
       switch (info.param) {
-        case MV2ExperimentStage::kNone:
-          return "NoneExperiment";
         case MV2ExperimentStage::kWarning:
           return "WarningExperiment";
         case MV2ExperimentStage::kDisableWithReEnable:
@@ -1390,7 +1406,7 @@ INSTANTIATE_TEST_SUITE_P(
     });
 
 // Tests that acknowledging the MV2 deprecation notice updates the extension
-// info when the experiment stage is different than 'kNone'.
+// info.
 TEST_P(ExtensionInfoGeneratorWithMV2DeprecationUnitTest,
        DidAcknowledgeMv2DeprecationNotice) {
   scoped_refptr<const Extension> extension =
@@ -1400,13 +1416,8 @@ TEST_P(ExtensionInfoGeneratorWithMV2DeprecationUnitTest,
   ManifestV2ExperimentManager* experiment_manager =
       ManifestV2ExperimentManager::Get(browser_context());
 
-  if (experiment_stage() == MV2ExperimentStage::kNone) {
-    // Extensions are not affected by MV2 deprecation in this stage.
-    EXPECT_FALSE(experiment_manager->IsExtensionAffected(*extension));
-  } else {
-    // Extensions with manifest version 2 are affected in the other stages.
-    EXPECT_TRUE(experiment_manager->IsExtensionAffected(*extension));
-  }
+  // Extensions with manifest version 2 are affected in the other stages.
+  EXPECT_TRUE(experiment_manager->IsExtensionAffected(*extension));
   EXPECT_FALSE(experiment_manager->DidUserAcknowledgeNotice(extension->id()));
 
   {
@@ -1420,10 +1431,9 @@ TEST_P(ExtensionInfoGeneratorWithMV2DeprecationUnitTest,
   {
     std::unique_ptr<developer::ExtensionInfo> info =
         GenerateExtensionInfo(extension->id());
-    if (experiment_stage() == MV2ExperimentStage::kNone ||
-        experiment_stage() == MV2ExperimentStage::kUnsupported) {
-      // Cannot acknowledge a notice that doesn't exist (none stage) or cannot
-      // be dismissed (unsupported stage).
+    if (experiment_stage() == MV2ExperimentStage::kUnsupported) {
+      // Cannot acknowledge a notice that cannot be dismissed (unsupported
+      // stage).
       EXPECT_FALSE(info->did_acknowledge_mv2_deprecation_notice);
     } else {
       EXPECT_TRUE(info->did_acknowledge_mv2_deprecation_notice);

@@ -37,6 +37,7 @@
 #include "third_party/blink/public/platform/platform.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource.h"
 #include "third_party/blink/renderer/platform/graphics/video_frame_sink_bundle.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "ui/gfx/presentation_feedback.h"
 
 namespace blink {
@@ -47,14 +48,11 @@ namespace {
 // other VideoFrameSubmitter living on the same thread with the same parent
 // FrameSinkId. This is used to aggregate Viz communication and substantially
 // reduce IPC traffic when many VideoFrameSubmitters are active within a frame.
-BASE_FEATURE(kUseVideoFrameSinkBundle,
-             "UseVideoFrameSinkBundle",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kUseVideoFrameSinkBundle, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // When VideoFrameSubmitter::ReclaimResources() is called in background,
 // trigger a clean of recycled video frames.
 BASE_FEATURE(kClearVideoFrameResourcesInBackground,
-             "ClearVideoFrameResourcesInBackground",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Builds a cc::FrameInfo representing a video frame, which is considered
@@ -112,8 +110,10 @@ class VideoFrameSubmitter::FrameSinkBundleProxy
   }
 
   // Not used by VideoFrameSubmitter.
-  void SetWantsAnimateOnlyBeginFrames() override { NOTREACHED(); }
-  void SetAutoNeedsBeginFrame() override { NOTREACHED(); }
+  void SetParams(
+      viz::mojom::blink::CompositorFrameSinkParamsPtr params) override {
+    NOTREACHED();
+  }
 
   void SubmitCompositorFrame(
       const viz::LocalSurfaceId& local_surface_id,
@@ -130,16 +130,6 @@ class VideoFrameSubmitter::FrameSinkBundleProxy
   }
 
   // Not used by VideoFrameSubmitter.
-  void SubmitCompositorFrameSync(
-      const viz::LocalSurfaceId& local_surface_id,
-      viz::CompositorFrame frame,
-      std::optional<viz::HitTestRegionList> hit_test_region_list,
-      uint64_t submit_time,
-      SubmitCompositorFrameSyncCallback callback) override {
-    NOTREACHED();
-  }
-
-  // Not used by VideoFrameSubmitter.
   void NotifyNewLocalSurfaceIdExpectedWhilePaused() override { NOTREACHED(); }
 
   void DidNotProduceFrame(const viz::BeginFrameAck& ack) override {
@@ -149,11 +139,12 @@ class VideoFrameSubmitter::FrameSinkBundleProxy
     bundle_->DidNotProduceFrame(frame_sink_id_.sink_id(), ack);
   }
 
-  void BindLayerContext(viz::mojom::blink::PendingLayerContextPtr context,
-                        bool draw_mode_is_gpu) override {}
+  void BindLayerContext(
+      viz::mojom::blink::PendingLayerContextPtr context,
+      viz::mojom::blink::LayerContextSettingsPtr settings) override {}
 
 #if BUILDFLAG(IS_ANDROID)
-  void SetThreads(const WTF::Vector<viz::Thread>& threads) override {
+  void SetThreads(const Vector<viz::Thread>& threads) override {
     bundle_->SetThreads(frame_sink_id_.sink_id(), threads);
   }
 #endif
@@ -173,7 +164,7 @@ VideoFrameSubmitter::VideoFrameSubmitter(
       resource_provider_(std::move(resource_provider)),
       roughness_reporter_(std::make_unique<cc::VideoPlaybackRoughnessReporter>(
           std::move(roughness_reporting_callback))),
-      frame_trackers_(false, nullptr) {
+      frame_trackers_(false) {
   frame_sorter_.AddObserver(&frame_trackers_);
   DETACH_FROM_THREAD(thread_checker_);
 }
@@ -217,7 +208,7 @@ void VideoFrameSubmitter::StopRendering() {
   is_rendering_ = false;
 
   frame_trackers_.StopSequence(cc::FrameSequenceTrackerType::kVideo);
-  frame_sorter_.Reset();
+  frame_sorter_.Reset(/*reset_fcp=*/false);
 
   UpdateSubmissionState();
 }
@@ -351,7 +342,7 @@ void VideoFrameSubmitter::OnGpuChannelLost() {
 }
 
 void VideoFrameSubmitter::DidReceiveCompositorFrameAck(
-    WTF::Vector<viz::ReturnedResource> resources) {
+    Vector<viz::ReturnedResource> resources) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   ReclaimResources(std::move(resources));
 
@@ -366,8 +357,8 @@ void VideoFrameSubmitter::DidReceiveCompositorFrameAck(
 
 void VideoFrameSubmitter::OnBeginFrame(
     const viz::BeginFrameArgs& args,
-    const WTF::HashMap<uint32_t, viz::FrameTimingDetails>& timing_details,
-    WTF::Vector<viz::ReturnedResource> resources) {
+    const HashMap<uint32_t, viz::FrameTimingDetails>& timing_details,
+    Vector<viz::ReturnedResource> resources) {
   if (!resources.empty()) {
     ReclaimResources(std::move(resources));
   }
@@ -377,7 +368,7 @@ void VideoFrameSubmitter::OnBeginFrame(
 
   last_begin_frame_args_ = args;
 
-  WTF::Vector<uint32_t> frame_tokens;
+  Vector<uint32_t> frame_tokens;
   for (const auto& id : timing_details.Keys())
     frame_tokens.push_back(id);
   std::sort(frame_tokens.begin(), frame_tokens.end());
@@ -452,10 +443,9 @@ void VideoFrameSubmitter::OnBeginFrame(
       }
     }
 
-    TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
-        "media", "VideoFrameSubmitter",
-        TRACE_ID_WITH_SCOPE("VideoFrameSubmitter", frame_token),
-        feedback.timestamp);
+    TRACE_EVENT_END("media",
+                    perfetto::NamedTrack("VideoFrameSubmitter", frame_token),
+                    feedback.timestamp);
   }
 
   base::TimeTicks deadline_min = args.frame_time + args.interval;
@@ -532,7 +522,7 @@ void VideoFrameSubmitter::OnBeginFrame(
 }
 
 void VideoFrameSubmitter::ReclaimResources(
-    WTF::Vector<viz::ReturnedResource> resources) {
+    Vector<viz::ReturnedResource> resources) {
   DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   resource_provider_->ReceiveReturnsFromParent(std::move(resources));
 
@@ -558,7 +548,9 @@ void VideoFrameSubmitter::OnReceivedContextProvider(
 
   if (!use_gpu_compositing) {
     shared_image_interface_ = std::move(shared_image_interface);
-    if (!shared_image_interface_) {
+    if (!shared_image_interface_ ||
+        !shared_image_interface_->gpu_channel()->AddObserverIfNotAlreadyLost(
+            this)) {
       base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
           FROM_HERE,
           base::BindOnce(
@@ -569,7 +561,6 @@ void VideoFrameSubmitter::OnReceivedContextProvider(
       return;
     }
 
-    shared_image_interface_->gpu_channel()->AddObserver(this);
     resource_provider_->Initialize(nullptr, shared_image_interface_);
     if (frame_sink_id_.is_valid()) {
       StartSubmitting();
@@ -645,7 +636,7 @@ void VideoFrameSubmitter::StartSubmitting() {
       &VideoFrameSubmitter::OnContextLost, base::Unretained(this)));
 
 #if BUILDFLAG(IS_ANDROID)
-  WTF::Vector<viz::Thread> threads;
+  Vector<viz::Thread> threads;
   threads.push_back(viz::Thread{base::PlatformThread::CurrentId(),
                                 viz::Thread::Type::kVideo});
   threads.push_back(viz::Thread{Platform::Current()->GetIOThreadId(),
@@ -891,15 +882,14 @@ viz::CompositorFrame VideoFrameSubmitter::CreateCompositorFrame(
 
   if (video_frame && video_frame->metadata().decode_end_time.has_value()) {
     base::TimeTicks value = *video_frame->metadata().decode_end_time;
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
-        "media", "VideoFrameSubmitter",
-        TRACE_ID_WITH_SCOPE("VideoFrameSubmitter", frame_token), value);
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
-        "media", "Pre-submit buffering",
-        TRACE_ID_WITH_SCOPE("VideoFrameSubmitter", frame_token), value);
-    TRACE_EVENT_NESTABLE_ASYNC_END0(
-        "media", "Pre-submit buffering",
-        TRACE_ID_WITH_SCOPE("VideoFrameSubmitter", frame_token));
+    TRACE_EVENT_BEGIN("media", "VideoFrameSubmitter",
+                      perfetto::NamedTrack("VideoFrameSubmitter", frame_token),
+                      value);
+    TRACE_EVENT_BEGIN("media", "Pre-submit buffering",
+                      perfetto::NamedTrack("VideoFrameSubmitter", frame_token),
+                      value);
+    TRACE_EVENT_END("media", /*Pre-submit buffering*/
+                    perfetto::NamedTrack("VideoFrameSubmitter", frame_token));
 
     if (begin_frame_ack.frame_id.source_id ==
         viz::BeginFrameArgs::kManualSourceId) {
@@ -911,10 +901,9 @@ viz::CompositorFrame VideoFrameSubmitter::CreateCompositorFrame(
     RecordUmaPreSubmitBufferingDelay(is_media_stream_,
                                      base::TimeTicks::Now() - value);
   } else {
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN1(
-        "media", "VideoFrameSubmitter",
-        TRACE_ID_WITH_SCOPE("VideoFrameSubmitter", frame_token),
-        "empty video frame?", !video_frame);
+    TRACE_EVENT_BEGIN("media", "VideoFrameSubmitter",
+                      perfetto::NamedTrack("VideoFrameSubmitter", frame_token),
+                      "empty video frame?", !video_frame);
   }
 
   // We don't assume that the ack is marked as having damage.  However, we're

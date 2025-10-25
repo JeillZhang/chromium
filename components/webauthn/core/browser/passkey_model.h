@@ -79,6 +79,9 @@ class PasskeyModel : public KeyedService {
     std::string user_display_name;
   };
 
+  // Hidden passkeys are permanently removed after `kHiddenPasskeyLifetime`.
+  static constexpr base::TimeDelta kHiddenPasskeyLifetime = base::Days(30);
+
   virtual void AddObserver(Observer* observer) = 0;
   virtual void RemoveObserver(Observer* observer) = 0;
 
@@ -100,6 +103,10 @@ class PasskeyModel : public KeyedService {
   virtual std::vector<sync_pb::WebauthnCredentialSpecifics> GetAllPasskeys()
       const = 0;
 
+  // Returns the list of all unshadowed passkeys.
+  virtual std::vector<sync_pb::WebauthnCredentialSpecifics>
+  GetUnShadowedPasskeys() const = 0;
+
   // Returns the passkey matching the given Relying Party and credential ID, if
   // any. Shadowed entities, which aren't suitable for generating assertions,
   // are ignored.
@@ -120,10 +127,16 @@ class PasskeyModel : public KeyedService {
   virtual bool DeletePasskey(const std::string& credential_id,
                              const base::Location& location) = 0;
 
-  // Sets the `hidden` property for the passkey with the given `credential_id`.
-  // Returns true if a passkey was found and updated, false otherwise.
-  virtual bool SetPasskeyHidden(const std::string& credential_id,
-                                bool hidden) = 0;
+  // Sets `hidden = true` and `hidden_time` for the passkey with the given
+  // `credential_id`. Returns true if a passkey was found and updated, false
+  // otherwise.
+  virtual bool HidePasskey(const std::string& credential_id,
+                           base::Time hidden_time) = 0;
+
+  // Sets `hidden = false` for the passkey with the given `credential_id`
+  // and clears its `hidden_time` property. Returns true if a
+  // passkey was found and updated, false otherwise.
+  virtual bool UnhidePasskey(const std::string& credential_id) = 0;
 
   // Deletes all passkeys.
   virtual void DeleteAllPasskeys() = 0;
@@ -143,6 +156,13 @@ class PasskeyModel : public KeyedService {
   // found and updated, false otherwise.
   virtual bool UpdatePasskeyTimestamp(const std::string& credential_id,
                                       base::Time last_used_time) = 0;
+
+  // Replaces the `encrypted` blob of an existing passkey.
+  // Used when the enclave rotates ciphertext after a large blob
+  // write. Returns false if the credential isn’t found.
+  virtual bool UpdatePasskeyEncryptedBlob(
+      const std::string& credential_id,
+      const std::string& new_encrypted_blob) = 0;
 
   // Creates a passkey for the given RP and user and returns the new entity
   // specifics.

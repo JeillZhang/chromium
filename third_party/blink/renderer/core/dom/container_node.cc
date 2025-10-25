@@ -74,6 +74,7 @@
 #include "third_party/blink/renderer/core/layout/layout_inline.h"
 #include "third_party/blink/renderer/core/layout/layout_text.h"
 #include "third_party/blink/renderer/core/layout/layout_text_combine.h"
+#include "third_party/blink/renderer/core/patching/patch_supplement.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/core/timing/soft_navigation_heuristics.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
@@ -294,9 +295,9 @@ bool ContainerNode::EnsurePreInsertionValidity(
     if (!ChildTypeAllowed(child->getNodeType())) {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kHierarchyRequestError,
-          WTF::StrCat({"Nodes of type '", child->nodeName(),
-                       "' may not be inserted inside nodes of type '",
-                       nodeName(), "'."}));
+          StrCat({"Nodes of type '", child->nodeName(),
+                  "' may not be inserted inside nodes of type '", nodeName(),
+                  "'."}));
       return false;
     }
     return true;
@@ -383,11 +384,11 @@ void ContainerNode::DidInsertNodeVector(
     const NodeVector& post_insertion_notification_targets) {
   Node* unchanged_previous =
       targets.size() > 0 ? targets[0]->previousSibling() : nullptr;
-  const Document& document = GetDocument();
   for (const auto& target_node : targets) {
     ChildrenChanged(ChildrenChange::ForInsertion(
         *target_node, unchanged_previous, next, ChildrenChangeSource::kAPI));
-    CheckSoftNavigationHeuristicsTracking(document, *target_node);
+    SoftNavigationHeuristics::InsertedNode(target_node,
+                                           /*container_node=*/this);
   }
   for (const auto& descendant : post_insertion_notification_targets) {
     if (descendant->isConnected())
@@ -1453,10 +1454,11 @@ bool ContainerNode::ChildrenChangedAllChildrenRemovedNeedsList() const {
 }
 
 void ContainerNode::CloneChildNodesFrom(const ContainerNode& node,
-                                        NodeCloningData& data) {
+                                        NodeCloningData& data,
+                                        CustomElementRegistry* registry) {
   CHECK(data.Has(CloneOption::kIncludeDescendants));
   for (const Node& child : NodeTraversal::ChildrenOf(node)) {
-    child.Clone(GetDocument(), data, this);
+    child.Clone(GetDocument(), data, this, registry);
   }
 }
 
@@ -1871,31 +1873,6 @@ void ContainerNode::ReplaceChildren(const VectorOf<Node>& nodes,
   AppendChildren(nodes, exception_state);
 }
 
-void ContainerNode::CheckSoftNavigationHeuristicsTracking(
-    const Document& document,
-    Node& inserted_node) {
-  if (!document.IsTrackingSoftNavigationHeuristics()) {
-    return;
-  }
-  if (!inserted_node.isConnected()) {
-    return;
-  }
-  LocalDOMWindow* window = document.domWindow();
-  if (!window) {
-    return;
-  }
-  if (SoftNavigationHeuristics* heuristics =
-          window->GetSoftNavigationHeuristics()) {
-    // When a child node, which is an HTML-element, is modified within a parent
-    // (added, moved, etc), mark that child as modified by soft navigation.
-    // Otherwise, if the child is not an HTML-element, mark the parent instead.
-    // TODO(crbug.com/1521100): This does not filter out updates from isolated
-    // worlds. Should it?
-    Node* updated_node = inserted_node.IsHTMLElement() ? &inserted_node : this;
-    heuristics->ModifiedDOM(updated_node);
-  }
-}
-
 String ContainerNode::getHTML(const GetHTMLOptions* options,
                               ExceptionState& exception_state) const {
   DCHECK(options && options->hasSerializableShadowRoots())
@@ -1911,6 +1888,49 @@ String ContainerNode::getHTML(const GetHTMLOptions* options,
   }
   return CreateMarkup(this, kChildrenOnly, kDoNotResolveURLs,
                       shadow_root_inclusion);
+}
+
+WritableStream* ContainerNode::patchSelf(ScriptState* script_state,
+                                         ExceptionState& exception_state) {
+  if (!IsElementNode() && !parentElement()) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kHierarchyRequestError,
+        "Patching an orphan DocumentFragment is not allowed");
+    return nullptr;
+  }
+  return PatchSupplement::From(GetDocument())
+      ->CreateSinglePatchStream(script_state, *this, /*previous_child=*/nullptr,
+                                /*next_child=*/nullptr);
+}
+
+WritableStream* ContainerNode::patchAfter(ScriptState* script_state,
+                                          Node* a,
+                                          ExceptionState& exception_state) {
+  return patchBetween(script_state, a, nullptr, exception_state);
+}
+WritableStream* ContainerNode::patchBefore(ScriptState* script_state,
+                                           Node* b,
+                                           ExceptionState& exception_state) {
+  return patchBetween(script_state, nullptr, b, exception_state);
+}
+WritableStream* ContainerNode::patchBetween(ScriptState* script_state,
+                                            Node* a,
+                                            Node* b,
+                                            ExceptionState& exception_state) {
+  if ((a && a->parentNode() != this) || (b && b->parentNode() != this)) {
+    exception_state.ThrowDOMException(
+        DOMExceptionCode::kHierarchyRequestError,
+        "Reference nodes have to be children of the target node when patching");
+    return nullptr;
+  }
+
+  return PatchSupplement::From(GetDocument())
+      ->CreateSinglePatchStream(script_state, *this, a, b);
+}
+
+WritableStream* ContainerNode::patchAll(ScriptState* script_state) {
+  return PatchSupplement::From(GetDocument())
+      ->CreateSubtreePatchStream(script_state, *this);
 }
 
 }  // namespace blink

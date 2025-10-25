@@ -353,7 +353,7 @@ bool HTMLDialogElement::HandleCommandInternal(HTMLElement& invoker,
 
   // Dialog actions conflict with popovers. We should avoid trying do anything
   // with a dialog that is an open popover.
-  if (HasPopoverAttribute() && popoverOpen()) {
+  if (IsPopover() && popoverOpen()) {
     AddConsoleMessage(mojom::blink::ConsoleMessageSource::kOther,
                       mojom::blink::ConsoleMessageLevel::kError,
                       "Dialog commands are ignored on open popovers.");
@@ -458,12 +458,6 @@ bool HTMLDialogElement::IsKeyboardFocusableSlow(
   if (!IsFocusable(update_behavior)) {
     return false;
   }
-  // Interest invoker targets with partial interest aren't keyboard focusable.
-  if (IsInPartialInterestPopover()) {
-    CHECK(RuntimeEnabledFeatures::HTMLInterestTargetAttributeEnabled(
-        GetDocument().GetExecutionContext()));
-    return false;
-  }
   // This handles cases such as <dialog tabindex=0>, <dialog contenteditable>,
   // etc.
   return Element::SupportsFocus(update_behavior) !=
@@ -536,14 +530,13 @@ void HTMLDialogElement::showModal(ExceptionState& exception_state,
         DOMExceptionCode::kInvalidStateError,
         "The element is not in a Document.");
   }
-  if (HasPopoverAttribute() && popoverOpen()) {
+  if (IsPopover() && popoverOpen()) {
     return exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "The dialog is already open as a Popover, and therefore cannot be "
         "opened as a modal dialog.");
   }
-  if (!GetDocument().IsActive() &&
-      RuntimeEnabledFeatures::TopLayerInactiveDocumentExceptionsEnabled()) {
+  if (!GetDocument().IsActive()) {
     return exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "Invalid for dialogs within documents that are not fully active.");
@@ -682,10 +675,6 @@ void HTMLDialogElement::SetFocusForDialog() {
 bool HTMLDialogElement::DispatchToggleEvents(bool opening,
                                              Element* source,
                                              bool asModal) {
-  if (!RuntimeEnabledFeatures::DialogElementToggleEventsEnabled()) {
-    return true;
-  }
-
   String old_state = opening ? "closed" : "open";
   String new_state = opening ? "open" : "closed";
 
@@ -699,8 +688,7 @@ bool HTMLDialogElement::DispatchToggleEvents(bool opening,
     if (IsOpen()) {
       return false;
     }
-    if (asModal &&
-        (!isConnected() || (HasPopoverAttribute() && popoverOpen()))) {
+    if (asModal && (!isConnected() || (IsPopover() && popoverOpen()))) {
       return false;
     }
   }
@@ -713,8 +701,8 @@ bool HTMLDialogElement::DispatchToggleEvents(bool opening,
                           old_state, new_state, source);
   pending_toggle_event_task_ = PostCancellableTask(
       *GetDocument().GetTaskRunner(TaskType::kDOMManipulation), FROM_HERE,
-      WTF::BindOnce(&HTMLDialogElement::DispatchPendingToggleEvent,
-                    WrapPersistent(this)));
+      BindOnce(&HTMLDialogElement::DispatchPendingToggleEvent,
+               WrapPersistent(this)));
   return true;
 }
 
@@ -737,9 +725,11 @@ void HTMLDialogElement::Trace(Visitor* visitor) const {
 void HTMLDialogElement::AttributeChanged(
     const AttributeModificationParams& params) {
   HTMLElement::AttributeChanged(params);
-  if (params.name == html_names::kClosedbyAttr && IsOpenAndActive() &&
-      params.old_value != params.new_value) {
-    SetCloseWatcherEnabledState();
+  if (params.name == html_names::kClosedbyAttr) {
+    UseCounter::CountWebDXFeature(GetDocument(), WebDXFeature::kDialogClosedby);
+    if (IsOpenAndActive() && params.old_value != params.new_value) {
+      SetCloseWatcherEnabledState();
+    }
   }
   if (params.name == html_names::kOpenAttr &&
       params.old_value != params.new_value) {

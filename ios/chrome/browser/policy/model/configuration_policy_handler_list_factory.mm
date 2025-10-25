@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
+#pragma allow_unsafe_buffers
+#endif
+
 #import "ios/chrome/browser/policy/model/configuration_policy_handler_list_factory.h"
 
 #import "base/check.h"
@@ -14,11 +19,14 @@
 #import "components/component_updater/pref_names.h"
 #import "components/content_settings/core/common/pref_names.h"
 #import "components/enterprise/browser/data_region/data_region_policy_handler.h"
+#import "components/enterprise/browser/reporting/cloud_profile_reporting_policy_handler.h"
 #import "components/enterprise/browser/reporting/cloud_reporting_frequency_policy_handler.h"
 #import "components/enterprise/browser/reporting/cloud_reporting_policy_handler.h"
 #import "components/enterprise/browser/reporting/common_pref_names.h"
 #import "components/enterprise/connectors/core/connectors_prefs.h"
 #import "components/enterprise/connectors/core/enterprise_connectors_policy_handler.h"
+#import "components/enterprise/data_controls/core/browser/data_controls_policy_handler.h"
+#import "components/enterprise/data_controls/core/browser/prefs.h"
 #import "components/enterprise/idle/idle_timeout_policy_handler.h"
 #import "components/history/core/common/pref_names.h"
 #import "components/lens/lens_overlay_permission_utils.h"
@@ -40,6 +48,7 @@
 #import "components/security_interstitials/core/https_only_mode_policy_handler.h"
 #import "components/signin/public/base/signin_pref_names.h"
 #import "components/sync/service/sync_policy_handler.h"
+#import "components/themes/theme_color_policy_handler.h"
 #import "components/translate/core/browser/translate_pref_names.h"
 #import "components/unified_consent/pref_names.h"
 #import "components/variations/pref_names.h"
@@ -169,12 +178,21 @@ const PolicyToPreferenceMapEntry kSimplePolicyMap[] = {
   { policy::key::kProvisionalNotificationsAllowed,
     prefs::kProvisionalNotificationsAllowedByPolicy,
     base::Value::Type::BOOLEAN },
-  { policy::key::kAIModeSearchSuggestSettings,
-    omnibox::kAIModeSearchSuggestSettings,
-    base::Value::Type::INTEGER },
   { policy::key::kAIModeSettings,
     omnibox::kAIModeSettings,
     base::Value::Type::INTEGER },
+  { policy::key::kGeminiSettings,
+    prefs::kGeminiEnabledByPolicy,
+    base::Value::Type::INTEGER },
+  { policy::key::kNTPCustomBackgroundEnabled,
+    prefs::kNTPCustomBackgroundEnabledByPolicy,
+    base::Value::Type::BOOLEAN },
+  { policy::key::kIncognitoModeBlocklist,
+    policy::policy_prefs::kIncognitoModeBlocklist,
+    base::Value::Type::LIST },
+  { policy::key::kIncognitoModeAllowlist,
+    policy::policy_prefs::kIncognitoModeAllowlist,
+    base::Value::Type::LIST },
 };
 // clang-format on
 
@@ -221,6 +239,9 @@ std::unique_ptr<policy::ConfigurationPolicyHandlerList> BuildPolicyHandlerList(
       std::make_unique<
           enterprise_reporting::CloudReportingFrequencyPolicyHandler>());
   handlers->AddHandler(
+      std::make_unique<
+          enterprise_reporting::CloudProfileReportingPolicyHandler>());
+  handlers->AddHandler(
       std::make_unique<policy::NewTabPageLocationPolicyHandler>());
   handlers->AddHandler(std::make_unique<policy::URLBlocklistPolicyHandler>(
       policy::key::kURLBlocklist));
@@ -251,8 +272,7 @@ std::unique_ptr<policy::ConfigurationPolicyHandlerList> BuildPolicyHandlerList(
   std::vector<policy::GenAiDefaultSettingsPolicyHandler::GenAiPolicyDetails>
       gen_ai_default_policies;
   gen_ai_default_policies.emplace_back(
-      policy::key::kAIModeSearchSuggestSettings,
-      omnibox::kAIModeSearchSuggestSettings,
+      policy::key::kLensOverlaySettings, lens::prefs::kLensOverlaySettings,
       policy::GenAiDefaultSettingsPolicyHandler::PolicyValueToPrefMap(
           {{0, 0}, {1, 0}, {2, 1}}));
   gen_ai_default_policies.emplace_back(
@@ -268,6 +288,8 @@ std::unique_ptr<policy::ConfigurationPolicyHandlerList> BuildPolicyHandlerList(
           policy::key::kTabGroupSharingSettings,
           collaboration::prefs::kSharedTabGroupsManagedAccountSetting,
           base::Value::Type::INTEGER)));
+
+  handlers->AddHandler(std::make_unique<ThemeColorPolicyHandler>());
 
   handlers->AddHandler(
       std::make_unique<
@@ -286,6 +308,11 @@ std::unique_ptr<policy::ConfigurationPolicyHandlerList> BuildPolicyHandlerList(
 
   handlers->AddHandler(std::make_unique<policy::DataRegionPolicyHandler>(
       policy::key::kChromeDataRegionSetting, prefs::kChromeDataRegionSetting));
+
+  handlers->AddHandler(
+      std::make_unique<data_controls::DataControlsPolicyHandler>(
+          policy::key::kDataControlsRules,
+          data_controls::kDataControlsRulesPref, chrome_schema));
 
   return handlers;
 }

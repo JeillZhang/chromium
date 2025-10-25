@@ -39,6 +39,7 @@
 namespace blink {
 
 class CSSValue;
+class Document;
 class LocalFrame;
 class MediaQuery;
 class MediaQueryExpNode;
@@ -85,6 +86,8 @@ class CORE_EXPORT MediaQueryEvaluator final
 
   const MediaValues& GetMediaValues() const { return *media_values_; }
 
+  const Document* GetDocument() const;
+
   bool MediaTypeMatch(const String& media_type_to_match) const;
 
   // Evaluates a list of media queries.
@@ -99,10 +102,10 @@ class CORE_EXPORT MediaQueryEvaluator final
   KleeneValue Eval(const MediaQueryExpNode&) const;
   KleeneValue Eval(const MediaQueryExpNode&, MediaQueryResultFlags*) const;
 
-  static KleeneValue EvalIfRange(const CSSValue& reference_value,
-                                 const CSSValue& query_value,
-                                 MediaQueryOperator op,
-                                 bool reverse_op);
+  static KleeneValue EvalStyleRange(const CSSValue& reference_value,
+                                    const CSSValue& query_value,
+                                    MediaQueryOperator op,
+                                    bool reverse_op);
 
   // Returns true if any of the media queries in the results lists changed its
   // evaluation.

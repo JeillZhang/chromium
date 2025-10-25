@@ -224,6 +224,10 @@ component("network") {
     "traffic_counters_handler.cc",
     "traffic_counters_handler.h",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }
 
 # This is separate from :network to prevent a dependency cycle due to:
@@ -304,6 +308,8 @@ source_set("test_support") {
     "system_token_cert_db_storage_test_util.h",
     "test_cellular_esim_profile_handler.cc",
     "test_cellular_esim_profile_handler.h",
+    "test_support/technology_enablement_waiter.cc",
+    "test_support/technology_enablement_waiter.h",
   ]
 }
 
@@ -411,4 +417,8 @@ source_set("unit_tests") {
     "text_message_provider_unittest.cc",
     "traffic_counters_handler_unittest.cc",
   ]
+
+  # TODO(crbug.com/40031409): Fix code that adds exit-time destructors and
+  # enable the diagnostic by removing this line.
+  configs += [ "//build/config/compiler:no_exit_time_destructors" ]
 }

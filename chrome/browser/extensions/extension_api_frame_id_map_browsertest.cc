@@ -33,24 +33,15 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiFrameIdMapBrowserTest, ContextIdsAreUnique) {
 
   // Open three frames, two of which point to page1.html.
   content::RenderFrameHost* page1_a_host =
-      ui_test_utils::NavigateToURLWithDisposition(
-          browser(), extension->ResolveExtensionURL("page1.html"),
-          WindowOpenDisposition::NEW_FOREGROUND_TAB,
-          ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+      NavigateToURLInNewTab(extension->GetResourceURL("page1.html"));
   ASSERT_TRUE(page1_a_host);
 
   content::RenderFrameHost* page1_b_host =
-      ui_test_utils::NavigateToURLWithDisposition(
-          browser(), extension->ResolveExtensionURL("page1.html"),
-          WindowOpenDisposition::NEW_FOREGROUND_TAB,
-          ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+      NavigateToURLInNewTab(extension->GetResourceURL("page1.html"));
   ASSERT_TRUE(page1_b_host);
 
   content::RenderFrameHost* page2_host =
-      ui_test_utils::NavigateToURLWithDisposition(
-          browser(), extension->ResolveExtensionURL("page2.html"),
-          WindowOpenDisposition::NEW_FOREGROUND_TAB,
-          ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
+      NavigateToURLInNewTab(extension->GetResourceURL("page2.html"));
   ASSERT_TRUE(page2_host);
 
   base::Uuid page1_a_context_id =
@@ -77,7 +68,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionApiFrameIdMapBrowserTest, ContextIdsAreUnique) {
   // since it's a new document.
   content::RenderFrameHost* page2_new_host =
       ui_test_utils::NavigateToURLWithDisposition(
-          browser(), extension->ResolveExtensionURL("page2.html"),
+          browser(), extension->GetResourceURL("page2.html"),
           WindowOpenDisposition::CURRENT_TAB,
           ui_test_utils::BROWSER_TEST_WAIT_FOR_LOAD_STOP);
   ASSERT_TRUE(page2_new_host);

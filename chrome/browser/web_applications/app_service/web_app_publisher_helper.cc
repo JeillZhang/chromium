@@ -104,14 +104,13 @@
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom-shared.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/display/types/display_constants.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "ash/webui/projector_app/public/cpp/projector_app_constants.h"  // nogncheck
 #include "ash/webui/system_apps/public/system_web_app_type.h"
-#include "chrome/browser/apps/browser_instance/browser_app_instance_tracker.h"
 #include "chrome/browser/ash/guest_os/guest_os_terminal.h"
 #include "chrome/browser/ash/login/demo_mode/demo_session.h"
 #include "chrome/browser/ash/system_web_apps/system_web_app_manager.h"
@@ -391,7 +390,7 @@ apps::IntentFilterPtr CreateIntentFilterFromOrigin(
                              : apps::PatternMatchType::kLiteral);
 
   intent_filter->AddSingleValueCondition(apps::ConditionType::kPath,
-                                         extended_scope.path(),
+                                         extended_scope.GetPath(),
                                          apps::PatternMatchType::kPrefix);
 
   return intent_filter;
@@ -409,6 +408,22 @@ apps::IntentFilters CreateIntentFiltersFromScopeExtensionInfo(
     filters.push_back(CreateIntentFilterFromOrigin(
         scope_extension_info.origin, scope_extension_info.scope,
         /*add_subdomain_wildcard=*/true));
+  }
+  return filters;
+}
+
+apps::IntentFilters CreateIntentFiltersFromProtocolHandlers(
+    const std::vector<custom_handlers::ProtocolHandler>& protocol_handlers) {
+  apps::IntentFilters filters;
+  for (const auto& handler : protocol_handlers) {
+    auto intent_filter = std::make_unique<apps::IntentFilter>();
+    intent_filter->AddSingleValueCondition(apps::ConditionType::kAction,
+                                           apps_util::kIntentActionView,
+                                           apps::PatternMatchType::kLiteral);
+    intent_filter->AddSingleValueCondition(apps::ConditionType::kScheme,
+                                           handler.protocol(),
+                                           apps::PatternMatchType::kLiteral);
+    filters.push_back(std::move(intent_filter));
   }
   return filters;
 }
@@ -517,9 +532,7 @@ void WebAppPublisherHelper::BadgeManagerDelegate::OnAppBadgeUpdated(
 WebAppPublisherHelper::WebAppPublisherHelper(Profile* profile,
                                              WebAppProvider* provider,
                                              Delegate* delegate)
-    : profile_(profile),
-      provider_(provider),
-      delegate_(delegate) {
+    : profile_(profile), provider_(provider), delegate_(delegate) {
   DCHECK(profile_);
   DCHECK(delegate_);
   Init();
@@ -648,6 +661,13 @@ apps::IntentFilters WebAppPublisherHelper::CreateIntentFiltersForWebApp(
                  CreateShareIntentFiltersFromShareTarget(*app.share_target()));
   }
 
+  // Includes all protocol handlers except for the ones that the user has
+  // explicitly disallowed.
+  const std::vector<custom_handlers::ProtocolHandler> protocol_handlers =
+      provider.os_integration_manager().GetAppProtocolHandlers(app.app_id());
+  base::Extend(filters,
+               CreateIntentFiltersFromProtocolHandlers(protocol_handlers));
+
   const apps::FileHandlers* enabled_file_handlers =
       provider.os_integration_manager().GetEnabledFileHandlers(app.app_id());
   if (enabled_file_handlers) {
@@ -748,8 +768,7 @@ apps::AppPtr WebAppPublisherHelper::CreateWebApp(const WebApp* web_app) {
 #endif
 
   // Add the intent filters for PWAs.
-  base::Extend(app->intent_filters,
-               CreateIntentFiltersForWebApp(*provider_, *web_app));
+  app->intent_filters = CreateIntentFiltersForWebApp(*provider_, *web_app);
 
   // These filters are used by the settings page to display would-be-handled
   // extensions even when the feature is not enabled for the app, whereas
@@ -760,7 +779,7 @@ apps::AppPtr WebAppPublisherHelper::CreateWebApp(const WebApp* web_app) {
   if (all_file_handlers && !all_file_handlers->empty()) {
     std::set<std::string> extensions_set =
         apps::GetFileExtensionsFromFileHandlers(*all_file_handlers);
-    app->intent_filters.push_back(apps_util::CreateFileFilter(
+    app->intent_filters->push_back(apps_util::CreateFileFilter(
         {apps_util::kIntentActionPotentialFileHandler},
         /*mime_types=*/{},
         /*file_extensions=*/
@@ -768,16 +787,16 @@ apps::AppPtr WebAppPublisherHelper::CreateWebApp(const WebApp* web_app) {
   }
 
   if (IsNoteTakingWebApp(*web_app)) {
-    app->intent_filters.push_back(apps_util::CreateNoteTakingFilter());
+    app->intent_filters->push_back(apps_util::CreateNoteTakingFilter());
   }
 
   if (IsLockScreenCapable(*web_app)) {
-    app->intent_filters.push_back(apps_util::CreateLockScreenFilter());
+    app->intent_filters->push_back(apps_util::CreateLockScreenFilter());
   }
 
 #if BUILDFLAG(IS_CHROMEOS)
   if (web_app->app_id() == guest_os::kTerminalSystemAppId) {
-    app->intent_filters.push_back(apps_util::CreateFileFilter(
+    app->intent_filters->push_back(apps_util::CreateFileFilter(
         {apps_util::kIntentActionView},
         /*mime_types=*/
         {extensions::app_file_handler_util::kMimeTypeInodeDirectory},
@@ -1057,6 +1076,12 @@ void WebAppPublisherHelper::LaunchAppWithParams(
     return;
   }
 
+  if (params.protocol_handler_launch_url) {
+    LaunchAppFromProtocolCheckingUserPermission(std::move(params),
+                                                std::move(on_complete));
+    return;
+  }
+
   apps::AppLaunchParams params_for_restore(
       params.app_id, params.container, params.disposition, params.override_url,
       params.launch_source, params.display_id, params.launch_files,
@@ -1304,6 +1329,14 @@ WebAppInstallManager& WebAppPublisherHelper::install_manager() const {
 
 bool WebAppPublisherHelper::IsShuttingDown() const {
   return is_shutting_down_;
+}
+
+void WebAppPublisherHelper::OnWebAppProtocolSettingsChanged(
+    const webapps::AppId& app_id) {
+  const WebApp* web_app = GetWebApp(app_id);
+  if (web_app) {
+    delegate_->PublishWebApp(CreateWebApp(web_app));
+  }
 }
 
 void WebAppPublisherHelper::OnWebAppFileHandlerApprovalStateChanged(
@@ -1832,6 +1865,35 @@ void WebAppPublisherHelper::LaunchAppWithFilesCheckingUserPermission(
       file_paths, app_id, std::move(launch_callback));
 }
 
+void WebAppPublisherHelper::LaunchAppFromProtocolCheckingUserPermission(
+    apps::AppLaunchParams params,
+    base::OnceCallback<void(content::WebContents*)> callback) {
+  CHECK(params.protocol_handler_launch_url);
+  std::string app_id = params.app_id;
+  GURL protocol_url = *params.protocol_handler_launch_url;
+
+  WebAppRegistrar& registrar = provider_->registrar_unsafe();
+  if (!registrar.IsRegisteredLaunchProtocol(app_id, protocol_url.GetScheme()) ||
+      registrar.IsDisallowedLaunchProtocol(app_id, protocol_url.GetScheme())) {
+    std::move(callback).Run(nullptr);
+    return;
+  }
+
+  if (!registrar.IsAllowedLaunchProtocol(params.app_id,
+                                         protocol_url.GetScheme())) {
+    provider_->ui_manager().ShowWebAppProtocolLaunchDialog(
+        protocol_url, app_id,
+        base::BindOnce(&WebAppPublisherHelper::OnProtocolHandlerDialogCompleted,
+                       weak_ptr_factory_.GetWeakPtr(), std::move(params),
+                       std::move(callback)));
+    return;
+  }
+
+  OnProtocolHandlerDialogCompleted(std::move(params), std::move(callback),
+                                   /*allowed=*/true,
+                                   /*remember_user_choice=*/false);
+}
+
 void WebAppPublisherHelper::OnFileHandlerDialogCompleted(
     std::string app_id,
     apps::AppLaunchParams params,
@@ -1887,6 +1949,31 @@ void WebAppPublisherHelper::OnFileHandlerDialogCompleted(
   }
 
   std::move(concurrent).Done(std::move(callback));
+}
+
+void WebAppPublisherHelper::OnProtocolHandlerDialogCompleted(
+    apps::AppLaunchParams params,
+    base::OnceCallback<void(content::WebContents*)> on_complete,
+    bool allowed,
+    bool remember_user_choice) {
+  if (remember_user_choice) {
+    ApiApprovalState approval_state =
+        allowed ? ApiApprovalState::kAllowed : ApiApprovalState::kDisallowed;
+    provider_->scheduler().UpdateProtocolHandlerUserApproval(
+        params.app_id, params.protocol_handler_launch_url->GetScheme(),
+        approval_state, base::DoNothing());
+  }
+  if (!allowed) {
+    std::move(on_complete).Run(nullptr);
+    return;
+  }
+  provider_->scheduler().LaunchAppWithCustomParams(
+      std::move(params),
+      base::BindOnce([](base::WeakPtr<Browser>,
+                        base::WeakPtr<content::WebContents> web_contents,
+                        apps::LaunchContainer) {
+        return web_contents.get();
+      }).Then(std::move(on_complete)));
 }
 
 void WebAppPublisherHelper::OnLaunchCompleted(

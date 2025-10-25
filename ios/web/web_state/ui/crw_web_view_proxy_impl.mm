@@ -101,6 +101,14 @@ UIView* GetFirstResponderSubview(UIView* view) {
       allowsBackForwardNavigationGestures;
 }
 
+- (BOOL)allowsLinkPreview {
+  return _webController.allowsLinkPreview;
+}
+
+- (void)setAllowsLinkPreview:(BOOL)allowsLinkPreview {
+  _webController.allowsLinkPreview = allowsLinkPreview;
+}
+
 - (CGRect)bounds {
   return [_contentView bounds];
 }
@@ -194,6 +202,14 @@ UIView* GetFirstResponderSubview(UIView* view) {
 
 - (BOOL)isWebPageInFullscreenMode {
   return [_webController isWebPageInFullscreenMode];
+}
+
+- (UIEdgeInsets)obscuredInsets {
+  return _contentView.obscuredInsets;
+}
+
+- (void)setObscuredInsets:(UIEdgeInsets)obscuredInsets {
+  [_contentView setObscuredInsets:obscuredInsets];
 }
 
 @end

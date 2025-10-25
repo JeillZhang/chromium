@@ -32,7 +32,6 @@
 #include "base/task/thread_pool/thread_pool_instance.h"
 #include "build/build_config.h"
 #include "chrome/enterprise_companion/device_management_storage/dm_storage.h"
-#include "chrome/enterprise_companion/dm_client.h"
 #include "chrome/updater/app/app.h"
 #include "chrome/updater/configurator.h"
 #include "chrome/updater/constants.h"
@@ -44,7 +43,6 @@
 #include "chrome/updater/service_proxy_factory.h"
 #include "chrome/updater/update_service.h"
 #include "components/crx_file/crx_verifier.h"
-#include "components/policy/core/common/cloud/cloud_policy_validator.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "components/update_client/unpacker.h"
 #include "components/update_client/unzip/in_process_unzipper.h"
@@ -187,28 +185,7 @@ void PrintCachedPolicy(const base::FilePath& policy_path) {
     return;
   }
 
-  scoped_refptr<device_management_storage::DMStorage> storage = GetDMStorage();
-  std::unique_ptr<device_management_storage::CachedPolicyInfo> info =
-      GetCachedPolicyInfo(storage);
-  std::unique_ptr<::policy::CloudPolicyValidatorBase::ValidationResult>
-      validation_result =
-          enterprise_companion::GetDefaultPolicyFetchResponseValidator().Run(
-              storage->GetDmToken(), storage->GetDeviceID(), info->public_key(),
-              info->timestamp(), response);
-  if (validation_result->status ==
-      ::policy::CloudPolicyValidatorBase::VALIDATION_OK) {
-    std::cout << "  [" << policy_type << "]: satisfies all validation check."
-              << std::endl;
-    return;
-  }
-
-  std::cout << "  [" << policy_type << "] validation failed: " << std::endl;
-  std::cout << "    Policy token: " << validation_result->policy_token
-            << std::endl;
-  std::cout << "    Validation status: "
-            << ::policy::CloudPolicyValidatorBase::StatusToString(
-                   validation_result->status)
-            << std::endl;
+  std::cout << "  [" << policy_type << "]: validation skipped." << std::endl;
 }
 
 void PrintCachedPolicyInfo(
@@ -417,6 +394,16 @@ void OnAppStateChanged(const UpdateService::UpdateState& update_state) {
                 << ", total: " << update_state.total_bytes << std::endl;
       break;
 
+    case UpdateService::UpdateState::State::kDecompressing:
+      std::cout << Quoted(update_state.app_id) << ": decompressing files"
+                << std::endl;
+      break;
+
+    case UpdateService::UpdateState::State::kPatching:
+      std::cout << Quoted(update_state.app_id) << ": applying patches"
+                << std::endl;
+      break;
+
     case UpdateService::UpdateState::State::kInstalling:
       std::cout << Quoted(update_state.app_id)
                 << ": installing update, progress at: "
@@ -539,8 +526,8 @@ void UpdaterUtilApp::ListApps() {
         if (OutputInJSONFormat()) {
           base::Value::Dict apps;
           for (updater::UpdateService::AppState app : states) {
-            apps.Set(app.app_id, base::Value::Dict().Set(
-                                     "version", app.version.GetString()));
+            apps.Set(app.app_id,
+                     base::Value::Dict().Set("version", app.version));
           }
           std::cout << ValueToJSONString(base::Value(std::move(apps)))
                     << std::endl;
@@ -548,7 +535,7 @@ void UpdaterUtilApp::ListApps() {
           std::cout << "Registered apps : {" << std::endl;
           for (updater::UpdateService::AppState app : states) {
             std::cout << "\t" << Quoted(app.app_id) << " = "
-                      << Quoted(app.version.GetString()) << ';' << std::endl;
+                      << Quoted(app.version) << ';' << std::endl;
           }
           std::cout << '}' << std::endl;
         }
@@ -570,10 +557,10 @@ void UpdaterUtilApp::FindApp(
             });
         LOG_IF(ERROR, it == std::end(states))
             << Quoted(app_id) << " is not a registered app.";
-        std::move(callback).Run(it == std::end(states)
-                                    ? nullptr
-                                    : base::MakeRefCounted<AppState>(
-                                          app_id, it->version.GetString()));
+        std::move(callback).Run(
+            it == std::end(states)
+                ? nullptr
+                : base::MakeRefCounted<AppState>(app_id, it->version));
       },
       app_id, std::move(callback)));
 }
@@ -605,8 +592,7 @@ void UpdaterUtilApp::DoListUpdate(scoped_refptr<AppState> app_state) {
              const UpdateService::UpdateState& update_state) {
             if (update_state.state ==
                 UpdateService::UpdateState::State::kUpdateAvailable) {
-              app_state->set_next_version(
-                  update_state.next_version.GetString());
+              app_state->set_next_version(update_state.next_version);
             }
           },
           app_state),
@@ -705,7 +691,9 @@ void UpdaterUtilApp::UnpackCRX() {
       ->PostTask(
           FROM_HERE,
           base::BindOnce(
-              &update_client::Unpacker::Unpack, std::vector<uint8_t>(),
+              &update_client::Unpacker::Unpack,
+              /*app_id=*/"",
+              /*prod_id=*/"UpdaterUtil", std::vector<uint8_t>(),
               base::CommandLine::ForCurrentProcess()->GetSwitchValuePath(
                   kUnpackSwitch),
               base::MakeRefCounted<update_client::InProcessUnzipperFactory>(
@@ -753,7 +741,8 @@ int UpdaterUtilMain(int argc, char** argv) {
   InitializeThreadPool("updater-util");
   const base::ScopedClosureRunner shutdown_thread_pool(
       base::BindOnce([] { base::ThreadPoolInstance::Get()->Shutdown(); }));
-  base::SingleThreadTaskExecutor main_task_executor(base::MessagePumpType::UI);
+  base::SingleThreadTaskExecutor main_task_executor(
+      base::MessagePumpType::DEFAULT, true);
   return base::MakeRefCounted<UpdaterUtilApp>()->Run();
 }
 

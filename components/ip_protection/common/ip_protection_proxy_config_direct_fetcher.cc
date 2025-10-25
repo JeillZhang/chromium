@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "base/check.h"
-#include "base/debug/crash_logging.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
@@ -217,8 +216,13 @@ IpProtectionProxyConfigDirectFetcher::GetProxyListFromProxyConfigResponse(
           chain_id > net::ProxyChain::kMaxIpProtectionChainId) {
         chain_id = net::ProxyChain::kDefaultIpProtectionChainId;
       }
-      proxy_list.push_back(
-          net::ProxyChain::ForIpProtection(std::move(proxies), chain_id));
+      auto chain =
+          net::ProxyChain::ForIpProtection(std::move(proxies), chain_id);
+      // `add_server()` fails if the proxy server is invalid, and `ok` will be
+      // false in that case, so it's safe to assume the chain we create here
+      // will be valid.
+      CHECK(chain.IsValid());
+      proxy_list.push_back(std::move(chain));
     }
   }
 
@@ -251,7 +255,9 @@ net::ProxyChain IpProtectionProxyConfigDirectFetcher::MakeChainForTesting(
     servers.push_back(net::ProxyServer::FromSchemeHostAndPort(
         net::ProxyServer::SCHEME_HTTPS, hostname, std::nullopt));
   }
-  return net::ProxyChain::ForIpProtection(servers, chain_id);
+  auto chain = net::ProxyChain::ForIpProtection(servers, chain_id);
+  CHECK(chain.IsValid());
+  return chain;
 }
 
 IpProtectionProxyConfigDirectFetcher::Retriever::Retriever(

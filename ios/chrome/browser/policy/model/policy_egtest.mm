@@ -20,8 +20,8 @@
 #import "components/policy/test_support/signature_provider.h"
 #import "components/safe_browsing/core/common/features.h"
 #import "components/strings/grit/components_strings.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/content_suggestions_constants.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_constants.h"
 #import "ios/chrome/browser/policy/model/cloud/user_policy_constants.h"
@@ -459,7 +459,8 @@ constexpr char kEnrollmentToken[] = "fake-enrollment-token";
 
 // Tests whether the managed item will be shown if UserPolicy is enabled and
 // the browser is signed in with a managed account.
-- (void)testPopupMenuItemWithUserPolicy {
+// TODO(crbug.com/435333773): Reenable this test.
+- (void)FLAKY_testPopupMenuItemWithUserPolicy {
   // Sign in with a managed account.
   NSString* managedAccountEmail = base::SysUTF8ToNSString(
       base::StrCat({"enterprise@", policy::SignatureProvider::kTestDomain1}));
@@ -665,9 +666,6 @@ constexpr char kEnrollmentToken[] = "fake-enrollment-token";
   config.additional_args.push_back(
       base::StrCat({"--", policy::switches::kDeviceManagementUrl, "=",
                     _server->GetServiceURL().spec()}));
-
-  config.features_enabled.push_back(
-      enterprise_connectors::kEnterpriseRealtimeEventReportingOnIOS);
 
   [[AppLaunchManager sharedManager] ensureAppLaunchedWithConfiguration:config];
 

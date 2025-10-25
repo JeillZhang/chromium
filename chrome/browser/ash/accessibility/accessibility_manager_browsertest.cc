@@ -500,8 +500,7 @@ class AccessibilityManagerTest : public MixinBasedInProcessBrowserTest {
     scoped_feature_list_.InitWithFeatures(
         {features::kOnDeviceSpeechRecognition,
          ::features::kAccessibilityReducedAnimations,
-         ::features::kAccessibilityMouseKeys,
-         ::features::kAccessibilityFaceGaze},
+         ::features::kAccessibilityMouseKeys},
         {});
     MixinBasedInProcessBrowserTest::SetUpCommandLine(command_line);
   }
@@ -1041,12 +1040,6 @@ class AccessibilityManagerDlcTest : public AccessibilityManagerTest {
       delete;
 
  protected:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    AccessibilityManagerTest::SetUpCommandLine(command_line);
-    scoped_feature_list_.InitAndEnableFeature(
-        ::features::kAccessibilityFaceGaze);
-  }
-
   void SetUpOnMainThread() override {
     AccessibilityManagerTest::SetUpOnMainThread();
     UninstallSodaForTesting();
@@ -1117,7 +1110,6 @@ class AccessibilityManagerDlcTest : public AccessibilityManagerTest {
 
  private:
   ui::ScopedAnimationDurationScaleMode disable_animations_;
-  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 // Tests that SODA download is initiated when Dictation is enabled.
@@ -2124,82 +2116,7 @@ IN_PROC_BROWSER_TEST_P(AccessibilityManagerUserTypeTest, BrailleWhenLoggedIn) {
       1);
 }
 
-class AccessibilityManagerWithAccessibilityServiceTest
-    : public AccessibilityManagerTest {
- public:
-  AccessibilityManagerWithAccessibilityServiceTest() = default;
-  AccessibilityManagerWithAccessibilityServiceTest(
-      const AccessibilityManagerWithAccessibilityServiceTest&) = delete;
-  AccessibilityManagerWithAccessibilityServiceTest& operator=(
-      const AccessibilityManagerWithAccessibilityServiceTest&) = delete;
-  ~AccessibilityManagerWithAccessibilityServiceTest() override = default;
 
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    scoped_feature_list_.InitAndEnableFeature(
-        ::features::kAccessibilityService);
-    MixinBasedInProcessBrowserTest::SetUpCommandLine(command_line);
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(AccessibilityManagerWithAccessibilityServiceTest,
-                       Constructs) {
-  // The service will be constructed and start receiving accessibility events
-  // when a subset of features are enabled. This simple test ensures that there
-  // are no crashes when setting up the service and toggling features.
-  SetSpokenFeedbackEnabled(true);
-  SetSelectToSpeakEnabled(true);
-  SetSwitchAccessEnabled(true);
-  SetAutoclickEnabled(true);
-  SetDictationEnabled(true);
-  SetMagnifierEnabled(true);
-
-  SetSpokenFeedbackEnabled(false);
-  SetSelectToSpeakEnabled(false);
-  SetSwitchAccessEnabled(false);
-  SetAutoclickEnabled(false);
-  SetDictationEnabled(false);
-  SetMagnifierEnabled(false);
-}
-
-class AccessibilityManagerWithAccessibilityServiceOOBETest
-    : public AccessibilityManagerWithAccessibilityServiceTest {
- public:
-  AccessibilityManagerWithAccessibilityServiceOOBETest() = default;
-  AccessibilityManagerWithAccessibilityServiceOOBETest(
-      const AccessibilityManagerWithAccessibilityServiceOOBETest&) = delete;
-  AccessibilityManagerWithAccessibilityServiceOOBETest& operator=(
-      const AccessibilityManagerWithAccessibilityServiceOOBETest&) = delete;
-  ~AccessibilityManagerWithAccessibilityServiceOOBETest() override = default;
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    command_line->AppendSwitchASCII(switches::kLoginProfile, "user");
-    command_line->AppendSwitch(switches::kLoginManager);
-    command_line->AppendSwitch(switches::kForceLoginManagerInTests);
-    AccessibilityManagerWithAccessibilityServiceTest::SetUpCommandLine(
-        command_line);
-  }
-};
-
-IN_PROC_BROWSER_TEST_F(AccessibilityManagerWithAccessibilityServiceOOBETest,
-                       Constructs) {
-  // The service will be constructed and start receiving accessibility events
-  // when a subset of features are enabled. This simple test ensures that there
-  // are no crashes when setting up the service and toggling features
-  // in the login profile.
-  SetSpokenFeedbackEnabled(true);
-  SetSelectToSpeakEnabled(true);
-  SetSwitchAccessEnabled(true);
-  SetAutoclickEnabled(true);
-  SetDictationEnabled(true);
-  SetMagnifierEnabled(true);
-
-  SetSpokenFeedbackEnabled(false);
-  SetSelectToSpeakEnabled(false);
-  SetSwitchAccessEnabled(false);
-  SetAutoclickEnabled(false);
-  SetDictationEnabled(false);
-  SetMagnifierEnabled(false);
-}
 
 class AccessibilityManagerWithManifestV3Test : public AccessibilityManagerTest {
  public:

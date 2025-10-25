@@ -8,7 +8,6 @@
 #include "chrome/browser/ui/actions/chrome_action_id.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_actions.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
 #include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -49,7 +48,6 @@ ManagePasswordsPageActionController::GetManagePasswordsTooltipText(
     case password_manager::ui::UPDATE_CONFIRMATION_STATE:
     case password_manager::ui::CREDENTIAL_REQUEST_STATE:
     case password_manager::ui::AUTO_SIGNIN_STATE:
-    case password_manager::ui::WILL_DELETE_UNSYNCED_ACCOUNT_PASSWORDS_STATE:
     case password_manager::ui::MANAGE_STATE:
     case password_manager::ui::PASSWORD_UPDATED_SAFE_STATE:
     case password_manager::ui::PASSWORD_UPDATED_MORE_TO_FIX:
@@ -103,12 +101,9 @@ ManagePasswordsPageActionController::~ManagePasswordsPageActionController() =
 void ManagePasswordsPageActionController::UpdateVisibility(
     password_manager::ui::State state,
     bool is_blocklisted,
-    ManagePasswordsUIController* passwords_ui_controller) {
-  CHECK(passwords_ui_controller);
-
-  bool should_be_visible =
-      !(state == password_manager::ui::INACTIVE_STATE ||
-        state == password_manager::ui::PASSWORD_CHANGE_STATE);
+    ManagePasswordsUIController& passwords_ui_controller,
+    actions::ActionItem& passwords_action_item) {
+  bool should_be_visible = state != password_manager::ui::INACTIVE_STATE;
   if (should_be_visible) {
     page_action_controller_->Show(kActionShowPasswordsBubbleOrPage);
     const gfx::VectorIcon& icon = GetVectorIconForState(state, is_blocklisted);
@@ -119,8 +114,7 @@ void ManagePasswordsPageActionController::UpdateVisibility(
          PasswordBubbleViewBase::manage_password_bubble()
              ->GetWidget()
              ->IsVisible()) ||
-        (passwords_ui_controller &&
-         passwords_ui_controller->IsAutomaticallyOpeningBubble());
+        passwords_ui_controller.IsAutomaticallyOpeningBubble();
     std::u16string tooltip =
         bubble_is_or_will_be_showing
             ? std::u16string()
@@ -134,4 +128,7 @@ void ManagePasswordsPageActionController::UpdateVisibility(
   } else {
     page_action_controller_->Hide(kActionShowPasswordsBubbleOrPage);
   }
+  // Updates the underline indicator for the pinned toolbar button.
+  passwords_action_item.SetProperty(kActionItemUnderlineIndicatorKey,
+                                    should_be_visible);
 }

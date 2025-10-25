@@ -16,9 +16,11 @@
 #include "base/check.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/stack_allocated.h"
+#include "base/observer_list.h"
 #include "base/types/pass_key.h"
 #include "components/tabs/public/supports_handles.h"
 #include "components/tabs/public/tab_collection_storage.h"
+#include "components/tabs/public/tab_interface.h"
 
 namespace tabs_api {
 class MojoTreeBuilder;
@@ -27,13 +29,17 @@ class MojoTreeBuilder;
 namespace tabs {
 
 class TabInterface;
+class TabCollectionObserver;
+class DirectChildWalker;
+
+DECLARE_HANDLE_FACTORY(TabCollection);
 
 // This is an interface that representing the hierarchical storage of tabs.
 // This can be used to access and manipulate tabs and the state of the tabstrip.
 // Different types of collections should implement this base class based on how
 // their feature works. For example, a pinned collection can implement tab
 // collection that does not store any collection.
-class TabCollection : public SupportsHandles<TabCollection> {
+class TabCollection : public SupportsHandles<TabCollectionHandleFactory> {
  public:
   // TabIterator provides a way to traverse all tab objects within this
   // TabCollection and its sub-collections in a depth first inorder traversal
@@ -120,6 +126,12 @@ class TabCollection : public SupportsHandles<TabCollection> {
   ~TabCollection() override;
   TabCollection(const TabCollection&) = delete;
   TabCollection& operator=(const TabCollection&) = delete;
+
+  void AddObserver(TabCollectionObserver* observer);
+
+  void RemoveObserver(TabCollectionObserver* observer);
+
+  bool HasObserver(TabCollectionObserver* observer) const;
 
   // Returns true is the tab collection contains the collection. This is a
   // non-recursive check.
@@ -215,6 +227,34 @@ class TabCollection : public SupportsHandles<TabCollection> {
     return GetChildren();
   }
 
+  virtual const ChildrenVector& GetChildren(
+      base::PassKey<DirectChildWalker> pass_key) const;
+
+  using NodeHandle = std::variant<Handle, TabHandle>;
+  using NodeHandles = std::vector<NodeHandle>;
+
+  // The parent collection and direct index within the parent collection for a
+  // child node. This uniquely determines the position of a node in the tree.
+  struct Position {
+    TabCollection::Handle parent_handle;
+    size_t index;
+  };
+
+  void NotifyOnChildrenAdded(base::PassKey<TabCollection> pass_key,
+                             const NodeHandles& handles,
+                             const Position& insertion_position,
+                             TabCollection* notification_root);
+
+  void NotifyOnChildrenRemoved(base::PassKey<TabCollection> pass_key,
+                               const NodeHandles& handles,
+                               TabCollection* notification_root);
+
+  void NotifyOnChildMoved(base::PassKey<TabCollection> pass_key,
+                          const NodeHandle& handle,
+                          const Position& src_position,
+                          const Position& dst_position,
+                          TabCollection* notification_root);
+
  protected:
   explicit TabCollection(Type type,
                          std::unordered_set<Type> supported_child_collections,
@@ -237,11 +277,15 @@ class TabCollection : public SupportsHandles<TabCollection> {
   std::unordered_set<Type> supported_child_collections_;
   bool supports_tabs_;
 
+  base::ObserverList<TabCollectionObserver> observers_;
+
   // Underlying implementation for the storage of children.
   std::unique_ptr<TabCollectionStorage> impl_;
 };
 
 using TabCollectionHandle = TabCollection::Handle;
+using TabCollectionNodeHandle = TabCollection::NodeHandle;
+using TabCollectionNodes = TabCollection::NodeHandles;
 
 }  // namespace tabs
 

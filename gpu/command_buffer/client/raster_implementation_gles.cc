@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "gpu/command_buffer/client/raster_implementation_gles.h"
 
 #include <algorithm>
@@ -16,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "cc/paint/decode_stashing_image_provider.h"
 #include "cc/paint/display_item_list.h"  // nogncheck
@@ -62,6 +59,8 @@ GLenum SkColorTypeToGLDataFormat(SkColorType color_type, bool supports_rg) {
     // should only support GL_LUMINANCE.
     case kA16_float_SkColorType:
       return GL_LUMINANCE;
+    case kRGBA_F16_SkColorType:
+      return GL_RGBA16F;
     default:
       NOTREACHED() << "Unknown SkColorType " << color_type;
   }
@@ -79,6 +78,7 @@ GLenum SkColorTypeToGLDataType(SkColorType color_type) {
     case kR16G16_unorm_SkColorType:
       return GL_UNSIGNED_SHORT;
     case kA16_float_SkColorType:
+    case kRGBA_F16_SkColorType:
       return GL_HALF_FLOAT_OES;
     default:
       NOTREACHED() << "Unknown SkColorType " << color_type;
@@ -141,20 +141,10 @@ void RasterImplementationGLES::EndQueryEXT(GLenum target) {
   gl_->EndQueryEXT(target);
 }
 
-void RasterImplementationGLES::QueryCounterEXT(GLuint id, GLenum target) {
-  gl_->QueryCounterEXT(id, target);
-}
-
 void RasterImplementationGLES::GetQueryObjectuivEXT(GLuint id,
                                                     GLenum pname,
                                                     GLuint* params) {
   gl_->GetQueryObjectuivEXT(id, pname, params);
-}
-
-void RasterImplementationGLES::GetQueryObjectui64vEXT(GLuint id,
-                                                      GLenum pname,
-                                                      GLuint64* params) {
-  gl_->GetQueryObjectui64vEXT(id, pname, params);
 }
 
 void RasterImplementationGLES::CopySharedImage(
@@ -175,11 +165,20 @@ void RasterImplementationGLES::CopySharedImage(
     return;
   }
   GLbyte mailboxes[sizeof(source_mailbox.name) * 2];
-  memcpy(mailboxes, source_mailbox.name, sizeof(source_mailbox.name));
-  memcpy(mailboxes + sizeof(source_mailbox.name), dest_mailbox.name,
-         sizeof(dest_mailbox.name));
+  UNSAFE_TODO(
+      memcpy(mailboxes, source_mailbox.name, sizeof(source_mailbox.name)));
+  UNSAFE_TODO(memcpy(mailboxes + sizeof(source_mailbox.name), dest_mailbox.name,
+                     sizeof(dest_mailbox.name)));
   gl_->CopySharedImageINTERNAL(xoffset, yoffset, x, y, width, height,
                                mailboxes);
+}
+
+void RasterImplementationGLES::CopySharedImage(
+    const gpu::Mailbox& source_mailbox,
+    const gpu::Mailbox& dest_mailbox,
+    const gfx::Rect& source_rect,
+    const gfx::Rect& dest_rect) {
+  NOTREACHED();
 }
 
 void RasterImplementationGLES::WritePixels(const gpu::Mailbox& dest_mailbox,
@@ -190,8 +189,9 @@ void RasterImplementationGLES::WritePixels(const gpu::Mailbox& dest_mailbox,
   const auto& src_info = src_sk_pixmap.info();
   const auto& src_row_bytes = src_sk_pixmap.rowBytes();
   DCHECK_GE(src_row_bytes, src_info.minRowBytes());
-  GLuint texture_id = CreateAndConsumeForGpuRaster(dest_mailbox);
-  BeginSharedImageAccessDirectCHROMIUM(
+  GLuint texture_id =
+      gl_->CreateAndTexStorage2DSharedImageCHROMIUM(dest_mailbox.name);
+  gl_->BeginSharedImageAccessDirectCHROMIUM(
       texture_id, GL_SHARED_IMAGE_ACCESS_MODE_READWRITE_CHROMIUM);
 
   GLint old_align = 0;
@@ -209,8 +209,8 @@ void RasterImplementationGLES::WritePixels(const gpu::Mailbox& dest_mailbox,
   gl_->PixelStorei(GL_UNPACK_ROW_LENGTH, 0);
   gl_->PixelStorei(GL_UNPACK_ALIGNMENT, old_align);
 
-  EndSharedImageAccessDirectCHROMIUM(texture_id);
-  DeleteGpuRasterTexture(texture_id);
+  gl_->EndSharedImageAccessDirectCHROMIUM(texture_id);
+  gl_->DeleteTextures(1u, &texture_id);
 }
 
 void RasterImplementationGLES::WritePixelsYUV(
@@ -269,15 +269,6 @@ void RasterImplementationGLES::EndRasterCHROMIUM() {
   NOTREACHED();
 }
 
-SyncToken RasterImplementationGLES::ScheduleImageDecode(
-    base::span<const uint8_t> encoded_data,
-    const gfx::Size& output_size,
-    uint32_t transfer_cache_entry_id,
-    const gfx::ColorSpace& target_color_space,
-    bool needs_mips) {
-  NOTREACHED();
-}
-
 void RasterImplementationGLES::ReadbackARGBPixelsAsync(
     const gpu::Mailbox& source_mailbox,
     GLenum source_target,
@@ -286,7 +277,7 @@ void RasterImplementationGLES::ReadbackARGBPixelsAsync(
     const gfx::Point& source_starting_point,
     const SkImageInfo& dst_info,
     GLuint dst_row_bytes,
-    unsigned char* out,
+    base::span<uint8_t> out,
     base::OnceCallback<void(bool)> readback_done) {
   DCHECK(!readback_done.is_null());
   DCHECK(dst_info.colorType() == kRGBA_8888_SkColorType ||
@@ -294,8 +285,9 @@ void RasterImplementationGLES::ReadbackARGBPixelsAsync(
   GLenum format =
       dst_info.colorType() == kRGBA_8888_SkColorType ? GL_RGBA : GL_BGRA_EXT;
   gfx::Size dst_gfx_size(dst_info.width(), dst_info.height());
-  GLuint texture_id = CreateAndConsumeForGpuRaster(source_mailbox);
-  BeginSharedImageAccessDirectCHROMIUM(
+  GLuint texture_id =
+      gl_->CreateAndTexStorage2DSharedImageCHROMIUM(source_mailbox.name);
+  gl_->BeginSharedImageAccessDirectCHROMIUM(
       texture_id, GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM);
 
   // Convert bottom-left GL coordinates to top-left coordinates expected
@@ -335,8 +327,8 @@ void RasterImplementationGLES::OnReadARGBPixelsAsync(
     base::OnceCallback<void(bool)> readback_done,
     bool success) {
   DCHECK(texture_id);
-  EndSharedImageAccessDirectCHROMIUM(texture_id);
-  DeleteGpuRasterTexture(texture_id);
+  gl_->EndSharedImageAccessDirectCHROMIUM(texture_id);
+  gl_->DeleteTextures(1u, &texture_id);
 
   std::move(readback_done).Run(success);
 }
@@ -348,16 +340,17 @@ void RasterImplementationGLES::ReadbackYUVPixelsAsync(
     const gfx::Rect& output_rect,
     bool vertically_flip_texture,
     int y_plane_row_stride_bytes,
-    unsigned char* y_plane_data,
+    base::span<uint8_t> y_plane_data,
     int u_plane_row_stride_bytes,
-    unsigned char* u_plane_data,
+    base::span<uint8_t> u_plane_data,
     int v_plane_row_stride_bytes,
-    unsigned char* v_plane_data,
+    base::span<uint8_t> v_plane_data,
     const gfx::Point& paste_location,
     base::OnceCallback<void()> release_mailbox,
     base::OnceCallback<void(bool)> readback_done) {
-  GLuint shared_texture_id = CreateAndConsumeForGpuRaster(source_mailbox);
-  BeginSharedImageAccessDirectCHROMIUM(
+  GLuint shared_texture_id =
+      gl_->CreateAndTexStorage2DSharedImageCHROMIUM(source_mailbox.name);
+  gl_->BeginSharedImageAccessDirectCHROMIUM(
       shared_texture_id, GL_SHARED_IMAGE_ACCESS_MODE_READ_CHROMIUM);
   base::OnceCallback<void()> on_release_mailbox =
       base::BindOnce(&RasterImplementationGLES::OnReleaseMailbox,
@@ -423,8 +416,8 @@ void RasterImplementationGLES::OnReleaseMailbox(
   DCHECK(shared_texture_id);
   DCHECK(!release_mailbox.is_null());
 
-  EndSharedImageAccessDirectCHROMIUM(shared_texture_id);
-  DeleteGpuRasterTexture(shared_texture_id);
+  gl_->EndSharedImageAccessDirectCHROMIUM(shared_texture_id);
+  gl_->DeleteTextures(1u, &shared_texture_id);
   std::move(release_mailbox).Run();
 }
 
@@ -452,64 +445,6 @@ bool RasterImplementationGLES::ReadbackImagePixels(
              dst_info.alphaType(), dst_row_bytes, src_x, src_y, plane_index,
              dst_pixels) ||
          base::FeatureList::IsEnabled(kDisableErrorHandlingForReadbackGLES);
-}
-
-GLuint RasterImplementationGLES::CreateAndConsumeForGpuRaster(
-    const gpu::Mailbox& mailbox) {
-  return gl_->CreateAndTexStorage2DSharedImageCHROMIUM(mailbox.name);
-}
-
-GLuint RasterImplementationGLES::CreateAndConsumeForGpuRaster(
-    const scoped_refptr<gpu::ClientSharedImage>& shared_image) {
-  CHECK(shared_image);
-  return CreateAndConsumeForGpuRaster(shared_image->mailbox());
-}
-
-void RasterImplementationGLES::DeleteGpuRasterTexture(GLuint texture) {
-  gl_->DeleteTextures(1u, &texture);
-}
-
-void RasterImplementationGLES::BeginGpuRaster() {
-  // Using push/pop functions directly incurs cost to evaluate function
-  // arguments even when tracing is disabled.
-  gl_->TraceBeginCHROMIUM("BeginGpuRaster", "GpuRasterization");
-}
-
-void RasterImplementationGLES::EndGpuRaster() {
-  // Restore default GL unpack alignment.  TextureUploader expects this.
-  gl_->PixelStorei(GL_UNPACK_ALIGNMENT, 4);
-
-  // Using push/pop functions directly incurs cost to evaluate function
-  // arguments even when tracing is disabled.
-  gl_->TraceEndCHROMIUM();
-
-  // Reset cached raster state.
-  gl_->ActiveTexture(GL_TEXTURE0);
-}
-
-void RasterImplementationGLES::BeginSharedImageAccessDirectCHROMIUM(
-    GLuint texture,
-    GLenum mode) {
-  gl_->BeginSharedImageAccessDirectCHROMIUM(texture, mode);
-}
-
-void RasterImplementationGLES::EndSharedImageAccessDirectCHROMIUM(
-    GLuint texture) {
-  gl_->EndSharedImageAccessDirectCHROMIUM(texture);
-}
-
-void RasterImplementationGLES::InitializeDiscardableTextureCHROMIUM(
-    GLuint texture) {
-  gl_->InitializeDiscardableTextureCHROMIUM(texture);
-}
-
-void RasterImplementationGLES::UnlockDiscardableTextureCHROMIUM(
-    GLuint texture) {
-  gl_->UnlockDiscardableTextureCHROMIUM(texture);
-}
-
-bool RasterImplementationGLES::LockDiscardableTextureCHROMIUM(GLuint texture) {
-  return gl_->LockDiscardableTextureCHROMIUM(texture);
 }
 
 void RasterImplementationGLES::TraceBeginCHROMIUM(const char* category_name,

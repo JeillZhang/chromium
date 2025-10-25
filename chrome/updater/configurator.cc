@@ -5,6 +5,7 @@
 #include "chrome/updater/configurator.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -27,6 +28,7 @@
 #include "chrome/updater/crx_downloader_factory.h"
 #include "chrome/updater/external_constants.h"
 #include "chrome/updater/net/network.h"
+#include "chrome/updater/out_of_process_unzipper.h"
 #include "chrome/updater/persisted_data.h"
 #include "chrome/updater/policy/service.h"
 #include "chrome/updater/prefs.h"
@@ -41,10 +43,8 @@
 #include "components/update_client/patch/in_process_patcher.h"
 #include "components/update_client/patcher.h"
 #include "components/update_client/protocol_handler.h"
-#include "components/update_client/unzip/in_process_unzipper.h"
 #include "components/update_client/unzipper.h"
 #include "components/version_info/version_info.h"
-#include "event_logger.h"
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_WIN)
@@ -52,19 +52,6 @@
 #endif
 
 namespace updater {
-
-namespace {
-
-// Allow internal symbolic links in zip files on macOS.
-#if BUILDFLAG(IS_POSIX)
-update_client::InProcessUnzipperFactory::SymlinkOption unzipper_symlink_option =
-    update_client::InProcessUnzipperFactory::SymlinkOption::PRESERVE;
-#else
-update_client::InProcessUnzipperFactory::SymlinkOption unzipper_symlink_option =
-    update_client::InProcessUnzipperFactory::SymlinkOption::DONT_PRESERVE;
-#endif
-
-}  // namespace
 
 Configurator::Configurator(scoped_refptr<UpdaterPrefs> prefs,
                            scoped_refptr<ExternalConstants> external_constants,
@@ -77,24 +64,26 @@ Configurator::Configurator(scoped_refptr<UpdaterPrefs> prefs,
           std::make_unique<ActivityDataService>(scope))),
       policy_service_(base::MakeRefCounted<PolicyService>(external_constants,
                                                           persisted_data_)),
-      unzip_factory_(
-          base::MakeRefCounted<update_client::InProcessUnzipperFactory>(
-              unzipper_symlink_option)),
+      unzip_factory_(base::MakeRefCounted<OutOfProcessUnzipperFactory>(scope)),
       patch_factory_(
           base::MakeRefCounted<update_client::InProcessPatcherFactory>()),
       crx_cache_(base::MakeRefCounted<update_client::CrxCache>(
           GetCrxCacheDirectory(scope))),
-      event_logger_(RemoteEventLoggingAllowed(
+      event_logger_(
+          RemoteEventLoggingAllowed(
+              scope,
+              persisted_data_->GetAppIds(),
+              external_constants->GetEventLoggingPermissionProvider())
+              ? UpdaterEventLogger::Create(
+                    std::make_unique<RemoteLoggingDelegate>(
                         scope,
-                        external_constants->GetEventLoggingPermissionProvider())
-                        ? UpdaterEventLogger::Create(
-                              std::make_unique<RemoteLoggingDelegate>(
-                                  scope,
-                                  external_constants->EventLoggingURL(),
-                                  IsCloudManaged(),
-                                  base::WrapRefCounted(this),
-                                  std::make_unique<base::DefaultClock>()))
-                        : nullptr),
+                        external_constants->EventLoggingURL(),
+                        IsCloudManaged(),
+                        base::WrapRefCounted(this),
+                        std::make_unique<base::DefaultClock>()),
+                    persisted_data_->GetNextAllowedLoggingAttemptTime(),
+                    /*auto_flush=*/false)
+              : nullptr),
       is_managed_device_([] {
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
         return base::IsManagedOrEnterpriseDevice();
@@ -200,7 +189,8 @@ Configurator::GetNetworkFetcherFactory() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!network_fetcher_factory_) {
     network_fetcher_factory_ = base::MakeRefCounted<NetworkFetcherFactory>(
-        PolicyServiceProxyConfiguration::Get(policy_service_));
+        PolicyServiceProxyConfiguration::Get(policy_service_),
+        GetEventLogger());
   }
   return network_fetcher_factory_;
 }
@@ -284,6 +274,11 @@ scoped_refptr<PolicyService> Configurator::GetPolicyService() const {
 crx_file::VerifierFormat Configurator::GetCrxVerifierFormat() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return external_constants_->CrxVerifierFormat();
+}
+
+std::optional<std::vector<uint8_t>> Configurator::GetCrxPublicKeyHash() const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return external_constants_->CrxPublicKeyHash();
 }
 
 base::TimeDelta Configurator::MinimumEventLoggingCooldown() const {

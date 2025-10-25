@@ -9,11 +9,10 @@
 #include <utility>
 #include <vector>
 
+#include "base/android/android_info.h"
 #include "base/android/apk_assets.h"
+#include "base/android/apk_info.h"
 #include "base/android/application_status_listener.h"
-#include "base/android/binder.h"
-#include "base/android/binder_box.h"
-#include "base/android/build_info.h"
 #include "base/android/jni_array.h"
 #include "base/base_switches.h"
 #include "base/feature_list.h"
@@ -22,8 +21,10 @@
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
 #include "base/process/launch.h"
+#include "base/trace_event/trace_event.h"
 #include "content/browser/child_process_launcher.h"
 #include "content/browser/child_process_launcher_helper_posix.h"
+#include "content/browser/memory_pressure/user_level_memory_pressure_signal_generator.h"
 #include "content/browser/posix_file_descriptor_info_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/browser_task_traits.h"
@@ -50,9 +51,7 @@ namespace internal {
 namespace {
 
 // Controls whether to explicitly enable service group importance logic.
-BASE_FEATURE(kServiceGroupImportance,
-             "ServiceGroupImportance",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kServiceGroupImportance, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Stops a child process based on the handle returned from StartChildProcess.
 void StopChildProcess(base::ProcessHandle handle) {
@@ -116,17 +115,18 @@ bool ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
 
   // The child processes can't correctly retrieve host package information so we
   // rather feed this information through the command line.
-  auto* build_info = base::android::BuildInfo::GetInstance();
-  command_line()->AppendSwitchASCII(switches::kHostPackageName,
-                                    build_info->host_package_name());
+  command_line()->AppendSwitchASCII(
+      switches::kHostPackageName, base::android::apk_info::host_package_name());
   command_line()->AppendSwitchASCII(switches::kPackageName,
-                                    build_info->package_name());
-  command_line()->AppendSwitchASCII(switches::kHostPackageLabel,
-                                    build_info->host_package_label());
-  command_line()->AppendSwitchASCII(switches::kHostVersionCode,
-                                    build_info->host_version_code());
-  command_line()->AppendSwitchASCII(switches::kPackageVersionName,
-                                    build_info->package_version_name());
+                                    base::android::apk_info::package_name());
+  command_line()->AppendSwitchASCII(
+      switches::kHostPackageLabel,
+      base::android::apk_info::host_package_label());
+  command_line()->AppendSwitchASCII(
+      switches::kHostVersionCode, base::android::apk_info::host_version_code());
+  command_line()->AppendSwitchASCII(
+      switches::kPackageVersionName,
+      base::android::apk_info::package_version_name());
 
   return true;
 }
@@ -136,6 +136,7 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
     const base::LaunchOptions* options,
     std::unique_ptr<PosixFileDescriptorInfo> files_to_register,
     bool can_use_warm_up_connection,
+    bool is_spare_renderer,
     bool* is_synchronous_launch,
     int* launch_result) {
   DCHECK(!options);
@@ -143,14 +144,6 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
 
   JNIEnv* env = AttachCurrentThread();
   DCHECK(env);
-
-  std::vector<base::android::BinderRef> binders;
-  if (mojo_channel_->remote_endpoint().platform_handle().is_valid_binder()) {
-    base::LaunchOptions binder_options;
-    auto endpoint = mojo_channel_->TakeRemoteEndpoint();
-    endpoint.PrepareToPass(binder_options, *command_line());
-    binders = std::move(binder_options.binders);
-  }
 
   // Create the Command line String[]
   ScopedJavaLocalRef<jobjectArray> j_argv =
@@ -187,8 +180,7 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
   AddRef();  // Balanced by OnChildProcessStarted.
   java_peer_.Reset(Java_ChildProcessLauncherHelperImpl_createAndStart(
       env, reinterpret_cast<intptr_t>(this), j_argv, j_file_infos,
-      can_use_warm_up_connection,
-      base::android::PackBinderBox(env, std::move(binders))));
+      can_use_warm_up_connection, is_spare_renderer));
 
   client_task_runner_->PostTask(
       FROM_HERE,
@@ -231,6 +223,8 @@ ChildProcessTerminationInfo ChildProcessLauncherHelper::GetTerminationInfo(
     // processes. So there is no need for base::GetTerminationInfo.
     info.status = base::TERMINATION_STATUS_NORMAL_TERMINATION;
   }
+  info.memory_pressure_metrics =
+      UserLevelMemoryPressureSignalGenerator::GetLatestMemoryMetrics();
   return info;
 }
 
@@ -312,6 +306,10 @@ void ChildProcessLauncherHelper::DumpProcessStack(
 void ChildProcessLauncherHelper::SetRenderProcessPriorityOnLauncherThread(
     base::Process process,
     const RenderProcessPriority& priority) {
+  TRACE_EVENT(
+      "content",
+      "ChildProcessLauncherHelper::SetRenderProcessPriorityOnLauncherThread",
+      "pid", process.Handle());
   JNIEnv* env = AttachCurrentThread();
   DCHECK(env);
   Java_ChildProcessLauncherHelperImpl_setPriority(

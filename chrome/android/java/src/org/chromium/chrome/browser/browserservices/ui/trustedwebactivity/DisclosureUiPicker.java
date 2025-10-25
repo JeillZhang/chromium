@@ -10,11 +10,10 @@ import static org.chromium.chrome.browser.notifications.channels.ChromeChannelDe
 import static org.chromium.chrome.browser.notifications.channels.ChromeChannelDefinitions.ChannelId.WEBAPPS_QUIET;
 
 import android.app.NotificationChannel;
-import android.os.Build;
 
-import org.chromium.base.BuildInfo;
 import org.chromium.base.Callback;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.DeviceInfo;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider;
 import org.chromium.chrome.browser.browserservices.intents.BrowserServicesIntentDataProvider.TwaDisclosureUi;
 import org.chromium.chrome.browser.browserservices.ui.view.DisclosureInfobar;
@@ -26,6 +25,8 @@ import org.chromium.components.browser_ui.notifications.BaseNotificationManagerP
 import org.chromium.components.browser_ui.notifications.BaseNotificationManagerProxyFactory;
 import org.chromium.components.browser_ui.notifications.NotificationProxyUtils;
 
+import java.util.function.Supplier;
+
 /**
  * Determines which of the versions of the "Running in Chrome" UI is displayed to the user.
  *
@@ -34,6 +35,7 @@ import org.chromium.components.browser_ui.notifications.NotificationProxyUtils;
  * * The new Notification. (When notifications are enabled.) <br>
  * * The new Snackbar. (A Snackbar dismisses automatically, this one after 7 seconds.)
  */
+@NullMarked
 public class DisclosureUiPicker implements NativeInitObserver {
     private final Supplier<DisclosureInfobar> mDisclosureInfobar;
     private final Supplier<DisclosureSnackbar> mDisclosureSnackbar;
@@ -41,6 +43,7 @@ public class DisclosureUiPicker implements NativeInitObserver {
     private final BrowserServicesIntentDataProvider mIntentDataProvider;
     private final BaseNotificationManagerProxy mNotificationManagerProxy =
             BaseNotificationManagerProxyFactory.create();
+    private final ActivityLifecycleDispatcher mLifecycleDispatcher;
 
     public DisclosureUiPicker(
             Supplier<DisclosureInfobar> disclosureInfobar,
@@ -52,6 +55,7 @@ public class DisclosureUiPicker implements NativeInitObserver {
         mDisclosureSnackbar = disclosureSnackbar;
         mDisclosureNotification = disclosureNotification;
         mIntentDataProvider = intentDataProvider;
+        mLifecycleDispatcher = lifecycleDispatcher;
         lifecycleDispatcher.register(this);
     }
 
@@ -69,6 +73,7 @@ public class DisclosureUiPicker implements NativeInitObserver {
         } else {
             areHeadsUpNotificationsEnabled(
                     (enabled) -> {
+                        if (mLifecycleDispatcher.isActivityFinishingOrDestroyed()) return;
                         if (enabled) {
                             mDisclosureNotification.get().onStartWithNative();
                         } else {
@@ -83,12 +88,8 @@ public class DisclosureUiPicker implements NativeInitObserver {
             callback.onResult(false);
             return;
         }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            callback.onResult(true);
-            return;
-        }
         // Android Automotive doesn't currently allow heads-up notifications.
-        if (BuildInfo.getInstance().isAutomotive) {
+        if (DeviceInfo.isAutomotive()) {
             callback.onResult(false);
             return;
         }

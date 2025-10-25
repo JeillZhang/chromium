@@ -100,13 +100,6 @@ export class OsSettingsInputPageElement extends OsSettingsInputPageElementBase {
         value: false,
       },
 
-      languageSettingsJapaneseEnabled_: {
-        type: Boolean,
-        value() {
-          return loadTimeData.getBoolean('systemJapanesePhysicalTyping');
-        },
-      },
-
       /**
        * Whether the shortcut reminder for the last used IME is currently
        * showing.
@@ -148,8 +141,6 @@ export class OsSettingsInputPageElement extends OsSettingsInputPageElementBase {
 
       allowEmojiSuggestion_: Boolean,
 
-      allowOrca_: Boolean,
-
       allowSuggestionSection_: Boolean,
 
       acceleratorFetcher: Object,
@@ -180,7 +171,6 @@ export class OsSettingsInputPageElement extends OsSettingsInputPageElementBase {
     Setting.kAddInputMethod,
     Setting.kShowEmojiSuggestions,
     Setting.kShowInputOptionsInShelf,
-    Setting.kShowOrca,
     Setting.kSpellCheckOnOff,
   ]);
   // From RouteOriginMixin.
@@ -203,16 +193,12 @@ export class OsSettingsInputPageElement extends OsSettingsInputPageElementBase {
 
   // loadTimeData flags.
   private onDeviceGrammarCheckEnabled_: boolean;
-  private languageSettingsJapaneseEnabled_: boolean;
   private languagePacksInSettingsEnabled_ =
       loadTimeData.getBoolean('languagePacksInSettingsEnabled');
   private readonly allowEmojiSuggestion_: boolean =
       loadTimeData.getBoolean('allowEmojiSuggestion');
-  private readonly allowOrca_: boolean = loadTimeData.getBoolean('allowOrca');
-  private readonly showOrcaReviewTermsBanner_: boolean =
-      loadTimeData.getBoolean('showOrcaReviewTermsBanner');
   private readonly allowSuggestionSection_: boolean =
-      this.allowOrca_ || this.allowEmojiSuggestion_;
+      this.allowEmojiSuggestion_;
 
   // Computed properties.
   private spellCheckLanguages_: SpellCheckLanguageState[]|undefined;
@@ -390,8 +376,6 @@ export class OsSettingsInputPageElement extends OsSettingsInputPageElementBase {
           loadTimeData.getBoolean('isPhysicalKeyboardAutocorrectAllowed'),
       isPhysicalKeyboardPredictiveWritingAllowed:
           loadTimeData.getBoolean('isPhysicalKeyboardPredictiveWritingAllowed'),
-      isJapaneseSettingsAllowed:
-          loadTimeData.getBoolean('systemJapanesePhysicalTyping'),
       isVietnameseFirstPartyInputSettingsAllowed:
           loadTimeData.getBoolean('allowFirstPartyVietnameseInput'),
     });

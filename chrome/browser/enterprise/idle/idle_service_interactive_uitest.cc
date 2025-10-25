@@ -3,8 +3,6 @@
 // found in the LICENSE file.
 
 #include <array>
-
-
 #include <memory>
 
 #include "base/memory/raw_ptr.h"
@@ -28,6 +26,7 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/idle_bubble.h"
 #include "chrome/browser/ui/profiles/profile_picker.h"
 #include "chrome/browser/ui/profiles/profile_ui_test_utils.h"
@@ -37,6 +36,7 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/ui_test_utils.h"
 #include "components/enterprise/idle/idle_pref_names.h"
 #include "components/enterprise/idle/metrics.h"
 #include "components/keep_alive_registry/keep_alive_types.h"
@@ -204,11 +204,13 @@ class IdleServiceTest : public InProcessBrowserTest {
 
   int GetBrowserCount(Profile* profile) {
     int count = 0;
-    for (Browser* browser : *BrowserList::GetInstance()) {
-      if (browser->profile() == profile) {
-        count++;
-      }
-    }
+    ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+        [profile, &count](BrowserWindowInterface* browser_window_interface) {
+          if (browser_window_interface->GetProfile() == profile) {
+            count++;
+          }
+          return true;
+        });
     return count;
   }
 
@@ -679,6 +681,16 @@ IN_PROC_BROWSER_TEST_F(IdleServiceTest, JustShowProfilePicker) {
 }
 
 IN_PROC_BROWSER_TEST_F(IdleServiceTest, ReloadPages) {
+  auto* web_contents = browser()->tab_strip_model()->GetWebContentsAt(0);
+
+  // TODO(crbug.com/430613676): Determine why about:blank refreshes are causing
+  // timeouts with RenderDocument enabled and revert this test to being
+  // navigated to about:blank.
+  ASSERT_TRUE(embedded_test_server()->Start());
+  const GURL main_url = ui_test_utils::GetTestUrl(
+      base::FilePath(), base::FilePath(FILE_PATH_LITERAL("empty.html")));
+  EXPECT_TRUE(NavigateToURL(web_contents, main_url));
+
   EXPECT_CALL(idle_time_provider(), CalculateIdleTime())
       .WillOnce(Return(base::Seconds(58)));
   Profile* profile = browser()->profile();
@@ -690,7 +702,6 @@ IN_PROC_BROWSER_TEST_F(IdleServiceTest, ReloadPages) {
   EXPECT_FALSE(GetIdleBubble(browser()));
   EXPECT_FALSE(ProfilePicker::IsOpen());
 
-  auto* web_contents = browser()->tab_strip_model()->GetWebContentsAt(0);
   ASSERT_NE(nullptr, web_contents);
 
   // This callback should run after a navigation happens.

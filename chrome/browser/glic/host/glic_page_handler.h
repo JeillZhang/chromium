@@ -5,11 +5,14 @@
 #ifndef CHROME_BROWSER_GLIC_HOST_GLIC_PAGE_HANDLER_H_
 #define CHROME_BROWSER_GLIC_HOST_GLIC_PAGE_HANDLER_H_
 
+#include <memory>
 #include <vector>
 
 #include "base/callback_list.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/glic/host/glic.mojom.h"
+#include "chrome/browser/glic/host/host.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
 
@@ -27,7 +30,8 @@ class GlicKeyedService;
 class GlicWebClientHandler;
 
 // Handles the Mojo requests coming from the Glic WebUI.
-class GlicPageHandler : public glic::mojom::PageHandler {
+class GlicPageHandler : public glic::mojom::PageHandler,
+                        public PanelStateObserver {
  public:
   GlicPageHandler(content::WebContents* webui_contents,
                   mojo::PendingReceiver<glic::mojom::PageHandler> receiver,
@@ -55,9 +59,13 @@ class GlicPageHandler : public glic::mojom::PageHandler {
   // Called whenever the webview main frame commits.
   void WebviewCommitted(const GURL& origin) override;
 
-  void ClosePanel() override;
+  void ClosePanel(ClosePanelCallback callback) override;
+
+  void OpenProfilePickerAndClosePanel() override;
 
   void SignInAndClosePanel() override;
+
+  void OpenDisabledByAdminLinkAndClosePanel() override;
 
   void ResizeWidget(const gfx::Size& size,
                     base::TimeDelta duration,
@@ -65,12 +73,27 @@ class GlicPageHandler : public glic::mojom::PageHandler {
 
   void EnableDragResize(bool enabled) override;
 
+  // Notifies the web client about zero state suggestions.
+  void ZeroStateSuggestionChanged(mojom::ZeroStateSuggestionsV2Ptr suggestions,
+                                  mojom::ZeroStateSuggestionsOptions options);
+
   void WebUiStateChanged(glic::mojom::WebUiState new_state) override;
 
+  // PanelStateObserver implementation.
+  void PanelStateChanged(const glic::mojom::PanelState& panel_state,
+                         const PanelStateContext& context) override;
+
+  void UpdatePageState(mojom::PanelStateKind panelStateKind);
+
+  Host& host() { return *host_; }
+
  private:
-  void AllowedChanged();
+  void UpdateProfileReadyState();
+
   GlicKeyedService* GetGlicService();
 
+  // HostManager keeps the host alive while GlicPageHandler is alive.
+  raw_ptr<Host> host_;
   // There should at most one WebClientHandler at a time. A new one is created
   // each time the webview loads a page.
   std::unique_ptr<GlicWebClientHandler> web_client_handler_;

@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "ui/display/types/display_constants.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 class Browser;
 class Profile;
@@ -89,14 +89,12 @@ namespace chrome {
 // against both non-incognito and incognito profiles. If
 // `match_original_profiles` is false, only an exact match may be returned. If
 // `display_id` is not equal to `display::kInvalidDisplayId`, only the browsers
-// in the corresponding display may be returned. If `ignore_closing_browsers` is
-// false, browsers that are in the closing state (i.e. browsers registered in
-// `BrowserList::currently_closing_browsers_`) may be returned.
+// in the corresponding display may be returned. Browsers that have closed and
+// are pending deletion are not returned.
 // WARNING: Do not use this method. See comment at top of file.
 Browser* FindTabbedBrowser(Profile* profile,
                            bool match_original_profiles,
-                           int64_t display_id = display::kInvalidDisplayId,
-                           bool ignore_closing_browsers = false);
+                           int64_t display_id = display::kInvalidDisplayId);
 
 // Returns an existing browser window of any kind.
 // WARNING: Do not use this method. See comment at top of file.

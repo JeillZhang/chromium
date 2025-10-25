@@ -11,18 +11,23 @@
 #include <vector>
 
 #include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
 #include "base/observer_list.h"
 #include "base/observer_list_types.h"
 #include "base/scoped_observation.h"
+#include "base/sequence_checker.h"
+#include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/types/expected.h"
 #include "chromeos/ash/components/boca/babelorca/soda_installer.h"
+#include "chromeos/ash/components/boca/invalidations/invalidation_service_delegate.h"
 #include "chromeos/ash/components/boca/notifications/boca_notification_handler.h"
 #include "chromeos/ash/components/boca/proto/session.pb.h"
 #include "chromeos/ash/components/boca/session_api/session_client_impl.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_constants.h"
 #include "chromeos/ash/components/boca/spotlight/spotlight_frame_consumer.h"
-#include "chromeos/ash/components/boca/spotlight/spotlight_oauth_token_fetcher.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_remoting_client_manager.h"
 #include "chromeos/services/network_config/public/cpp/cros_network_config_observer.h"
 #include "components/account_id/account_id.h"
 #include "components/prefs/pref_service.h"
@@ -44,21 +49,23 @@ namespace google_apis {
 enum ApiErrorCode;
 }
 
-namespace remoting {
-class RemotingClient;
-}
-
 namespace session_manager {
 class SessionManager;
 }  // namespace session_manager
 
 namespace ash::boca {
 
+class ScreenPresenterFactory;
+class StudentScreenPresenter;
+class TeacherScreenPresenter;
+
 class BocaSessionManager
     : public chromeos::network_config::CrosNetworkConfigObserver,
       public signin::IdentityManager::Observer,
       public user_manager::UserManager::UserSessionStateObserver,
-      public session_manager::SessionManagerObserver {
+      public session_manager::SessionManagerObserver,
+      public remoting::ClientStatusObserver,
+      public InvalidationServiceDelegate {
  public:
   using SessionCaptionInitializer =
       base::RepeatingCallback<void(base::OnceCallback<void(bool)>)>;
@@ -110,12 +117,12 @@ class BocaSessionManager
   BocaSessionManager(SessionClientImpl* session_client_impl,
                      const PrefService* pref_service,
                      AccountId account_id,
-                     bool is_producer);
+                     bool is_producer,
+                     std::unique_ptr<SpotlightRemotingClientManager>
+                         remoting_client_manager = nullptr);
   BocaSessionManager(const BocaSessionManager&) = delete;
   BocaSessionManager& operator=(const BocaSessionManager&) = delete;
   ~BocaSessionManager() override;
-
-  void Reset();
 
   // Interface for observing events.
   class Observer : public base::CheckedObserver {
@@ -169,6 +176,8 @@ class BocaSessionManager
     // order changed in the vector too.
     virtual void OnConsumerActivityUpdated(
         const std::map<std::string, ::boca::StudentStatus>& activities);
+
+    virtual void OnReceiverInvalidation();
   };
   // CrosNetworkConfigObserver
   void OnNetworkStateChanged(
@@ -230,17 +239,37 @@ class BocaSessionManager
   }
   SodaStatus GetSodaStatus();
 
-  void set_spotlight_token_fetcher(
-      SpotlightOAuthTokenFetcher* spotlight_token_fetcher) {
-    spotlight_token_fetcher_ = spotlight_token_fetcher;
-  }
-  bool HasSpotlightTokenFetcher() { return spotlight_token_fetcher_; }
-  void StartCrdClientForTeacher(
+  void StartCrdClient(
+      std::string crd_connection_code,
       base::OnceClosure done_callback,
       SpotlightFrameConsumer::FrameReceivedCallback frame_received_callback,
-      std::string connection_code);
-  void EndSpotlightSession();
-  std::string GetDeviceRobotEmail();
+      SpotlightCrdStateUpdatedCallback crd_state_callback);
+
+  // Calls the `SpotlightRemotingClientManager` to try and stop an existing
+  // session and then free up any remaining resources.
+  virtual void EndSpotlightSession(base::OnceClosure on_stopped_callback);
+
+  virtual std::string GetDeviceRobotEmail();
+
+  // InvalidationServiceDelegate:
+  void UploadToken(
+      const std::string& fcm_token,
+      base::OnceCallback<void(bool)> on_token_uploaded_cb) override;
+  void OnInvalidationReceived(const std::string& payload) override;
+
+  void SetScreenPresenterFactory(
+      std::unique_ptr<ScreenPresenterFactory> screen_presenter_factory);
+
+  // virtual for testing.
+  // Could be nullptr.
+  // Do not store returned pointer.
+  virtual StudentScreenPresenter* GetStudentScreenPresenter();
+  // Could be nullptr.
+  // Do not store returned pointer.
+  virtual TeacherScreenPresenter* GetTeacherScreenPresenter();
+  virtual std::optional<std::string> GetStudentActiveDeviceId(
+      std::string_view student_id);
+  virtual void CleanupPresenters();
 
   base::ObserverList<Observer>& observers() { return observers_; }
 
@@ -294,11 +323,9 @@ class BocaSessionManager
 
   void CloseAllCaptions();
 
-  void StartCrdSessionForTeacherInternal(
-      std::string connection_code,
-      std::optional<std::string> oauth_token);
-  void FetchSpotlightOAuthToken(
-      SpotlightOAuthTokenFetcher::OAuthTokenCallback callback);
+  void OnTokenUploadResult(
+      base::OnceCallback<void(bool)> on_token_uploaded_cb,
+      base::expected<bool, google_apis::ApiErrorCode> result);
 
   const bool is_producer_;
   base::OnceClosure end_session_callback_for_testing_;
@@ -329,8 +356,6 @@ class BocaSessionManager
 
   std::unique_ptr<::boca::Session> current_session_;
   std::unique_ptr<::boca::Session> previous_session_;
-  std::unique_ptr<SpotlightFrameConsumer> frame_consumer_;
-  std::unique_ptr<remoting::RemotingClient> remoting_client_;
   bool is_network_connected_ = false;
   bool disabled_on_non_managed_network_ = false;
   // Remote for sending requests to the CrosNetworkConfig service.
@@ -341,14 +366,17 @@ class BocaSessionManager
   AccountId account_id_;
   std::u16string active_tab_title_;
   BocaNotificationHandler notification_handler_;
+  std::unique_ptr<SpotlightRemotingClientManager> remoting_client_manager_;
   raw_ptr<const PrefService> pref_service_;
   raw_ptr<SessionClientImpl> session_client_impl_;
   raw_ptr<signin::IdentityManager> identity_manager_;
   raw_ptr<babelorca::SodaInstaller> soda_installer_;
-  raw_ptr<SpotlightOAuthTokenFetcher> spotlight_token_fetcher_;
   bool is_local_caption_enabled_ = false;
   SessionCaptionInitializer session_caption_initializer_;
   net::BackoffEntry student_heartbeat_retry_backoff_;
+  std::unique_ptr<ScreenPresenterFactory> screen_presenter_factory_;
+  std::unique_ptr<StudentScreenPresenter> student_screen_presenter_;
+  std::unique_ptr<TeacherScreenPresenter> teacher_screen_presenter_;
   base::ScopedObservation<session_manager::SessionManager,
                           session_manager::SessionManagerObserver>
       session_manager_observation_{this};

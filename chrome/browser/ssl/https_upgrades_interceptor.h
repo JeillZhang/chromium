@@ -6,12 +6,11 @@
 #define CHROME_BROWSER_SSL_HTTPS_UPGRADES_INTERCEPTOR_H_
 
 #include <memory>
-
-#include "base/memory/weak_ptr.h"
-#include "base/sequence_checker.h"
-// #include "chrome/browser/ssl/https_first_mode_settings_tracker.h"
 #include <optional>
 
+#include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "base/sequence_checker.h"
 #include "chrome/browser/ssl/https_only_mode_tab_helper.h"
 #include "components/security_interstitials/core/https_only_mode_metrics.h"
 #include "content/public/browser/url_loader_request_interceptor.h"
@@ -74,13 +73,6 @@ class HttpsUpgradesInterceptor : public content::URLLoaderRequestInterceptor,
       mojo::PendingReceiver<network::mojom::URLLoaderClient>* client_receiver,
       blink::ThrottlingURLLoader* url_loader) override;
 
-  // Continuation of MaybeCreateLoader() after querying the network service for
-  // the HSTS status for the hostname in the request.
-  void MaybeCreateLoaderOnHstsQueryCompleted(
-      const network::ResourceRequest& tentative_resource_request,
-      content::URLLoaderRequestInterceptor::LoaderCallback callback,
-      bool is_hsts_active_for_host);
-
   // Sets the ports used by the EmbeddedTestServer (which uses random ports)
   // to determine the correct port to upgrade/fallback to in tests.
   static void SetHttpsPortForTesting(int port);
@@ -89,6 +81,15 @@ class HttpsUpgradesInterceptor : public content::URLLoaderRequestInterceptor,
   static int GetHttpPortForTesting();
 
  private:
+  // Continuation of MaybeCreateLoader() after querying the network service for
+  // the HSTS status for the hostname in the request.
+  void MaybeCreateLoaderOnHstsQueryCompleted(
+      GURL url,
+      bool is_outermost_main_frame,
+      std::string method,
+      content::URLLoaderRequestInterceptor::LoaderCallback callback,
+      bool is_hsts_active_for_host);
+
   // network::mojom::URLLoader:
   void FollowRedirect(
       const std::vector<std::string>& removed_headers,

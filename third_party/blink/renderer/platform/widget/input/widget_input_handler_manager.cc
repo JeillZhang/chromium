@@ -40,6 +40,7 @@
 #include "third_party/blink/public/common/input/web_input_event_attribution.h"
 #include "third_party/blink/public/common/input/web_keyboard_event.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/platform/scheduler/main_thread/pending_user_input.h"
 #include "third_party/blink/renderer/platform/scheduler/public/agent_group_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/compositor_thread_scheduler.h"
 #include "third_party/blink/renderer/platform/scheduler/public/widget_scheduler.h"
@@ -73,6 +74,10 @@ const base::TimeDelta kEventCountsTimerDelay = base::Milliseconds(500);
 // 1.5x to avoid false positives on slow devices.
 const base::TimeDelta kFirstPaintMaxAcceptableDelay = base::Seconds(15);
 
+// If enabled, restrict continuous events from setting input event as pending to
+// the compositor.
+BASE_FEATURE(kRestrictPendingInputEventType, base::FEATURE_DISABLED_BY_DEFAULT);
+
 mojom::blink::DidOverscrollParamsPtr ToDidOverscrollParams(
     const InputHandlerProxy::DidOverscrollParams* overscroll_params) {
   if (!overscroll_params)
@@ -82,7 +87,7 @@ mojom::blink::DidOverscrollParamsPtr ToDidOverscrollParams(
       overscroll_params->latest_overscroll_delta,
       overscroll_params->current_fling_velocity,
       overscroll_params->causal_event_viewport_point,
-      overscroll_params->overscroll_behavior);
+      overscroll_params->overscroll_behavior, overscroll_params->source_device);
 }
 
 void CallCallback(
@@ -338,7 +343,7 @@ WidgetInputHandlerManager::WidgetInputHandlerManager(
 #endif
 }
 
-void WidgetInputHandlerManager::DidFirstVisuallyNonEmptyPaint(
+void WidgetInputHandlerManager::OnFirstContentfulPaint(
     const base::TimeTicks& first_paint_time) {
   suppressing_input_events_state_ &=
       ~static_cast<uint16_t>(SuppressingInputEventsBits::kHasNotPainted);
@@ -355,6 +360,32 @@ void WidgetInputHandlerManager::SetHost(
   } else {
     host_ = mojo::SharedRemote<mojom::blink::WidgetInputHandlerHost>(
         std::move(host));
+  }
+}
+
+void WidgetInputHandlerManager::SetVizHost(
+    mojo::PendingRemote<mojom::blink::WidgetInputHandlerHost> viz_host) {
+  if (viz_host_) {
+    DLOG(WARNING) << "Resetting an existing viz_host. This may indicate a "
+                  << "missed disconnect notification during GPU restart.";
+    viz_host_.reset();
+  }
+
+  CHECK(viz_host);
+  if (compositor_thread_default_task_runner_) {
+    viz_host_ = mojo::SharedRemote<mojom::blink::WidgetInputHandlerHost>(
+        std::move(viz_host), compositor_thread_default_task_runner_);
+    viz_host_.set_disconnect_handler(
+        base::BindOnce(&WidgetInputHandlerManager::OnVizHostDisconnected,
+                       AsWeakPtr()),
+        compositor_thread_default_task_runner_);
+  } else {
+    viz_host_ = mojo::SharedRemote<mojom::blink::WidgetInputHandlerHost>(
+        std::move(viz_host));
+    viz_host_.set_disconnect_handler(
+        base::BindOnce(&WidgetInputHandlerManager::OnVizHostDisconnected,
+                       AsWeakPtr()),
+        base::SequencedTaskRunner::GetCurrentDefault());
   }
 }
 
@@ -430,8 +461,15 @@ bool WidgetInputHandlerManager::HandleInputEvent(
     // `widget_`.
     return true;
   }
-  // TODO(szager): Should this be limited to discrete input events by
-  // conditioning on (!scheduler::PendingUserInput::IsContinuousEventType())?
+
+  if (base::FeatureList::IsEnabled(kRestrictPendingInputEventType) &&
+      scheduler::PendingUserInput::IsContinuousEventType(
+          event.Event().GetType())) {
+    // Restrict continuous events from setting input event as pending, since
+    // this blocks the main thread in `ProxyMain::BeginMainFrame()`.
+    return true;
+  }
+
   widget_->LayerTreeHost()->proxy()->SetInputResponsePending();
 
   return true;
@@ -494,10 +532,15 @@ void WidgetInputHandlerManager::FindScrollTargetOnMainThread(
 }
 
 void WidgetInputHandlerManager::DidStartScrollingViewport() {
-  mojom::blink::WidgetInputHandlerHost* host = GetWidgetInputHandlerHost();
-  if (!host)
-    return;
-  host->DidStartScrollingViewport();
+  if (mojom::blink::WidgetInputHandlerHost* host =
+          GetWidgetInputHandlerHost()) {
+    host->DidStartScrollingViewport();
+  }
+
+  if (mojom::blink::WidgetInputHandlerHost* viz_host =
+          GetVizWidgetInputHandlerHost()) {
+    viz_host->DidStartScrollingViewport();
+  }
 }
 
 void WidgetInputHandlerManager::SetAllowedTouchAction(
@@ -507,14 +550,29 @@ void WidgetInputHandlerManager::SetAllowedTouchAction(
 
 void WidgetInputHandlerManager::ProcessTouchAction(
     cc::TouchAction touch_action) {
-  if (mojom::blink::WidgetInputHandlerHost* host = GetWidgetInputHandlerHost())
+  if (mojom::blink::WidgetInputHandlerHost* host =
+          GetWidgetInputHandlerHost()) {
     host->SetTouchActionFromMain(touch_action);
+  }
+
+  if (mojom::blink::WidgetInputHandlerHost* viz_host =
+          GetVizWidgetInputHandlerHost()) {
+    viz_host->SetTouchActionFromMain(touch_action);
+  }
 }
 
 mojom::blink::WidgetInputHandlerHost*
 WidgetInputHandlerManager::GetWidgetInputHandlerHost() {
   if (host_)
     return host_.get();
+  return nullptr;
+}
+
+mojom::blink::WidgetInputHandlerHost*
+WidgetInputHandlerManager::GetVizWidgetInputHandlerHost() {
+  if (viz_host_) {
+    return viz_host_.get();
+  }
   return nullptr;
 }
 
@@ -1164,6 +1222,11 @@ void WidgetInputHandlerManager::DidHandleInputEventSentToCompositor(
 
   mojom::blink::InputEventResultState ack_state =
       InputEventDispositionToAck(event_disposition);
+  if (event->Event().IsGestureScroll()) {
+    input_event_queue_->OnGestureScrollEventAck(event->Event().GetType(),
+                                                ack_state);
+  }
+
   if (ack_state == mojom::blink::InputEventResultState::kConsumed) {
     widget_scheduler_->DidHandleInputEventOnCompositorThread(
         event->Event(), scheduler::WidgetScheduler::InputEventState::

@@ -4,7 +4,6 @@
 
 #include "components/ip_protection/common/ip_protection_core_impl_mojo.h"
 
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -12,6 +11,7 @@
 #include <vector>
 
 #include "base/check.h"
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
@@ -41,18 +41,23 @@ namespace ip_protection {
 namespace {
 
 // Make a map-by-layer of token managers. This is a utility for the constructor.
-std::map<ProxyLayer, std::unique_ptr<IpProtectionTokenManager>>
-MakeTokenManagerMap(
+IpProtectionCoreImpl::ProxyTokenManagerMap MakeTokenManagerMap(
     IpProtectionCore* ip_protection_core,
-    scoped_refptr<IpProtectionCoreHostRemote> core_host_remote) {
-  std::map<ProxyLayer, std::unique_ptr<IpProtectionTokenManager>> managers;
+    scoped_refptr<IpProtectionCoreHostRemote> core_host_remote,
+    IpProtectionCoreImpl::InitialTokensMap initial_tokens) {
+  IpProtectionCoreImpl::ProxyTokenManagerMap managers;
   for (ProxyLayer proxy_layer : {ProxyLayer::kProxyA, ProxyLayer::kProxyB}) {
+    std::vector<BlindSignedAuthToken> initial_tokens_for_layer;
+    if (auto it = initial_tokens.find(proxy_layer);
+        it != initial_tokens.end()) {
+      initial_tokens_for_layer = std::move(it->second);
+    }
     managers.insert(
         {proxy_layer,
          std::make_unique<IpProtectionTokenManagerImpl>(
-             ip_protection_core,
+             ip_protection_core, core_host_remote,
              std::make_unique<IpProtectionTokenMojoFetcher>(core_host_remote),
-             proxy_layer)});
+             proxy_layer, std::move(initial_tokens_for_layer))});
   }
   return managers;
 }
@@ -66,6 +71,7 @@ IpProtectionCoreImplMojo::IpProtectionCoreImplMojo(
     ProbabilisticRevealTokenRegistry* probabilistic_reveal_token_registry,
     bool is_ip_protection_enabled,
     bool ip_protection_incognito,
+    InitialTokensMap initial_tokens,
     std::optional<base::FilePath> data_directory)
     : IpProtectionCoreImpl(
           masked_domain_list_manager,
@@ -75,10 +81,10 @@ IpProtectionCoreImplMojo::IpProtectionCoreImplMojo(
                     std::make_unique<IpProtectionProxyConfigMojoFetcher>(
                         core_host_remote))
               : nullptr,
-          core_host_remote
-              ? MakeTokenManagerMap(this, core_host_remote)
-              : std::map<ProxyLayer,
-                         std::unique_ptr<IpProtectionTokenManager>>(),
+          core_host_remote ? MakeTokenManagerMap(this,
+                                                 core_host_remote,
+                                                 std::move(initial_tokens))
+                           : IpProtectionCoreImpl::ProxyTokenManagerMap(),
           probabilistic_reveal_token_registry,
           (core_host_remote &&
            base::FeatureList::IsEnabled(
@@ -97,8 +103,7 @@ IpProtectionCoreImplMojo::IpProtectionCoreImplMojo(
     MaskedDomainListManager* masked_domain_list_manager,
     std::unique_ptr<IpProtectionProxyConfigManager>
         ip_protection_proxy_config_manager,
-    std::map<ProxyLayer, std::unique_ptr<IpProtectionTokenManager>>
-        ip_protection_token_managers,
+    IpProtectionCoreImpl::ProxyTokenManagerMap ip_protection_token_managers,
     ProbabilisticRevealTokenRegistry* probabilistic_reveal_token_registry,
     std::unique_ptr<IpProtectionProbabilisticRevealTokenManager>
         ipp_prt_manager,
@@ -120,8 +125,7 @@ IpProtectionCoreImplMojo IpProtectionCoreImplMojo::CreateForTesting(
     MaskedDomainListManager* masked_domain_list_manager,
     std::unique_ptr<IpProtectionProxyConfigManager>
         ip_protection_proxy_config_manager,
-    std::map<ProxyLayer, std::unique_ptr<IpProtectionTokenManager>>
-        ip_protection_token_managers,
+    IpProtectionCoreImpl::ProxyTokenManagerMap ip_protection_token_managers,
     ProbabilisticRevealTokenRegistry* probabilistic_reveal_token_registry,
     std::unique_ptr<IpProtectionProbabilisticRevealTokenManager>
         ipp_prt_manager,
@@ -134,8 +138,13 @@ IpProtectionCoreImplMojo IpProtectionCoreImplMojo::CreateForTesting(
       is_ip_protection_enabled, ip_protection_incognito);
 }
 
+void IpProtectionCoreImplMojo::BindTestInterfaceForTesting(
+    mojo::PendingReceiver<ip_protection::mojom::CoreControlTest> receiver) {
+  test_receivers_for_testing_.Add(this, std::move(receiver));
+}
+
 void IpProtectionCoreImplMojo::VerifyIpProtectionCoreHostForTesting(
-    ip_protection::mojom::CoreControl::
+    ip_protection::mojom::CoreControlTest::
         VerifyIpProtectionCoreHostForTestingCallback callback) {
   auto* ipp_token_manager_impl = static_cast<IpProtectionTokenManagerImpl*>(
       GetIpProtectionTokenManagerForTesting(  // IN-TEST
@@ -202,9 +211,25 @@ void IpProtectionCoreImplMojo::SetIpProtectionEnabled(bool enabled) {
 }
 
 void IpProtectionCoreImplMojo::IsIpProtectionEnabledForTesting(
-    ip_protection::mojom::CoreControl::IsIpProtectionEnabledForTestingCallback
-        callback) {
+    ip_protection::mojom::CoreControlTest::
+        IsIpProtectionEnabledForTestingCallback callback) {
   std::move(callback).Run(is_ip_protection_enabled());
+}
+
+void IpProtectionCoreImplMojo::GetAuthTokenForTesting(
+    ProxyLayer proxy_layer,
+    const std::string& geo_id,
+    ip_protection::mojom::CoreControlTest::GetAuthTokenForTestingCallback
+        callback) {
+  std::move(callback).Run(
+      IpProtectionCoreImpl::GetAuthTokenForTesting(proxy_layer, geo_id));
+}
+
+void IpProtectionCoreImplMojo::HasTrackingProtectionExceptionForTesting(
+    const GURL& first_party_url,
+    ip_protection::mojom::CoreControlTest::
+        HasTrackingProtectionExceptionForTestingCallback callback) {
+  std::move(callback).Run(HasTrackingProtectionException(first_party_url));
 }
 
 void IpProtectionCoreImplMojo::OnIpProtectionConfigAvailableForTesting(

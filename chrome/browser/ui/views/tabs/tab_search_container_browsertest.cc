@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/views/tabs/tab_search_container.h"
+
 #include "base/feature_list.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -9,12 +11,14 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/tabs/organization/tab_organization_service.h"
 #include "chrome/browser/ui/tabs/organization/tab_organization_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/tab_strip_region_view.h"
+#include "chrome/browser/ui/views/interaction/browser_elements_views.h"
 #include "chrome/browser/ui/views/tabs/tab_search_button.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -28,6 +32,13 @@
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/animation/slide_animation.h"
 #include "ui/views/test/views_test_utils.h"
+#include "ui/views/view_utils.h"
+
+namespace {
+
+using ::testing::AssertionFailure;
+using ::testing::AssertionResult;
+using ::testing::AssertionSuccess;
 
 class TabSearchContainerBrowserTest : public InProcessBrowserTest {
  public:
@@ -44,12 +55,30 @@ class TabSearchContainerBrowserTest : public InProcessBrowserTest {
     return BrowserView::GetBrowserViewForBrowser(browser());
   }
 
-  TabStrip* tab_strip() { return browser_view()->tabstrip(); }
-
   TabSearchContainer* tab_search_container() {
-    return browser_view()
-        ->tab_strip_region_view()
-        ->tab_search_container_for_testing();
+    return BrowserElementsViews::From(browser())->GetViewAs<TabSearchContainer>(
+        kTabSearchContainerElementId);
+  }
+
+  // Returns an assertion result that the expansion animation is closing.
+  AssertionResult ExpansionAnimationIsClosing() {
+    if (!tab_search_container()) {
+      return AssertionFailure() << "tab_search_container is null.";
+    }
+    if (!tab_search_container()->animation_session_for_testing()) {
+      return AssertionFailure() << "animation_session_for_testing is null.";
+    }
+    if (!tab_search_container()
+             ->animation_session_for_testing()
+             ->expansion_animation()) {
+      return AssertionFailure() << "expansion_animation is null.";
+    }
+    return tab_search_container()
+                   ->animation_session_for_testing()
+                   ->expansion_animation()
+                   ->IsClosing()
+               ? AssertionSuccess()
+               : AssertionFailure() << "expansion_animation is not closing.";
   }
 
  protected:
@@ -109,11 +138,10 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
 #endif
 IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
                        MAYBE_TogglesActionUIStateOnlyInCorrectBrowser) {
-  const Browser* const second_browser = CreateBrowser(browser()->profile());
+  Browser* const second_browser = CreateBrowser(browser()->profile());
   TabSearchContainer* const second_search_container =
-      BrowserView::GetBrowserViewForBrowser(second_browser)
-          ->tab_strip_region_view()
-          ->tab_search_container_for_testing();
+      BrowserElementsViews::From(second_browser)
+          ->GetViewAs<TabSearchContainer>(kTabSearchContainerElementId);
 
   ASSERT_FALSE(second_search_container->animation_session_for_testing());
 
@@ -224,7 +252,13 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest, DelaysShow) {
                   ->IsShowing());
 }
 
-IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest, DelaysHide) {
+// TODO(crbug.com/413441658): Flaky on Windows 10 builds.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_DelaysHide DISABLED_DelaysHide
+#else
+#define MAYBE_DelaysHide DelaysHide
+#endif
+IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest, MAYBE_DelaysHide) {
   ASSERT_FALSE(tab_search_container()->animation_session_for_testing());
 
   tab_search_container()->ShowTabOrganization(
@@ -245,14 +279,19 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest, DelaysHide) {
   tab_search_container()->SetLockedExpansionModeForTesting(
       LockedExpansionMode::kNone, nullptr);
 
-  ASSERT_TRUE(tab_search_container()
-                  ->animation_session_for_testing()
-                  ->expansion_animation()
-                  ->IsClosing());
+  EXPECT_TRUE(ExpansionAnimationIsClosing());
 }
 
+// TODO(crbug.com/413441658): Flaky on Windows 10 builds.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ImmediatelyHidesWhenOrganizeButtonClicked \
+  DISABLED_ImmediatelyHidesWhenOrganizeButtonClicked
+#else
+#define MAYBE_ImmediatelyHidesWhenOrganizeButtonClicked \
+  ImmediatelyHidesWhenOrganizeButtonClicked
+#endif
 IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
-                       ImmediatelyHidesWhenOrganizeButtonClicked) {
+                       MAYBE_ImmediatelyHidesWhenOrganizeButtonClicked) {
   tab_search_container()->ShowTabOrganization(
       tab_search_container()->auto_tab_group_button());
   ResetAnimation(1);
@@ -264,14 +303,19 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
 
   tab_search_container()->OnAutoTabGroupButtonClicked();
 
-  EXPECT_TRUE(tab_search_container()
-                  ->animation_session_for_testing()
-                  ->expansion_animation()
-                  ->IsClosing());
+  EXPECT_TRUE(ExpansionAnimationIsClosing());
 }
 
+// TODO(crbug.com/413441658): Flaky on Windows 10 builds.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ImmediatelyHidesWhenOrganizeButtonDismissed \
+  DISABLED_ImmediatelyHidesWhenOrganizeButtonDismissed
+#else
+#define MAYBE_ImmediatelyHidesWhenOrganizeButtonDismissed \
+  ImmediatelyHidesWhenOrganizeButtonDismissed
+#endif
 IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
-                       ImmediatelyHidesWhenOrganizeButtonDismissed) {
+                       MAYBE_ImmediatelyHidesWhenOrganizeButtonDismissed) {
   tab_search_container()->ShowTabOrganization(
       tab_search_container()->auto_tab_group_button());
   ResetAnimation(1);
@@ -283,10 +327,7 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
 
   tab_search_container()->OnAutoTabGroupButtonDismissed();
 
-  EXPECT_TRUE(tab_search_container()
-                  ->animation_session_for_testing()
-                  ->expansion_animation()
-                  ->IsClosing());
+  EXPECT_TRUE(ExpansionAnimationIsClosing());
 }
 
 // TODO(crbug.com/414839512): Fix flaky test.
@@ -320,10 +361,7 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
       LockedExpansionMode::kNone,
       tab_search_container()->auto_tab_group_button());
 
-  ASSERT_TRUE(tab_search_container()
-                  ->animation_session_for_testing()
-                  ->expansion_animation()
-                  ->IsClosing());
+  EXPECT_TRUE(ExpansionAnimationIsClosing());
 }
 
 IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
@@ -449,8 +487,16 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
       "Tab.Organization.Declutter.Trigger.Outcome", 2, 1);
 }
 
+// TODO(crbug.com/413441658): Flaky on Windows 10 builds.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_HidesAutoTabGroupButtonFromHalfway \
+  DISABLED_HidesAutoTabGroupButtonFromHalfway
+#else
+#define MAYBE_HidesAutoTabGroupButtonFromHalfway \
+  HidesAutoTabGroupButtonFromHalfway
+#endif
 IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
-                       HidesAutoTabGroupButtonFromHalfway) {
+                       MAYBE_HidesAutoTabGroupButtonFromHalfway) {
   ASSERT_FALSE(tab_search_container()->animation_session_for_testing());
 
   tab_search_container()->ShowTabOrganization(
@@ -477,10 +523,7 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
   tab_search_container()->HideTabOrganization(
       tab_search_container()->auto_tab_group_button());
 
-  EXPECT_TRUE(tab_search_container()
-                  ->animation_session_for_testing()
-                  ->expansion_animation()
-                  ->IsClosing());
+  EXPECT_TRUE(ExpansionAnimationIsClosing());
 
   EXPECT_EQ(tab_search_container()
                 ->animation_session_for_testing()
@@ -508,8 +551,14 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
                   ->IsShowing());
 }
 
+// TODO(crbug.com/413441658): Flaky on Windows 10 builds.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_ShowsAndHidesDeclutterChip DISABLED_ShowsAndHidesDeclutterChip
+#else
+#define MAYBE_ShowsAndHidesDeclutterChip ShowsAndHidesDeclutterChip
+#endif
 IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
-                       ShowsAndHidesDeclutterChip) {
+                       MAYBE_ShowsAndHidesDeclutterChip) {
   ASSERT_FALSE(tab_search_container()->animation_session_for_testing());
 
   tab_search_container()->ShowTabOrganization(
@@ -528,14 +577,20 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
   tab_search_container()->HideTabOrganization(
       tab_search_container()->tab_declutter_button());
 
-  ASSERT_TRUE(tab_search_container()
-                  ->animation_session_for_testing()
-                  ->expansion_animation()
-                  ->IsClosing());
+  EXPECT_TRUE(ExpansionAnimationIsClosing());
 }
 
-IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
-                       DoesNotShowDeclutterChipWhenAutoTabGroupChipIsShown) {
+// TODO(crbug.com/413441658): Flaky on Windows 10 builds.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_DoesNotShowDeclutterChipWhenAutoTabGroupChipIsShown \
+  DISABLED_DoesNotShowDeclutterChipWhenAutoTabGroupChipIsShown
+#else
+#define MAYBE_DoesNotShowDeclutterChipWhenAutoTabGroupChipIsShown \
+  DoesNotShowDeclutterChipWhenAutoTabGroupChipIsShown
+#endif
+IN_PROC_BROWSER_TEST_F(
+    TabSearchContainerBrowserTest,
+    MAYBE_DoesNotShowDeclutterChipWhenAutoTabGroupChipIsShown) {
   ASSERT_FALSE(tab_search_container()->animation_session_for_testing());
 
   // Show the auto-tab group chip.
@@ -555,3 +610,5 @@ IN_PROC_BROWSER_TEST_F(TabSearchContainerBrowserTest,
 
   ASSERT_FALSE(tab_search_container()->animation_session_for_testing());
 }
+
+}  // namespace

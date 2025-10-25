@@ -6,13 +6,17 @@
 
 #import "base/notreached.h"
 #import "components/feature_engagement/public/tracker.h"
+#import "components/omnibox/browser/omnibox_pref_names.h"
 #import "ios/chrome/browser/bubble/ui_bundled/bubble_presenter.h"
 #import "ios/chrome/browser/content_settings/model/host_content_settings_map_factory.h"
 #import "ios/chrome/browser/discover_feed/model/discover_feed_service.h"
 #import "ios/chrome/browser/discover_feed/model/discover_feed_service_factory.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
+#import "ios/chrome/browser/fullscreen/ui_bundled/fullscreen_controller.h"
+#import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/ntp/ui_bundled/new_tab_page_feature.h"
 #import "ios/chrome/browser/overlays/model/public/overlay_presenter.h"
+#import "ios/chrome/browser/reader_mode/model/features.h"
 #import "ios/chrome/browser/segmentation_platform/model/segmentation_platform_service_factory.h"
 #import "ios/chrome/browser/shared/coordinator/layout_guide/layout_guide_util.h"
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
@@ -22,6 +26,7 @@
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/help_commands.h"
+#import "ios/chrome/browser/shared/public/commands/page_action_menu_entry_point_commands.h"
 #import "ios/chrome/browser/shared/public/commands/popup_menu_commands.h"
 #import "ios/chrome/browser/shared/public/commands/tab_strip_commands.h"
 #import "ios/chrome/browser/shared/public/commands/toolbar_commands.h"
@@ -55,6 +60,8 @@
           initWithLayoutGuideCenter:LayoutGuideCenterForBrowser(self.browser)
                   engagementTracker:engagementTracker
                        webStateList:self.browser->GetWebStateList()
+               fullscreenController:FullscreenController::FromBrowser(
+                                        self.browser)
       overlayPresenterForWebContent:webContentPresenter
                       infobarBanner:infobarBannerPresenter
                        infobarModal:infobarModalPresenter];
@@ -67,7 +74,7 @@
 
   _bottomOmniboxEnabled = [[PrefBackedBoolean alloc]
       initWithPrefService:GetApplicationContext()->GetLocalState()
-                 prefName:prefs::kBottomOmnibox];
+                 prefName:omnibox::kIsOmniboxInBottomPosition];
   [_bottomOmniboxEnabled setObserver:self];
 }
 
@@ -118,14 +125,6 @@
     }
     case InProductHelpType::kHomeCustomizationMenu: {
       [_presenter presentHomeCustomizationTipBubble];
-      break;
-    }
-    case InProductHelpType::kFollowWhileBrowsing: {
-      [_presenter presentFollowWhileBrowsingTipBubbleAndLogWithRecorder:
-                      DiscoverFeedServiceFactory::GetForProfile(profile)
-                          ->GetFeedMetricsRecorder()
-                                                       popupMenuHandler:
-                                                           popupMenuHandler];
       break;
     }
     case InProductHelpType::kDefaultSiteView: {
@@ -189,6 +188,18 @@
     }
     case InProductHelpType::kSwitchAccountsWithNTPAccountParticleDisc: {
       [_presenter presentSwitchAccountsWithNTPAccountParticleDiscBubble];
+      break;
+    }
+    case InProductHelpType::kPageActionMenu: {
+      CHECK(IsPageActionMenuEnabled());
+      _presenter.pageActionMenuEntryPointHandler = HandlerForProtocol(
+          commandDispatcher, PageActionMenuEntryPointCommands);
+      [_presenter presentPageActionMenuBubble];
+      break;
+    }
+    case InProductHelpType::kReaderModeOptions: {
+      CHECK(IsReaderModeAvailable());
+      [_presenter presentReaderModeOptionsBubble];
       break;
     }
   }

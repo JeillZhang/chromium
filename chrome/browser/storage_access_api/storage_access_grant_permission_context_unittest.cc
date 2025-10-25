@@ -32,13 +32,16 @@
 #include "components/metrics/dwa/dwa_recorder.h"
 #include "components/permissions/constants.h"
 #include "components/permissions/features.h"
+#include "components/permissions/permission_decision.h"
 #include "components/permissions/permission_request_id.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/permissions/permission_util.h"
+#include "components/permissions/resolvers/content_setting_permission_resolver.h"
 #include "components/permissions/test/mock_permission_prompt_factory.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/btm_service.h"
 #include "content/public/browser/permission_descriptor_util.h"
+#include "content/public/browser/permission_result.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/browser_test_utils.h"
@@ -85,7 +88,7 @@ MATCHER_P2(DwaEntryMatches, outcome, requester, "") {
   return testing::ExplainMatchResult(
       AllOf(Field("event_hash", &DwaEntry::event_hash, kDwaEventNameHash),
             Field("content_hash", &DwaEntry::content_hash,
-                  base::HashMetricName(requester.GetURL().host_piece())),
+                  base::HashMetricName(requester.GetURL().host())),
             Field("metrics", &DwaEntry::metrics,
                   testing::UnorderedElementsAre(testing::Pair(
                       kDwaMetricsHash, static_cast<int64_t>(outcome))))),
@@ -187,25 +190,29 @@ class StorageAccessGrantPermissionContextTest
     ChromeRenderViewHostTestHarness::TearDown();
   }
 
-  base::test::TestFuture<ContentSetting> DecidePermission(bool user_gesture) {
-    base::test::TestFuture<ContentSetting> future;
+  base::test::TestFuture<content::PermissionResult> DecidePermission(
+      bool user_gesture) {
+    base::test::TestFuture<content::PermissionResult> future;
     permission_context_->DecidePermissionForTesting(
         std::make_unique<permissions::PermissionRequestData>(
-            permission_context(), CreateFakeID(), user_gesture,
-            GetRequesterURL(), GetTopLevelURL()),
+            std::make_unique<permissions::ContentSettingPermissionResolver>(
+                ContentSettingsType::STORAGE_ACCESS),
+            CreateFakeID(), user_gesture, GetRequesterURL(), GetTopLevelURL()),
         future.GetCallback());
     return future;
   }
 
-  ContentSetting DecidePermissionSync(bool user_gesture) {
-    return DecidePermission(user_gesture).Get();
+  PermissionStatus DecidePermissionSync(bool user_gesture) {
+    return DecidePermission(user_gesture).Get().status;
   }
 
-  ContentSetting RequestPermissionSync() {
-    base::test::TestFuture<ContentSetting> future;
+  content::PermissionResult RequestPermissionSync() {
+    base::test::TestFuture<content::PermissionResult> future;
     permission_context()->RequestPermissionForTesting(
         std::make_unique<permissions::PermissionRequestData>(
-            permission_context(), CreateFakeID(),
+            std::make_unique<permissions::ContentSettingPermissionResolver>(
+                ContentSettingsType::STORAGE_ACCESS),
+            CreateFakeID(),
             /*user_gesture=*/true, GetRequesterURL()),
         future.GetCallback());
 
@@ -314,7 +321,7 @@ TEST_F(StorageAccessGrantPermissionContextTest,
   // Accept the prompt and validate we get the expected setting back in our
   // callback.
   request_manager()->Accept();
-  EXPECT_EQ(CONTENT_SETTING_ALLOW, future.Get());
+  EXPECT_EQ(PermissionStatus::GRANTED, future.Get().status);
 
   histogram_tester().ExpectUniqueSample(kGrantIsImplicitHistogram,
                                         /*sample=*/false, 1);
@@ -352,7 +359,7 @@ TEST_F(StorageAccessGrantPermissionContextTest, PermissionDecided) {
   EXPECT_EQ(GetTopLevelURL(), request_manager()->GetEmbeddingOrigin());
 
   request_manager()->Dismiss();
-  EXPECT_EQ(CONTENT_SETTING_ASK, future.Get());
+  EXPECT_EQ(PermissionStatus::ASK, future.Get().status);
   histogram_tester().ExpectUniqueSample(kRequestOutcomeHistogram,
                                         RequestOutcome::kDismissedByUser, 1);
 
@@ -370,7 +377,7 @@ TEST_F(StorageAccessGrantPermissionContextTest, PermissionDecided) {
 // No user gesture should force a permission rejection.
 TEST_F(StorageAccessGrantPermissionContextTest,
        PermissionDeniedWithoutUserGesture) {
-  EXPECT_EQ(CONTENT_SETTING_BLOCK,
+  EXPECT_EQ(PermissionStatus::DENIED,
             DecidePermissionSync(/*user_gesture=*/false));
   histogram_tester().ExpectUniqueSample(
       kRequestOutcomeHistogram, RequestOutcome::kDeniedByPrerequisites, 1);
@@ -471,7 +478,7 @@ TEST_F(StorageAccessGrantPermissionContextTest, AllowedByCookieSettings) {
       static_cast<int>(content_settings::CookieControlsMode::kOff));
 
   // User gesture is not needed.
-  EXPECT_EQ(CONTENT_SETTING_ALLOW,
+  EXPECT_EQ(PermissionStatus::GRANTED,
             DecidePermissionSync(/*user_gesture=*/false));
   histogram_tester().ExpectUniqueSample(
       kRequestOutcomeHistogram, RequestOutcome::kAllowedByCookieSettings, 1);
@@ -496,7 +503,7 @@ TEST_F(StorageAccessGrantPermissionContextTest, DeniedByCookieSettings) {
       CONTENT_SETTING_BLOCK);
 
   // User gesture is not needed.
-  EXPECT_EQ(CONTENT_SETTING_BLOCK,
+  EXPECT_EQ(PermissionStatus::DENIED,
             DecidePermissionSync(/*user_gesture=*/false));
   histogram_tester().ExpectUniqueSample(
       kRequestOutcomeHistogram, RequestOutcome::kDeniedByCookieSettings, 1);
@@ -528,10 +535,12 @@ class StorageAccessGrantPermissionContextAPIWithImplicitGrantsTest
     const int implicit_grant_limit =
         StorageAccessGrantPermissionContext::GetImplicitGrantLimitForTesting();
     for (int grant_id = 0; grant_id < implicit_grant_limit; grant_id++) {
-      base::test::TestFuture<ContentSetting> future;
+      base::test::TestFuture<content::PermissionResult> future;
       permission_context()->DecidePermissionForTesting(
           std::make_unique<permissions::PermissionRequestData>(
-              permission_context(), fake_id,
+              std::make_unique<permissions::ContentSettingPermissionResolver>(
+                  ContentSettingsType::STORAGE_ACCESS),
+              fake_id,
               /*user_gesture=*/true, requesting_origin,
               GetDummyEmbeddingUrl(grant_id)),
           future.GetCallback());
@@ -578,7 +587,7 @@ TEST_F(StorageAccessGrantPermissionContextAPIWithImplicitGrantsTest,
     // Close the prompt and validate we get the expected setting back in our
     // callback.
     request_manager()->Dismiss();
-    EXPECT_EQ(CONTENT_SETTING_ASK, future.Get());
+    EXPECT_EQ(PermissionStatus::ASK, future.Get().status);
   }
   EXPECT_EQ(histogram_tester().GetBucketCount(kRequestOutcomeHistogram,
                                               RequestOutcome::kDismissedByUser),
@@ -604,15 +613,17 @@ TEST_F(StorageAccessGrantPermissionContextAPIWithImplicitGrantsTest,
 
   // However now if a different requesting origin makes a request we should see
   // it gets auto-granted as the limit has not been reached for it yet.
-  base::test::TestFuture<ContentSetting> future;
+  base::test::TestFuture<content::PermissionResult> future;
   permission_context()->DecidePermissionForTesting(
       std::make_unique<permissions::PermissionRequestData>(
-          permission_context(), CreateFakeID(), /*user_gesture=*/true,
-          alternate_requester_url, GetTopLevelURL()),
+          std::make_unique<permissions::ContentSettingPermissionResolver>(
+              ContentSettingsType::STORAGE_ACCESS),
+          CreateFakeID(), /*user_gesture=*/true, alternate_requester_url,
+          GetTopLevelURL()),
       future.GetCallback());
 
   // We should have no prompts still and our latest result should be an allow.
-  EXPECT_EQ(CONTENT_SETTING_ALLOW, future.Get());
+  EXPECT_EQ(PermissionStatus::GRANTED, future.Get().status);
   EXPECT_FALSE(request_manager()->IsRequestInProgress());
   EXPECT_EQ(histogram_tester().GetBucketCount(
                 kRequestOutcomeHistogram, RequestOutcome::kGrantedByAllowance),
@@ -660,7 +671,7 @@ TEST_F(StorageAccessGrantPermissionContextAPIWithImplicitGrantsTest,
   // `RequestPermission`, which checks for existing grants, while
   // `DecidePermission` does not.
   // We should have no prompts still and our latest result should be an allow.
-  EXPECT_EQ(CONTENT_SETTING_ALLOW, RequestPermissionSync());
+  EXPECT_EQ(PermissionStatus::GRANTED, RequestPermissionSync().status);
   EXPECT_FALSE(request_manager()->IsRequestInProgress());
   EXPECT_EQ(histogram_tester().GetBucketCount(
                 kRequestOutcomeHistogram, RequestOutcome::kGrantedByAllowance),
@@ -696,7 +707,7 @@ TEST_F(StorageAccessGrantPermissionContextTest, ExplicitGrantDenial) {
   // Deny the prompt and validate we get the expected setting back in our
   // callback.
   request_manager()->Deny();
-  EXPECT_EQ(CONTENT_SETTING_BLOCK, future.Get());
+  EXPECT_EQ(PermissionStatus::DENIED, future.Get().status);
 
   histogram_tester().ExpectTotalCount(kGrantIsImplicitHistogram, 0);
   histogram_tester().ExpectUniqueSample(
@@ -731,7 +742,7 @@ TEST_F(StorageAccessGrantPermissionContextTest,
   auto future = DecidePermission(/*user_gesture=*/true);
   // Ensure the prompt is not shown.
   ASSERT_FALSE(request_manager()->IsRequestInProgress());
-  EXPECT_EQ(CONTENT_SETTING_BLOCK, future.Get());
+  EXPECT_EQ(PermissionStatus::DENIED, future.Get().status);
 
   // However, ensure that the user's denial is not exposed when querying the
   // permission, per the spec.
@@ -763,7 +774,7 @@ TEST_F(StorageAccessGrantPermissionContextTest, ExplicitGrantAccept) {
   // Accept the prompt and validate we get the expected setting back in our
   // callback.
   request_manager()->Accept();
-  EXPECT_EQ(CONTENT_SETTING_ALLOW, future.Get());
+  EXPECT_EQ(PermissionStatus::GRANTED, future.Get().status);
 
   histogram_tester().ExpectUniqueSample(kGrantIsImplicitHistogram,
                                         /*sample=*/false, 1);
@@ -826,7 +837,8 @@ TEST_F(StorageAccessGrantPermissionContextAPIWithFirstPartySetsTest,
                   content_settings::mojom::SessionModel::DURABLE),
               Each(DecidedByRelatedWebsiteSets(false)));
 
-  EXPECT_EQ(DecidePermissionSync(/*user_gesture=*/true), CONTENT_SETTING_ALLOW);
+  EXPECT_EQ(DecidePermissionSync(/*user_gesture=*/true),
+            PermissionStatus::GRANTED);
 
   histogram_tester().ExpectUniqueSample(
       kRequestOutcomeHistogram, RequestOutcome::kGrantedByFirstPartySet, 1);
@@ -886,7 +898,7 @@ TEST_P(StorageAccessGrantPermissionContextAPIWithFedCMConnectionTest,
   auto future = DecidePermission(/*user_gesture=*/false);
   // Ensure no prompt is shown.
   ASSERT_FALSE(request_manager()->IsRequestInProgress());
-  EXPECT_EQ(CONTENT_SETTING_ALLOW, future.Get());
+  EXPECT_EQ(PermissionStatus::GRANTED, future.Get().status);
 
   histogram_tester().ExpectUniqueSample(kRequestOutcomeHistogram,
                                         RequestOutcome::kAllowedByFedCM, 1);

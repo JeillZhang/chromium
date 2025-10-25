@@ -44,36 +44,22 @@ class CompositorFrameSinkImpl : public mojom::CompositorFrameSink {
   ~CompositorFrameSinkImpl() override;
 
   // mojom::CompositorFrameSink:
+  void SetParams(mojom::CompositorFrameSinkParamsPtr params) override;
   void SetNeedsBeginFrame(bool needs_begin_frame) override;
-  void SetWantsAnimateOnlyBeginFrames() override;
-  void SetAutoNeedsBeginFrame() override;
   void SubmitCompositorFrame(
       const LocalSurfaceId& local_surface_id,
       CompositorFrame frame,
       std::optional<HitTestRegionList> hit_test_region_list,
       uint64_t submit_time) override;
-  void SubmitCompositorFrameSync(
-      const LocalSurfaceId& local_surface_id,
-      CompositorFrame frame,
-      std::optional<HitTestRegionList> hit_test_region_list,
-      uint64_t submit_time,
-      SubmitCompositorFrameSyncCallback callback) override;
   void DidNotProduceFrame(const BeginFrameAck& begin_frame_ack) override;
   void NotifyNewLocalSurfaceIdExpectedWhilePaused() override;
   void BindLayerContext(mojom::PendingLayerContextPtr context,
-                        bool draw_mode_is_gpu) override;
+                        mojom::LayerContextSettingsPtr settings) override;
 #if BUILDFLAG(IS_ANDROID)
   void SetThreads(const std::vector<Thread>& threads) override;
 #endif
 
  private:
-  void SubmitCompositorFrameInternal(
-      const LocalSurfaceId& local_surface_id,
-      CompositorFrame frame,
-      std::optional<HitTestRegionList> hit_test_region_list,
-      uint64_t submit_time,
-      mojom::CompositorFrameSink::SubmitCompositorFrameSyncCallback);
-
   void OnClientConnectionLost();
 
   mojo::Remote<mojom::CompositorFrameSinkClient> compositor_frame_sink_client_;
@@ -86,6 +72,8 @@ class CompositorFrameSinkImpl : public mojom::CompositorFrameSink {
   // Must be destroyed before |compositor_frame_sink_client_|. This must never
   // change for the lifetime of CompositorFrameSinkImpl.
   const std::unique_ptr<CompositorFrameSinkSupport> support_;
+
+  bool params_set_ = false;
 };
 
 }  // namespace viz

@@ -39,7 +39,7 @@
 #include "components/autofill/core/browser/field_types.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/browser/foundations/test_autofill_client.h"
-#include "components/autofill/core/browser/integrators/optimization_guide/mock_autofill_optimization_guide.h"
+#include "components/autofill/core/browser/integrators/optimization_guide/mock_autofill_optimization_guide_decider.h"
 #include "components/autofill/core/browser/metrics/autofill_metrics.h"
 #include "components/autofill/core/browser/metrics/payments/mandatory_reauth_metrics.h"
 #include "components/autofill/core/browser/payments/constants.h"
@@ -70,7 +70,7 @@
 #include "ui/gfx/image/image_unittest_util.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/device_info.h"
 #include "base/android/scoped_java_ref.h"
 #endif
 
@@ -133,7 +133,8 @@ class PaymentsDataManagerHelper : public PaymentsDataManagerTestBase {
         profile_database_service_, account_database_service_,
         /*image_fetcher=*/nullptr, /*shared_storage_handler=*/nullptr,
         prefs_.get(), &sync_service_, identity_test_env_.identity_manager(),
-        GeoIpCountryCode(country_code), app_locale);
+        GeoIpCountryCode(country_code), app_locale,
+        autofill_client()->GetAutofillOptimizationGuideDecider());
     payments_data_manager_->Refresh();
     WaitForOnPaymentsDataChanged();
   }
@@ -271,7 +272,8 @@ class PaymentsDataManagerTest : public PaymentsDataManagerHelper,
 
   PaymentsDataManagerTest() {
     scoped_feature_list_.InitWithFeatures(
-        /*enabled_features=*/{features::kAutofillEnableBuyNowPayLaterSyncing},
+        /*enabled_features=*/{features::kAutofillEnableBuyNowPayLaterSyncing,
+                              features::kAutofillEnableAiBasedAmountExtraction},
         /*disabled_features=*/{});
   }
 
@@ -338,6 +340,21 @@ TEST_F(PaymentsDataManagerTest, GetIbans) {
   std::vector<const Iban*> all_ibans = {&local_iban1, &local_iban2,
                                         &server_iban1, &server_iban2};
   ExpectSameElements(all_ibans, payments_data_manager().GetIbans());
+}
+
+// Tests that OnPaymentsDataLoaded is called after syncing.
+TEST_F(PaymentsDataManagerTest, OnPaymentsDataLoaded) {
+  ASSERT_TRUE(GetServerDataTable()->SetPaymentInstruments(
+      {test::CreatePaymentInstrumentWithEwalletAccount(1234L)}));
+
+  EXPECT_CALL(*static_cast<MockAutofillOptimizationGuideDecider*>(
+                  autofill_client()->GetAutofillOptimizationGuideDecider()),
+              OnPaymentsDataLoaded);
+
+  // We need to call `Refresh()` to ensure that the payment instruments
+  // are loaded from the WebDatabase.
+  payments_data_manager().Refresh();
+  WaitForOnPaymentsDataChanged();
 }
 
 // Test that a local IBAN is removed from suggestions when it has a matching
@@ -2368,6 +2385,64 @@ TEST_F(
   ewallet_accounts = payments_data_manager().GetEwalletAccounts();
   EXPECT_EQ(2u, ewallet_accounts.size());
 }
+
+// Tests that eWallet data is unchanged when the `kAutofillBnplEnabled` pref
+// is turned on/off.
+TEST_F(
+    PaymentsDataManagerTest,
+    OnPaymentInstrumentEnabledPrefChange_BnplEnabledPrefChanged_EwalletsUnchanged) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      {features::kAutofillSyncEwalletAccounts,
+       features::kAutofillEnableBuyNowPayLaterSyncing},
+      {});
+  sync_pb::PaymentInstrument ewallet_1 =
+      test::CreatePaymentInstrumentWithEwalletAccount(1234L);
+  sync_pb::PaymentInstrument ewallet_2 =
+      test::CreatePaymentInstrumentWithEwalletAccount(2345L);
+  sync_pb::PaymentInstrument linked_issuer =
+      test::CreatePaymentInstrumentWithLinkedBnplIssuer(
+          3456L, std::string(kBnplAffirmIssuerId), "USD",
+          /*min_price_in_micros=*/0,
+          /*max_price_in_micros=*/35'000'000);
+  ASSERT_TRUE(GetServerDataTable()->SetPaymentInstruments(
+      {ewallet_1, ewallet_2, linked_issuer}));
+  ASSERT_TRUE(GetServerDataTable()->SetPaymentInstrumentCreationOptions(
+      {test::CreatePaymentInstrumentCreationOptionWithBnplIssuer("5678")}));
+
+  // Since the PaymentsDataManager was initialized before adding the
+  // payment instruments to the WebDatabase, we expect `GetEwalletAccounts()`
+  // and `GetBnplIssuers()` to return an empty list.
+  EXPECT_EQ(0U, payments_data_manager().GetEwalletAccounts().size());
+  EXPECT_EQ(0U, payments_data_manager().GetBnplIssuers().size());
+
+  // We need to call `Refresh()` to ensure that the payment instruments
+  // are loaded again from the WebDatabase.
+  payments_data_manager().Refresh();
+  WaitForOnPaymentsDataChanged();
+
+  EXPECT_EQ(2U, payments_data_manager().GetBnplIssuers().size());
+  EXPECT_EQ(1U, payments_data_manager().GetUnlinkedBnplIssuers().size());
+  EXPECT_EQ(1U, payments_data_manager().GetLinkedBnplIssuers().size());
+  EXPECT_EQ(2U, payments_data_manager().GetEwalletAccounts().size());
+
+  ASSERT_TRUE(prefs::IsAutofillBnplEnabled(prefs_.get()));
+  prefs::SetAutofillBnplEnabled(prefs_.get(), false);
+  WaitForOnPaymentsDataChanged();
+
+  EXPECT_TRUE(payments_data_manager().GetBnplIssuers().empty());
+  EXPECT_TRUE(payments_data_manager().GetUnlinkedBnplIssuers().empty());
+  EXPECT_TRUE(payments_data_manager().GetLinkedBnplIssuers().empty());
+  EXPECT_EQ(2U, payments_data_manager().GetEwalletAccounts().size());
+
+  prefs::SetAutofillBnplEnabled(prefs_.get(), true);
+  WaitForOnPaymentsDataChanged();
+
+  EXPECT_EQ(2U, payments_data_manager().GetBnplIssuers().size());
+  EXPECT_EQ(1U, payments_data_manager().GetUnlinkedBnplIssuers().size());
+  EXPECT_EQ(1U, payments_data_manager().GetLinkedBnplIssuers().size());
+  EXPECT_EQ(2U, payments_data_manager().GetEwalletAccounts().size());
+}
 #endif  // BUILDFLAG(IS_ANDROID)
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || \
@@ -2381,7 +2456,7 @@ TEST_F(PaymentsDataManagerTest, GetLinkedBnplIssuers_FlagOff) {
       test::CreatePaymentInstrumentWithLinkedBnplIssuer(
           1234L, std::string(kBnplAffirmIssuerId), "USD",
           /*min_price_in_micros=*/0,
-          /*max_price_in_micros=*/35000000);
+          /*max_price_in_micros=*/35'000'000);
   ASSERT_TRUE(
       GetServerDataTable()->SetPaymentInstruments({payment_instrument}));
 
@@ -2411,12 +2486,12 @@ TEST_F(PaymentsDataManagerTest, GetLinkedBnplIssuers_PaymentMethodsDisabled) {
       test::CreatePaymentInstrumentWithLinkedBnplIssuer(
           1234L, std::string(kBnplAffirmIssuerId), "USD",
           /*min_price_in_micros=*/0,
-          /*max_price_in_micros=*/35000000);
+          /*max_price_in_micros=*/35'000'000);
   sync_pb::PaymentInstrument payment_instrument_2 =
       test::CreatePaymentInstrumentWithLinkedBnplIssuer(
           2345L, std::string(kBnplZipIssuerId), "USD",
           /*min_price_in_micros=*/0,
-          /*max_price_in_micros=*/35000000);
+          /*max_price_in_micros=*/35'000'000);
   ASSERT_TRUE(GetServerDataTable()->SetPaymentInstruments(
       {payment_instrument_1, payment_instrument_2}));
 
@@ -2442,7 +2517,7 @@ TEST_F(PaymentsDataManagerTest, GetLinkedBnplIssuers_UnsupportedIssuer) {
       test::CreatePaymentInstrumentWithLinkedBnplIssuer(
           1234L, "unsupported_issuer_id", "USD",
           /*min_price_in_micros=*/0,
-          /*max_price_in_micros=*/35000000);
+          /*max_price_in_micros=*/35'000'000);
   ASSERT_TRUE(
       GetServerDataTable()->SetPaymentInstruments({payment_instrument_1}));
 
@@ -2464,14 +2539,56 @@ TEST_F(PaymentsDataManagerTest, GetLinkedBnplIssuers) {
   int64_t instrument_id = 1234L;
   std::string issuer_id = std::string(kBnplAffirmIssuerId);
   std::string currency = "USD";
-  uint64_t min_price_in_micros = 5000000;
-  uint64_t max_price_in_micros = 35000000;
+  uint64_t min_price_in_micros = 5'000'000;
+  uint64_t max_price_in_micros = 35'000'000;
   sync_pb::PaymentInstrument payment_instrument =
       test::CreatePaymentInstrumentWithLinkedBnplIssuer(
           instrument_id, issuer_id, currency, min_price_in_micros,
           max_price_in_micros);
   ASSERT_TRUE(
       GetServerDataTable()->SetPaymentInstruments({payment_instrument}));
+
+  // Since the PaymentsDataManager was initialized before adding the linked BNPL
+  // issuer payment instruments to the WebDatabase, `GetLinkedBnplIssuers()` is
+  // expected to return an empty list.
+  base::span<const BnplIssuer> linked_bnpl_issuers =
+      payments_data_manager().GetLinkedBnplIssuers();
+  EXPECT_TRUE(linked_bnpl_issuers.empty());
+
+  // `Refresh()` must be called to ensure that the linked BNPL issuer payment
+  // instruments are loaded again from the WebDatabase.
+  payments_data_manager().Refresh();
+  WaitForOnPaymentsDataChanged();
+
+  linked_bnpl_issuers = payments_data_manager().GetLinkedBnplIssuers();
+
+  ASSERT_EQ(linked_bnpl_issuers.size(), 1U);
+  EXPECT_EQ(linked_bnpl_issuers[0],
+            BnplIssuer(instrument_id, ConvertToBnplIssuerIdEnum(issuer_id),
+                       /*eligible_price_ranges=*/
+                       {BnplIssuer::EligiblePriceRange(
+                           currency, /*price_lower_bound=*/min_price_in_micros,
+                           /*price_upper_bound=*/max_price_in_micros)}));
+}
+
+// This test ensures that if the server accidentally returns duplicate linked
+// BNPL issuers it is handled gracefully in Chrome.
+TEST_F(PaymentsDataManagerTest, GetLinkedBnplIssuers_DuplicateIssuers) {
+  base::test::ScopedFeatureList scoped_feature_list(
+      features::kAutofillEnableBuyNowPayLaterSyncing);
+  int64_t instrument_id = 1234L;
+  std::string issuer_id = std::string(kBnplAffirmIssuerId);
+  std::string currency = "USD";
+  uint64_t min_price_in_micros = 5'000'000;
+  uint64_t max_price_in_micros = 35'000'000;
+  sync_pb::PaymentInstrument payment_instrument =
+      test::CreatePaymentInstrumentWithLinkedBnplIssuer(
+          instrument_id, issuer_id, currency, min_price_in_micros,
+          max_price_in_micros);
+  sync_pb::PaymentInstrument payment_instrument_2 = payment_instrument;
+  payment_instrument_2.set_instrument_id(5678L);
+  ASSERT_TRUE(GetServerDataTable()->SetPaymentInstruments(
+      {payment_instrument, payment_instrument_2}));
 
   // Since the PaymentsDataManager was initialized before adding the linked BNPL
   // issuer payment instruments to the WebDatabase, `GetLinkedBnplIssuers()` is
@@ -2504,8 +2621,8 @@ TEST_F(PaymentsDataManagerTest, GetLinkedBnplIssuers_NoEligiblePriceRange) {
   int64_t instrument_id = 1234L;
   std::string issuer_id = std::string(kBnplAffirmIssuerId);
   std::string currency = "USD";
-  uint64_t min_price_in_micros = 50000000;
-  uint64_t max_price_in_micros = 35000000;
+  uint64_t min_price_in_micros = 50'000'000;
+  uint64_t max_price_in_micros = 35'000'000;
   sync_pb::PaymentInstrument payment_instrument =
       test::CreatePaymentInstrumentWithLinkedBnplIssuer(
           instrument_id, issuer_id, currency, min_price_in_micros,
@@ -2542,7 +2659,8 @@ TEST_F(PaymentsDataManagerTest, GetLinkedBnplIssuers_NonUsdPriceRangeRejected) {
       {test::CreatePaymentInstrumentWithLinkedBnplIssuer(
           /*instrument_id=*/1234L,
           /*issuer_id=*/std::string(kBnplAffirmIssuerId), /*currency=*/"CAD",
-          /*min_price_in_micros=*/5000000, /*max_price_in_micros=*/35000000)}));
+          /*min_price_in_micros=*/5'000'000,
+          /*max_price_in_micros=*/35'000'000)}));
 
   // `Refresh()` must be called to ensure that the linked BNPL issuer payment
   // instruments are loaded again from the WebDatabase.
@@ -2552,6 +2670,71 @@ TEST_F(PaymentsDataManagerTest, GetLinkedBnplIssuers_NonUsdPriceRangeRejected) {
   // No linked BNPL issuers should be cached as there is no eligible price
   // range present.
   EXPECT_TRUE(payments_data_manager().GetLinkedBnplIssuers().empty());
+}
+
+// Tests that externally linked BNPL issuer will not be added  if flag
+// `AutofillEnableBuyNowPayLaterForExternallyLinked` is disabled.
+TEST_F(PaymentsDataManagerTest,
+       GetLinkedBnplIssuers_IssuerLinkedExternally_FlagDisabled) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      /*enabled_features=*/{features::kAutofillEnableBuyNowPayLaterSyncing,
+                            features::kAutofillEnableBuyNowPayLaterForKlarna},
+      /*disabled_features=*/{
+          features::kAutofillEnableBuyNowPayLaterForExternallyLinked});
+  sync_pb::PaymentInstrument payment_instrument =
+      test::CreatePaymentInstrumentWithLinkedBnplIssuer(
+          /*instrument_id=*/1234L, std::string(kBnplKlarnaIssuerId), "USD",
+          /*min_price_in_micros=*/0,
+          /*max_price_in_micros=*/35'000'000,
+          /*actions_required=*/
+          {sync_pb::PaymentInstrument_ActionRequired_ACCEPT_TOS});
+  ASSERT_TRUE(
+      GetServerDataTable()->SetPaymentInstruments({payment_instrument}));
+  payments_data_manager().Refresh();
+  WaitForOnPaymentsDataChanged();
+
+  base::span<const BnplIssuer> linked_bnpl_issuers =
+      payments_data_manager().GetLinkedBnplIssuers();
+
+  ASSERT_EQ(linked_bnpl_issuers.size(), 0U);
+}
+
+// Tests that `action_required` is set for BNPL issuers if flag
+// `AutofillEnableBuyNowPayLaterForExternallyLinked` is enabled.
+TEST_F(PaymentsDataManagerTest, GetLinkedBnplIssuers_IssuerLinkedExternally) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeatures(
+      /*enabled_features=*/
+      {features::kAutofillEnableBuyNowPayLaterSyncing,
+       features::kAutofillEnableBuyNowPayLaterForKlarna,
+       features::kAutofillEnableBuyNowPayLaterForExternallyLinked},
+      /*disabled_features=*/{});
+  sync_pb::PaymentInstrument payment_instrument =
+      test::CreatePaymentInstrumentWithLinkedBnplIssuer(
+          /*instrument_id=*/1234L, std::string(kBnplKlarnaIssuerId), "USD",
+          /*min_price_in_micros=*/0,
+          /*max_price_in_micros=*/35'000'000,
+          /*actions_required=*/
+          {sync_pb::PaymentInstrument_ActionRequired_ACCEPT_TOS});
+  ASSERT_TRUE(
+      GetServerDataTable()->SetPaymentInstruments({payment_instrument}));
+  payments_data_manager().Refresh();
+  WaitForOnPaymentsDataChanged();
+
+  base::span<const BnplIssuer> linked_bnpl_issuers =
+      payments_data_manager().GetLinkedBnplIssuers();
+
+  ASSERT_EQ(linked_bnpl_issuers.size(), 1U);
+  EXPECT_EQ(
+      linked_bnpl_issuers[0],
+      BnplIssuer(
+          /*instrument_id=*/1234L, BnplIssuer::IssuerId::kBnplKlarna,
+          /*eligible_price_ranges=*/
+          {BnplIssuer::EligiblePriceRange("USD", /*price_lower_bound=*/0,
+                                          /*price_upper_bound=*/35'000'000)},
+          /*action_required=*/
+          DenseSet({PaymentInstrument::ActionRequired::kAcceptTos})));
 }
 
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
@@ -2817,7 +3000,8 @@ TEST_F(PaymentsDataManagerTest,
       /*sync_service=*/nullptr,
       /*identity_manager=*/nullptr,
       /*variations_country_code=*/GeoIpCountryCode("US"),
-      /*app-locale=*/"en-US");
+      /*app-locale=*/"en-US",
+      /*autofill_optimization_guide=*/nullptr);
 
   histogram_tester.ExpectTotalCount(
       "Autofill.PaymentMethods.CardBenefitsIsEnabled.Startup", 0);
@@ -2835,6 +3019,10 @@ class PaymentsDataManagerShouldBlockBenefitsTest
     ResetPaymentsDataManager(false, app_locale());
   }
   const std::string& app_locale() { return GetParam(); }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_{
+      features::kAutofillEnableFlatRateCardBenefitsBlocklist};
 };
 
 // Tests that card benefits should be blocked if the app locale is not en-US or
@@ -2843,6 +3031,91 @@ TEST_P(PaymentsDataManagerShouldBlockBenefitsTest, NonSupportedAppLocale) {
   EXPECT_NE(test_api(payments_data_manager())
                 .ShouldBlockCardBenefitSuggestionLabels(),
             app_locale() == "en-US" || app_locale() == "en-GB");
+}
+
+// Tests that card flat rate benefits should be blocked when benefit suggestions
+// are disabled for the given url.
+TEST_P(PaymentsDataManagerShouldBlockBenefitsTest,
+       BlockedUrlForFlateRateBenefit) {
+  if (app_locale() != "en-US" && app_locale() != "en-GB") {
+    GTEST_SKIP() << "This test should not run for not supported app locale.";
+  }
+
+  const url::Origin origin =
+      url::Origin::Create(GURL("https://example-blocked-url.com/"));
+  ON_CALL(*static_cast<MockAutofillOptimizationGuideDecider*>(
+              autofill_client()->GetAutofillOptimizationGuideDecider()),
+          ShouldBlockFlatRateBenefitSuggestionLabelsForUrl)
+      .WillByDefault(testing::Return(true));
+
+  // Add flat rate benefits and linked card.
+  CreditCardFlatRateBenefit flat_rate_benefit =
+      test::GetActiveCreditCardFlatRateBenefit();
+  CreditCard card = test::GetMaskedServerCard();
+  test_api(flat_rate_benefit)
+      .SetLinkedCardInstrumentId(
+          CreditCardBenefitBase::LinkedCardInstrumentId(card.instrument_id()));
+  test_api(payments_data_manager()).AddServerCreditCard(card);
+  payments_data_manager().AddCreditCardBenefitForTest(
+      std::move(flat_rate_benefit));
+
+  EXPECT_TRUE(payments_data_manager()
+                  .GetApplicableBenefitDescriptionForCardAndOrigin(
+                      test::GetMaskedServerCard(), origin,
+                      autofill_client()->GetAutofillOptimizationGuideDecider())
+                  .empty());
+
+  // Add other benefit.
+  CreditCardMerchantBenefit merchant_benefit =
+      test::GetActiveCreditCardMerchantBenefit();
+  test_api(merchant_benefit)
+      .SetLinkedCardInstrumentId(
+          CreditCardBenefitBase::LinkedCardInstrumentId(card.instrument_id()));
+  test_api(merchant_benefit).SetMerchantDomains({origin});
+  payments_data_manager().AddCreditCardBenefitForTest(merchant_benefit);
+
+  EXPECT_EQ(
+      payments_data_manager().GetApplicableBenefitDescriptionForCardAndOrigin(
+          card, origin,
+          autofill_client()->GetAutofillOptimizationGuideDecider()),
+      merchant_benefit.benefit_description());
+}
+
+// Tests that card flat rate benefits should not be blocked if the given url is
+// on the flat rate benefit blocklist, but the blocklist feature flag is
+// disabled.
+TEST_P(PaymentsDataManagerShouldBlockBenefitsTest,
+       BlockedUrlForFlateRateBenefit_BlocklistDisabled) {
+  if (app_locale() != "en-US" && app_locale() != "en-GB") {
+    GTEST_SKIP() << "This test should not run for not supported app locale.";
+  }
+
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      features::kAutofillEnableFlatRateCardBenefitsBlocklist);
+
+  const url::Origin origin =
+      url::Origin::Create(GURL("https://example-blocked-url.com/"));
+  ON_CALL(*static_cast<MockAutofillOptimizationGuideDecider*>(
+              autofill_client()->GetAutofillOptimizationGuideDecider()),
+          ShouldBlockFlatRateBenefitSuggestionLabelsForUrl)
+      .WillByDefault(testing::Return(true));
+
+  // Add flat rate benefits and linked card.
+  CreditCardFlatRateBenefit flat_rate_benefit =
+      test::GetActiveCreditCardFlatRateBenefit();
+  CreditCard card = test::GetMaskedServerCard();
+  test_api(flat_rate_benefit)
+      .SetLinkedCardInstrumentId(
+          CreditCardBenefitBase::LinkedCardInstrumentId(card.instrument_id()));
+  test_api(payments_data_manager()).AddServerCreditCard(card);
+  payments_data_manager().AddCreditCardBenefitForTest(flat_rate_benefit);
+
+  EXPECT_EQ(
+      payments_data_manager().GetApplicableBenefitDescriptionForCardAndOrigin(
+          card, origin,
+          autofill_client()->GetAutofillOptimizationGuideDecider()),
+      flat_rate_benefit.benefit_description());
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -3266,7 +3539,7 @@ TEST_F(PaymentsDataManagerSyncTransportModeTest, OnUserAcceptedUpstreamOffer) {
 #if BUILDFLAG(IS_ANDROID)
 TEST_F(PaymentsDataManagerTest,
        AutofillPaymentMethodsMandatoryReauthAlwaysEnabledOnAutomotive) {
-  if (!base::android::BuildInfo::GetInstance()->is_automotive()) {
+  if (!base::android::device_info::is_automotive()) {
     GTEST_SKIP() << "This test should only run on automotive.";
   }
 
@@ -3288,7 +3561,7 @@ TEST_F(PaymentsDataManagerTest,
 // correctly.
 TEST_F(PaymentsDataManagerTest, AutofillPaymentMethodsMandatoryReauthEnabled) {
 #if BUILDFLAG(IS_ANDROID)
-  if (base::android::BuildInfo::GetInstance()->is_automotive()) {
+  if (base::android::device_info::is_automotive()) {
     GTEST_SKIP() << "This test should not run on automotive.";
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -3310,7 +3583,7 @@ TEST_F(
     PaymentsDataManagerTest,
     ShouldShowPaymentMethodsMandatoryReauthPromo_MaxValueForPromoShownCounterReached) {
 #if BUILDFLAG(IS_ANDROID)
-  if (base::android::BuildInfo::GetInstance()->is_automotive()) {
+  if (base::android::device_info::is_automotive()) {
     GTEST_SKIP() << "This test should not run on automotive.";
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -3344,7 +3617,7 @@ TEST_F(PaymentsDataManagerTest,
 #if BUILDFLAG(IS_ANDROID)
   // Opt-in prompts are not shown on automotive as mandatory reauth is always
   // enabled.
-  if (base::android::BuildInfo::GetInstance()->is_automotive()) {
+  if (base::android::device_info::is_automotive()) {
     GTEST_SKIP() << "This test should not run on automotive.";
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -3367,7 +3640,7 @@ TEST_F(PaymentsDataManagerTest,
 TEST_F(PaymentsDataManagerTest,
        ShouldShowPaymentMethodsMandatoryReauthPromo_UserOptedOut) {
 #if BUILDFLAG(IS_ANDROID)
-  if (base::android::BuildInfo::GetInstance()->is_automotive()) {
+  if (base::android::device_info::is_automotive()) {
     GTEST_SKIP() << "This test should not run on automotive.";
   }
 #endif  // BUILDFLAG(IS_ANDROID)
@@ -3439,6 +3712,28 @@ TEST_F(PaymentsDataManagerTest, SaveCardLocallyIfNewWithExistingCard) {
   }
 
   EXPECT_THAT(saved_credit_cards, testing::ElementsAre(credit_card));
+}
+
+TEST_F(PaymentsDataManagerTest, SaveCardLocallyIfNewWithDisallowedCvcStripped) {
+  CreditCard credit_card(base::Uuid::GenerateRandomV4().AsLowercaseString(),
+                         kSettingsOrigin);
+  test::SetCreditCardInfo(&credit_card, "Sunraku Emul",
+                          /*card_number=*/"4111 1111 1111 1111" /* Visa */,
+                          /*expiration_month=*/"01", /*expiration_year=*/"2999",
+                          /*billing_address_id=*/"", /*cvc=*/u"123");
+  prefs::SetPaymentCvcStorage(prefs_.get(), false);
+  ResetPaymentsDataManager();
+
+  EXPECT_EQ(0U, payments_data_manager().GetCreditCards().size());
+
+  // Add the credit card to the database.
+  bool is_saved = payments_data_manager().SaveCardLocallyIfNew(credit_card);
+  WaitForOnPaymentsDataChanged();
+
+  // Expect that the credit card was saved.
+  EXPECT_TRUE(is_saved);
+  ASSERT_EQ(1U, payments_data_manager().GetCreditCards().size());
+  EXPECT_TRUE(payments_data_manager().GetCreditCards()[0]->cvc().empty());
 }
 
 TEST_F(PaymentsDataManagerTest, GetAccountInfoForPaymentsServer) {
@@ -3536,6 +3831,51 @@ TEST_F(PaymentsDataManagerTest,
 
   ASSERT_TRUE(GetServerDataTable()->SetPaymentInstrumentCreationOptions(
       {creation_option}));
+
+  // Since the PaymentsDataManager was initialized before adding the unlinked
+  // BNPL issuer payment instrument creation options to the WebDatabase, we
+  // expect GetUnlinkedBnplIssuers to return an empty list.
+  EXPECT_EQ(payments_data_manager().GetUnlinkedBnplIssuers().size(), 0u);
+
+  // We need to call `Refresh()` to ensure that the BNPL issuer payment
+  // instrument creation options are loaded again from the WebDatabase.
+  payments_data_manager().Refresh();
+  WaitForOnPaymentsDataChanged();
+
+  // Must match the BnplCreationOption in the payment instrument creation
+  // option.
+  std::vector<BnplIssuer> want_bnpl_issuers = {BnplIssuer(
+      /*instrument_id=*/std::nullopt, BnplIssuer::IssuerId::kBnplAffirm,
+      {BnplIssuer::EligiblePriceRange(/*currency= */ "USD",
+                                      /*price_lower_bound=*/50,
+                                      /*price_upper_bound=*/200)})};
+
+  EXPECT_THAT(payments_data_manager().GetUnlinkedBnplIssuers(),
+              testing::UnorderedElementsAreArray(want_bnpl_issuers));
+}
+
+// This test ensures that if the server accidentally returns duplicate unlinked
+// BNPL issuers it is handled gracefully in Chrome.
+TEST_F(PaymentsDataManagerTest, GetUnlinkedBnplIssuers_DuplicateIssuers) {
+  // Create a BNPL payment creation option.
+  sync_pb::PaymentInstrumentCreationOption creation_option;
+  creation_option.set_id("1234");
+
+  sync_pb::BnplCreationOption* bnpl_option =
+      creation_option.mutable_buy_now_pay_later_option();
+  bnpl_option->set_issuer_id(kBnplAffirmIssuerId);
+
+  sync_pb::EligiblePriceRange eligible_price_range;
+  eligible_price_range.set_currency("USD");
+  eligible_price_range.set_min_price_in_micros(50);
+  eligible_price_range.set_max_price_in_micros(200);
+  *bnpl_option->add_eligible_price_range() = eligible_price_range;
+
+  sync_pb::PaymentInstrumentCreationOption creation_option_2 = creation_option;
+  creation_option_2.set_id("5678");
+
+  ASSERT_TRUE(GetServerDataTable()->SetPaymentInstrumentCreationOptions(
+      {creation_option, creation_option_2}));
 
   // Since the PaymentsDataManager was initialized before adding the unlinked
   // BNPL issuer payment instrument creation options to the WebDatabase, we
@@ -3747,35 +4087,34 @@ TEST_F(PaymentsDataManagerTest, BnplIssuerGetters_AutofillBnplFeatureDisabled) {
   EXPECT_TRUE(payments_data_manager().GetLinkedBnplIssuers().empty());
 }
 
-// Tests that Buy-now-pay-later issuer getters does not return any issuers if
-// `app_locale` is not "en-US".
-TEST_F(PaymentsDataManagerTest,
-       BnplIssuerGetters_AutofillBnplLocaleNotSupported) {
-  test_api(payments_data_manager())
-      .AddBnplIssuer(test::GetTestLinkedBnplIssuer());
-  test_api(payments_data_manager())
-      .AddBnplIssuer(test::GetTestUnlinkedBnplIssuer());
+// Tests that BNPL issuers are supported for "en-US" app locales.
+TEST_F(PaymentsDataManagerTest, AreBnplIssuersSupported_LocaleIsEnUS) {
+  ResetPaymentsDataManager(false, "en-US", "US");
+  EXPECT_TRUE(test_api(payments_data_manager()).AreBnplIssuersSupported());
+}
 
-  ASSERT_EQ(2U, payments_data_manager().GetBnplIssuers().size());
-  ASSERT_EQ(1U, payments_data_manager().GetUnlinkedBnplIssuers().size());
-  ASSERT_EQ(1U, payments_data_manager().GetLinkedBnplIssuers().size());
+// Tests that BNPL issuers are supported for "en-GB" app locales.
+TEST_F(PaymentsDataManagerTest, AreBnplIssuersSupported_LocaleIsEnGB) {
+  ResetPaymentsDataManager(false, "en-GB", "US");
+  EXPECT_TRUE(test_api(payments_data_manager()).AreBnplIssuersSupported());
+}
 
-  ResetPaymentsDataManager(false, "en-CA");
+// Tests that BNPL issuers are supported for "en-CA" app locales.
+TEST_F(PaymentsDataManagerTest, AreBnplIssuersSupported_LocaleIsEnCA) {
+  ResetPaymentsDataManager(false, "en-CA", "US");
+  EXPECT_TRUE(test_api(payments_data_manager()).AreBnplIssuersSupported());
+}
 
-  test_api(payments_data_manager())
-      .AddBnplIssuer(test::GetTestLinkedBnplIssuer());
-  test_api(payments_data_manager())
-      .AddBnplIssuer(test::GetTestUnlinkedBnplIssuer());
-
-  EXPECT_TRUE(payments_data_manager().GetBnplIssuers().empty());
-  EXPECT_TRUE(payments_data_manager().GetUnlinkedBnplIssuers().empty());
-  EXPECT_TRUE(payments_data_manager().GetLinkedBnplIssuers().empty());
+// Tests that BNPL issuers are not supported for "es-US" app locales.
+TEST_F(PaymentsDataManagerTest, AreBnplIssuersSupported_LocaleIsEsUS) {
+  ResetPaymentsDataManager(false, "es-US", "US");
+  EXPECT_FALSE(test_api(payments_data_manager()).AreBnplIssuersSupported());
 }
 
 // Tests that Buy-now-pay-later issuer getters does not return any issuers if
 // `experiment_country_code` is not "US".
 TEST_F(PaymentsDataManagerTest,
-       BnplIssuerGetters_AutofillBnplLanguageCodeNotSupported) {
+       BnplIssuerGetters_AutofillBnplCountryNotSupported) {
   test_api(payments_data_manager())
       .AddBnplIssuer(test::GetTestLinkedBnplIssuer());
   test_api(payments_data_manager())
@@ -3810,6 +4149,21 @@ TEST_F(PaymentsDataManagerTest, SetAutofillHasSeenBnpl) {
   // The pref remains enabled after subsequent calls.
   payments_data_manager().SetAutofillHasSeenBnpl();
   ASSERT_TRUE(payments_data_manager().IsAutofillHasSeenBnplPrefEnabled());
+}
+
+// Tests that `SetAutofillAmountExtractionAiTermsSeen()` sets the pref to
+// `true` regardless of its current value.
+TEST_F(PaymentsDataManagerTest, SetAutofillAmountExtractionAiTermsSeen) {
+  // The pref should always start disabled.
+  EXPECT_FALSE(payments_data_manager()
+                   .IsAutofillAmountExtractionAiTermsSeenPrefEnabled());
+
+  // Calling `SetAutofillAmountExtractionAiTermsSeen()` permanently enables
+  // the pref.
+  payments_data_manager().SetAutofillAmountExtractionAiTermsSeen();
+
+  EXPECT_TRUE(payments_data_manager()
+                  .IsAutofillAmountExtractionAiTermsSeenPrefEnabled());
 }
 
 // Tests that Buy-now-pay-later issuers are loaded when the
@@ -3865,59 +4219,6 @@ TEST_F(
   EXPECT_TRUE(payments_data_manager().GetLinkedBnplIssuers().empty());
 }
 
-// Tests that eWallet data is unchanged when the `kAutofillBnplEnabled` pref
-// pref is turned on/off.
-TEST_F(
-    PaymentsDataManagerTest,
-    OnPaymentInstrumentEnabledPrefChange_BnplEnabledPrefChanged_EwalletsUnchanged) {
-  sync_pb::PaymentInstrument ewallet_1 =
-      test::CreatePaymentInstrumentWithEwalletAccount(1234L);
-  sync_pb::PaymentInstrument ewallet_2 =
-      test::CreatePaymentInstrumentWithEwalletAccount(2345L);
-  sync_pb::PaymentInstrument linked_issuer =
-      test::CreatePaymentInstrumentWithLinkedBnplIssuer(
-          3456L, std::string(kBnplAffirmIssuerId), "USD",
-          /*min_price_in_micros=*/0,
-          /*max_price_in_micros=*/35'000'000);
-  ASSERT_TRUE(GetServerDataTable()->SetPaymentInstruments(
-      {ewallet_1, ewallet_2, linked_issuer}));
-  ASSERT_TRUE(GetServerDataTable()->SetPaymentInstrumentCreationOptions(
-      {test::CreatePaymentInstrumentCreationOptionWithBnplIssuer("5678")}));
-
-  // Since the PaymentsDataManager was initialized before adding the
-  // payment instruments to the WebDatabase, we expect `GetEwalletAccounts()`
-  // and `GetBnplIssuers()` to return an empty list.
-  EXPECT_EQ(0U, payments_data_manager().GetEwalletAccounts().size());
-  EXPECT_EQ(0U, payments_data_manager().GetBnplIssuers().size());
-
-  // We need to call `Refresh()` to ensure that the payment instruments
-  // are loaded again from the WebDatabase.
-  payments_data_manager().Refresh();
-  WaitForOnPaymentsDataChanged();
-
-  EXPECT_EQ(2U, payments_data_manager().GetBnplIssuers().size());
-  EXPECT_EQ(1U, payments_data_manager().GetUnlinkedBnplIssuers().size());
-  EXPECT_EQ(1U, payments_data_manager().GetLinkedBnplIssuers().size());
-  EXPECT_EQ(2U, payments_data_manager().GetEwalletAccounts().size());
-
-  ASSERT_TRUE(prefs::IsAutofillBnplEnabled(prefs_.get()));
-  prefs::SetAutofillBnplEnabled(prefs_.get(), false);
-  WaitForOnPaymentsDataChanged();
-
-  EXPECT_TRUE(payments_data_manager().GetBnplIssuers().empty());
-  EXPECT_TRUE(payments_data_manager().GetUnlinkedBnplIssuers().empty());
-  EXPECT_TRUE(payments_data_manager().GetLinkedBnplIssuers().empty());
-  EXPECT_EQ(2U, payments_data_manager().GetEwalletAccounts().size());
-
-  prefs::SetAutofillBnplEnabled(prefs_.get(), true);
-  WaitForOnPaymentsDataChanged();
-
-  EXPECT_EQ(2U, payments_data_manager().GetBnplIssuers().size());
-  EXPECT_EQ(1U, payments_data_manager().GetUnlinkedBnplIssuers().size());
-  EXPECT_EQ(1U, payments_data_manager().GetLinkedBnplIssuers().size());
-  EXPECT_EQ(2U, payments_data_manager().GetEwalletAccounts().size());
-}
-
 TEST_F(PaymentsDataManagerTest, ShouldShowBnplSettings) {
   base::test::ScopedFeatureList feature_list{
       features::kAutofillEnableBuyNowPayLater};
@@ -3951,6 +4252,15 @@ TEST_F(PaymentsDataManagerTest, ShouldShowBnplSettings_FlagOff) {
 
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) ||
         // BUILDFLAG(IS_CHROMEOS)
+
+TEST_F(PaymentsDataManagerTest, GetWeakPtr_InvalidatedAfterManagerDestroyed) {
+  base::WeakPtr<const PaymentsDataManager> weak_ptr_local =
+      payments_data_manager().GetWeakPtr();
+  EXPECT_TRUE(weak_ptr_local);
+
+  ResetPaymentsDataManager();
+  EXPECT_FALSE(weak_ptr_local);
+}
 
 }  // namespace
 }  // namespace autofill

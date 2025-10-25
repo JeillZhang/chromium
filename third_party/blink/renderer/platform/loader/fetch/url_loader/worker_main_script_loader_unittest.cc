@@ -10,6 +10,7 @@
 #include "build/build_config.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/system/data_pipe_utils.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -240,7 +241,7 @@ TEST_F(WorkerMainScriptLoaderTest, ResponseWithSucessThenOnComplete) {
   EXPECT_FALSE(client_->LoadingIsFailed());
   EXPECT_EQ(KURL(kTopLevelScriptURL),
             worker_main_script_loader->GetRequestURL());
-  EXPECT_EQ(UTF8Encoding(), worker_main_script_loader->GetScriptEncoding());
+  EXPECT_EQ(Utf8Encoding(), worker_main_script_loader->GetScriptEncoding());
   auto flatten_data = client_->Data()->CopyAs<Vector<char>>();
   EXPECT_EQ(kTopLevelScript, std::string(base::as_string_view(flatten_data)));
   EXPECT_EQ("text/javascript", fake_resource_load_info_notifier.GetMimeType());

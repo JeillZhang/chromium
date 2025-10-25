@@ -13,11 +13,13 @@
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
 #include "base/containers/lru_cache.h"
+#include "base/feature_list.h"
 #include "base/functional/callback_forward.h"
 #include "base/gtest_prod_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/sequence_checker.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/clock.h"
 #include "base/timer/timer.h"
@@ -53,6 +55,25 @@ enum class OptimizationTypeDecision;
 class StoreUpdateData;
 class TabUrlProvider;
 class TopHostProvider;
+
+// Whether batch updates are enabled for active tabs and top hosts.
+// TODO: crbug.com/421924837 - This only exists to allow tests to exercise this
+// behavior on platforms where it is disabled. Fix tests and remove this.
+BASE_DECLARE_FEATURE(kHintsBatchUpdateForActiveTabsAndTopHosts);
+
+// The max number of concurrent fetches to the remote Optimization Guide
+// Service that should be allowed for batch updates
+// TODO: crbug.com/421924837 - This is only a param because some tests are
+// hardcoded to a assume a value that doesn't match the real one. Fix that and
+// remove this.
+BASE_DECLARE_FEATURE_PARAM(size_t, kHintsMaxConcurrentBatchUpdateFetches);
+
+// The max number of concurrent fetches to the remote Optimization Guide
+// Service that should be allowed for navigations
+// TODO: crbug.com/421924837 - This is only a param because some tests are
+// hardcoded to a assume a value that doesn't match the real one. Fix that and
+// remove this.
+BASE_DECLARE_FEATURE_PARAM(size_t, kHintsMaxConcurrentNavigationFetches);
 
 class HintsManager : public OptimizationHintsComponentObserver,
                      public PushNotificationManager::Delegate {
@@ -216,6 +237,13 @@ class HintsManager : public OptimizationHintsComponentObserver,
                          proto::OptimizationType optimization_type,
                          const std::optional<OptimizationMetadata>& metadata);
 
+  // Add hints to the cache for the provided optimization types. For testing
+  // only.
+  void AddHintWithMultipleOptimizationsForTesting(
+      const GURL& url,
+      const std::vector<optimization_guide::proto::OptimizationType>&
+          optimization_types);
+
   // Add hints to be returned for on-demand hints requests.
   void AddOnDemandHintForTesting(
       const GURL& url,
@@ -279,6 +307,8 @@ class HintsManager : public OptimizationHintsComponentObserver,
   // Schedules |active_tabs_hints_fetch_timer_| to fire based on the last time a
   // fetch attempt was made.
   void ScheduleActiveTabsHintsFetch();
+
+  bool HasPersonalizableTypesRegistered();
 
   // Called to make a request to fetch hints from the remote Optimization Guide
   // Service. Used to fetch hints for origins frequently visited by the user and
@@ -549,7 +579,7 @@ class HintsManager : public OptimizationHintsComponentObserver,
   raw_ptr<TopHostProvider> top_host_provider_ = nullptr;
 
   // The tab URL provider that can be queried. Not owned.
-  raw_ptr<TabUrlProvider> tab_url_provider_ = nullptr;
+  raw_ptr<TabUrlProvider, DanglingUntriaged> tab_url_provider_ = nullptr;
 
   // The timer used to schedule fetching hints from the remote Optimization
   // Guide Service.
@@ -592,6 +622,23 @@ class HintsManager : public OptimizationHintsComponentObserver,
 
   // Used to get |weak_ptr_| to self.
   base::WeakPtrFactory<HintsManager> weak_ptr_factory_{this};
+
+  // Wrapper that immediately invokes HintsFetcher for the purposes of fetching
+  // hints for urls.
+  void FetchHintsForURLsInternal(
+      const InsertionOrderedSet<std::string>& target_hosts,
+      const InsertionOrderedSet<GURL>& target_urls,
+      optimization_guide::proto::RequestContext request_context,
+      const std::string& access_token);
+
+  // Wrapper that immediately invokes HintsFetcher for the purposes of fetching
+  // hints for active tabs.
+  void FetchHintsForActiveTabsInternal(
+      const std::vector<std::string>& top_hosts,
+      const std::vector<GURL>& active_tab_urls_to_refresh,
+      optimization_guide::proto::RequestContext request_context,
+      HintsFetchedCallback hints_fetched_callback,
+      const std::string& access_token);
 };
 
 }  // namespace optimization_guide

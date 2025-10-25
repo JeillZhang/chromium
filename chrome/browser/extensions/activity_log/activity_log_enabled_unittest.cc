@@ -6,6 +6,7 @@
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/scoped_command_line.h"
+#include "chrome/browser/custom_handlers/protocol_handler_registry_factory.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 #include "chrome/browser/extensions/activity_log/activity_log_task_runner.h"
 #include "chrome/browser/extensions/test_extension_system.h"
@@ -13,6 +14,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/custom_handlers/simple_protocol_handler_registry_factory.h"
 #include "components/prefs/pref_service.h"
 #include "extensions/browser/extension_registrar.h"
 #include "extensions/browser/uninstall_reason.h"
@@ -40,6 +42,15 @@ class ActivityLogEnabledTest : public ChromeRenderViewHostTestHarness {
   void TearDown() override {
     ChromeRenderViewHostTestHarness::TearDown();
     SetActivityLogTaskRunnerForTesting(nullptr);
+  }
+
+  TestingProfile::TestingFactories GetTestingFactories() const override {
+    // Use SimpleProtocolHandlerRegistryFactory to prevent OS integration during
+    // the protocol registration process.
+    return TestingProfile::TestingFactories{TestingProfile::TestingFactory{
+        ProtocolHandlerRegistryFactory::GetInstance(),
+        custom_handlers::SimpleProtocolHandlerRegistryFactory::
+            GetDefaultFactory()}};
   }
 
   base::test::ScopedFeatureList scoped_feature_list_;
@@ -138,13 +149,7 @@ TEST_F(ActivityLogEnabledTest, WatchdogSwitch) {
       profile2->GetPrefs()->GetInteger(prefs::kWatchdogExtensionActive));
 
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder()
-          .SetManifest(base::Value::Dict()
-                           .Set("name", "Watchdog Extension ")
-                           .Set("version", "1.0.0")
-                           .Set("manifest_version", 2))
-          .SetID(kExtensionID)
-          .Build();
+      ExtensionBuilder("Watchdog Extension").SetID(kExtensionID).Build();
   extension_registrar1->AddExtension(extension);
 
   EXPECT_EQ(1,
@@ -197,11 +202,7 @@ TEST_F(ActivityLogEnabledTest, WatchdogSwitch) {
   EXPECT_FALSE(activity_log2->IsDatabaseEnabled());
 
   scoped_refptr<const Extension> extension2 =
-      ExtensionBuilder()
-          .SetManifest(base::Value::Dict()
-                           .Set("name", "Watchdog Extension ")
-                           .Set("version", "1.0.0")
-                           .Set("manifest_version", 2))
+      ExtensionBuilder("Watchdog Extension 2")
           .SetID("fpofdchlamddhnajleknffcbmnjfahpg")
           .Build();
   extension_registrar1->AddExtension(extension);
@@ -243,13 +244,7 @@ TEST_F(ActivityLogEnabledTest, AppAndCommandLine) {
 
   // Enable the extension.
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder()
-          .SetManifest(base::Value::Dict()
-                           .Set("name", "Watchdog Extension ")
-                           .Set("version", "1.0.0")
-                           .Set("manifest_version", 2))
-          .SetID(kExtensionID)
-          .Build();
+      ExtensionBuilder("Watchdog Extension").SetID(kExtensionID).Build();
   extension_registrar->AddExtension(extension);
 
   EXPECT_TRUE(activity_log->IsDatabaseEnabled());
@@ -297,13 +292,7 @@ TEST_F(ActivityLogEnabledTest, IncorrectPrefsRecovery) {
 
   // Testing adding an extension maintains pref and active correctness.
   scoped_refptr<const Extension> extension =
-      ExtensionBuilder()
-          .SetManifest(base::Value::Dict()
-                           .Set("name", "Watchdog Extension ")
-                           .Set("version", "1.0.0")
-                           .Set("manifest_version", 2))
-          .SetID(kExtensionID)
-          .Build();
+      ExtensionBuilder("Watchdog Extension").SetID(kExtensionID).Build();
   ExtensionRegistrar::Get(profile.get())->AddExtension(extension);
 
   EXPECT_EQ(

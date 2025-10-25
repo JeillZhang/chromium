@@ -28,7 +28,6 @@ import org.chromium.components.tab_groups.TabGroupColorId;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -67,11 +66,8 @@ class ConversionUtils {
             attribution.tabGroupMetadata.localTabGroupId = localTabGroupId;
             attribution.tabGroupMetadata.syncTabGroupId = syncTabGroupId;
             attribution.tabGroupMetadata.lastKnownTitle = lastKnownTabGroupTitle;
-            if (lastKnownTabGroupColor == -1) {
-                attribution.tabGroupMetadata.lastKnownColor = Optional.empty();
-            } else {
-                attribution.tabGroupMetadata.lastKnownColor = Optional.of(lastKnownTabGroupColor);
-            }
+            attribution.tabGroupMetadata.lastKnownColor =
+                    lastKnownTabGroupColor == -1 ? null : lastKnownTabGroupColor;
         }
         if (localTabId != -1
                 || syncTabId != null
@@ -93,7 +89,7 @@ class ConversionUtils {
 
     @CalledByNative
     private static ArrayList<PersistentMessage> createPersistentMessageList() {
-        return new ArrayList<PersistentMessage>();
+        return new ArrayList<>();
     }
 
     @CalledByNative
@@ -133,7 +129,7 @@ class ConversionUtils {
 
     @CalledByNative
     private static Set<String> createStringSet() {
-        return new TreeSet<String>();
+        return new TreeSet<>();
     }
 
     @CalledByNative
@@ -153,7 +149,7 @@ class ConversionUtils {
 
     @CalledByNative
     private static ArrayList<ActivityLogItem> createActivityLogItemList() {
-        return new ArrayList<ActivityLogItem>();
+        return new ArrayList<>();
     }
 
     @CalledByNative

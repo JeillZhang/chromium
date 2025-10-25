@@ -5,6 +5,7 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_TIMING_PAINT_TIMING_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_PAINT_TIMING_PAINT_TIMING_H_
 
+#include <array>
 #include <memory>
 
 #include "base/gtest_prod_util.h"
@@ -109,34 +110,25 @@ class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming>,
   // Times when the first paint happens after the page is restored from the
   // back-forward cache. If the element value is zero time tick, the first paint
   // event did not happen for that navigation.
-  WTF::Vector<base::TimeTicks> FirstPaintsAfterBackForwardCacheRestore() const {
+  Vector<base::TimeTicks> FirstPaintsAfterBackForwardCacheRestore() const {
     return first_paints_after_back_forward_cache_restore_presentation_;
   }
 
-  WTF::Vector<RequestAnimationFrameTimesAfterBackForwardCacheRestore>
+  Vector<RequestAnimationFrameTimesAfterBackForwardCacheRestore>
   RequestAnimationFramesAfterBackForwardCacheRestore() const {
     return request_animation_frames_after_back_forward_cache_restore_;
   }
 
   // Returns the first time that 'contentful' content was painted in the current
-  // document after a hard navigation (and ignoring soft navigations). For
-  // instance, the first time that text or image content was painted after the
-  // user landed on the page.
-  base::TimeTicks FirstContentfulPaintIgnoringSoftNavigations() const {
-    return first_contentful_paint_presentation_ignoring_soft_navigations_;
+  // document after a hard navigation. For instance, the first time that text or
+  // image content was painted after the user landed on the page.
+  base::TimeTicks FirstContentfulPaint() const {
+    return first_contentful_paint_presentation_;
   }
 
   base::TimeTicks FirstContentfulPaintRenderedButNotPresentedAsMonotonicTime()
       const {
     return paint_details_.first_contentful_paint_;
-  }
-
-  void ResetFirstPaintAndFCP() {
-    soft_navigation_pending_paint_details_ = PaintDetails();
-    first_paints_reset_ = true;
-    soft_navigation_detected_ = false;
-    soft_navigation_fp_reported_ = false;
-    soft_navigation_fcp_reported_ = false;
   }
 
   // FirstImagePaint returns the first time that image content was painted.
@@ -185,8 +177,6 @@ class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming>,
   void SetTickClockForTesting(const base::TickClock* clock);
 
   void OnRestoredFromBackForwardCache();
-
-  void SoftNavigationDetected();
 
   void MarkPaintTiming();
 
@@ -238,9 +228,9 @@ class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming>,
     return paint_details_.first_paint_;
   }
 
-  WTF::Vector<base::TimeTicks>
+  Vector<base::TimeTicks>
       first_paints_after_back_forward_cache_restore_presentation_;
-  WTF::Vector<RequestAnimationFrameTimesAfterBackForwardCacheRestore>
+  Vector<RequestAnimationFrameTimesAfterBackForwardCacheRestore>
       request_animation_frames_after_back_forward_cache_restore_;
   struct PaintDetails {
     // TODO(crbug/738235): Non first_*_presentation_ variables are only being
@@ -254,33 +244,18 @@ class CORE_EXPORT PaintTiming final : public GarbageCollected<PaintTiming>,
     base::TimeTicks first_contentful_paint_presentation_;
   };
 
-  PaintDetails& GetRelevantPaintDetails() {
-    return first_paints_reset_ ? soft_navigation_pending_paint_details_
-                               : paint_details_;
-  }
+  PaintDetails& GetRelevantPaintDetails() { return paint_details_; }
 
   DOMPaintTimingInfo ToDOMPaintTimingInfo(const PaintTimingInfo&) const;
 
   PaintDetails paint_details_;
-  PaintDetails soft_navigation_pending_paint_details_;
-  std::optional<PaintTimingInfo>
-      soft_navigation_pending_first_paint_timing_info_;
-  std::optional<PaintTimingInfo>
-      soft_navigation_pending_first_contentful_paint_timing_info_;
-  // First paint timestamp that doesn't update after soft navigations, and only
-  // used for UKM reporting.
+  // Timestamps used for UKM reporting.
   base::TimeTicks first_paint_presentation_for_ukm_;
-  // FCP timestamp that does not update after soft navigations.
-  base::TimeTicks
-      first_contentful_paint_presentation_ignoring_soft_navigations_;
+  base::TimeTicks first_contentful_paint_presentation_;
   base::TimeTicks first_meaningful_paint_presentation_;
   base::TimeTicks first_meaningful_paint_candidate_;
   base::TimeTicks first_eligible_to_paint_;
   base::TimeTicks last_rendering_update_end_time_;
-  bool first_paints_reset_ = false;
-  bool soft_navigation_detected_ = false;
-  bool soft_navigation_fp_reported_ = false;
-  bool soft_navigation_fcp_reported_ = false;
 
   base::TimeTicks lcp_mouse_over_dispatch_time_;
 

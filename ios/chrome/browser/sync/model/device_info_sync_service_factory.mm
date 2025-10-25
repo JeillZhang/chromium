@@ -93,7 +93,7 @@ class DeviceInfoSyncClient : public syncer::DeviceInfoSyncClient {
     std::string representative_target_id =
         GetApplicationContext()
             ->GetPushNotificationService()
-            ->GetRepresentativeTargetIdForGaiaId(gaia_id.ToNSString());
+            ->GetRepresentativeTargetIdForGaiaId(gaia_id);
     // Sharing info is not implemented on iOS, so empty structs are passed in.
     // TODO(crbug.com/352370268): Use SharingSyncPreference to hold SharingInfo.
     return syncer::DeviceInfo::SharingInfo(
@@ -188,9 +188,7 @@ DeviceInfoSyncServiceFactory::~DeviceInfoSyncServiceFactory() {}
 
 std::unique_ptr<KeyedService>
 DeviceInfoSyncServiceFactory::BuildServiceInstanceFor(
-    web::BrowserState* context) const {
-  ProfileIOS* profile = ProfileIOS::FromBrowserState(context);
-
+    ProfileIOS* profile) const {
   syncer::SyncInvalidationsService* const sync_invalidations_service =
       SyncInvalidationsServiceFactory::GetForProfile(profile);
   signin::IdentityManager* const identity_manager =

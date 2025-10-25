@@ -6,6 +6,8 @@
 
 #import "ios/chrome/browser/collaboration/model/messaging/messaging_backend_service_factory.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
+#import "ios/chrome/browser/saved_tab_groups/coordinator/face_pile_configuration.h"
+#import "ios/chrome/browser/saved_tab_groups/coordinator/face_pile_coordinator.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_service_factory.h"
 #import "ios/chrome/browser/shared/coordinator/layout_guide/layout_guide_util.h"
@@ -18,6 +20,7 @@
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_empty_state_view.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_theme.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/regular/regular_grid_mediator.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/regular/regular_grid_mediator_delegate.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/regular/regular_grid_view_controller.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/tab_group_grid_view_controller.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/pinned_tabs/pinned_tabs_mediator.h"
@@ -27,8 +30,16 @@
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_grid_view_controller.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_group_coordinator.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_group_view_controller.h"
+#import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/transitions/tab_grid_transition_layout.h"
 
-@interface RegularGridCoordinator ()
+namespace {
+
+// The preferred size in points for the avatar icons.
+constexpr CGFloat kFacePileAvatarSize = 16;
+
+}  // namespace
+
+@interface RegularGridCoordinator () <RegularGridMediatorDelegate>
 
 // Redefined as readwrite.
 @property(nonatomic, readwrite, strong)
@@ -72,23 +83,50 @@
 
 #pragma mark - Superclass overrides
 
-- (LegacyGridTransitionLayout*)transitionLayout {
+- (LegacyGridTransitionLayout*)legacyTransitionLayout {
   if (self.tabGroupCoordinator) {
     return [self.tabGroupCoordinator.viewController
-                .gridViewController transitionLayout];
+                .gridViewController legacyTransitionLayout];
   }
 
   LegacyGridTransitionLayout* transitionLayout =
-      [_gridViewController transitionLayout];
+      [_gridViewController legacyTransitionLayout];
 
   if (IsPinnedTabsEnabled()) {
     LegacyGridTransitionLayout* pinnedTabsTransitionLayout =
-        [self.pinnedTabsViewController transitionLayout];
+        [self.pinnedTabsViewController legacyTransitionLayout];
 
     return [self combineTransitionLayout:transitionLayout
                     withTransitionLayout:pinnedTabsTransitionLayout];
   }
 
+  return transitionLayout;
+}
+
+- (TabGridTransitionLayout*)transitionLayout {
+  if (self.tabGroupCoordinator) {
+    return [self.tabGroupCoordinator.viewController
+                .gridViewController transitionLayout];
+  }
+
+  BOOL const usePinnedTabsLayout =
+      IsPinnedTabsEnabled() && [self.pinnedTabsViewController hasSelectedCell];
+
+  TabGridTransitionLayout* transitionLayout =
+      usePinnedTabsLayout ? [self.pinnedTabsViewController transitionLayout]
+                          : [self.gridViewController transitionLayout];
+
+  // If the selected cell is from a pinned tab, ensure the active grid is still
+  // the "normal" grid view controller so that it's animated correctly behind
+  // the selected view. This way, the pinned tabs "grid" is animated with the
+  // active grid (since it's a part of it), instead of animated alone with the
+  // normal grid not having any animations.
+  if (usePinnedTabsLayout) {
+    transitionLayout.activeGrid = self.gridViewController;
+    transitionLayout.isActiveCellPinned = YES;
+  }
+
+  transitionLayout.pinnedTabs = self.pinnedTabsViewController;
   return transitionLayout;
 }
 
@@ -149,6 +187,7 @@
                               MessagingBackendServiceFactory::GetForProfile(
                                   profile)];
   _mediator.consumer = gridViewController;
+  _mediator.regularDelegate = self;
 
   gridViewController.dragDropHandler = _mediator;
   gridViewController.mutator = _mediator;
@@ -215,6 +254,25 @@
                                     sharedGroups:sharedGroups
                                  allInactiveTabs:animateAllInactiveTabs
                                completionHandler:completionHandler];
+}
+
+#pragma mark - RegularGridMediatorDelegate
+
+- (id<FacePileProviding>)facePileProviderForGroupID:(const std::string&)groupID
+                                         groupColor:(UIColor*)groupColor {
+  // Configure the face pile.
+  FacePileConfiguration* config = [[FacePileConfiguration alloc] init];
+  config.showsEmptyState = NO;
+  config.backgroundColor = groupColor;
+  config.avatarSize = kFacePileAvatarSize;
+  config.groupID = data_sharing::GroupId(groupID);
+
+  FacePileCoordinator* facePileCoordinator =
+      [[FacePileCoordinator alloc] initWithFacePileConfiguration:config
+                                                         browser:self.browser];
+  [facePileCoordinator start];
+
+  return facePileCoordinator;
 }
 
 #pragma mark - Public

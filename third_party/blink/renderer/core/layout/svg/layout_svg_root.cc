@@ -31,6 +31,7 @@
 #include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/layout/natural_sizing_info.h"
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_resource_container.h"
@@ -285,10 +286,12 @@ void LayoutSVGRoot::IntrinsicSizingInfoChanged() {
   GetFrame()->Owner()->NaturalSizingInfoChanged();
 }
 
-void LayoutSVGRoot::StyleDidChange(StyleDifference diff,
-                                   const ComputedStyle* old_style) {
+void LayoutSVGRoot::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutReplaced::StyleDidChange(diff, old_style);
+  LayoutReplaced::StyleDidChange(diff, old_style, style_change_context);
 
   if (old_style && StyleChangeAffectsIntrinsicSize(*old_style))
     IntrinsicSizingInfoChanged();

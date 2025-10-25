@@ -5,15 +5,13 @@
 #ifndef IOS_CHROME_BROWSER_OMNIBOX_COORDINATOR_POPUP_OMNIBOX_POPUP_COORDINATOR_H_
 #define IOS_CHROME_BROWSER_OMNIBOX_COORDINATOR_POPUP_OMNIBOX_POPUP_COORDINATOR_H_
 
-#include <memory>
-
 #import "ios/chrome/browser/shared/coordinator/chrome_coordinator/chrome_coordinator.h"
 
 class AutocompleteController;
 @class OmniboxAutocompleteController;
 @protocol OmniboxKeyboardDelegate;
 @protocol OmniboxPopupPresenterDelegate;
-class OmniboxPopupViewIOS;
+enum class OmniboxPresentationContext;
 @protocol ToolbarOmniboxConsumer;
 
 /// Coordinator for the Omnibox Popup.
@@ -23,11 +21,10 @@ class OmniboxPopupViewIOS;
                                    browser:(Browser*)browser
                     autocompleteController:
                         (AutocompleteController*)autocompleteController
-                                 popupView:
-                                     (std::unique_ptr<OmniboxPopupViewIOS>)
-                                         popupView
              omniboxAutocompleteController:
                  (OmniboxAutocompleteController*)omniboxAutocompleteController
+                       presentationContext:
+                           (OmniboxPresentationContext)presentationContext
     NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)initWithBaseViewController:(UIViewController*)viewController
@@ -43,8 +40,7 @@ class OmniboxPopupViewIOS;
 /// Object implementing OmniboxKeyboardDelegate in OmniboxPopupCoordinator.
 @property(nonatomic, weak, readonly) id<OmniboxKeyboardDelegate>
     KeyboardDelegate;
-
-// Returns the toolbar omnibox consumer.
+/// Returns the toolbar omnibox consumer.
 - (id<ToolbarOmniboxConsumer>)toolbarOmniboxConsumer;
 
 /// Toggle visibility of the omnibox debugger view.

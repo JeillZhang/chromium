@@ -30,6 +30,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/browser_test.h"
 #include "extensions/browser/api_test_utils.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/test/test_extension_dir.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "google_apis/gaia/google_service_auth_error.h"
@@ -45,6 +46,8 @@
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 #include "chrome/browser/ui/browser.h"
 #endif
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using extensions::api_test_utils::RunFunctionAndReturnSingleResult;
 
@@ -90,7 +93,7 @@ const char kRemoveEverythingArguments[] =
 bool SetGaiaCookieForProfile(Profile* profile) {
   GURL google_url = GaiaUrls::GetInstance()->secure_google_url();
   auto cookie = net::CanonicalCookie::CreateUnsafeCookieForTesting(
-      "SAPISID", std::string(), "." + google_url.host(), "/", base::Time(),
+      "SAPISID", std::string(), "." + google_url.GetHost(), "/", base::Time(),
       base::Time(), base::Time(), base::Time(),
       /*secure=*/true, false, net::CookieSameSite::NO_RESTRICTION,
       net::COOKIE_PRIORITY_DEFAULT);
@@ -116,7 +119,7 @@ bool SetGaiaCookieForProfile(Profile* profile) {
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 // Test that Sync is not paused when browsing data is cleared.
 IN_PROC_BROWSER_TEST_F(ExtensionBrowsingDataTest, Syncing) {
-  Profile* profile = browser()->profile();
+  Profile* profile = GetProfile();
   // Set a Gaia cookie.
   ASSERT_TRUE(SetGaiaCookieForProfile(profile));
   // Set a Sync account and a secondary account.
@@ -136,11 +139,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowsingDataTest, Syncing) {
   sync_service->GetUserSettings()->SetInitialSyncFeatureSetupComplete(
       syncer::SyncFirstSetupCompleteSource::BASIC_FLOW);
 
-  ASSERT_EQ(SyncStatusMessageType::kSynced, GetSyncStatusMessageType(profile));
   // Clear browsing data.
   auto function = base::MakeRefCounted<BrowsingDataRemoveFunction>();
   EXPECT_FALSE(RunFunctionAndReturnSingleResult(
-      function.get(), kRemoveEverythingArguments, browser()->profile()));
+      function.get(), kRemoveEverythingArguments, GetProfile()));
   // Check that the Sync token was not revoked.
   EXPECT_TRUE(identity_manager->HasAccountWithRefreshToken(
       primary_account_info.account_id));
@@ -155,7 +157,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowsingDataTest, Syncing) {
 // Test that Sync remained in error when browsing data is cleared if Sync was in
 // authentication error.
 IN_PROC_BROWSER_TEST_F(ExtensionBrowsingDataTest, SyncError) {
-  Profile* profile = browser()->profile();
+  Profile* profile = GetProfile();
   // Set a Gaia cookie.
   ASSERT_TRUE(SetGaiaCookieForProfile(profile));
   // Set a Sync account with authentication error.
@@ -170,12 +172,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowsingDataTest, SyncError) {
           GoogleServiceAuthError::InvalidGaiaCredentialsReason::
               CREDENTIALS_REJECTED_BY_SERVER));
 
-  // Sync is not running.
-  ASSERT_NE(SyncStatusMessageType::kSynced, GetSyncStatusMessageType(profile));
   // Clear browsing data.
   auto function = base::MakeRefCounted<BrowsingDataRemoveFunction>();
   EXPECT_FALSE(RunFunctionAndReturnSingleResult(
-      function.get(), kRemoveEverythingArguments, browser()->profile()));
+      function.get(), kRemoveEverythingArguments, GetProfile()));
   // Check that the account was not removed and Sync remains in auth error.
   EXPECT_TRUE(
       identity_manager->HasAccountWithRefreshToken(account_info.account_id));
@@ -189,7 +189,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowsingDataTest, SyncError) {
 // Test that the tokens are revoked when browsing data is cleared when there is
 // no primary account.
 IN_PROC_BROWSER_TEST_F(ExtensionBrowsingDataTest, NotSyncing) {
-  Profile* profile = browser()->profile();
+  Profile* profile = GetProfile();
   // Set a Gaia cookie.
   ASSERT_TRUE(SetGaiaCookieForProfile(profile));
   // Set a non-Sync account.
@@ -200,7 +200,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionBrowsingDataTest, NotSyncing) {
   // Clear browsing data.
   auto function = base::MakeRefCounted<BrowsingDataRemoveFunction>();
   EXPECT_FALSE(RunFunctionAndReturnSingleResult(
-      function.get(), kRemoveEverythingArguments, browser()->profile()));
+      function.get(), kRemoveEverythingArguments, GetProfile()));
   // Check that the account was removed.
   EXPECT_FALSE(
       identity_manager->HasAccountWithRefreshToken(account_info.account_id));

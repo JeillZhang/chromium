@@ -4,12 +4,15 @@
 
 package org.chromium.chrome.browser.compositor.overlays.strip;
 
-import static org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils.FOLIO_ATTACHED_BOTTOM_MARGIN_DP;
-import static org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils.FOLIO_DETACHED_BOTTOM_MARGIN_DP;
+import static org.chromium.build.NullUtil.assertNonNull;
+import static org.chromium.build.NullUtil.assumeNonNull;
+import static org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils.ANIM_TAB_MOVE_MS;
 import static org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils.INVALID_TIME;
 import static org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils.MAX_TAB_WIDTH_DP;
 import static org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils.MIN_TAB_WIDTH_DP;
+import static org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils.PINNED_TAB_WIDTH_DP;
 import static org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils.TAB_OVERLAP_WIDTH_DP;
+import static org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutUtils.isTabPinningFromStripEnabled;
 import static org.chromium.chrome.browser.tasks.tab_management.TabUiThemeUtil.FOLIO_FOOT_LENGTH_DP;
 
 import android.animation.Animator;
@@ -31,6 +34,7 @@ import android.os.Message;
 import android.os.SystemClock;
 import android.text.format.DateUtils;
 import android.util.TypedValue;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.AdapterView;
@@ -39,23 +43,27 @@ import android.widget.ArrayAdapter;
 import android.widget.ListPopupWindow;
 
 import androidx.annotation.ColorInt;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.annotation.VisibleForTesting;
-import androidx.core.content.res.ResourcesCompat;
+import androidx.appcompat.content.res.AppCompatResources;
+import androidx.core.view.ViewCompat;
 
 import org.chromium.base.ApplicationStatus;
 import org.chromium.base.Callback;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.MathUtils;
 import org.chromium.base.ResettersForTesting;
 import org.chromium.base.Token;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.supplier.ObservableSupplierImpl;
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.task.PostTask;
 import org.chromium.base.task.TaskTraits;
+import org.chromium.build.annotations.Contract;
+import org.chromium.build.annotations.EnsuresNonNullIf;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.collaboration.CollaborationServiceFactory;
 import org.chromium.chrome.browser.compositor.LayerTitleCache;
@@ -81,6 +89,7 @@ import org.chromium.chrome.browser.data_sharing.DataSharingServiceFactory;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabManager;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.layouts.SceneOverlay;
 import org.chromium.chrome.browser.layouts.animation.CompositorAnimationHandler;
 import org.chromium.chrome.browser.layouts.animation.CompositorAnimator;
 import org.chromium.chrome.browser.layouts.components.VirtualView;
@@ -88,15 +97,20 @@ import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.share.ShareDelegate;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.Tab.MediaState;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
 import org.chromium.chrome.browser.tab_ui.ActionConfirmationManager;
+import org.chromium.chrome.browser.tabmodel.TabClosingSource;
 import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabClosureParamsUtils;
 import org.chromium.chrome.browser.tabmodel.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabGroupColorUtils;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilter;
 import org.chromium.chrome.browser.tabmodel.TabGroupModelFilterObserver;
+import org.chromium.chrome.browser.tabmodel.TabGroupTitleUtils;
+import org.chromium.chrome.browser.tabmodel.TabGroupUtils.TabGroupCreationCallback;
 import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabmodel.TabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
 import org.chromium.chrome.browser.tasks.tab_management.GroupSharedState;
 import org.chromium.chrome.browser.tasks.tab_management.TabBubbler;
@@ -125,16 +139,19 @@ import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.util.ColorUtils;
 import org.chromium.ui.util.MotionEventUtils;
-import org.chromium.ui.util.XrUtils;
 import org.chromium.ui.widget.RectProvider;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * This class handles managing the positions and behavior of all tabs in a tab strip. It is
@@ -143,6 +160,7 @@ import java.util.Set;
  *
  * <p>The stacking and visual behavior is driven by setting a {@link StripStacker}.
  */
+@NullMarked
 public class StripLayoutHelper
         implements StripLayoutGroupTitleDelegate,
                 StripLayoutViewOnClickHandler,
@@ -150,10 +168,7 @@ public class StripLayoutHelper
                 StripUpdateDelegate,
                 AnimationHost,
                 TabListNotificationHandler {
-    private static final String TAG = "StripLayoutHelper";
-
     // Animation/Timer Constants
-    private static final int RESIZE_DELAY_MS = 1500;
     private static final int SPINNER_UPDATE_DELAY_MS = 66;
     // Degrees per millisecond.
     private static final float SPINNER_DPMS = 0.33f;
@@ -162,32 +177,31 @@ public class StripLayoutHelper
     private static final int ANIM_TAB_RESIZE_MS = 250;
     private static final int ANIM_TAB_DRAW_X_MS = 250;
     private static final int ANIM_BUTTONS_FADE_MS = 150;
-    private static final int ANIM_HOVERED_TAB_CONTAINER_FADE_MS = 200;
     private static final int NEW_ANIM_TAB_RESIZE_MS = 200;
 
     // Visibility Constants
-    private static final float TAB_WIDTH_MEDIUM = 156.f;
     private static final float NEW_TAB_BUTTON_BACKGROUND_Y_OFFSET_DP = 3.f;
-    private static final float NEW_TAB_BUTTON_CLICK_SLOP_DP = 8.f;
     private static final float NEW_TAB_BUTTON_BACKGROUND_WIDTH_DP = 32.f;
     private static final float NEW_TAB_BUTTON_BACKGROUND_HEIGHT_DP = 32.f;
-    private static final float BUTTON_DESIRED_TOUCH_TARGET_SIZE = 48.f;
 
     // Desired spacing between new tab button and tabs when tab strip is not full.
-    private static final float NEW_TAB_BUTTON_X_OFFSET_TOWARDS_TABS = 4.f;
     private static final float DESIRED_PADDING_BETWEEN_NEW_TAB_BUTTON_AND_TABS = 2.f;
     private static final float NEW_TAB_BUTTON_DEFAULT_PRESSED_OPACITY = 0.2f;
     private static final float NEW_TAB_BUTTON_HOVER_BACKGROUND_PRESSED_OPACITY = 0.12f;
     private static final float NEW_TAB_BUTTON_HOVER_BACKGROUND_DEFAULT_OPACITY = 0.08f;
-    static final float TAB_OPACITY_HIDDEN = 0.f;
-    static final float TAB_OPACITY_VISIBLE = 1.f;
     static final float FADE_FULL_OPACITY_THRESHOLD_DP = 24.f;
-    private static final float NEW_TAB_BUTTON_WITH_MODEL_SELECTOR_BUTTON_PADDING = 8.f;
 
-    private static final int MESSAGE_RESIZE = 1;
-    private static final int MESSAGE_UPDATE_SPINNER = 2;
-    private static final int MESSAGE_HOVER_CARD = 3;
-    private static final float CLOSE_BTN_VISIBILITY_THRESHOLD_START = 96.f;
+    // Values adapt based on whether the device is desktop or tablet.
+    private static final boolean IS_DESKTOP_DENSITY = StripLayoutUtils.shouldApplyMoreDensity();
+    private static final float BUTTON_DESIRED_TOUCH_TARGET_SIZE =
+            IS_DESKTOP_DENSITY ? NEW_TAB_BUTTON_BACKGROUND_WIDTH_DP : 48.f;
+    private static final float NEW_TAB_BUTTON_CLICK_SLOP_DP =
+            (BUTTON_DESIRED_TOUCH_TARGET_SIZE - NEW_TAB_BUTTON_BACKGROUND_WIDTH_DP) / 2;
+    private static final float NEW_TAB_BUTTON_WITH_MODEL_SELECTOR_BUTTON_PADDING =
+            IS_DESKTOP_DENSITY ? 24.f : 8.f;
+
+    private static final int MESSAGE_UPDATE_SPINNER = 1;
+    private static final int MESSAGE_HOVER_CARD = 2;
     private static final long TAB_SWITCH_METRICS_MAX_ALLOWED_SCROLL_INTERVAL =
             DateUtils.MINUTE_IN_MILLIS;
 
@@ -220,10 +234,10 @@ public class StripLayoutHelper
     // An observer that is notified of changes to a {@link TabGroupModelFilter} object.
     private final TabGroupModelFilterObserver mTabGroupModelFilterObserver =
             new TabGroupModelFilterObserver() {
-                int mSourceRootId = Tab.INVALID_TAB_ID;
+                @Nullable Token mSourceTabGroupId;
 
                 @Override
-                public void willMoveTabGroup(int tabModelOldIndex, int tabModelNewIndex) {
+                public void willMoveTabGroup(Token tabGroupId, int currentIndex) {
                     mMovingGroup = true;
                 }
 
@@ -231,18 +245,31 @@ public class StripLayoutHelper
                 public void didMoveTabGroup(
                         Tab movedTab, int tabModelOldIndex, int tabModelNewIndex) {
                     mMovingGroup = false;
+                    // The sequencing of #didMoveTabGroup and #didMoveTab is different with and
+                    // without Tab Collections. With Tab Collections enabled, the final event is
+                    // #didMoveTabGroup, meaning we need to trigger a rebuild here. With it
+                    // disabled, we instead need to trigger a rebuild after the final #didMoveTab
+                    // event, which is handled in #tabMoved.
+                    if (ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_COLLECTION_ANDROID)) {
+                        // Additionally rebuild the StripLayoutTabs here as well. This was
+                        // previously maintained by #tabMoved, but the old/new indices that are
+                        // provided are different with Tab Collections enabled.
+                        rebuildStripTabs(/* deferAnimations= */ true);
+                        rebuildStripViewsAfterMove();
+                    }
                 }
 
                 @Override
-                public void didMergeTabToGroup(Tab movedTab) {
+                public void didMergeTabToGroup(Tab movedTab, boolean isDestinationTab) {
                     // TODO(crbug.com/375047646): Investigate kicking off animations here.
-                    int rootId = movedTab.getRootId();
-                    updateGroupTextAndSharedState(rootId);
+                    Token tabGroupId = movedTab.getTabGroupId();
+                    assumeNonNull(tabGroupId);
+                    updateGroupTextAndSharedState(tabGroupId);
                     onTabMergeToOrMoveOutOfGroup();
 
                     // Tab merging should not automatically expand a collapsed tab group. If the
                     // target group is collapsed, the tab being merged should also be collapsed.
-                    StripLayoutGroupTitle groupTitle = findGroupTitle(rootId);
+                    StripLayoutGroupTitle groupTitle = findGroupTitle(movedTab.getTabGroupId());
                     if (groupTitle != null) {
                         updateTabCollapsed(
                                 findTabById(movedTab.getId()), groupTitle.isCollapsed(), false);
@@ -254,36 +281,41 @@ public class StripLayoutHelper
                         Tab movedTab, @Nullable Token destinationTabGroupId) {
                     // TODO(crbug.com/326494015): Refactor #didMoveTabOutOfGroup to pass in previous
                     //  root ID.
-                    mSourceRootId = movedTab.getRootId();
+                    mSourceTabGroupId = movedTab.getTabGroupId();
                 }
 
                 @Override
                 public void didMoveTabOutOfGroup(Tab movedTab, int prevFilterIndex) {
-                    updateGroupTextAndSharedState(mSourceRootId);
-                    int groupIdToHide = mGroupIdToHideSupplier.get();
-                    boolean removedLastTabInGroup =
-                            (groupIdToHide != Tab.INVALID_TAB_ID)
-                                    && (movedTab.getRootId() == groupIdToHide);
+                    updateGroupTextAndSharedState(mSourceTabGroupId);
+                    Token groupIdToHide = mGroupIdToHideSupplier.get();
+                    // TODO(crbug.com/430514194): There is a strong possibility this is never true
+                    // as didRemoveTabGroup is invoked before this and would make groupIdToHide
+                    // null.
+                    boolean removedHiddenLastTabInGroup =
+                            groupIdToHide != null
+                                    && groupIdToHide.equals(mSourceTabGroupId)
+                                    && mTabGroupModelFilter != null
+                                    && !mTabGroupModelFilter.tabGroupExists(mSourceTabGroupId);
+
                     // Skip if the rebuild will be handled elsewhere after reaching a "proper" tab
                     // state, such as confirming the group deletion.
-                    if (!removedLastTabInGroup) onTabMergeToOrMoveOutOfGroup();
+                    if (!removedHiddenLastTabInGroup) {
+                        onTabMergeToOrMoveOutOfGroup();
+                    }
 
                     // Expand the tab if necessary.
                     StripLayoutTab tab = findTabById(movedTab.getId());
                     if (tab != null && tab.isCollapsed()) {
                         updateTabCollapsed(tab, false, false);
                         finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
-                        computeAndUpdateTabWidth(
-                                /* animate= */ true,
-                                /* deferAnimations= */ false,
-                                /* closedTab= */ null);
+                        computeAndUpdateTabWidth(/* animate= */ true, /* deferAnimations= */ false);
                     }
                 }
 
                 @Override
                 public void didMoveWithinGroup(
                         Tab movedTab, int tabModelOldIndex, int tabModelNewIndex) {
-                    updateGroupAccessibilityDescription(findGroupTitle(movedTab.getRootId()));
+                    updateGroupAccessibilityDescription(findGroupTitle(movedTab.getTabGroupId()));
                 }
 
                 @Override
@@ -292,54 +324,28 @@ public class StripLayoutHelper
                 }
 
                 @Override
-                public void didChangeTabGroupTitle(int rootId, String newTitle) {
-                    final StripLayoutGroupTitle groupTitle = findGroupTitle(rootId);
-                    if (groupTitle == null) return;
-
-                    updateGroupTextAndSharedState(groupTitle, newTitle);
+                public void didChangeTabGroupTitle(Token tabGroupId, @Nullable String newTitle) {
+                    updateGroupTextAndSharedState(tabGroupId);
                     mRenderHost.requestRender();
                 }
 
                 @Override
-                public void didChangeTabGroupColor(int rootId, @TabGroupColorId int newColor) {
-                    updateGroupTitleTint(findGroupTitle(rootId), newColor);
+                public void didChangeTabGroupColor(
+                        Token tabGroupId, @TabGroupColorId int newColor) {
+                    updateGroupTitleTint(findGroupTitle(tabGroupId), newColor);
                 }
 
                 @Override
                 public void didChangeTabGroupCollapsed(
-                        int rootId, boolean isCollapsed, boolean animate) {
-                    final StripLayoutGroupTitle groupTitle = findGroupTitle(rootId);
+                        Token tabGroupId, boolean isCollapsed, boolean animate) {
+                    final StripLayoutGroupTitle groupTitle = findGroupTitle(tabGroupId);
                     if (groupTitle == null) return;
 
                     if (!isCollapsed && groupTitle.getNotificationBubbleShown()) {
                         groupTitle.setNotificationBubbleShown(false);
-                        updateGroupTextAndSharedState(rootId);
+                        updateGroupTextAndSharedState(tabGroupId);
                     }
                     updateTabGroupCollapsed(groupTitle, isCollapsed, animate);
-                }
-
-                @Override
-                public void didChangeGroupRootId(int oldRootId, int newRootId) {
-                    StripLayoutGroupTitle groupTitle = findGroupTitle(oldRootId);
-                    if (groupTitle != null) {
-                        groupTitle.updateRootId(newRootId);
-                        // Refresh properties since removing the root tab may have cleared the ones
-                        // associated with the oldRootId before updating to the newRootId here.
-                        updateGroupTextAndSharedState(groupTitle);
-                        updateGroupTitleTint(groupTitle);
-                    }
-
-                    // Update LastSyncedGroupId to prevent the IPH from being dismissed when the
-                    // synced rootId changes.
-                    if (oldRootId == mLastSyncedGroupRootIdForIph) {
-                        mLastSyncedGroupRootIdForIph = newRootId;
-                    }
-
-                    // Update sourceRootId for moving tabs out of a group. This handles the tab
-                    // removal causing the rootId to change.
-                    if (oldRootId == mSourceRootId) {
-                        mSourceRootId = newRootId;
-                    }
                 }
 
                 @Override
@@ -352,34 +358,130 @@ public class StripLayoutHelper
                         int oldRootId,
                         @Nullable Token oldTabGroupId,
                         @DidRemoveTabGroupReason int removalReason) {
-                    releaseResourcesForGroupTitle(oldTabGroupId);
-                    if (mGroupIdToHideSupplier.get() == oldRootId) {
-                        // Clear the hidden group ID if the group has been removed from the model.
-                        mGroupIdToHideSupplier.set(Tab.INVALID_TAB_ID);
+                    if (oldTabGroupId == null) return;
+
+                    StripLayoutGroupTitle groupTitle = findGroupTitle(oldTabGroupId);
+                    // TODO(crbug.com/443337907) If we're closing for a close button click, we don't
+                    // want to clobber the existing animations. This check can be removed once we
+                    // update the tab strip close button clicks to immediately remove from the
+                    // model.
+                    if (!mCloseAnimationsRequested || groupTitle == null || groupTitle.isDying()) {
+                        clearClosingGroupTitleState(oldTabGroupId);
+                    } else {
+                        mClosingGroupTitles.add(groupTitle);
+                        requestCloseAnimations();
                     }
 
-                    // dismiss the iph text bubble when the synced tab group is unsynced.
-                    if (oldRootId == mLastSyncedGroupRootIdForIph) {
-                        dismissTabStripSyncIph();
-                    }
+                    // Dismiss the iph text bubble when the synced tab group is unsynced.
+                    if (oldTabGroupId.equals(mLastSyncedGroupIdForIph)) dismissTabStripSyncIph();
                     onWillCloseView(
                             StripLayoutUtils.findGroupTitle(mStripGroupTitles, oldTabGroupId));
                 }
             };
 
+    private final TabModelObserver mTabModelObserver =
+            new TabModelObserver() {
+                @Override
+                public void onTabsSelectionChanged() {
+                    if (mModel == null || mStripTabs.length == 0) return;
+                    for (StripLayoutTab stripTab : mStripTabs) {
+                        mTabDelegate.setIsTabMultiSelected(
+                                stripTab, mModel.isTabMultiSelected(stripTab.getTabId()));
+                        setAccessibilityDescription(stripTab, getTabById(stripTab.getTabId()));
+                        if (stripTab.isKeyboardFocused()) {
+                            ViewCompat.setAccessibilityPaneTitle(
+                                    mToolbarContainerView, stripTab.getAccessibilityDescription());
+                        }
+                    }
+                    mUpdateHost.requestUpdate();
+                }
+
+                @Override
+                public void didChangePinState(Tab tab) {
+                    boolean isPinned = tab.getIsPinned();
+                    StripLayoutTab stripTab = findTabById(tab.getId());
+                    assumeNonNull(stripTab);
+                    stripTab.setIsPinned(isPinned);
+                    setAccessibilityDescription(stripTab, tab);
+
+                    // Compute each view's ideal position to get ready for the tab move animation
+                    // below.
+                    computeIdealViewPositions();
+
+                    // Foreground the pinned/unpinned tab to start animation.
+                    stripTab.setIsForegrounded(/* isForegrounded= */ true);
+                    mTabDelegate.setIsTabNonDragReordering(
+                            stripTab, /* isNonDragReordering= */ true);
+                    List<Animator> pinnedAnimations =
+                            computeAndUpdateTabWidth(
+                                    /* animate= */ true, /* deferAnimations= */ true);
+                    assumeNonNull(pinnedAnimations);
+
+                    // Animate the moving tab to the pinned boundary. Normally we animate from drawX
+                    // to idealX, but if the first unpinned slot is off-screen, a newly unpinned tab
+                    // would “fly” toward the strip start. To make it appear to fly into the
+                    // unpinned section instead, animate offsetX toward the absolute pinned
+                    // boundary.
+                    boolean rtl = LocalizationUtils.isLayoutRtl();
+                    float pinnedWidth = getEffectiveTabWidth(/* isPinned= */ true);
+                    // For pinning, subtract one tab width, because the total pinned width already
+                    // includes the newly pinned tab width, but the animation should target the
+                    // x-position before it was included.
+                    float animationEndX =
+                            getPinnedTabsBoundary() + (isPinned && !rtl ? -pinnedWidth : 0f);
+                    float startOffsetX = stripTab.getDrawX() - stripTab.getIdealX();
+                    float endOffsetX = animationEndX - stripTab.getIdealX();
+                    pinnedAnimations.add(
+                            CompositorAnimator.ofFloatProperty(
+                                    mUpdateHost.getAnimationHandler(),
+                                    stripTab,
+                                    StripLayoutView.X_OFFSET,
+                                    startOffsetX,
+                                    endOffsetX,
+                                    ANIM_TAB_MOVE_MS));
+
+                    queueAnimations(
+                            pinnedAnimations,
+                            new AnimatorListenerAdapter() {
+                                @Override
+                                public void onAnimationEnd(Animator animation) {
+                                    stripTab.setIsForegrounded(/* isForegrounded= */ false);
+                                    mTabDelegate.setIsTabNonDragReordering(
+                                            stripTab, /* isNonDragReordering= */ false);
+                                    stripTab.setOffsetX(0f);
+                                }
+                            });
+
+                    if (isPinned) {
+                        recordPinnedOnlyTabStripUserAction();
+                    }
+                }
+
+                @Override
+                public void willUndoTabClosure(List<Tab> tabs, boolean isAllTabs) {
+                    finishAnimations();
+                }
+            };
+
     // External influences
+    private final SceneOverlay mSceneOverlay;
     private final LayoutUpdateHost mUpdateHost;
     private final LayoutRenderHost mRenderHost;
     private final LayoutManagerHost mManagerHost;
     private final WindowAndroid mWindowAndroid;
-    private TabModel mModel;
-    private TabGroupModelFilter mTabGroupModelFilter;
-    private TabCreator mTabCreator;
-    private LayerTitleCache mLayerTitleCache;
-    @NonNull private final BottomSheetController mBottomSheetController;
-    @NonNull private final Supplier<ShareDelegate> mShareDelegateSupplier;
 
-    @NonNull
+    // Set after native initialization
+    private @MonotonicNonNull TabModel mModel;
+    private @MonotonicNonNull TabGroupModelFilter mTabGroupModelFilter;
+    private @MonotonicNonNull TabCreator mTabCreator;
+    private @MonotonicNonNull TabStripIphController mTabStripIphController; // IPH on tab strip.
+
+    // Set when StripLayoutHelperManager's mLayerTitleCacheSupplier gets a value
+    private @MonotonicNonNull LayerTitleCache mLayerTitleCache;
+
+    private final BottomSheetController mBottomSheetController;
+    private final Supplier<ShareDelegate> mShareDelegateSupplier;
+
     private final TabGroupListBottomSheetCoordinatorFactory
             mTabGroupListBottomSheetCoordinatorFactory;
 
@@ -389,7 +491,7 @@ public class StripLayoutHelper
     private StripLayoutTab[] mStripTabsToRender = new StripLayoutTab[0];
     private StripLayoutGroupTitle[] mStripGroupTitles = new StripLayoutGroupTitle[0];
     private StripLayoutGroupTitle[] mStripGroupTitlesToRender = new StripLayoutGroupTitle[0];
-    private StripLayoutTab mTabAtPositionForTesting;
+    private @Nullable StripLayoutTab mTabAtPositionForTesting;
     private final StripTabEventHandler mStripTabEventHandler = new StripTabEventHandler();
     private final TabLoadTrackerCallback mTabLoadTrackerHost = new TabLoadTrackerCallbackImpl();
     private final RectF mTouchableRect = new RectF();
@@ -404,10 +506,15 @@ public class StripLayoutHelper
     // not limited to tab closure, tab creation/selection, and tab reordering. Not intended to be
     // used for hover actions. Consider using setAndStartRunningAnimator() to set and start this
     // animator.
-    private Animator mRunningAnimator;
+    private @Nullable Animator mRunningAnimator;
+    private final List<Animator> mQueuedAnimators = new ArrayList<>();
+
+    private boolean mCloseAnimationsRequested;
+    private final Set<StripLayoutTab> mClosingTabs = new HashSet<>();
+    private final Set<StripLayoutGroupTitle> mClosingGroupTitles = new HashSet<>();
 
     private final TintedCompositorButton mNewTabButton;
-    @Nullable private final CompositorButton mModelSelectorButton;
+    private final @Nullable CompositorButton mModelSelectorButton;
 
     // Layout Constants
     private final float mNewTabButtonWidth;
@@ -431,9 +538,20 @@ public class StripLayoutHelper
     // Reorder State
     private boolean mMovingGroup;
 
+    // Close State
+    private boolean mPendingMouseTabClosure;
+    // If closing the end-most tab via precision pointer, that tab's properties are stored here.
+    // These properties are used to determine how to resize the strip such that the preceding tab's
+    // close button moves to where the closing tab's close button was, if possible.
+    private @Nullable Float mClosingEndMostTabDrawX;
+    private @Nullable Float mClosingEndMostTabWidth;
+
+    // Multi-selection state
+    private int mAnchorTabId = Tab.INVALID_TAB_ID;
+
     // Tab switch efficiency
-    private Long mTabScrollStartTime;
-    private Long mMostRecentTabScroll;
+    private @Nullable Long mTabScrollStartTime;
+    private @Nullable Long mMostRecentTabScroll;
 
     // UI State
     private float mWidth;
@@ -455,8 +573,8 @@ public class StripLayoutHelper
     private final float mFixedEndPadding;
     private float mReservedEndMargin;
 
-    // 3-dots menu button with tab strip end padding
     private final boolean mIncognito;
+    private boolean mSelected;
     private boolean mIsFirstLayoutPass;
     // Whether tab strip scrolling is in progress
     private boolean mIsStripScrollInProgress;
@@ -468,7 +586,6 @@ public class StripLayoutHelper
 
     // Animation states. True while the relevant animations are running, and false otherwise.
     private boolean mMultiStepTabCloseAnimRunning;
-    private boolean mNewTabButtonAnimRunning;
     private boolean mTabResizeAnimRunning;
 
     // TabModel info available before the tab state is actually initialized. Determined from frozen
@@ -491,7 +608,7 @@ public class StripLayoutHelper
     // without first long-pressing. The second case is a long-press triggering a view's context
     // menu, where we'll delay reorder (and dismissing the context menu) until a drag threshold has
     // been reached.
-    private StripLayoutView mDelayedReorderView;
+    private @Nullable StripLayoutView mDelayedReorderView;
 
     // X-position of the initial interaction with the view above. If the user drags a certain
     // distance away from this initial position, the context menu (if any) will be dismissed, and
@@ -500,7 +617,7 @@ public class StripLayoutHelper
 
     // Tab Drag and Drop state to hold clicked tab being dragged.
     private final View mToolbarContainerView;
-    @Nullable private final TabStripDragHandler mTabStripDragHandler;
+    private final @Nullable TabStripDragHandler mTabStripDragHandler;
 
     // Tab hover state.
     private @Nullable StripLayoutTab mLastHoveredTab;
@@ -508,32 +625,43 @@ public class StripLayoutHelper
     private long mLastHoverCardExitTime;
 
     // Tab Group Sync.
-    private int mLastSyncedGroupRootIdForIph = Tab.INVALID_TAB_ID;
+    private @Nullable Token mLastSyncedGroupIdForIph;
     private final Supplier<Boolean> mTabStripVisibleSupplier;
 
     // Tab group delete dialog.
-    private final ObservableSupplierImpl<Integer> mGroupIdToHideSupplier =
-            new ObservableSupplierImpl<>(Tab.INVALID_TAB_ID);
+    private final ObservableSupplierImpl<@Nullable Token> mGroupIdToHideSupplier =
+            new ObservableSupplierImpl<>();
 
     // Tab group context menu.
-    private TabGroupContextMenuCoordinator mTabGroupContextMenuCoordinator;
+    // Set when showTabGroupContextMenu is called for the first time.
+    private @MonotonicNonNull TabGroupContextMenuCoordinator mTabGroupContextMenuCoordinator;
 
     // Tab context menu.
-    @Nullable private TabContextMenuCoordinator mTabContextMenuCoordinator;
-    @Nullable private TabGroupListBottomSheetCoordinator mTabGroupListBottomSheetCoordinator;
-    @NonNull private final MultiInstanceManager mMultiInstanceManager;
+    private final MultiInstanceManager mMultiInstanceManager;
+    // Set when showTabContextMenu is called for the first time.
+    private @MonotonicNonNull TabContextMenuCoordinator mTabContextMenuCoordinator;
+    private @MonotonicNonNull TabGroupListBottomSheetCoordinator
+            mTabGroupListBottomSheetCoordinator;
+    // Set when the context menu triggered by a gesture on empty strip space is shown for the first
+    // time.
+    private @MonotonicNonNull TabStripContextMenuCoordinator mTabStripContextMenuCoordinator;
 
     // Tab group share.
-    @NonNull private DataSharingService mDataSharingService;
-    @NonNull private CollaborationService mCollaborationService;
-    @Nullable private final DataSharingTabManager mDataSharingTabManager;
-    @Nullable private DataSharingService.Observer mDataSharingObserver;
-    @Nullable private TabGroupSyncService mTabGroupSyncService;
-    @Nullable private TabGroupSyncService.Observer mTabGroupSyncObserver;
+    // These are set if shouldEnableGroupSharing() is true.
+    private @MonotonicNonNull DataSharingService mDataSharingService;
+    private @MonotonicNonNull CollaborationService mCollaborationService;
 
-    // IPH on tab strip.
-    private TabStripIphController mTabStripIphController;
+    private final DataSharingTabManager mDataSharingTabManager;
+    private DataSharingService.@Nullable Observer mDataSharingObserver;
+    private @Nullable TabGroupSyncService mTabGroupSyncService;
+    private TabGroupSyncService.@Nullable Observer mTabGroupSyncObserver;
+
     private final List<QueuedIph> mQueuedIphList = new ArrayList<>();
+
+    private final StripLayoutTabDelegate mTabDelegate;
+
+    // Pinned tabs.
+    private boolean mIsPinnedOnlyStripRecorded;
 
     @FunctionalInterface
     interface QueuedIph {
@@ -567,23 +695,22 @@ public class StripLayoutHelper
      */
     public StripLayoutHelper(
             Context context,
+            StripLayoutHelperManager manager,
             LayoutManagerHost managerHost,
             LayoutUpdateHost updateHost,
             LayoutRenderHost renderHost,
             boolean incognito,
-            CompositorButton modelSelectorButton,
+            @Nullable CompositorButton modelSelectorButton,
             @Nullable TabStripDragHandler tabStripDragHandler,
-            @NonNull View toolbarContainerView,
-            @NonNull WindowAndroid windowAndroid,
+            View toolbarContainerView,
+            WindowAndroid windowAndroid,
             ActionConfirmationManager actionConfirmationManager,
             DataSharingTabManager dataSharingTabManager,
             Supplier<Boolean> tabStripVisibleSupplier,
-            @NonNull BottomSheetController bottomSheetController,
-            @NonNull MultiInstanceManager multiInstanceManager,
-            @NonNull Supplier<ShareDelegate> shareDelegateSupplier,
-            @NonNull
-                    TabGroupListBottomSheetCoordinatorFactory
-                            tabGroupListBottomSheetCoordinatorFactory) {
+            BottomSheetController bottomSheetController,
+            MultiInstanceManager multiInstanceManager,
+            Supplier<ShareDelegate> shareDelegateSupplier,
+            TabGroupListBottomSheetCoordinatorFactory tabGroupListBottomSheetCoordinatorFactory) {
         mGroupTitleDrawXOffset = TAB_OVERLAP_WIDTH_DP - FOLIO_FOOT_LENGTH_DP;
         mGroupTitleOverlapWidth = FOLIO_FOOT_LENGTH_DP - mGroupTitleDrawXOffset;
         mNewTabButtonWidth = NEW_TAB_BUTTON_BACKGROUND_WIDTH_DP;
@@ -607,6 +734,7 @@ public class StripLayoutHelper
         mReservedEndMargin = mFixedEndPadding + mNewTabButtonWidth;
         updateMargins(false);
 
+        mSceneOverlay = manager;
         mManagerHost = managerHost;
         mUpdateHost = updateHost;
         mRenderHost = renderHost;
@@ -619,9 +747,7 @@ public class StripLayoutHelper
                         null,
                         NEW_TAB_BUTTON_BACKGROUND_WIDTH_DP,
                         NEW_TAB_BUTTON_BACKGROUND_HEIGHT_DP,
-                        (text) -> {
-                            mToolbarContainerView.setTooltipText(text);
-                        },
+                        mToolbarContainerView::setTooltipText,
                         /* clickHandler= */ this,
                         /* keyboardFocusHandler= */ this,
                         R.drawable.ic_new_tab_button,
@@ -647,35 +773,35 @@ public class StripLayoutHelper
                         NEW_TAB_BUTTON_HOVER_BACKGROUND_PRESSED_OPACITY);
 
         // Primary container for default bg color.
-        int BackgroundDefaultTint = TabUiThemeProvider.getDefaultNtbContainerColor(context);
+        int backgroundDefaultTint = TabUiThemeProvider.getDefaultNtbContainerColor(context);
 
         // Primary @ 20% for default pressed bg color.
-        int BackgroundPressedTint =
+        int backgroundPressedTint =
                 ColorUtils.setAlphaComponentWithFloat(
                         SemanticColorUtils.getDefaultIconColorAccent1(context),
                         NEW_TAB_BUTTON_DEFAULT_PRESSED_OPACITY);
 
         // gm3_baseline_surface_container_dark for incognito bg color.
-        int BackgroundIncognitoDefaultTint =
+        int backgroundIncognitoDefaultTint =
                 context.getColor(R.color.tab_strip_bg_incognito_default_tint);
 
         // gm3_baseline_surface_container_highest_dark for incognito pressed bg color
-        int BackgroundIncognitoPressedTint =
+        int backgroundIncognitoPressedTint =
                 context.getColor(R.color.tab_strip_bg_incognito_pressed_tint);
 
         // Tab strip redesign new tab button night mode bg color.
         if (ColorUtils.inNightMode(context)) {
             // colorSurfaceContainerLow for night mode bg color.
-            BackgroundDefaultTint = SemanticColorUtils.getColorSurfaceContainerLow(context);
+            backgroundDefaultTint = SemanticColorUtils.getColorSurfaceContainerLow(context);
 
             // colorSurfaceContainerHighest for pressed night mode bg color.
-            BackgroundPressedTint = SemanticColorUtils.getColorSurfaceContainerHighest(context);
+            backgroundPressedTint = SemanticColorUtils.getColorSurfaceContainerHighest(context);
         }
         mNewTabButton.setBackgroundTint(
-                BackgroundDefaultTint,
-                BackgroundPressedTint,
-                BackgroundIncognitoDefaultTint,
-                BackgroundIncognitoPressedTint,
+                backgroundDefaultTint,
+                backgroundPressedTint,
+                backgroundIncognitoDefaultTint,
+                backgroundIncognitoPressedTint,
                 apsBackgroundHoveredTint,
                 apsBackgroundPressedTint,
                 apsBackgroundIncognitoHoveredTint,
@@ -702,6 +828,11 @@ public class StripLayoutHelper
 
         // Create tab menu
         mCloseButtonMenu = new ListPopupWindow(mContext);
+
+        mCloseButtonMenu.setBackgroundDrawable(
+                AppCompatResources.getDrawable(
+                        mContext, R.drawable.tablet_tab_strip_close_all_tabs_context_menu));
+
         mCloseButtonMenu.setAdapter(
                 new ArrayAdapter<>(
                         mContext,
@@ -718,6 +849,7 @@ public class StripLayoutHelper
                     public void onItemClick(
                             AdapterView<?> parent, View view, int position, long id) {
                         mCloseButtonMenu.dismiss();
+                        if (mTabGroupModelFilter == null) return;
                         if (position == ID_CLOSE_ALL_TABS) {
                             mTabGroupModelFilter
                                     .getTabModel()
@@ -725,6 +857,8 @@ public class StripLayoutHelper
                                     .closeTabs(
                                             TabClosureParams.closeAllTabs()
                                                     .hideTabGroups(true)
+                                                    .tabClosingSource(
+                                                            TabClosingSource.TABLET_TAB_STRIP)
                                                     .build(),
                                             /* allowDialog= */ true);
                             RecordUserAction.record("MobileToolbarCloseAllTabs");
@@ -740,9 +874,12 @@ public class StripLayoutHelper
         mGroupIdToHideSupplier.addObserver((newIdToHide) -> rebuildStripViews());
 
         mIsFirstLayoutPass = true;
+
+        mTabDelegate = new StripLayoutTabDelegate(mUpdateHost);
     }
 
     /** Cleans up internal state. An instance should not be used after this method is called. */
+    @SuppressWarnings("NullAway")
     public void destroy() {
         mStripTabEventHandler.removeCallbacksAndMessages(null);
         mLastHoveredTab = null;
@@ -774,6 +911,10 @@ public class StripLayoutHelper
             mTabGroupListBottomSheetCoordinator.destroy();
             mTabGroupListBottomSheetCoordinator = null;
         }
+        if (mModel != null) {
+            mModel.removeObserver(mTabModelObserver);
+            mModel = null;
+        }
     }
 
     /**
@@ -791,44 +932,59 @@ public class StripLayoutHelper
 
     /**
      * Get the touchable area within the strip, presented as a {@link RectF}, where (0,0) is the
-     * top-left point of the StripLayoutHelper. The area will include the tabs and new tab button.
+     * top-left point of the StripLayoutHelper. The area will include the tabs, but not the new tab
+     * button.
      */
     RectF getTouchableRect() {
         return mTouchableRect;
     }
 
-    /**
-     * @return The visually ordered list of visible {@link StripLayoutTab}s.
-     */
+    /** Returns the visually ordered list of visible {@link StripLayoutTab}s. */
     public StripLayoutTab[] getStripLayoutTabsToRender() {
         return mStripTabsToRender;
     }
 
-    /**
-     * @return The visually ordered list of visible {@link StripLayoutGroupTitle}s.
-     */
+    /** Returns the visually ordered list of visible {@link StripLayoutGroupTitle}s. */
     public StripLayoutGroupTitle[] getStripLayoutGroupTitlesToRender() {
         return mStripGroupTitlesToRender;
     }
 
     /**
-     * @return A {@link TintedCompositorButton} that represents the positioning of the new tab
-     *         button.
+     * Returns a {@link TintedCompositorButton} that represents the positioning of the new tab
+     * button.
      */
     public TintedCompositorButton getNewTabButton() {
         return mNewTabButton;
     }
 
     /**
+     * @param isPinned Whether the tab has been pinned.
      * @return The effective width of a tab (accounting for overlap).
      */
-    private float getEffectiveTabWidth() {
-        return mCachedTabWidthSupplier.get() - TAB_OVERLAP_WIDTH_DP;
+    private float getEffectiveTabWidth(boolean isPinned) {
+        return getCachedTabWidth(isPinned) - TAB_OVERLAP_WIDTH_DP;
     }
 
-    /**
-     * @return The visual offset to be applied to the new tab button.
-     */
+    /** Returns the total effective width of pinned tabs. */
+    protected float getTotalPinnedTabsWidth() {
+        float width = 0.f;
+        for (StripLayoutTab tab : mStripTabs) {
+            if (!tab.getIsPinned()) break;
+            if (isLiveTab(tab)) {
+                width += getEffectiveTabWidth(/* isPinned= */ true) + tab.getTrailingMargin();
+            }
+        }
+        return width == 0.f ? 0.f : width + mScrollDelegate.getReorderStartMargin();
+    }
+
+    /** Returns the pinned tabs boundary on tab strip. */
+    private float getPinnedTabsBoundary() {
+        boolean isRtl = LocalizationUtils.isLayoutRtl();
+        return getStartPositionForStripViews()
+                + (isRtl ? -getTotalPinnedTabsWidth() : getTotalPinnedTabsWidth());
+    }
+
+    /** Returns the visual offset to be applied to the new tab button. */
     protected float getNewTabButtonVisualOffset() {
         boolean isRtl = LocalizationUtils.isLayoutRtl();
         float newTabButtonTouchTargetOffset;
@@ -841,36 +997,32 @@ public class StripLayoutHelper
     }
 
     /**
-     * Check whether the tab strip is full by checking whether tab width has decreased to fit more
+     * Returns whether the tab strip is full by checking whether tab width has decreased to fit more
      * tabs.
-     *
-     * @return Whether the tab strip is full.
      */
     private boolean isTabStripFull() {
-        return mCachedTabWidthSupplier.get() < MAX_TAB_WIDTH_DP;
+        return getCachedTabWidth(/* isPinned= */ false) < MAX_TAB_WIDTH_DP;
     }
 
     /**
-     * Determine How far to shift new tab button icon visually towards the tab in order to achieve
+     * Determine how far to shift new tab button icon visually towards the tab in order to achieve
      * the desired spacing between new tab button and tabs when tab strip is not full.
      *
      * @return Visual offset of new tab button icon.
      */
     protected float getNtbVisualOffsetHorizontal() {
-        return (BUTTON_DESIRED_TOUCH_TARGET_SIZE - mNewTabButtonWidth) / 2
-                - DESIRED_PADDING_BETWEEN_NEW_TAB_BUTTON_AND_TABS;
+        return Math.max(
+                (BUTTON_DESIRED_TOUCH_TARGET_SIZE - mNewTabButtonWidth) / 2
+                        - DESIRED_PADDING_BETWEEN_NEW_TAB_BUTTON_AND_TABS,
+                0);
     }
 
-    /**
-     * @return The opacity to use for the fade on the left side of the tab strip.
-     */
+    /** Returns the opacity to use for the fade on the left side of the tab strip. */
     public float getLeftFadeOpacity() {
         return getFadeOpacity(true);
     }
 
-    /**
-     * @return The opacity to use for the fade on the right side of the tab strip.
-     */
+    /** Returns the opacity to use for the fade on the right side of the tab strip. */
     public float getRightFadeOpacity() {
         return getFadeOpacity(false);
     }
@@ -884,30 +1036,80 @@ public class StripLayoutHelper
      * @return The opacity to use for the fade.
      */
     private float getFadeOpacity(boolean isLeft) {
+        // If there isn’t enough room to show even a single unpinned tab (pinned-only strip), force
+        // show the end edge fade, because the end fade is used to mask the cut-off tab area so it
+        // doesn't appear under the NTB.
+        boolean rtl = LocalizationUtils.isLayoutRtl();
+        boolean isEndFade = rtl ? isLeft : !isLeft;
+        if (doPinnedTabsOccupyEntireVisibleArea() && isEndFade) return 1.f;
+
         float edgeOffset = mScrollDelegate.getEdgeOffset(isLeft);
+
+        // Force start fade to be fully opaque when pinned tabs exist so the first unpinned divider
+        // doesn't show through during scrolling.
+        boolean shouldForceStartFadeOpacity = !isEndFade && getTotalPinnedTabsWidth() > 0;
         if (edgeOffset <= 0.f) {
             return 0.f;
-        } else if (edgeOffset >= FADE_FULL_OPACITY_THRESHOLD_DP) {
+        } else if (edgeOffset >= FADE_FULL_OPACITY_THRESHOLD_DP || shouldForceStartFadeOpacity) {
             return 1.f;
         } else {
             return edgeOffset / FADE_FULL_OPACITY_THRESHOLD_DP;
         }
     }
 
+    private boolean doPinnedTabsOccupyEntireVisibleArea() {
+        return getAvailableTabWidthForResizing() < mCachedTabWidthSupplier.get();
+    }
+
     /**
-     * @return The strip's current scroll offset. It's a 1-D vector on the X axis under the dynamic
-     *     coordinate system used by {@link ScrollDelegate}.
+     * Returns the strip's current scroll offset. It's a 1-D vector on the X axis under the dynamic
+     * coordinate system used by {@link ScrollDelegate}.
      */
     float getScrollOffset() {
         return mScrollDelegate.getScrollOffset();
     }
 
-    float getVisibleLeftBound() {
-        return mLeftPadding;
+    /**
+     * Returns the visible left bound of the tab strip for pinned or unpinned views. Pinned views
+     * begin at {@code mLeftPadding} and remain fixed (do not scroll), while unpinned views scroll
+     * and are positioned after the pinned tabs. Pass {@code false} for the entire tab strip bound,
+     * or {@code true} for the scrolling portion.
+     *
+     * @param clampToUnpinnedViews true to return the bound for unpinned views; false for pinned
+     *     views.
+     * @return the tab strip's visible left bound.
+     */
+    float getVisibleLeftBound(boolean clampToUnpinnedViews) {
+        if (!clampToUnpinnedViews) {
+            return mLeftPadding;
+        }
+        return mLeftPadding + (LocalizationUtils.isLayoutRtl() ? 0.f : getTotalPinnedTabsWidth());
     }
 
-    float getVisibleRightBound() {
-        return mWidth - mRightPadding;
+    /**
+     * See {@link #getVisibleLeftBound(boolean)} for details on difference between pinned and
+     * unpinned bounds.
+     *
+     * @param clampToUnpinnedViews true to return the bound for unpinned views; false for pinned
+     *     views.
+     * @return the tab strip's visible right bound.
+     */
+    float getVisibleRightBound(boolean clampToUnpinnedViews) {
+        float baseRightBound = mWidth - mRightPadding;
+        if (!clampToUnpinnedViews) {
+            return baseRightBound;
+        }
+        return baseRightBound - (LocalizationUtils.isLayoutRtl() ? getTotalPinnedTabsWidth() : 0.f);
+    }
+
+    /** Returns tab strip's visible left padding accounting for pinned tab background. */
+    protected float getLeftPaddingToDraw() {
+        return mLeftPadding + (LocalizationUtils.isLayoutRtl() ? 0.f : getTotalPinnedTabsWidth());
+    }
+
+    /** Returns tab strip's visible right padding accounting for pinned tab background. */
+    protected float getRightPaddingToDraw() {
+        return mRightPadding + (LocalizationUtils.isLayoutRtl() ? getTotalPinnedTabsWidth() : 0.f);
     }
 
     /**
@@ -935,8 +1137,7 @@ public class StripLayoutHelper
         }
         if (recalculateTabWidth) {
             finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
-            computeAndUpdateTabWidth(
-                    /* animate= */ false, /* deferAnimations= */ false, /* closedTab= */ null);
+            computeAndUpdateTabWidth(/* animate= */ false, /* deferAnimations= */ false);
         }
     }
 
@@ -954,6 +1155,7 @@ public class StripLayoutHelper
 
     /**
      * Sets the right fade width based on which fade is showing.
+     *
      * @param fadeWidth The width of the right fade.
      */
     public void setRightFadeWidth(float fadeWidth) {
@@ -1026,6 +1228,8 @@ public class StripLayoutHelper
         if ((orientationChanged && wasSelectedTabVisible) || !mTabStateInitialized) {
             bringSelectedTabToVisibleArea(time, mTabStateInitialized);
         }
+
+        recordPinnedOnlyTabStripUserAction();
     }
 
     /**
@@ -1064,14 +1268,14 @@ public class StripLayoutHelper
             RecordHistogram.deprecatedRecordMediumTimesHistogram(
                     PLACEHOLDER_VISIBLE_DURATION_HISTOGRAM_NAME, 0L);
 
-            rebuildStripTabs(false, false);
+            rebuildStripTabs(/* deferAnimations= */ false);
             finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
-            computeAndUpdateTabWidth(
-                    /* animate= */ false, /* deferAnimations= */ false, /* closedTab= */ null);
+            computeAndUpdateTabWidth(/* animate= */ false, /* deferAnimations= */ false);
         }
         if (getSelectedTabId() != Tab.INVALID_TAB_ID) {
             tabSelected(LayoutManagerImpl.time(), getSelectedTabId(), Tab.INVALID_TAB_ID);
         }
+        mModel.addObserver(mTabModelObserver);
     }
 
     /** Called to notify that the tab state has been initialized. */
@@ -1081,7 +1285,13 @@ public class StripLayoutHelper
         if (mPlaceholderStripReady) {
             int numLeftoverPlaceholders = 0;
             for (int i = 0; i < mStripTabs.length; i++) {
-                if (mStripTabs[i].getIsPlaceholder()) numLeftoverPlaceholders++;
+                StripLayoutTab stripTab = mStripTabs[i];
+                if (stripTab.getIsPlaceholder()) numLeftoverPlaceholders++;
+                assumeNonNull(mModel);
+                Tab tab = mModel.getTabById(stripTab.getTabId());
+                if (tab != null) {
+                    stripTab.setIsPinned(tab.getIsPinned());
+                }
             }
 
             RecordHistogram.recordCount1000Histogram(
@@ -1099,7 +1309,7 @@ public class StripLayoutHelper
 
         // Recreate the StripLayoutTabs from the TabModel, now that all of the real Tabs have been
         // restored. This will reuse valid tabs, discard invalid tabs, and correct tab orders.
-        rebuildStripTabs(false, false);
+        rebuildStripTabs(/* deferAnimations= */ false);
         if (getSelectedTabId() != Tab.INVALID_TAB_ID) {
             tabSelected(LayoutManagerImpl.time(), getSelectedTabId(), Tab.INVALID_TAB_ID);
         }
@@ -1139,7 +1349,7 @@ public class StripLayoutHelper
         // listen to collaboration change as soon as the tab strip is initialized.
         // TODO(crbug.com/380511640) Use SharedGroupObserver instead of DataSharingObserver.
         if (shouldEnableGroupSharing()) {
-            mDataSharingService = DataSharingServiceFactory.getForProfile(profile);
+            mDataSharingService = DataSharingServiceFactory.getForProfile(assumeNonNull(profile));
             mCollaborationService = CollaborationServiceFactory.getForProfile(profile);
             mTabGroupSyncObserver =
                     new TabGroupSyncService.Observer() {
@@ -1151,8 +1361,8 @@ public class StripLayoutHelper
                             // The group title can be null in split-screen since the sync service
                             // notifies both screens of a group localId change, but only one screen
                             // contains the group.
-                            @Nullable
-                            StripLayoutGroupTitle groupTitle =
+
+                            @Nullable StripLayoutGroupTitle groupTitle =
                                     findGroupTitle(localTabGroupId.tabGroupId);
                             if (groupTitle == null) return;
 
@@ -1176,16 +1386,19 @@ public class StripLayoutHelper
                     new DataSharingService.Observer() {
                         @Override
                         public void onGroupChanged(GroupData groupData) {
-                            updateOrClearSharedState(groupData);
+                            if (mTabGroupSyncService == null) return;
+                            updateOrClearSharedState(groupData, mTabGroupSyncService);
                         }
 
                         @Override
                         public void onGroupAdded(GroupData groupData) {
-                            updateOrClearSharedState(groupData);
+                            if (mTabGroupSyncService == null) return;
+                            updateOrClearSharedState(groupData, mTabGroupSyncService);
                         }
 
                         @Override
                         public void onGroupRemoved(String collaborationId) {
+                            if (mTabGroupSyncService == null) return;
                             StripLayoutGroupTitle groupTitle =
                                     StripLayoutUtils.findGroupTitleByCollaborationId(
                                             mStripGroupTitles,
@@ -1200,13 +1413,17 @@ public class StripLayoutHelper
 
         // Prepare to show tab strip IPH for tab group sync and share notification bubble. Skip
         // initialization if testing value has been set.
-        if (mTabStripIphController == null && !mIncognito) {
+        if (mTabStripIphController == null
+                && !mIncognito
+                && mModel != null
+                && mModel.getProfile() != null) {
+            Profile modelProfile = mModel.getProfile();
             UserEducationHelper userEducationHelper =
                     new UserEducationHelper(
-                            mWindowAndroid.getActivity().get(),
-                            mModel.getProfile(),
+                            assumeNonNull(mWindowAndroid.getActivity().get()),
+                            modelProfile,
                             new Handler(Looper.getMainLooper()));
-            Tracker tracker = TrackerFactory.getTrackerForProfile(mModel.getProfile());
+            Tracker tracker = TrackerFactory.getTrackerForProfile(modelProfile);
             mTabStripIphController =
                     new TabStripIphController(
                             mContext.getResources(), userEducationHelper, tracker);
@@ -1216,7 +1433,9 @@ public class StripLayoutHelper
         rebuildStripViews();
     }
 
+    @EnsuresNonNullIf("mTabGroupSyncService")
     private boolean shouldEnableGroupSharing() {
+        if (mTabGroupModelFilter == null) return false;
         Profile profile = mTabGroupModelFilter.getTabModel().getProfile();
         if (profile == null || profile.isOffTheRecord() || mTabGroupSyncService == null) {
             return false;
@@ -1246,7 +1465,7 @@ public class StripLayoutHelper
 
         for (int i = 0; i < mStripGroupTitles.length; ++i) {
             final StripLayoutGroupTitle groupTitle = mStripGroupTitles[i];
-            updateGroupTextAndSharedState(groupTitle, groupTitle.getTitle());
+            updateGroupTextAndSharedStateUnchecked(groupTitle);
         }
     }
 
@@ -1276,7 +1495,8 @@ public class StripLayoutHelper
         // 3. Update tab spinners.
         updateSpinners(time);
 
-        final boolean doneAnimating = mRunningAnimator == null || !mRunningAnimator.isRunning();
+        queueCloseAnimationsIfAny();
+        startQueuedAnimationsIfAny();
         updateStrip();
 
         // If this is the first layout pass, scroll to the selected tab so that it is visible.
@@ -1288,9 +1508,10 @@ public class StripLayoutHelper
         }
 
         // Show IPH on the last synced tab group, so place it at the front of the queue.
-        if (mLastSyncedGroupRootIdForIph != Tab.INVALID_TAB_ID
-                && mTabStripIphController.wouldTriggerIph(IphType.TAB_GROUP_SYNC)) {
-            final StripLayoutGroupTitle groupTitle = findGroupTitle(mLastSyncedGroupRootIdForIph);
+        if (mLastSyncedGroupIdForIph != null
+                && (mTabStripIphController != null
+                        && mTabStripIphController.wouldTriggerIph(IphType.TAB_GROUP_SYNC))) {
+            final StripLayoutGroupTitle groupTitle = findGroupTitle(mLastSyncedGroupIdForIph);
             mQueuedIphList.add(
                     0,
                     () ->
@@ -1299,10 +1520,11 @@ public class StripLayoutHelper
                                     /* tab= */ null,
                                     IphType.TAB_GROUP_SYNC,
                                     /* enableSnoozeMode= */ false));
-            mLastSyncedGroupRootIdForIph = Tab.INVALID_TAB_ID;
+            mLastSyncedGroupIdForIph = null;
         }
 
         // 4. Attempt to show one iph text bubble at a time on tab strip.
+        final boolean doneAnimating = mRunningAnimator == null || !mRunningAnimator.isRunning();
         if (doneAnimating && mScrollDelegate.isFinished()) {
             Iterator<QueuedIph> iterator = mQueuedIphList.iterator();
             while (iterator.hasNext()) {
@@ -1315,6 +1537,15 @@ public class StripLayoutHelper
             }
         }
         return doneAnimating;
+    }
+
+    private void recordPinnedOnlyTabStripUserAction() {
+        if (isTabPinningFromStripEnabled()
+                && !mIsPinnedOnlyStripRecorded
+                && doPinnedTabsOccupyEntireVisibleArea()) {
+            mIsPinnedOnlyStripRecorded = true;
+            RecordUserAction.record("MobileToolbarPinnedOnlyTabStrip");
+        }
     }
 
     /**
@@ -1334,6 +1565,7 @@ public class StripLayoutHelper
             @Nullable StripLayoutTab tab,
             @IphType int iphType,
             boolean enableSnoozeMode) {
+        if (mModel == null || mTabStripIphController == null) return false;
         // Remove the showTabStrip callback from the queue, as showing IPH is not applicable in
         // these cases.
         if (mModel.isIncognito()
@@ -1348,7 +1580,7 @@ public class StripLayoutHelper
         }
 
         // Display iph only when the target view is fully visible.
-        StripLayoutView view = tab == null ? (StripLayoutView) groupTitle : tab;
+        StripLayoutView view = assumeNonNull(tab == null ? (StripLayoutView) groupTitle : tab);
         if (!view.isVisible() || !isViewCompletelyVisible(view)) {
             return false;
         }
@@ -1358,8 +1590,8 @@ public class StripLayoutHelper
         return true;
     }
 
-    void setLastSyncedGroupIdForTesting(int id) {
-        mLastSyncedGroupRootIdForIph = id;
+    void setLastSyncedGroupIdForTesting(@Nullable Token tabGroupId) {
+        mLastSyncedGroupIdForIph = tabGroupId;
     }
 
     void setTabStripIphControllerForTesting(TabStripIphController tabStripIphController) {
@@ -1377,11 +1609,30 @@ public class StripLayoutHelper
      *     with.
      */
     public void tabModelSelected(boolean selected) {
+        mSelected = selected;
         if (selected) {
             bringSelectedTabToVisibleArea(0, false);
         } else {
             clearLastHoveredTab();
+            finishCloseAnimations();
             mCloseButtonMenu.dismiss();
+        }
+    }
+
+    /** Marks the helper as selected. */
+    public void setSelected(boolean selected) {
+        mSelected = selected;
+    }
+
+    /** Updates the current selected tab. */
+    private void updateSelectedTab(int newFocusedTabId, int previouslyFocusedTabId) {
+        StripLayoutTab previouslyFocusedTab = findTabById(previouslyFocusedTabId);
+        if (previouslyFocusedTab != null) {
+            mTabDelegate.setIsTabSelected(previouslyFocusedTab, false);
+        }
+        StripLayoutTab newFocusedTab = findTabById(newFocusedTabId);
+        if (newFocusedTab != null) {
+            mTabDelegate.setIsTabSelected(newFocusedTab, true);
         }
     }
 
@@ -1396,14 +1647,17 @@ public class StripLayoutHelper
         StripLayoutTab stripTab = findTabById(id);
         if (stripTab == null) {
             tabCreated(time, id, prevId, true, false, false);
+            updateSelectedTab(id, prevId);
         } else {
+            updateSelectedTab(id, prevId);
             updateCloseButtons();
 
             Tab tab = getTabById(id);
             if (tab != null
                     && mTabGroupModelFilter != null
-                    && mTabGroupModelFilter.getTabGroupCollapsed(tab.getRootId())) {
-                mTabGroupModelFilter.deleteTabGroupCollapsed(tab.getRootId());
+                    && tab.getTabGroupId() != null
+                    && mTabGroupModelFilter.getTabGroupCollapsed(tab.getTabGroupId())) {
+                mTabGroupModelFilter.deleteTabGroupCollapsed(tab.getTabGroupId());
             }
 
             if (!mReorderDelegate.getInReorderMode()) {
@@ -1419,21 +1673,16 @@ public class StripLayoutHelper
                 setAccessibilityDescription(findTabById(prevId), getTabById(prevId));
             }
         }
-        StripLayoutTab previouslyFocusedTab = findTabById(prevId);
-        if (previouslyFocusedTab != null) previouslyFocusedTab.setIsSelected(false);
-        StripLayoutTab newFocusedTab = findTabById(id);
-        if (newFocusedTab != null) newFocusedTab.setIsSelected(true);
     }
 
     /**
      * Called when a tab has been moved in the tabModel.
      *
-     * @param time The current time of the app in ms.
      * @param id The id of the Tab.
      * @param oldIndex The old index of the tab in the {@link TabModel}.
      * @param newIndex The new index of the tab in the {@link TabModel}.
      */
-    public void tabMoved(long time, int id, int oldIndex, int newIndex) {
+    public void tabMoved(int id, int oldIndex, int newIndex) {
         StripLayoutTab tab = findTabById(id);
         if (tab == null || oldIndex == newIndex) return;
 
@@ -1443,32 +1692,17 @@ public class StripLayoutHelper
 
         // 2. Swap the tabs.
         StripLayoutUtils.moveElement(mStripTabs, index, newIndex);
-        if (!mMovingGroup) {
-            if (mReorderDelegate.isReorderingTab()) {
-                // Update strip start and end margins to create more space for first tab or last tab
-                // to drag out of group.
-                mReorderDelegate.setEdgeMarginsForReorder(mStripTabs);
-            }
-            // When tab groups are moved, each tab is moved one-by-one. During this process, the
-            // invariant that tab groups must be contiguous is temporarily broken, so we suppress
-            // rebuilding until the entire group is moved. See https://crbug.com/329318567.
-            // TODO(crbug.com/329335086): Investigate reordering (with #moveElement) instead of
-            // rebuilding here.
-            rebuildStripViews();
-            computeIdealViewPositions();
-        }
+        if (!mMovingGroup) rebuildStripViewsAfterMove();
     }
 
     /**
      * Called when a tab will be closed. When called, the closing tab will be part of the model.
      *
-     * @param time The current time of the app in ms.
      * @param tab The tab that will be closed.
      */
-    public void willCloseTab(long time, Tab tab) {
+    public void willCloseTab(Tab tab) {
         if (tab == null) return;
-
-        updateGroupTextAndSharedState(tab.getRootId());
+        updateGroupTextAndSharedState(tab.getTabGroupId());
         onWillCloseView(findTabById(tab.getId()));
     }
 
@@ -1476,44 +1710,40 @@ public class StripLayoutHelper
      * Called when a tab is being closed. When called, the closing tab will not be part of the
      * model.
      *
-     * @param time The current time of the app in ms.
-     * @param id The id of the tab being closed.
+     * @param tab The {@link Tab} being closed.
      */
-    public void tabClosed(long time, int id) {
-        if (findTabById(id) == null) return;
-
-        // 1. Find out if we're closing the last tab.  This determines if we resize immediately.
-        // We know mStripTabs.length >= 1 because findTabById did not return null.
-        boolean closingLastTab = mStripTabs[mStripTabs.length - 1].getTabId() == id;
-
-        // 2. Rebuild the strip.
-        rebuildStripTabs(!closingLastTab, false);
+    public void tabClosed(Tab tab) {
+        if (findTabById(tab.getId()) == null) return;
+        multipleTabsClosed(Collections.singletonList(tab));
     }
 
     /**
-     * Called when a multiple tabs are being closed. When called, the closing tabs will not be part
-     * of the model.
+     * Called when multiple tabs are being closed. When called, the closing tabs will not be part of
+     * the model.
      *
      * @param tabs The list of tabs that are being closed.
      */
     public void multipleTabsClosed(List<Tab> tabs) {
-        // 1. Find out if we're closing the last tab.  This determines if we resize immediately.
-        // We know mStripTabs.length >= 1 because findTabById did not return null.
-        boolean closingLastTab = false;
         for (Tab tab : tabs) {
-            if (mStripTabs[mStripTabs.length - 1].getTabId() == tab.getId()) {
-                closingLastTab = true;
-                break;
+            StripLayoutTab stripTab = findTabById(tab.getId());
+            if (stripTab != null && !stripTab.isDying()) {
+                mClosingTabs.add(stripTab);
+                stripTab.setSkipAsyncClosure(/* skipAsyncClosure= */ true);
             }
         }
-
-        // 2. Rebuild the strip.
-        rebuildStripTabs(!closingLastTab, false);
+        if (!mClosingTabs.isEmpty()) {
+            requestCloseAnimations();
+        } else {
+            // TODO(crbug.com/443337907): Can be removed once we update the tab strip close buttons
+            //  to this new animation method.
+            rebuildStripTabs(/* deferAnimations= */ false);
+            clearPendingMouseTabClosureState();
+        }
     }
 
     /** Called when all tabs are closed at once. */
     public void willCloseAllTabs() {
-        rebuildStripTabs(true, false);
+        rebuildStripTabs(/* deferAnimations= */ false);
     }
 
     /**
@@ -1524,8 +1754,11 @@ public class StripLayoutHelper
      * @param id The id of the Tab.
      */
     public void tabClosureCancelled(long time, int id) {
+        if (mModel == null) return;
+        finishAnimations();
         final boolean selected = TabModelUtils.getCurrentTabId(mModel) == id;
         tabCreated(time, id, Tab.INVALID_TAB_ID, selected, true, false);
+        updateGroupTextAndSharedState(mModel.getTabByIdChecked(id).getTabGroupId());
     }
 
     /**
@@ -1555,15 +1788,17 @@ public class StripLayoutHelper
 
         // Otherwise, 2. Build any tabs that are missing. Determine if it will be collapsed.
         finishAnimationsAndPushTabUpdates();
-        List<Animator> animationList = rebuildStripTabs(false, !onStartup);
+        List<Animator> animationList = rebuildStripTabs(!onStartup);
         Tab tab = getTabById(id);
         boolean collapsed = false;
         if (tab != null) {
-            int rootId = tab.getRootId();
-            updateGroupTextAndSharedState(rootId);
-            if (mTabGroupModelFilter.getTabGroupCollapsed(rootId)) {
+            Token tabGroupId = tab.getTabGroupId();
+            updateGroupTextAndSharedState(tabGroupId);
+            if (tabGroupId != null
+                    && mTabGroupModelFilter != null
+                    && mTabGroupModelFilter.getTabGroupCollapsed(tabGroupId)) {
                 if (selected) {
-                    mTabGroupModelFilter.deleteTabGroupCollapsed(rootId);
+                    mTabGroupModelFilter.deleteTabGroupCollapsed(tabGroupId);
                 } else {
                     collapsed = true;
                 }
@@ -1575,7 +1810,9 @@ public class StripLayoutHelper
         StripLayoutTab stripTab = findTabById(id);
         if (stripTab != null) {
             updateTabCollapsed(stripTab, collapsed, false);
-            if (!onStartup && !collapsed) runTabAddedAnimator(animationList, stripTab);
+            if (!onStartup && !collapsed) {
+                runTabAddedAnimator(animationList, stripTab, /* fromTabCreation= */ true);
+            }
         }
 
         // 4. If the new tab will be selected, scroll it to view. If the new tab will not be
@@ -1593,7 +1830,7 @@ public class StripLayoutHelper
         }
 
         // 5. Trigger IPH for tab tearing on XR if applicable.
-        if (XrUtils.isXrDevice()
+        if (DeviceInfo.isXr()
                 && mStripTabs.length > 1
                 && !onStartup
                 && !closureCancelled
@@ -1610,8 +1847,9 @@ public class StripLayoutHelper
         mUpdateHost.requestUpdate();
     }
 
-    private void runTabAddedAnimator(@NonNull List<Animator> animationList, StripLayoutTab tab) {
-        if (!ChromeFeatureList.sTabletTabStripAnimation.isEnabled()) {
+    private void runTabAddedAnimator(
+            List<Animator> animationList, StripLayoutTab tab, boolean fromTabCreation) {
+        if (!ChromeFeatureList.sTabletTabStripAnimation.isEnabled() || !fromTabCreation) {
             animationList.add(
                     CompositorAnimator.ofFloatProperty(
                             mUpdateHost.getAnimationHandler(),
@@ -1668,13 +1906,14 @@ public class StripLayoutHelper
 
         // 2. Initialize the draw parameters.
         finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
-        computeAndUpdateTabWidth(false, false, null);
+        computeAndUpdateTabWidth(false, false);
 
         // 3. Scroll the strip to bring the selected tab to view and ensure that the active tab
         // container is visible.
         if (mActiveTabIndexOnStartup != TabModel.INVALID_TAB_INDEX) {
             bringSelectedTabToVisibleArea(LayoutManagerImpl.time(), false);
-            mStripTabs[mActiveTabIndexOnStartup].setContainerOpacity(TAB_OPACITY_VISIBLE);
+            StripLayoutTabDelegate.setTabVisibility(
+                    mStripTabs[mActiveTabIndexOnStartup], /* isVisible= */ true);
         }
 
         // 4. Mark that the placeholder strip layout is ready and request a visual update.
@@ -1688,7 +1927,7 @@ public class StripLayoutHelper
      * relevant properties in the StripLayoutTab (id).
      */
     private void replacePlaceholdersForRestoredTabs() {
-        if (!mPlaceholderStripReady || mTabStateInitialized) return;
+        if (!mPlaceholderStripReady || mTabStateInitialized || mModel == null) return;
 
         // If the number of tabs is less than the expected active tab index, it means that there
         // will need to be placeholders before the active tab. If this is the case, replace the
@@ -1773,7 +2012,7 @@ public class StripLayoutHelper
             // a "valid" state that may break this, such as ensuring that grouped tabs are
             // contiguous. See https://crbug.com/329191924 for details.
             replaceIndex = mCurrentPlaceholderIndex++;
-            if (replaceIndex != mModel.indexOf(getTabById(id))) return;
+            if (mModel == null || replaceIndex != mModel.indexOf(getTabById(id))) return;
         }
 
         if (replaceIndex >= 0 && replaceIndex < mStripTabs.length) {
@@ -1788,23 +2027,17 @@ public class StripLayoutHelper
         }
     }
 
-    /**
-     * @return The expected tab count after tabs finish restoring.
-     */
+    /** Returns The expected tab count after tabs finish restoring. */
     protected int getTabCountOnStartupForTesting() {
         return mTabCountOnStartup;
     }
 
-    /**
-     * @return The expected active tab index after tabs finish restoring.
-     */
+    /** Returns The expected active tab index after tabs finish restoring. */
     protected int getActiveTabIndexOnStartupForTesting() {
         return mActiveTabIndexOnStartup;
     }
 
-    /**
-     * @return Whether a non-restored tab was created during startup (e.g. through intent).
-     */
+    /** Returns Whether a non-restored tab was created during startup (e.g. through intent). */
     protected boolean getCreatedTabOnStartupForTesting() {
         return mCreatedTabOnStartup;
     }
@@ -1814,31 +2047,37 @@ public class StripLayoutHelper
      * partially visible tabs at the edge of the tab strip when min tab width is set to >=156dp.
      */
     private void updateCloseButtons() {
+        boolean anyVisibilityChange = false;
+
         final int count = mStripTabs.length;
-        int selectedIndex = getSelectedStripTabIndex();
 
         for (int i = 0; i < count; i++) {
             final StripLayoutTab tab = mStripTabs[i];
-            boolean tabSelected = selectedIndex == i;
-            boolean canShowCloseButton =
-                    (tab.getWidth() >= TAB_WIDTH_MEDIUM
-                            || (tabSelected && shouldShowCloseButton(tab, i)));
-            // TODO(crbug.com/419843587): Await UX direction for close button appearance
-            if (ChromeFeatureList.sTabletTabStripAnimation.isEnabled()
-                    && tab.isDying()
-                    && !tabSelected) {
-                mStripTabs[i].setCanShowCloseButton(false, false);
-            } else {
-                mStripTabs[i].setCanShowCloseButton(canShowCloseButton, !mIsFirstLayoutPass);
-            }
+            boolean isLastTab = i == mStripTabs.length - 1;
+            anyVisibilityChange |=
+                    mTabDelegate.updateTabCloseButtonVisibility(
+                            tab,
+                            isLastTab,
+                            mLeftFadeWidth,
+                            mRightFadeWidth,
+                            getVisibleLeftBound(/* clampToUnpinnedViews= */ true),
+                            getVisibleRightBound(/* clampToUnpinnedViews= */ true),
+                            mNewTabButton,
+                            mIsFirstLayoutPass);
         }
-    }
-
-    private void setTabContainerVisible(StripLayoutTab tab, boolean selected) {
-        // The container will be visible if the tab is selected or is a placeholder tab.
-        float containerOpacity =
-                selected || tab.getIsPlaceholder() ? TAB_OPACITY_VISIBLE : TAB_OPACITY_HIDDEN;
-        tab.setContainerOpacity(containerOpacity);
+        if (anyVisibilityChange) {
+            // If close buttons appear / disappear, the CompositorView's keyboard focus index will
+            // be wrong; fix it.
+            // Note that we guard this in an if(anyVisibilityChange) block to avoid requesting
+            // updates unnecessarily (which would hurt performance).
+            mUpdateHost.requestUpdate(
+                    () -> {
+                        @Nullable StripLayoutView keyboardFocusedView = getKeyboardFocusedView();
+                        if (keyboardFocusedView != null) {
+                            mManagerHost.requestKeyboardFocus(mSceneOverlay, keyboardFocusedView);
+                        }
+                    });
+        }
     }
 
     private void updateTabContainersAndDividers() {
@@ -1850,15 +2089,15 @@ public class StripLayoutHelper
 
             // 1. Set container visibility. Handled in a separate animation for hovered tabs.
             if (hoveredId != currTab.getTabId()) {
-                setTabContainerVisible(currTab, isSelectedTab(currTab.getTabId()));
+                StripLayoutTabDelegate.updateTabVisibility(currTab);
             }
-            boolean currContainerHidden = currTab.getContainerOpacity() == TAB_OPACITY_HIDDEN;
+            boolean currContainerHidden = StripLayoutTabDelegate.isTabHidden(currTab);
 
             boolean hideDividerForDyingTab =
                     ChromeFeatureList.sTabletTabStripAnimation.isEnabled() && currTab.isDying();
             // 2. Set start divider visibility.
             if (i > 0 && viewsOnStrip[i - 1] instanceof StripLayoutTab prevTab) {
-                boolean prevContainerHidden = prevTab.getContainerOpacity() == TAB_OPACITY_HIDDEN;
+                boolean prevContainerHidden = StripLayoutTabDelegate.isTabHidden(prevTab);
                 boolean prevTabHasMargin = prevTab.getTrailingMargin() > 0;
                 boolean startDividerVisible =
                         !hideDividerForDyingTab
@@ -1887,67 +2126,41 @@ public class StripLayoutHelper
         // Make the entire strip touchable when during dragging / reordering mode.
         boolean isTabDraggingInProgress = isViewDraggingInProgress();
         if (isTabStripFull() || mReorderDelegate.getInReorderMode() || isTabDraggingInProgress) {
-            mTouchableRect.set(getVisibleLeftBound(), 0, getVisibleRightBound(), mHeight);
+            mTouchableRect.set(
+                    getVisibleLeftBound(/* clampToUnpinnedViews= */ false),
+                    0,
+                    getVisibleRightBound(/* clampToUnpinnedViews= */ false),
+                    mHeight);
             return;
         }
 
-        // When the tab strip is not full and not in recording mode, NTB is always showing after
-        // the last visible tab on strip.
-        RectF touchableRect = new RectF(0, 0, 0, mHeight);
-        RectF ntbTouchRect = new RectF();
-        getNewTabButton().getTouchTarget(ntbTouchRect);
-        boolean isRtl = LocalizationUtils.isLayoutRtl();
-        if (isRtl) {
-            touchableRect.right = getVisibleRightBound();
-            touchableRect.left = Math.max(ntbTouchRect.left, getVisibleLeftBound());
-        } else {
-            touchableRect.left = getVisibleLeftBound();
-            touchableRect.right = Math.min(ntbTouchRect.right, getVisibleRightBound());
+        if (mStripViews.length == 0) {
+            mTouchableRect.setEmpty();
+            return;
         }
-        mTouchableRect.set(touchableRect);
-    }
 
-    /**
-     * Checks whether a tab at the edge of the strip is partially hidden, in which case the close
-     * button will be hidden to avoid accidental clicks.
-     *
-     * @param tab The tab to check.
-     * @param index The index of the tab.
-     * @return Whether the close button should be shown for this tab.
-     */
-    private boolean shouldShowCloseButton(StripLayoutTab tab, int index) {
-        boolean tabStartHidden;
-        boolean tabEndHidden;
-        boolean isLastTab = index == mStripTabs.length - 1;
+        // Get the bounding box of all strip views (excludes new tab and model selector buttons).
+        StripLayoutView firstStripView = mStripViews[0];
+        StripLayoutView lastStripView = mStripViews[mStripViews.length - 1];
+
+        float leftBound = firstStripView.getDrawX();
+        float rightBound = lastStripView.getDrawX() + lastStripView.getWidth();
+
         if (LocalizationUtils.isLayoutRtl()) {
-            if (isLastTab) {
-                tabStartHidden =
-                        tab.getDrawX() + TAB_OVERLAP_WIDTH_DP
-                                < getVisibleLeftBound()
-                                        + mNewTabButton.getDrawX()
-                                        + mNewTabButton.getWidth();
-            } else {
-                tabStartHidden =
-                        tab.getDrawX() + TAB_OVERLAP_WIDTH_DP
-                                < getVisibleLeftBound() + getCloseBtnVisibilityThreshold(false);
-            }
-            tabEndHidden =
-                    tab.getDrawX() > getVisibleRightBound() - getCloseBtnVisibilityThreshold(true);
-        } else {
-            tabStartHidden =
-                    tab.getDrawX() + tab.getWidth()
-                            < getVisibleLeftBound() + getCloseBtnVisibilityThreshold(true);
-            if (isLastTab) {
-                tabEndHidden =
-                        tab.getDrawX() + tab.getWidth() - TAB_OVERLAP_WIDTH_DP
-                                > getVisibleLeftBound() + mNewTabButton.getDrawX();
-            } else {
-                tabEndHidden =
-                        (tab.getDrawX() + tab.getWidth() - TAB_OVERLAP_WIDTH_DP
-                                > getVisibleRightBound() - getCloseBtnVisibilityThreshold(false));
-            }
+            leftBound = lastStripView.getDrawX();
+            rightBound = firstStripView.getDrawX() + firstStripView.getWidth();
         }
-        return !tabStartHidden && !tabEndHidden;
+
+        // Clamp the bounding box to the visible area.
+        float left = Math.max(leftBound, getVisibleLeftBound(/* clampToUnpinnedViews= */ false));
+        float right = Math.min(rightBound, getVisibleRightBound(/* clampToUnpinnedViews= */ false));
+
+        // Ensure left is not greater than right, which can happen if all tabs are off-screen.
+        if (left > right) {
+            mTouchableRect.setEmpty();
+        } else {
+            mTouchableRect.set(left, 0, right, mHeight);
+        }
     }
 
     /**
@@ -1972,13 +2185,11 @@ public class StripLayoutHelper
     /**
      * Called on touch drag event.
      *
-     * @param time The current time of the app in ms.
      * @param x The x coordinate of the end of the drag event.
      * @param y The y coordinate of the end of the drag event.
      * @param deltaX The number of pixels dragged in the x direction.
      */
-    public void drag(long time, float x, float y, float deltaX) {
-        resetResizeTimeout(false);
+    public void drag(float x, float y, float deltaX) {
         deltaX = MathUtils.flipSignIf(deltaX, LocalizationUtils.isLayoutRtl());
 
         // 1. Reset the button state.
@@ -1987,15 +2198,10 @@ public class StripLayoutHelper
         // 2.a. Enter reorder mode either if the view was initially clicked by a mouse OR the view
         // was long-pressed, but we suppressed reorder mode to instead show the view's context menu.
         // In the second case, dismiss the aforementioned context menu.
-        boolean shouldTriggerReorder =
-                mDelayedReorderView != null
-                        && !mReorderDelegate.getInReorderMode()
-                        && (Math.abs(x - mDelayedReorderInitialX) > INITIATE_REORDER_DRAG_THRESHOLD
-                                || !isViewContextMenuShowing());
-        boolean canReorderViewType =
-                !(mDelayedReorderView instanceof StripLayoutGroupTitle)
-                        || ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_STRIP_GROUP_REORDER);
-        if (shouldTriggerReorder && canReorderViewType) {
+        if (mDelayedReorderView != null
+                && !mReorderDelegate.getInReorderMode()
+                && (Math.abs(x - mDelayedReorderInitialX) > INITIATE_REORDER_DRAG_THRESHOLD
+                        || !isViewContextMenuShowing())) {
             if (isViewContextMenuShowing()) dismissContextMenu();
             // Intentionally start the reorder at the initial long-press x. The difference from the
             // current event (accumulatedDeltaX in step 3) will then "snap" the interacting view to
@@ -2042,15 +2248,11 @@ public class StripLayoutHelper
 
     /**
      * Called on touch fling event. This is called before the onUpOrCancel event.
-     * @param time      The current time of the app in ms.
-     * @param x         The y coordinate of the start of the fling event.
-     * @param y         The y coordinate of the start of the fling event.
+     *
+     * @param time The current time of the app in ms.
      * @param velocityX The amount of velocity in the x direction.
-     * @param velocityY The amount of velocity in the y direction.
      */
-    public void fling(long time, float x, float y, float velocityX, float velocityY) {
-        resetResizeTimeout(false);
-
+    public void fling(long time, float velocityX) {
         // 1. If we're currently in reorder mode or the context menu is showing, don't allow the
         // user to fling.
         if (mReorderDelegate.getInReorderMode() || isViewContextMenuShowing()) return;
@@ -2069,8 +2271,6 @@ public class StripLayoutHelper
      * @param buttons State of all buttons that are pressed.
      */
     public void onDown(float x, float y, int buttons) {
-        resetResizeTimeout(false);
-
         if (mNewTabButton.onDown(x, y, buttons)) {
             mRenderHost.requestRender();
             return;
@@ -2096,21 +2296,24 @@ public class StripLayoutHelper
      * @param y The y coordinate of the position of the press event.
      */
     public void onLongPress(float x, float y) {
-        resetResizeTimeout(false);
         StripLayoutView stripView = determineClickedView(x, y, /* buttons= */ 0);
+
+        if (stripView == null) {
+            // Broadcast to start moving the window instance as the user has long pressed on the
+            // open space of the tab strip.
+            sendMoveWindowBroadcast(mToolbarContainerView, x, y);
+
+            // Show the tab strip context menu at the long-press position on the empty space.
+            showTabStripContextMenu(x, y);
+            return;
+        }
+
         // If long-pressed on tab (not on close button) or group, mark for delayed reorder during
         // drag.
-        if ((stripView instanceof StripLayoutTab clickedTab
-                        && !clickedTab.checkCloseHitTest(x, y)
-                        && ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_STRIP_CONTEXT_MENU))
+        if ((stripView instanceof StripLayoutTab clickedTab && !clickedTab.checkCloseHitTest(x, y))
                 || stripView instanceof StripLayoutGroupTitle) {
             mDelayedReorderView = stripView;
             mDelayedReorderInitialX = x;
-        } else if (stripView == null
-                || (stripView instanceof StripLayoutTab
-                        && !ChromeFeatureList.isEnabled(
-                                ChromeFeatureList.TAB_STRIP_CONTEXT_MENU))) {
-            startReorderMode(x, y, stripView, ReorderType.START_DRAG_DROP);
         }
         showContextMenu(stripView);
     }
@@ -2124,7 +2327,8 @@ public class StripLayoutHelper
                 || (mCloseButtonMenu != null && mCloseButtonMenu.isShowing());
     }
 
-    private void dismissContextMenu() {
+    @VisibleForTesting
+    void dismissContextMenu() {
         if (mTabGroupContextMenuCoordinator != null) mTabGroupContextMenuCoordinator.dismiss();
         if (mTabContextMenuCoordinator != null) mTabContextMenuCoordinator.dismiss();
         if (mCloseButtonMenu != null) mCloseButtonMenu.dismiss();
@@ -2141,7 +2345,8 @@ public class StripLayoutHelper
      *     tab group context menu can be shown.
      */
     private void showTabGroupContextMenu(
-            StripLayoutGroupTitle groupTitle, boolean shouldWaitForUpdate) {
+            @Nullable StripLayoutGroupTitle groupTitle, boolean shouldWaitForUpdate) {
+        if (mModel == null || mTabGroupModelFilter == null) return;
         if (mTabGroupContextMenuCoordinator == null) {
             mTabGroupContextMenuCoordinator =
                     TabGroupContextMenuCoordinator.createContextMenuCoordinator(
@@ -2149,7 +2354,19 @@ public class StripLayoutHelper
                             mTabGroupModelFilter,
                             mMultiInstanceManager,
                             mWindowAndroid,
-                            mDataSharingTabManager);
+                            mDataSharingTabManager,
+                            (groupId, toLeft) -> {
+                                // Don't use anchorTab here, since that will be the anchor of the
+                                // first-opened tab context menu (it won't change when a new context
+                                // menu is opened).
+                                mReorderDelegate.reorderViewInDirection(
+                                        mTabDelegate,
+                                        mStripViews,
+                                        mStripGroupTitles,
+                                        mStripTabs,
+                                        findGroupTitle(groupId),
+                                        toLeft);
+                            });
         }
         StripLayoutUtils.performHapticFeedback(mToolbarContainerView);
 
@@ -2171,31 +2388,35 @@ public class StripLayoutHelper
      *
      * @param groupTitle The title of the group.
      */
-    private void showTabGroupContextMenuHelper(StripLayoutGroupTitle groupTitle) {
+    private void showTabGroupContextMenuHelper(@Nullable StripLayoutGroupTitle groupTitle) {
         // No-op if the tab group isn't found in sync (it might have been removed from another
         // device and will be cleaned up here soon).
-        if (groupTitle.getTabGroupId() == null) return;
+        if (groupTitle == null || groupTitle.getTabGroupId() == null) return;
         // Popup menu requires screen coordinates for anchor view. Get absolute position for title.
         RectProvider anchorRectProvider = new RectProvider();
-        getAnchorRect(groupTitle, anchorRectProvider);
+        groupTitle.getAnchorRect(anchorRectProvider.getRect());
+        getAdjustedAnchorRect(anchorRectProvider);
         // If the menu is already showing (which may happen if the user does two long presses in
         // quick succession and showing the menu is slow), then abort.
-        if (mTabGroupContextMenuCoordinator.isMenuShowing()) return;
+        // Also note that we can assume mTabGroupContextMenuCoordinator is non-null since this
+        // method should only be called after mTabGroupContextMenuCoordinator is initialized.
+        if (assumeNonNull(mTabGroupContextMenuCoordinator).isMenuShowing()) return;
         mTabGroupContextMenuCoordinator.showMenu(anchorRectProvider, groupTitle.getTabGroupId());
     }
 
-    private void showTabContextMenu(StripLayoutTab tab) {
+    private void showTabContextMenu(List<Integer> tabIds, StripLayoutTab anchorTab) {
+        if (mModel == null || mTabGroupModelFilter == null) return;
         if (mTabContextMenuCoordinator == null) {
+            TabGroupCreationCallback tabGroupCreationCallback =
+                    (newTabGroupId) ->
+                            showTabGroupContextMenu(
+                                    findGroupTitle(newTabGroupId), /* shouldWaitForUpdate= */ true);
             if (mTabGroupListBottomSheetCoordinator == null) {
                 mTabGroupListBottomSheetCoordinator =
                         mTabGroupListBottomSheetCoordinatorFactory.create(
                                 mContext,
-                                mTabGroupModelFilter.getTabModel().getProfile(),
-                                (newTabGroupId) -> {
-                                    showTabGroupContextMenu(
-                                            findGroupTitle(newTabGroupId),
-                                            /* shouldWaitForUpdate= */ true);
-                                },
+                                assumeNonNull(mTabGroupModelFilter.getTabModel().getProfile()),
+                                tabGroupCreationCallback,
                                 /* tabMovedCallback= */ null,
                                 mTabGroupModelFilter,
                                 mBottomSheetController,
@@ -2207,33 +2428,60 @@ public class StripLayoutHelper
                             () -> mModel,
                             mTabGroupModelFilter,
                             mTabGroupListBottomSheetCoordinator,
+                            tabGroupCreationCallback,
                             mMultiInstanceManager,
                             mShareDelegateSupplier,
-                            mWindowAndroid);
+                            mWindowAndroid,
+                            mContext,
+                            (ids, toLeft) -> {
+                                assert ids.size() == 1
+                                        : "Expected to only be able to reorder individual tabs";
+                                // Don't use anchorTab here, since that will be the anchor of the
+                                // first-opened tab context menu (it won't change when a new context
+                                // menu is opened).
+                                mReorderDelegate.reorderViewInDirection(
+                                        mTabDelegate,
+                                        mStripViews,
+                                        mStripGroupTitles,
+                                        mStripTabs,
+                                        assumeNonNull(findTabById(ids.get(0))),
+                                        toLeft);
+                            });
         }
         RectProvider anchorRectProvider = new RectProvider();
-        getAnchorRect(tab, anchorRectProvider);
+        anchorTab.getAnchorRect(anchorRectProvider.getRect());
+        getAdjustedAnchorRect(anchorRectProvider);
         StripLayoutUtils.performHapticFeedback(mToolbarContainerView);
-        mTabContextMenuCoordinator.showMenu(anchorRectProvider, tab.getTabId());
+        mTabContextMenuCoordinator.showMenu(anchorRectProvider, tabIds);
     }
 
     /**
      * Opens the context menu for the keyboard-focused view, if applicable.
-     *
      * @return Whether the context menu was successfully opened.
      */
     public boolean openKeyboardFocusedContextMenu() {
-        List<VirtualView> virtualViews = new ArrayList<>();
-        getVirtualViews(virtualViews);
-        for (VirtualView view : virtualViews) {
-            if (!view.isKeyboardFocused()) continue;
-            return showContextMenu((StripLayoutView) view);
-        }
-        return false;
+        @Nullable StripLayoutView focusedView = getKeyboardFocusedView();
+        if (focusedView == null) return false;
+        return showContextMenu(focusedView);
     }
 
-    /* package */ void showTabContextMenuForTesting(StripLayoutTab tab) {
-        showTabContextMenu(tab);
+    /**
+     * Moves the currently keyboard-selected strip view to the left or right by one position.
+     *
+     * @param toLeft Whether to move towards the left (note: this is left even in RTL).
+     * @return Whether the item was successfully reordered.
+     */
+    public boolean moveSelectedStripView(boolean toLeft) {
+        @Nullable StripLayoutView focusedView = getKeyboardFocusedView();
+        if (focusedView == null) return false;
+        mReorderDelegate.reorderViewInDirection(
+                mTabDelegate, mStripViews, mStripGroupTitles, mStripTabs, focusedView, toLeft);
+        return true;
+    }
+
+    /* package */ void showTabContextMenuForTesting(
+            List<Integer> tabIds, StripLayoutTab anchorTab) {
+        showTabContextMenu(tabIds, anchorTab);
     }
 
     /* package */ void destroyTabContextMenuForTesting() {
@@ -2245,12 +2493,14 @@ public class StripLayoutHelper
      * clears the shared state accordingly.
      *
      * @param groupData The shared group data.
+     * @param tabGroupSyncService The {@link TabGroupSyncService}
      */
-    private void updateOrClearSharedState(GroupData groupData) {
+    private void updateOrClearSharedState(
+            GroupData groupData, TabGroupSyncService tabGroupSyncService) {
         String collaborationId = groupData.groupToken.collaborationId;
         StripLayoutGroupTitle groupTitle =
                 StripLayoutUtils.findGroupTitleByCollaborationId(
-                        mStripGroupTitles, collaborationId, mTabGroupSyncService);
+                        mStripGroupTitles, collaborationId, tabGroupSyncService);
         updateOrClearSharedState(groupData, groupTitle);
     }
 
@@ -2262,10 +2512,11 @@ public class StripLayoutHelper
      * @param groupData The shared group data.
      * @param groupTitle The group title to update or clear shared state.
      */
-    private void updateOrClearSharedState(GroupData groupData, StripLayoutGroupTitle groupTitle) {
+    private void updateOrClearSharedState(
+            @Nullable GroupData groupData, @Nullable StripLayoutGroupTitle groupTitle) {
         if (groupTitle == null) return;
         @GroupSharedState int groupSharedState = TabShareUtils.discernSharedGroupState(groupData);
-        if (groupSharedState == GroupSharedState.NOT_SHARED) {
+        if (groupSharedState == GroupSharedState.NOT_SHARED || groupData == null) {
             clearSharedTabGroup(groupTitle);
         } else {
             updateSharedTabGroup(groupData.groupToken.collaborationId, groupTitle);
@@ -2277,12 +2528,16 @@ public class StripLayoutHelper
      *
      * @param groupTitle The group title to update with the shared tab group state.
      */
-    private void updateSharedTabGroupIfNeeded(@NonNull StripLayoutGroupTitle groupTitle) {
+    private void updateSharedTabGroupIfNeeded(StripLayoutGroupTitle groupTitle) {
         Token tabGroupId = groupTitle.getTabGroupId();
         if (shouldEnableGroupSharing()) {
             SavedTabGroup savedTabGroup =
                     mTabGroupSyncService.getGroup(new LocalTabGroupId(tabGroupId));
-            if (savedTabGroup == null || savedTabGroup.collaborationId == null) return;
+            if (savedTabGroup == null
+                    || savedTabGroup.collaborationId == null
+                    || mCollaborationService == null) {
+                return;
+            }
 
             GroupData groupData = mCollaborationService.getGroupData(savedTabGroup.collaborationId);
             updateOrClearSharedState(groupData, groupTitle);
@@ -2296,23 +2551,25 @@ public class StripLayoutHelper
      * @param collaborationId The sharing ID associated with the group.
      * @param groupTitle The group title to update with the shared tab group state.
      */
-    private void updateSharedTabGroup(
-            String collaborationId, @NonNull StripLayoutGroupTitle groupTitle) {
+    private void updateSharedTabGroup(String collaborationId, StripLayoutGroupTitle groupTitle) {
+        if (mTabGroupModelFilter == null) return;
         // Setup tab bubbler used for showing notification bubbles for shared tab groups.
         if (groupTitle.getTabBubbler() == null) {
             TabBubbler tabBubbler =
                     new TabBubbler(
-                            mTabGroupModelFilter.getTabModel().getProfile(),
+                            assumeNonNull(mTabGroupModelFilter.getTabModel().getProfile()),
                             this,
                             new ObservableSupplierImpl<>(groupTitle.getTabGroupId()));
             groupTitle.setTabBubbler(tabBubbler);
         }
 
+        if (mDataSharingService == null || mCollaborationService == null) return;
         groupTitle.updateSharedTabGroup(
                 collaborationId,
                 mDataSharingService,
                 mCollaborationService,
                 (avatarRes) -> {
+                    if (mLayerTitleCache == null) return;
                     mLayerTitleCache.registerSharedGroupAvatar(
                             groupTitle.getTabGroupId(), avatarRes);
                 },
@@ -2325,9 +2582,11 @@ public class StripLayoutHelper
      *
      * @param groupTitle The groupTitle to clear shared state.
      */
-    private void clearSharedTabGroup(@NonNull StripLayoutGroupTitle groupTitle) {
+    private void clearSharedTabGroup(StripLayoutGroupTitle groupTitle) {
         groupTitle.clearSharedTabGroup();
-        mLayerTitleCache.removeSharedGroupAvatar(groupTitle.getTabGroupId());
+        if (mLayerTitleCache != null) {
+            mLayerTitleCache.removeSharedGroupAvatar(groupTitle.getTabGroupId());
+        }
         updateGroupTextAndSharedState(groupTitle);
     }
 
@@ -2344,13 +2603,13 @@ public class StripLayoutHelper
         }
     }
 
-    private void getAnchorRect(StripLayoutView stripLayoutView, RectProvider anchorRectProvider) {
+    private void getAdjustedAnchorRect(RectProvider anchorRectProvider) {
         int[] toolbarCoordinates = new int[2];
         Rect backgroundPadding = new Rect();
         mToolbarContainerView.getLocationInWindow(toolbarCoordinates);
         Drawable background = TabOverflowMenuCoordinator.getMenuBackground(mContext, mIncognito);
         background.getPadding(backgroundPadding);
-        stripLayoutView.getAnchorRect(anchorRectProvider.getRect());
+
         // Use parent toolbar view coordinates to offset title rect.
         // Also shift the anchor left by menu padding to align the menu exactly with title x.
         int xOffset =
@@ -2365,32 +2624,24 @@ public class StripLayoutHelper
     private void startReorderMode(
             float x, float y, StripLayoutView interactingView, @ReorderType int reorderType) {
         // Allow the user to drag the selected tab out of the tab strip.
-        if (interactingView != null) {
-            if (mReorderDelegate.getInReorderMode()) return;
-            // Attempt to start reordering. If the interacting view is a StripLayoutTab,
-            // only continue if it is valid (non-null, non-dying, non-placeholder) and
-            // the tab state is initialized.
-            if (interactingView instanceof StripLayoutTab interactingTab
-                    && (interactingTab.isDying()
-                            || interactingTab.getTabId() == Tab.INVALID_TAB_ID
-                            || !mTabStateInitialized)) {
-                return;
-            }
-
-            mReorderDelegate.startReorderMode(
-                    mStripViews,
-                    mStripTabs,
-                    mStripGroupTitles,
-                    interactingView,
-                    new PointF(x, y),
-                    reorderType);
-        } else {
-            // Broadcast to start moving the window instance as the user has long pressed on the
-            // open space of the tab strip.
-            // TODO(crbug.com/358191015): Decouple the move window broadcast from this method and
-            // maybe move to #onLongPress when `stripView` is null.
-            sendMoveWindowBroadcast(mToolbarContainerView, x, y);
+        if (mReorderDelegate.getInReorderMode()) return;
+        // Attempt to start reordering. If the interacting view is a StripLayoutTab,
+        // only continue if it is valid (non-null, non-dying, non-placeholder) and
+        // the tab state is initialized.
+        if (interactingView instanceof StripLayoutTab interactingTab
+                && (interactingTab.isDying()
+                        || interactingTab.getTabId() == Tab.INVALID_TAB_ID
+                        || !mTabStateInitialized)) {
+            return;
         }
+
+        mReorderDelegate.startReorderMode(
+                mStripViews,
+                mStripTabs,
+                mStripGroupTitles,
+                interactingView,
+                new PointF(x, y),
+                reorderType);
     }
 
     /**
@@ -2404,9 +2655,8 @@ public class StripLayoutHelper
         // Hovered into a tab on the strip.
         if (hoveredTab != null) {
             updateLastHoveredTab(hoveredTab);
-
             // Check whether the close button on the hovered tab is being hovered on.
-            hoveredTab.setCloseHovered(hoveredTab.checkCloseHitTest(x, y));
+            StripLayoutTabDelegate.updateTabCloseHoverState(hoveredTab, x, y);
         } else {
             // Check whether new tab button or model selector button is being hovered.
             updateCompositorButtonHoverState(x, y);
@@ -2427,34 +2677,30 @@ public class StripLayoutHelper
         // Hovered into a non-tab region within the strip.
         if (hoveredTab == null) {
             clearLastHoveredTab();
-            mUpdateHost.requestUpdate();
-            return;
-        }
-
-        // Hovered within the same tab that was last hovered into and close button hover state
-        // remains unchanged.
-        boolean isCloseHit = hoveredTab.checkCloseHitTest(x, y);
-        if (hoveredTab == mLastHoveredTab && hoveredTab.isCloseHovered() == isCloseHit) {
-            return;
         } else if (hoveredTab == mLastHoveredTab) {
-            // Hovered within the same tab that was last hovered into, but close button hover state
-            // has changed.
-            hoveredTab.setCloseHovered(isCloseHit);
+            if (!StripLayoutTabDelegate.updateTabCloseHoverState(hoveredTab, x, y)) return;
         } else {
             // Hovered from one tab to another tab on the strip.
             clearLastHoveredTab();
             updateLastHoveredTab(hoveredTab);
         }
-
         mUpdateHost.requestUpdate();
     }
 
     /** Called on hover exit event. */
-    public void onHoverExit() {
+    public void onHoverExit(boolean inTabStrip) {
+        // TODO(crbug.com/419015257): Use inTabStrip to delay resize on tab close from mouse.
         clearLastHoveredTab();
 
         // Clear tab strip button (NTB and MSB) hover state.
         clearCompositorButtonHoverStateIfNotClicked();
+
+        // Trigger a resize, as the pointer has left the strip, and we no longer need to suppress.
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_STRIP_MOUSE_CLOSE_RESIZE_DELAY)
+                && !inTabStrip) {
+            clearPendingMouseTabClosureState();
+            computeAndUpdateTabWidth(/* animate= */ true, /* deferAnimations= */ false);
+        }
 
         mUpdateHost.requestUpdate();
     }
@@ -2520,7 +2766,6 @@ public class StripLayoutHelper
         }
     }
 
-    @VisibleForTesting
     void setTabHoverCardView(StripTabHoverCardView tabHoverCardView) {
         mTabHoverCardView = tabHoverCardView;
         // If onHoverEnter was already processed before this method call, show card now.
@@ -2529,15 +2774,16 @@ public class StripLayoutHelper
         }
     }
 
-    StripTabHoverCardView getTabHoverCardViewForTesting() {
+    @Nullable StripTabHoverCardView getTabHoverCardViewForTesting() {
         return mTabHoverCardView;
     }
 
     void setLastHoveredTabForTesting(StripLayoutTab tab) {
         mLastHoveredTab = tab;
+        mTabDelegate.setIsTabHovered(tab, true);
     }
 
-    StripLayoutTab getLastHoveredTab() {
+    @Nullable StripLayoutTab getLastHoveredTab() {
         return mLastHoveredTab;
     }
 
@@ -2546,22 +2792,26 @@ public class StripLayoutHelper
         mTabGroupContextMenuCoordinator = tabGroupContextMenuCoordinator;
     }
 
+    @SuppressWarnings("NullAway")
     void setTabContextMenuCoordinatorForTesting(
             TabContextMenuCoordinator tabGroupContextMenuCoordinator) {
         mTabContextMenuCoordinator = tabGroupContextMenuCoordinator;
         ResettersForTesting.register(() -> mTabContextMenuCoordinator = null);
     }
 
+    @SuppressWarnings("NullAway")
+    void setTabStripContextMenuCoordinatorForTesting(
+            TabStripContextMenuCoordinator tabStripContextMenuCoordinator) {
+        mTabStripContextMenuCoordinator = tabStripContextMenuCoordinator;
+        ResettersForTesting.register(() -> mTabStripContextMenuCoordinator = null);
+    }
+
     private void clearLastHoveredTab() {
         if (mLastHoveredTab == null) {
             return;
         }
-        // Clear close button hover state.
-        mLastHoveredTab.setCloseHovered(false);
-        // Remove the highlight from the last hovered tab.
-        updateHoveredTabAttachedState(mLastHoveredTab, false);
+        mTabDelegate.setIsTabHovered(mLastHoveredTab, false);
         mLastHoveredTab = null;
-
         // Hide hover card view.
         mStripTabEventHandler.removeMessages(MESSAGE_HOVER_CARD);
         // Hover card view can be null if hover event was processed before view inflation completes.
@@ -2588,15 +2838,7 @@ public class StripLayoutHelper
         if (isViewCompletelyHidden(hoveredTab)) return;
 
         mLastHoveredTab = hoveredTab;
-        CompositorAnimator.ofFloatProperty(
-                        mUpdateHost.getAnimationHandler(),
-                        hoveredTab,
-                        StripLayoutTab.OPACITY,
-                        hoveredTab.getContainerOpacity(),
-                        TAB_OPACITY_VISIBLE,
-                        ANIM_HOVERED_TAB_CONTAINER_FADE_MS)
-                .start();
-        updateHoveredTabAttachedState(mLastHoveredTab, true);
+        mTabDelegate.setIsTabHovered(hoveredTab, true);
 
         // Show the tab hover card.
         // Just in case, cancel the previous delayed hover card event.
@@ -2664,6 +2906,8 @@ public class StripLayoutHelper
             return;
         }
 
+        if (mModel == null) return;
+
         // Don't allow the hovercard to show when any context menu is already showing.
         if (isViewContextMenuShowing()) return;
 
@@ -2675,18 +2919,6 @@ public class StripLayoutHelper
                 mLastHoveredTab.getWidth(),
                 mHeight,
                 mTopPadding);
-    }
-
-    private void updateHoveredTabAttachedState(StripLayoutTab tab, boolean hovered) {
-        if (tab == null) return;
-
-        // Do not update the attached state of a selected tab that is hovered on.
-        if (isSelectedTab(tab.getTabId())) return;
-
-        // If a tab is hovered on, detach its container.
-        tab.setFolioAttached(!hovered);
-        tab.setBottomMargin(
-                hovered ? FOLIO_DETACHED_BOTTOM_MARGIN_DP : FOLIO_ATTACHED_BOTTOM_MARGIN_DP);
     }
 
     /**
@@ -2711,7 +2943,8 @@ public class StripLayoutHelper
      * @param allowUndo whether to allow undo of tab closure, such as showing the "undo" snackbar.
      * @see #finishAnimationsAndCloseDyingTabs(boolean)
      */
-    private void handleCloseTab(StripLayoutTab tab, boolean allowUndo) {
+    @VisibleForTesting
+    void handleCloseTab(StripLayoutTab tab, boolean allowUndo) {
         mMultiStepTabCloseAnimRunning = false;
         finishAnimationsAndCloseDyingTabs(allowUndo);
 
@@ -2724,6 +2957,15 @@ public class StripLayoutHelper
         tab.setIsDying(true);
 
         // 2. Start the tab closing animator with a listener to resize/move tabs after the closure.
+        // If closing the end-most tab, set an offset to prevent the tab from "jumping" to align
+        // with the new end-most tab. This will be cleared when the resize is animated.
+        if (!ChromeFeatureList.sTabletTabStripAnimation.isEnabled()
+                && isEndMostTab(tab.getTabId())) {
+            mNewTabButton.setOffsetX(
+                    MathUtils.flipSignIf(
+                            getEffectiveTabWidth(/* isPinned= */ false),
+                            LocalizationUtils.isLayoutRtl()));
+        }
         AnimatorListener listener =
                 new AnimatorListenerAdapter() {
                     @Override
@@ -2732,18 +2974,7 @@ public class StripLayoutHelper
                         finishAnimationsAndCloseDyingTabs(allowUndo);
 
                         if (!ChromeFeatureList.sTabletTabStripAnimation.isEnabled()) {
-                            if (runImprovedTabAnimations) {
-                                resizeStripOnTabClose(getTabById(tab.getTabId()));
-                            } else {
-                                mMultiStepTabCloseAnimRunning = false;
-                                mNewTabButtonAnimRunning = false;
-
-                                // Resize the tabs appropriately.
-                                computeAndUpdateTabWidth(
-                                        /* animate= */ true,
-                                        /* deferAnimations= */ false,
-                                        /* closedTab= */ null);
-                            }
+                            resizeStripOnTabClose(runImprovedTabAnimations);
                         }
                     }
                 };
@@ -2752,45 +2983,69 @@ public class StripLayoutHelper
         // 3. If we're closing the selected tab, attempt to select the next expanded tab now. If
         // none exists, we'll default to the normal auto-selection behavior (i.e. selecting the
         // closest collapsed tab, or opening the GTS if none exist).
-        if (getSelectedTabId() == tab.getTabId()) {
-            int nextIndex = getNearbyExpandedTabIndex();
-            if (nextIndex != TabModel.INVALID_TAB_INDEX) {
-                TabModelUtils.setIndex(mModel, nextIndex);
+        if (mModel != null && getSelectedTabId() == tab.getTabId()) {
+            int nextIndex = getNextIndexAfterClose(Collections.singleton(tab));
+            if (nextIndex != TabModel.INVALID_TAB_INDEX) TabModelUtils.setIndex(mModel, nextIndex);
+        }
+    }
+
+    private Animator getLegacyTabClosedAnimator(StripLayoutTab tab) {
+        return CompositorAnimator.ofFloatProperty(
+                mUpdateHost.getAnimationHandler(),
+                tab,
+                StripLayoutTab.Y_OFFSET,
+                tab.getOffsetY(),
+                tab.getHeight(),
+                ANIM_TAB_CLOSED_MS);
+    }
+
+    private Animator getViewWidthAnimator(StripLayoutView view, float targetWidth, int duration) {
+        return CompositorAnimator.ofFloatProperty(
+                mUpdateHost.getAnimationHandler(),
+                view,
+                StripLayoutView.WIDTH,
+                view.getWidth(),
+                targetWidth,
+                duration);
+    }
+
+    private List<Animator> getTabClosingAnimators(Collection<StripLayoutTab> tabs) {
+        if (ChromeFeatureList.sTabletTabStripAnimation.isEnabled()) {
+            // computeAndUpdateTabWidth handles animating a tab closing.
+            List<Animator> tabClosingAnimators =
+                    computeAndUpdateTabWidth(/* animate= */ true, /* deferAnimations= */ true);
+            if (tabClosingAnimators != null) return tabClosingAnimators;
+            return new ArrayList<>();
+        } else {
+            mMultiStepTabCloseAnimRunning = true;
+            List<Animator> tabClosingAnimators = new ArrayList<>();
+            for (StripLayoutTab tab : tabs) {
+                tabClosingAnimators.add(getLegacyTabClosedAnimator(tab));
             }
+            return tabClosingAnimators;
         }
     }
 
     private void runTabRemovalAnimation(StripLayoutTab tab, AnimatorListener listener) {
-        // 1. Setup the close animation.
-        List<Animator> tabClosingAnimators = new ArrayList<>();
-        if (ChromeFeatureList.sTabletTabStripAnimation.isEnabled()) {
-            // computeAndUpdateTabWidth handles animating a tab closing.
-            tabClosingAnimators =
-                    computeAndUpdateTabWidth(
-                            /* animate= */ true,
-                            /* deferAnimations= */ true,
-                            /* closedTab= */ getTabById(tab.getTabId()));
-        } else {
-            tabClosingAnimators.add(
-                    CompositorAnimator.ofFloatProperty(
-                            mUpdateHost.getAnimationHandler(),
-                            tab,
-                            StripLayoutTab.Y_OFFSET,
-                            tab.getOffsetY(),
-                            tab.getHeight(),
-                            ANIM_TAB_CLOSED_MS));
-            // 2. Start the animation.
-            mNewTabButtonAnimRunning = true;
-            mMultiStepTabCloseAnimRunning = true;
-        }
-        startAnimations(tabClosingAnimators, listener);
+        startAnimations(getTabClosingAnimators(Collections.singletonList(tab)), listener);
     }
 
-    private void resizeStripOnTabClose(Tab closedTab) {
+    private void resizeStripOnTabClose(boolean runImprovedTabAnimations) {
+        if (runImprovedTabAnimations) {
+            resizeStripOnTabClose();
+        } else {
+            mNewTabButton.setOffsetX(/* offsetX= */ 0.f);
+            mMultiStepTabCloseAnimRunning = false;
+            // Resize the tabs appropriately.
+            computeAndUpdateTabWidth(/* animate= */ true, /* deferAnimations= */ false);
+        }
+    }
+
+    private void resizeStripOnTabClose() {
         List<Animator> tabStripAnimators = new ArrayList<>();
 
         // 1. Add tabs expanding animators to expand remaining tabs to fill scrollable area.
-        List<Animator> tabExpandAnimators = computeAndUpdateTabWidth(true, true, closedTab);
+        List<Animator> tabExpandAnimators = computeAndUpdateTabWidth(true, true);
         if (tabExpandAnimators != null) tabStripAnimators.addAll(tabExpandAnimators);
 
         // 2. Calculate new scroll offset and idealX for tab offset animation.
@@ -2821,8 +3076,17 @@ public class StripLayoutHelper
             tabStripAnimators.add(drawXAnimator);
         }
 
-        // 4. Add new tab button offset animation.
-        tabStripAnimators.add(getLastTabClosedNtbAnimator());
+        // 4. Add new tab button offset animation if needed.
+        if (mNewTabButton.getOffsetX() != 0.f) {
+            tabStripAnimators.add(
+                    CompositorAnimator.ofFloatProperty(
+                            mUpdateHost.getAnimationHandler(),
+                            mNewTabButton,
+                            StripLayoutView.X_OFFSET,
+                            mNewTabButton.getOffsetX(),
+                            /* endValue= */ 0.f,
+                            ANIM_TAB_RESIZE_MS));
+        }
 
         // 5. Add animation completion listener and start animations.
         startAnimations(
@@ -2831,7 +3095,6 @@ public class StripLayoutHelper
                     @Override
                     public void onAnimationEnd(Animator animation) {
                         mMultiStepTabCloseAnimRunning = false;
-                        mNewTabButtonAnimRunning = false;
                     }
                 });
     }
@@ -2843,25 +3106,29 @@ public class StripLayoutHelper
      * @param x The x coordinate of the position of the click.
      * @param y The y coordinate of the position of the click.
      * @param buttons State of all buttons that were pressed when onDown was invoked.
+     * @param modifiers State of all Meta/Modifier keys that are pressed.
      */
-    public void click(long time, float x, float y, int buttons) {
-        resetResizeTimeout(false);
+    public void click(long time, float x, float y, int buttons, int modifiers) {
         StripLayoutView clickedView = determineClickedView(x, y, buttons);
-        if (clickedView == null) return;
         clearLastHoveredTab();
+        if (clickedView == null) {
+            if (MotionEventUtils.isSecondaryClick(buttons)) {
+                // A right click on empty strip space should trigger the strip context menu.
+                showTabStripContextMenu(x, y);
+            }
+            return;
+        }
         if (MotionEventUtils.isSecondaryClick(buttons)) {
             showContextMenu(clickedView);
         } else {
-            clickedView.handleClick(time, buttons);
+            clickedView.handleClick(time, buttons, modifiers);
         }
     }
 
     /**
      * Called on up or cancel touch events. This is called after the click and fling event if any.
-     *
-     * @param time The current time of the app in ms.
      */
-    public void onUpOrCancel(long time) {
+    public void onUpOrCancel() {
         /* 1. Stop any reordering that is happening. For Android drag&drop, this method is invoked
          * immediately after View#startDrag to stop ongoing gesture events. Do not stop reorder in
          * this case.
@@ -2871,16 +3138,19 @@ public class StripLayoutHelper
         // 2. Reset state
         if (mNewTabButton.onUpOrCancel() && mModel != null) {
             if (!mModel.isIncognito()) mModel.commitAllTabClosures();
-            mTabCreator.launchNtp();
+            if (mTabCreator != null) mTabCreator.launchNtp();
         }
         mIsStripScrollInProgress = false;
         resetDelayedReorderState();
     }
 
     @Override
-    public void onClick(long time, StripLayoutView view, int motionEventButtonState) {
+    public void onClick(
+            long time, StripLayoutView view, int motionEventButtonState, int modifiers) {
         if (view instanceof StripLayoutTab tab) {
-            handleTabClick(tab);
+            handleTabClick(
+                    tab, modifiers, MotionEventUtils.isPrimaryButton(motionEventButtonState));
+            return;
         } else if (view instanceof StripLayoutGroupTitle groupTitle) {
             handleGroupTitleClick(groupTitle);
         } else if (view instanceof CompositorButton button) {
@@ -2889,8 +3159,12 @@ public class StripLayoutHelper
             } else if (button.getType() == ButtonType.TAB_CLOSE) {
                 handleCloseButtonClick(
                         (StripLayoutTab) button.getParentView(), motionEventButtonState);
+                return;
             }
         }
+        // If multi-selection is active, any click on the tab strip that is not a tab should clear
+        // the selection.
+        clearMultiSelection(/* clearAnchor= */ true, /* notifyObservers= */ true);
     }
 
     @Override
@@ -2912,47 +3186,305 @@ public class StripLayoutHelper
      * @return Whether a context menu was shown.
      */
     private boolean showContextMenu(StripLayoutView clickedView) {
-        if (clickedView instanceof StripLayoutTab clickedTab
-                && ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_STRIP_CONTEXT_MENU)) {
-            showTabContextMenu(clickedTab);
+        if (clickedView == null) return false;
+        if (clickedView instanceof StripLayoutTab clickedTab) {
+            // The current tab is always multi selected. So we need to check if there are more tabs
+            // in multi-selection.
+            if (mModel != null
+                    && mModel.isTabMultiSelected(clickedTab.getTabId())
+                    && mModel.getMultiSelectedTabsCount() > 1) {
+                showTabContextMenu(getMultiSelectedTabIds(), clickedTab);
+            } else {
+                if (mModel != null) {
+                    mModel.clearMultiSelection(/* notifyObservers= */ true);
+                }
+                showTabContextMenu(Collections.singletonList(clickedTab.getTabId()), clickedTab);
+            }
             return true;
         } else if (clickedView instanceof CompositorButton button
                 && button.getType() == ButtonType.TAB_CLOSE) {
-            showCloseButtonMenu((StripLayoutTab) button.getParentView());
+            if (mModel != null) {
+                mModel.clearMultiSelection(/* notifyObservers= */ true);
+            }
+            showCloseButtonMenu(assumeNonNull((StripLayoutTab) button.getParentView()));
             return true;
         } else if (clickedView instanceof StripLayoutGroupTitle groupTitle) {
+            if (mModel != null) {
+                mModel.clearMultiSelection(/* notifyObservers= */ true);
+            }
             showTabGroupContextMenu(groupTitle, /* shouldWaitForUpdate= */ false);
             return true;
         }
         return false;
     }
 
-    private void handleTabClick(StripLayoutTab tab) {
-        if (tab == null || tab.isDying()) return;
+    /**
+     * Shows the context menu originating at strip coordinates ({@code xDp}, {@code yDp}) to handle
+     * a long-press or right-click event at this position. The coordinates are assumed to lie on the
+     * empty space of the tab strip. For context menus associated with gestures on a {@link
+     * StripLayoutView}, see {@link #showContextMenu(StripLayoutView)}.
+     *
+     * @param xDp The x coordinate of the position of the gesture event.
+     * @param yDp The y coordinate of the position of the gesture event.
+     */
+    private void showTabStripContextMenu(float xDp, float yDp) {
+        if (mTabStripContextMenuCoordinator == null) {
+            mTabStripContextMenuCoordinator =
+                    new TabStripContextMenuCoordinator(mContext, mMultiInstanceManager);
+        }
+
+        // Determine the anchor view rect to position the menu.
+        float dpToPx = mContext.getResources().getDisplayMetrics().density;
+        RectProvider anchorRectProvider = new RectProvider();
+        anchorRectProvider.setRect(
+                new Rect(
+                        Math.round(xDp * dpToPx),
+                        Math.round(yDp * dpToPx),
+                        Math.round(xDp * dpToPx),
+                        Math.round(yDp * dpToPx)));
+        getAdjustedAnchorRect(anchorRectProvider);
+
+        var activity = assertNonNull(mWindowAndroid.getActivity().get());
+        mTabStripContextMenuCoordinator.showMenu(
+                anchorRectProvider, assumeNonNull(mModel).isIncognito(), activity);
+    }
+
+    private List<Integer> getMultiSelectedTabIds() {
+        StripLayoutUtils.recordTabMultiSelectionTabCount(mModel);
+        List<Integer> multiSelectedTabs = new ArrayList<>();
+        if (mModel == null) return multiSelectedTabs;
+        for (StripLayoutTab stripTab : mStripTabs) {
+            if (mModel.isTabMultiSelected(stripTab.getTabId())) {
+                multiSelectedTabs.add(stripTab.getTabId());
+            }
+        }
+        assert multiSelectedTabs.size() == mModel.getMultiSelectedTabsCount()
+                : "Count of multi selected tabs don't match.";
+        assert multiSelectedTabs.size() >= 2 : "Too few tabs in multi selection";
+        return multiSelectedTabs;
+    }
+
+    /**
+     * Processes a click event on a tab, dispatching to the appropriate multi-select handler based
+     * on the keyboard modifier state. This serves as the main entry point for all multi-selection
+     * click logic.
+     *
+     * @param tab The {@link StripLayoutTab} that was clicked by the user.
+     * @param modifiers The active keyboard modifiers from the {@link MotionEvent#getMetaState()}.
+     * @param isMouseClick True if the click event originated from a mouse.
+     */
+    private void handleTabClick(StripLayoutTab tab, int modifiers, boolean isMouseClick) {
+        if (tab == null || tab.isDying() || mModel == null) return;
+
+        // Restrict modified clicks to mouse input only for a predictable experience.
+        // If feature disabled, return to legacy behaviour.
+        if (!ChromeFeatureList.sAndroidTabHighlighting.isEnabled()
+                    || (!isMouseClick && !StripLayoutUtils.isTabHighlightingTestingEnabled())) {
+            selectTab(tab);
+            clearMultiSelection(/* clearAnchor= */ true, /* notifyObservers= */ true);
+            mRenderHost.requestRender();
+            return;
+        }
+
+        // Force flags are required for testing on an emulator, as key presses don't seem to be
+        // propagated to the app.
+        boolean isShiftPressed = (modifiers & KeyEvent.META_SHIFT_ON) != 0
+                || StripLayoutUtils.isTabHighlightingForceShiftClick();
+        boolean isCtrlPressed = (modifiers & KeyEvent.META_CTRL_ON) != 0
+                || StripLayoutUtils.isTabHighlightingForceCtrlClick();
+
+        if (isShiftPressed && isCtrlPressed) {
+            handleShiftClick(tab, /* isDestructive= */ false);
+        } else if (isShiftPressed) {
+            handleShiftClick(tab, /* isDestructive= */ true);
+        } else if (isCtrlPressed) {
+            handleCtrlClick(tab);
+        } else {
+            selectTab(tab);
+            clearMultiSelection(/* clearAnchor= */ true, /* notifyObservers= */ true);
+        }
+
+        mRenderHost.requestRender();
+    }
+
+    /**
+     * Handles a Ctrl+Click event, which toggles the selection state of a single tab. If the tab is
+     * already in the multi-selection set, it is removed; otherwise, it is added. If the tab is
+     * added to the selection, it is also set as the active tab.
+     *
+     * @param clickedTab The tab that was clicked.
+     */
+    private void handleCtrlClick(StripLayoutTab clickedTab) {
+        if (clickedTab == null || clickedTab.isDying() || mModel == null) return;
+        int tabId = clickedTab.getTabId();
+        // If the tab is already multi-selected, ctrl click should unselect it.
+        if (mModel.isTabMultiSelected(tabId)) {
+            if (tabId == getSelectedTabId()) {
+                handleSelectedTabCtrlClicked(tabId);
+                return;
+            }
+            mModel.setTabsMultiSelected(Collections.singleton(tabId), false);
+        } else {
+            int oldSelectedTabId = getSelectedTabId();
+            // select clicked tab.
+            selectTab(clickedTab);
+            // When Ctrl clicked, even the previous tab gets selected.
+            mModel.setTabsMultiSelected(Set.of(tabId, oldSelectedTabId), true);
+            // Clear anchor tab.
+            mAnchorTabId = Tab.INVALID_TAB_ID;
+        }
+    }
+
+    /**
+     * Handles a Shift+Click event, which selects a range of tabs from an anchor tab to the clicked
+     * tab.
+     *
+     * @param clickedTab The tab that was clicked, representing the endpoint of the range.
+     * @param isDestructive If true, any existing multi-selection is cleared before the new range is
+     *     selected. If false, the new range is added to the existing selection.
+     */
+    private void handleShiftClick(StripLayoutTab clickedTab, boolean isDestructive) {
+        if (clickedTab == null || clickedTab.isDying() || mModel == null) return;
+        if (isDestructive) {
+            clearMultiSelection(/* clearAnchor= */ false, /* notifyObservers= */ false);
+        }
+        if (mAnchorTabId == Tab.INVALID_TAB_ID) {
+            // If there's no anchor, treat the previously selected tab as anchor.
+            mAnchorTabId = getSelectedTabId();
+        }
+
+        int anchorIndex = mModel.indexOf(getTabById(mAnchorTabId));
+        int clickedIndex = mModel.indexOf(getTabById(clickedTab.getTabId()));
+
+        int startIndex = Math.min(anchorIndex, clickedIndex);
+        int endIndex = Math.max(anchorIndex, clickedIndex);
+
+        Set<Integer> selectedTabIds = new HashSet<>();
+        Set<Token> tabGroupIds = new HashSet<>();
+        if (startIndex != -1 && endIndex != -1) {
+            for (int i = startIndex; i <= endIndex; i++) {
+                int tabId = mStripTabs[i].getTabId();
+                selectedTabIds.add(tabId);
+                Tab tab = mModel.getTabById(tabId);
+                // If part of a tab group, expand the tab group.
+                if (tab == null) return;
+                Token tabGroupId = tab.getTabGroupId();
+                if (tabGroupId != null
+                        && !tabGroupIds.contains(tabGroupId)
+                        && mTabGroupModelFilter != null) {
+                    mTabGroupModelFilter.setTabGroupCollapsed(
+                            tabGroupId, false, /* animate= */ true);
+                    tabGroupIds.add(tabGroupId);
+                }
+            }
+        }
+        selectTab(clickedTab);
+        mModel.setTabsMultiSelected(/* tabIds= */ selectedTabIds, /* isSelected= */ true);
+    }
+
+    /**
+     * Sets the given tab as the currently active tab in the TabModel and records relevant usage
+     * metrics.
+     *
+     * @param tab The tab to select.
+     */
+    private void selectTab(StripLayoutTab tab) {
+        if (tab == null || tab.isDying() || mModel == null) return;
         RecordUserAction.record("MobileTabSwitched.TabletTabStrip");
         recordTabSwitchTimeHistogram();
 
         int newIndex = TabModelUtils.getTabIndexById(mModel, tab.getTabId());
-
         // Early return, since placeholder tabs are known to not have tab ids.
         if (newIndex == Tab.INVALID_TAB_ID) return;
-
         TabModelUtils.setIndex(mModel, newIndex);
     }
 
-    private void handleGroupTitleClick(StripLayoutGroupTitle groupTitle) {
-        if (groupTitle == null) return;
+    /**
+     * Clears the entire set of multi-selected tabs.
+     *
+     * @param clearAnchor If true, the anchor tab for Shift+Click range selection is also reset.
+     */
+    private void clearMultiSelection(boolean clearAnchor, boolean notifyObservers) {
+        if (clearAnchor) {
+            // Clear anchor tab.
+            mAnchorTabId = Tab.INVALID_TAB_ID;
+        }
+        if (mModel == null) return;
+        mModel.clearMultiSelection(notifyObservers);
+    }
 
-        int rootId = groupTitle.getRootId();
-        boolean isCollapsed = mTabGroupModelFilter.getTabGroupCollapsed(rootId);
+    /**
+     * Handles the specific user action of Ctrl+clicking the currently active tab. This action
+     * deselects the active tab and transfers the active status to another tab within the existing
+     * multi-selection. The new active tab will be the leftmost tab in the current selection. if the
+     * clicked tab is the only one selected, this method does nothing to prevent a state with no
+     * active tab.
+     *
+     * @param tabId The ID of the currently active tab that was clicked.
+     */
+    private void handleSelectedTabCtrlClicked(int tabId) {
+        if (mModel == null || mModel.getMultiSelectedTabsCount() <= 1 || mStripTabs.length <= 1) {
+            // Can't deselect the only tab.
+            return;
+        }
+
+        // Find and select the new active tab, which will be the leftmost tab
+        // in the selection that isn't the one being deselected.
+        for (StripLayoutTab stripTab : mStripTabs) {
+            int id = stripTab.getTabId();
+            if (id != tabId && mModel.isTabMultiSelected(id)) {
+                selectTab(stripTab);
+                mModel.setTabsMultiSelected(Collections.singleton(tabId), false);
+                break;
+            }
+        }
+    }
+
+    /**
+     * Toggles multiselection on the keyboard focused tab.
+     *
+     * @return Whether the multiselect action was successfully performed.
+     */
+    public boolean multiselectKeyboardFocusedItem() {
+        @Nullable StripLayoutView focusedView = getKeyboardFocusedView();
+        if (focusedView instanceof StripLayoutTab) {
+            multiselectKeyboardFocusedItem((StripLayoutTab) focusedView);
+            return true;
+        }
+        return false;
+    }
+
+    private void multiselectKeyboardFocusedItem(StripLayoutTab tab) {
+        if (tab == null || tab.isDying() || mModel == null) return;
+        int tabId = tab.getTabId();
+        // If the tab is already multi-selected, unselect it.
+        if (mModel.isTabMultiSelected(tabId)) {
+            mModel.setTabsMultiSelected(Collections.singleton(tabId), false);
+        } else {
+            int activeTabId = getSelectedTabId();
+            // When toggling multiselect, we need to add the active tab to the multi-selection set.
+            // This is an additive operation, and does not reset the selection set.
+            mModel.setTabsMultiSelected(Set.of(tabId, activeTabId), true);
+        }
+    }
+
+    public int getAnchorTabIdForTesting() {
+        return mAnchorTabId;
+    }
+
+    private void handleGroupTitleClick(StripLayoutGroupTitle groupTitle) {
+        if (groupTitle == null || mTabGroupModelFilter == null) return;
+
+        Token tabGroupId = groupTitle.getTabGroupId();
+        boolean isCollapsed = mTabGroupModelFilter.getTabGroupCollapsed(tabGroupId);
         assert isCollapsed == groupTitle.isCollapsed();
 
-        mTabGroupModelFilter.setTabGroupCollapsed(rootId, !isCollapsed, /* animate= */ true);
+        mTabGroupModelFilter.setTabGroupCollapsed(tabGroupId, !isCollapsed, /* animate= */ true);
         RecordHistogram.recordBooleanHistogram("Android.TabStrip.TabGroupCollapsed", !isCollapsed);
     }
 
     private void handleNewTabClick() {
-        if (mModel == null) return;
+        if (mModel == null || mTabCreator == null) return;
 
         RecordUserAction.record("MobileToolbarNewTab");
         if (!mModel.isIncognito()) mModel.commitAllTabClosures();
@@ -2980,21 +3512,40 @@ public class StripLayoutHelper
      * @see #handleCloseTab(StripLayoutTab, boolean)
      */
     @VisibleForTesting
-    void handleCloseButtonClick(StripLayoutTab tab, int motionEventButtonState) {
+    void handleCloseButtonClick(@Nullable StripLayoutTab tab, int motionEventButtonState) {
         // Placeholder tabs are expected to have invalid tab ids.
         if (tab == null || tab.isDying() || tab.getTabId() == Tab.INVALID_TAB_ID) return;
         RecordUserAction.record("MobileToolbarCloseTab");
+
         int tabId = tab.getTabId();
-        Tab realTab = getTabById(tabId);
-        int rootId = realTab.getRootId();
-        StripTabModelActionListener listener =
-                new StripTabModelActionListener(
-                        rootId,
-                        ActionType.CLOSE,
-                        mGroupIdToHideSupplier,
-                        mToolbarContainerView,
-                        /* beforeSyncDialogRunnable= */ null,
-                        /* onSuccess= */ null);
+        Tab realTab = assumeNonNull(getTabById(tabId));
+        Token tabGroupId = realTab.getTabGroupId();
+
+        // Set mouse tab closure state.
+        if (MotionEventUtils.isPrimaryButton(motionEventButtonState)) {
+            mPendingMouseTabClosure = true;
+            boolean pendingClosureIsEndMostTab = isEndMostTab(tabId);
+            if (pendingClosureIsEndMostTab) {
+                // Store the properties since the tab may be removed by the time we're resizing. We
+                // can't infer the width from #getCachedTabWidth when we're resizing, since we might
+                // call #computeAndUpdateTabWidth multiple times, changing the cached width.
+                mClosingEndMostTabDrawX = tab.getDrawX();
+                mClosingEndMostTabWidth = tab.getWidth();
+            }
+        }
+
+        // Prepare close params.
+        StripTabModelActionListener listener = null;
+        if (tabGroupId != null) {
+            listener =
+                    new StripTabModelActionListener(
+                            tabGroupId,
+                            ActionType.CLOSE,
+                            mGroupIdToHideSupplier,
+                            mToolbarContainerView,
+                            /* beforeSyncDialogRunnable= */ null,
+                            /* onSuccess= */ null);
+        }
         Callback<TabClosureParams> onPreparedCallback =
                 (tabClosureParams) -> {
                     // Note: the documentation of TabRemover#prepareCloseTabs() says we should use
@@ -3009,20 +3560,39 @@ public class StripLayoutHelper
                     // TODO(crbug.com/415079634): check if passing TabClosureParams to
                     //  finishAnimationsAndCloseDyingTabs() is the right thing to do since this
                     //  indicates only closing the tab that was clicked instead of all dying tabs.
-                    assert tabClosureParams.tabs.size() == 1
-                            && tabClosureParams.tabs.get(0) == realTab;
+                    List<Tab> tabs = tabClosureParams.tabs;
+                    assert tabs != null && tabs.size() == 1 && tabs.get(0) == realTab;
                     handleCloseTab(tab, tabClosureParams.allowUndo);
                 };
 
         boolean allowUndo = TabClosureParamsUtils.shouldAllowUndo(motionEventButtonState);
-        TabClosureParams params = TabClosureParams.closeTab(realTab).allowUndo(allowUndo).build();
+        TabClosureParams params =
+                TabClosureParams.closeTab(realTab)
+                        .allowUndo(allowUndo)
+                        .tabClosingSource(TabClosingSource.TABLET_TAB_STRIP)
+                        .build();
+        if (mTabGroupModelFilter == null) return;
         mTabGroupModelFilter
                 .getTabModel()
                 .getTabRemover()
                 .prepareCloseTabs(params, /* allowDialog= */ true, listener, onPreparedCallback);
     }
 
-    private StripLayoutView determineClickedView(float x, float y, int buttons) {
+    private void clearPendingMouseTabClosureState() {
+        mPendingMouseTabClosure = false;
+        mClosingEndMostTabDrawX = null;
+        mClosingEndMostTabWidth = null;
+    }
+
+    private void clearClosingGroupTitleState(Token tabGroupId) {
+        releaseResourcesForGroupTitle(tabGroupId);
+        if (Objects.equals(tabGroupId, mGroupIdToHideSupplier.get())) {
+            // Clear the hidden group ID if the group has been removed from the model.
+            mGroupIdToHideSupplier.set(null);
+        }
+    }
+
+    private @Nullable StripLayoutView determineClickedView(float x, float y, int buttons) {
         if (mNewTabButton.click(x, y, buttons)) return mNewTabButton;
         StripLayoutView view = getViewAtPositionX(x, true);
         if (view instanceof StripLayoutTab clickedTab) {
@@ -3051,9 +3621,7 @@ public class StripLayoutHelper
         mMostRecentTabScroll = null;
     }
 
-    /**
-     * @return Whether or not the tabs are moving.
-     */
+    /** Returns Whether or not the tabs are moving. */
     public boolean isAnimatingForTesting() {
         return (mRunningAnimator != null && mRunningAnimator.isRunning())
                 || !mScrollDelegate.isFinished();
@@ -3066,6 +3634,9 @@ public class StripLayoutHelper
 
     @Override
     public void finishAnimations() {
+        // Start any queued animations. This will ensure that their end state is reached, and any
+        // listeners are triggered accordingly.
+        startQueuedAnimationsIfAny();
         // Force any outstanding animations to finish. Need to recurse as some animations (like the
         // multi-step tab close animation) kick off another animation once the first ends.
         while (mRunningAnimator != null && mRunningAnimator.isRunning()) {
@@ -3075,11 +3646,9 @@ public class StripLayoutHelper
     }
 
     @Override
-    public void startAnimations(@Nullable List<Animator> animationList, AnimatorListener listener) {
-        AnimatorSet set = new AnimatorSet();
-        set.playTogether(animationList);
-        if (listener != null) set.addListener(listener);
-
+    public void startAnimations(
+            @Nullable List<Animator> animationList, @Nullable AnimatorListener listener) {
+        AnimatorSet set = getAnimatorSet(animationList, listener);
         finishAnimations();
         setAndStartRunningAnimator(set);
     }
@@ -3105,6 +3674,96 @@ public class StripLayoutHelper
     }
 
     @Override
+    public void queueAnimations(
+            @Nullable List<Animator> animationList, @Nullable AnimatorListener listener) {
+        AnimatorSet set = getAnimatorSet(animationList, listener);
+        mQueuedAnimators.add(set);
+        // The queued animators get started in the next #updateLayout call. Request an update here
+        // to ensure that we get one of these calls.
+        mUpdateHost.requestUpdate();
+    }
+
+    private void requestCloseAnimations() {
+        if (!mSelected) {
+            finishCloseAnimations();
+            return;
+        }
+        finishAnimations();
+        mCloseAnimationsRequested = true;
+        mUpdateHost.requestUpdate();
+    }
+
+    private void queueCloseAnimationsIfAny() {
+        if (mCloseAnimationsRequested) queueCloseAnimations();
+    }
+
+    private void queueCloseAnimations() {
+        mCloseAnimationsRequested = false;
+
+        // TODO(crbug.com/450076798): Unify closing tabs + closing group titles logic.
+        // Set initial state.
+        for (StripLayoutView view : mClosingTabs) view.setIsDying(true);
+        for (StripLayoutView view : mClosingGroupTitles) view.setIsDying(true);
+
+        // Create animators.
+        List<Animator> animationList = getTabClosingAnimators(mClosingTabs);
+        if (ChromeFeatureList.sTabletTabStripAnimation.isEnabled()) {
+            for (StripLayoutGroupTitle groupTitle : mClosingGroupTitles) {
+                animationList.add(
+                        getViewWidthAnimator(
+                                groupTitle, mGroupTitleOverlapWidth, ANIM_TAB_CLOSED_MS));
+            }
+        }
+
+        // Queue the animations.
+        queueAnimations(
+                animationList,
+                new AnimatorListenerAdapter() {
+                    @Override
+                    public void onAnimationEnd(Animator animation) {
+                        boolean runImprovedTabAnimations = mStripTabs.length > 1;
+                        rebuildStripTabs(/* deferAnimations= */ false);
+                        if (!ChromeFeatureList.sTabletTabStripAnimation.isEnabled()) {
+                            resizeStripOnTabClose(runImprovedTabAnimations);
+                        }
+                        clearStateOnCloseAnimationsEnd();
+                    }
+                });
+    }
+
+    private void clearStateOnCloseAnimationsEnd() {
+        for (StripLayoutGroupTitle groupTitle : mClosingGroupTitles) {
+            clearClosingGroupTitleState(groupTitle.getTabGroupId());
+        }
+        clearPendingMouseTabClosureState();
+        mClosingTabs.clear();
+        mClosingGroupTitles.clear();
+    }
+
+    private void finishCloseAnimations() {
+        queueCloseAnimations();
+        finishAnimations();
+    }
+
+    private AnimatorSet getAnimatorSet(
+            @Nullable List<Animator> animationList, @Nullable AnimatorListener listener) {
+        AnimatorSet set = new AnimatorSet();
+        set.playTogether(animationList);
+        if (listener != null) set.addListener(listener);
+        return set;
+    }
+
+    private void startQueuedAnimationsIfAny() {
+        if (!mQueuedAnimators.isEmpty()) {
+            // We need to clone and clear mQueuedAnimators to prevent an infinite-loop when we try
+            // to #finishAnimations in #startAnimations below.
+            List<Animator> queuedAnimators = new ArrayList<>(mQueuedAnimators);
+            mQueuedAnimators.clear();
+            startAnimations(queuedAnimators);
+        }
+    }
+
+    @Override
     public void finishAnimationsAndPushTabUpdates() {
         finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
     }
@@ -3125,7 +3784,7 @@ public class StripLayoutHelper
         // 2. Figure out which tabs need to be closed.
         ArrayList<StripLayoutTab> tabsToRemove = new ArrayList<>();
         for (StripLayoutTab tab : mStripTabs) {
-            if (tab.isDying()) tabsToRemove.add(tab);
+            if (tab.isDying() && !tab.shouldSkipAsyncClosure()) tabsToRemove.add(tab);
         }
 
         if (tabsToRemove.isEmpty()) return;
@@ -3143,6 +3802,7 @@ public class StripLayoutHelper
         PostTask.postTask(
                 TaskTraits.UI_DEFAULT,
                 () -> {
+                    if (mModel == null) return;
                     for (StripLayoutTab stripTab : tabsToRemove) {
                         @Nullable Tab tab = mModel.getTabById(stripTab.getTabId());
                         if (tab == null) continue;
@@ -3152,6 +3812,7 @@ public class StripLayoutHelper
                                 .forceCloseTabs(
                                         TabClosureParams.closeTab(tab)
                                                 .allowUndo(allowUndo)
+                                                .tabClosingSource(TabClosingSource.TABLET_TAB_STRIP)
                                                 .build());
                     }
 
@@ -3186,7 +3847,7 @@ public class StripLayoutHelper
                 mWidth,
                 mLeftMargin,
                 mRightMargin,
-                mCachedTabWidthSupplier.get(),
+                getCachedTabWidth(/* isPinned= */ false),
                 TAB_OVERLAP_WIDTH_DP,
                 mGroupTitleOverlapWidth);
     }
@@ -3196,49 +3857,40 @@ public class StripLayoutHelper
      * that still exist in the model. Sets tabs at their new position and animates any width
      * changes, unless a multi-step close is running. Requests a layout update.
      *
-     * @param delayResize Whether or not the resultant width changes should be delayed (for the
-     *     multi-step close animation.
      * @param deferAnimations Whether or not the resultant width changes should automatically run,
      *     or returned as a list to be kicked off simultaneously with other animations.
      * @return The list of width {@link Animator}s to run, if any.
      */
-    private List<Animator> rebuildStripTabs(boolean delayResize, boolean deferAnimations) {
+    private @Nullable List<Animator> rebuildStripTabs(boolean deferAnimations) {
+        if (mModel == null) return List.of();
         final int count = mModel.getCount();
         StripLayoutTab[] tabs = new StripLayoutTab[count];
 
         for (int i = 0; i < count; i++) {
-            final Tab tab = mModel.getTabAt(i);
+            final Tab tab = assumeNonNull(mModel.getTabAt(i));
             final int id = tab.getId();
             final StripLayoutTab oldTab = findTabById(id);
-            tabs[i] = oldTab != null ? oldTab : createStripTab(id);
+            boolean isPinned = isTabPinningFromStripEnabled() && tab.getIsPinned();
+            tabs[i] = oldTab != null ? oldTab : createStripTab(id, isPinned);
             setAccessibilityDescription(tabs[i], tab);
         }
 
-        int oldTabsLength = mStripTabs.length;
         mStripTabs = tabs;
         // Update stripViews since tabs are updated.
         rebuildStripViews();
 
-        List<Animator> animationList = null;
-        // If multi-step animation is running, the resize will be handled elsewhere.
-        if (mStripTabs.length != oldTabsLength && !mMultiStepTabCloseAnimRunning) {
-            computeIdealViewPositions();
-            if (delayResize) {
-                resetResizeTimeout(/* postIfNotPresent= */ true);
-            } else {
-                finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
-                animationList =
-                        computeAndUpdateTabWidth(
-                                /* animate= */ true,
-                                /* deferAnimations= */ deferAnimations,
-                                /* closedTab= */ null);
-            }
-        }
+        // If a tab close is animating, the resize may be handled elsewhere.
+        if (mMultiStepTabCloseAnimRunning || mPendingMouseTabClosure) return null;
+        recordPinnedOnlyTabStripUserAction();
 
-        return animationList;
+        // Otherwise, animate the required width changes.
+        computeIdealViewPositions();
+        finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
+        return computeAndUpdateTabWidth(
+                /* animate= */ true, /* deferAnimations= */ deferAnimations);
     }
 
-    private String buildGroupAccessibilityDescription(@NonNull StripLayoutGroupTitle groupTitle) {
+    private String buildGroupAccessibilityDescription(StripLayoutGroupTitle groupTitle) {
         Resources res = mContext.getResources();
         StringBuilder builder = new StringBuilder();
 
@@ -3255,7 +3907,10 @@ public class StripLayoutHelper
         builder.append(groupDescription);
 
         // 2. Retrieve the grouped tabs and append the tab titles.
-        List<Tab> relatedTabs = mTabGroupModelFilter.getTabsInGroup(groupTitle.getTabGroupId());
+        List<Tab> relatedTabs =
+                mTabGroupModelFilter == null
+                        ? List.of()
+                        : mTabGroupModelFilter.getTabsInGroup(groupTitle.getTabGroupId());
         int relatedTabsCount = relatedTabs.size();
         if (relatedTabsCount > 0) {
             final String contentDescriptionSeparator = " - ";
@@ -3277,14 +3932,14 @@ public class StripLayoutHelper
         return builder.toString();
     }
 
-    private void updateGroupAccessibilityDescription(StripLayoutGroupTitle groupTitle) {
+    private void updateGroupAccessibilityDescription(@Nullable StripLayoutGroupTitle groupTitle) {
         if (groupTitle == null) return;
         groupTitle.setAccessibilityDescription(buildGroupAccessibilityDescription(groupTitle));
     }
 
     @Override
-    public void releaseResourcesForGroupTitle(Token groupId) {
-        mLayerTitleCache.removeGroupTitle(groupId);
+    public void releaseResourcesForGroupTitle(@Nullable Token groupId) {
+        if (mLayerTitleCache != null) mLayerTitleCache.removeGroupTitle(groupId);
     }
 
     @Override
@@ -3293,7 +3948,7 @@ public class StripLayoutHelper
     }
 
     private AnimatorListener getCollapseAnimatorListener(
-            StripLayoutGroupTitle collapsedGroupTitle) {
+            @Nullable StripLayoutGroupTitle collapsedGroupTitle) {
         return new AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(Animator animation) {
@@ -3308,7 +3963,9 @@ public class StripLayoutHelper
         finishAnimations();
     }
 
-    private Animator updateTabCollapsed(StripLayoutTab tab, boolean isCollapsed, boolean animate) {
+    private @Nullable Animator updateTabCollapsed(
+            @Nullable StripLayoutTab tab, boolean isCollapsed, boolean animate) {
+        if (tab == null) return null;
         tab.setCollapsed(isCollapsed);
 
         // The tab expand will be handled when the tab strip resizes, since we'll need to first
@@ -3323,25 +3980,21 @@ public class StripLayoutHelper
             return null;
         }
 
-        return CompositorAnimator.ofFloatProperty(
-                mUpdateHost.getAnimationHandler(),
-                tab,
-                StripLayoutTab.WIDTH,
-                tab.getWidth(),
-                TAB_OVERLAP_WIDTH_DP,
-                ANIM_TAB_RESIZE_MS);
+        return getViewWidthAnimator(tab, TAB_OVERLAP_WIDTH_DP, ANIM_TAB_RESIZE_MS);
     }
 
     private void updateTabGroupCollapsed(
             StripLayoutGroupTitle groupTitle, boolean isCollapsed, boolean animate) {
+        if (mModel == null) return;
         if (groupTitle.isCollapsed() == isCollapsed) return;
 
         List<Animator> collapseAnimationList = animate ? new ArrayList<>() : null;
 
         finishAnimations();
         groupTitle.setCollapsed(isCollapsed);
-        for (StripLayoutTab tab :
-                StripLayoutUtils.getGroupedTabs(mModel, mStripTabs, groupTitle.getRootId())) {
+        List<StripLayoutTab> groupedTabs =
+                StripLayoutUtils.getGroupedTabs(mModel, mStripTabs, groupTitle.getTabGroupId());
+        for (StripLayoutTab tab : groupedTabs) {
             if (collapseAnimationList != null) {
                 Animator animator = updateTabCollapsed(tab, isCollapsed, true);
                 if (animator != null) collapseAnimationList.add(animator);
@@ -3358,10 +4011,7 @@ public class StripLayoutHelper
 
         finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
         List<Animator> resizeAnimationList =
-                computeAndUpdateTabWidth(
-                        /* animate= */ animate,
-                        /* deferAnimations= */ animate,
-                        /* closedTab= */ null);
+                computeAndUpdateTabWidth(/* animate= */ animate, /* deferAnimations= */ animate);
         if (collapseAnimationList != null) {
             StripLayoutGroupTitle collapsedGroupTitle = null;
             if (isCollapsed) {
@@ -3391,11 +4041,12 @@ public class StripLayoutHelper
         // tabs are collapsed, open a ntp.
         if (isCollapsed) {
             Tab selectedTab = getTabById(getSelectedTabId());
-            if (selectedTab != null && selectedTab.getRootId() == groupTitle.getRootId()) {
-                int nextIndex = getNearbyExpandedTabIndex();
-                if (nextIndex != TabModel.INVALID_TAB_INDEX) {
+            if (selectedTab != null
+                    && groupTitle.getTabGroupId().equals(selectedTab.getTabGroupId())) {
+                int nextIndex = getNearbyTabIndex(groupedTabs);
+                if (nextIndex != TabModel.INVALID_TAB_INDEX && mModel != null) {
                     TabModelUtils.setIndex(mModel, nextIndex);
-                } else {
+                } else if (mTabCreator != null) {
                     mTabCreator.launchNtp();
                 }
             }
@@ -3408,31 +4059,85 @@ public class StripLayoutHelper
      * be expanded.
      */
     protected void expandGroupOnGtsExit() {
+        if (mTabGroupModelFilter == null) return;
         StripLayoutTab selectedTab = getSelectedStripTab();
         if (selectedTab == null) {
             return;
         }
         Tab tab = getTabById(selectedTab.getTabId());
-        if (tab != null && mTabGroupModelFilter.getTabGroupCollapsed(tab.getRootId())) {
-            mTabGroupModelFilter.deleteTabGroupCollapsed(tab.getRootId());
+        Token tabGroupId = tab != null ? tab.getTabGroupId() : null;
+        if (tabGroupId != null && mTabGroupModelFilter.getTabGroupCollapsed(tabGroupId)) {
+            mTabGroupModelFilter.deleteTabGroupCollapsed(tabGroupId);
         }
     }
 
+    @Override
+    public int getNextIndexAfterClose(Collection<StripLayoutTab> closingTabs) {
+        // Intentionally kept separate from #getNearbyNotClosingTabIndex, to have more specific
+        // javadocs for each method.
+        return getNearbyTabIndex(closingTabs);
+    }
+
     /**
-     * @return The index of the nearby expanded tab to the selected tab. Prioritizes tabs before the
-     *     selected tab. If none are found, return an invalid index.
+     * Wrapper for {@link #getNearbyTabIndex(Collection, Collection)}. Prioritizes tabs in a certain
+     * direction based on {@link ChromeFeatureList#TAB_STRIP_AUTO_SELECT_ON_CLOSE_CHANGE}.
      */
-    private int getNearbyExpandedTabIndex() {
-        int index = getSelectedStripTabIndex();
-
-        for (int i = index - 1; i >= 0; --i) {
-            if (!mStripTabs[i].isCollapsed()) return i;
+    private int getNearbyTabIndex(Collection<StripLayoutTab> excludedTabs) {
+        // Have to create a copy of the list, so that the reverse doesn't affect the original array.
+        List<StripLayoutTab> allTabs = new ArrayList<>(Arrays.asList(mStripTabs));
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_STRIP_AUTO_SELECT_ON_CLOSE_CHANGE)) {
+            // If the flag is enabled, reverse the order of tabs to prefer picking a nearby tab
+            // after (as opposed to before) the excluded tabs.
+            Collections.reverse(allTabs);
         }
+        return getNearbyTabIndex(allTabs, excludedTabs);
+    }
 
-        for (int i = index + 1; i < mStripTabs.length; ++i) {
-            if (!mStripTabs[i].isCollapsed()) return i;
+    /**
+     * Wrapper for {@link #getNearbyTabIndex(Collection, Collection, boolean)}. Prioritizes expanded
+     * tabs, if possible.
+     */
+    private int getNearbyTabIndex(
+            Collection<StripLayoutTab> allTabs, Collection<StripLayoutTab> excludedTabs) {
+        int nearbyIndex = getNearbyTabIndex(allTabs, excludedTabs, /* ignoreCollapsedTabs= */ true);
+        if (nearbyIndex != TabModel.INVALID_TAB_INDEX) return nearbyIndex;
+        return getNearbyTabIndex(allTabs, excludedTabs, /* ignoreCollapsedTabs= */ false);
+    }
+
+    /**
+     * Returns The index of a tab nearest to the excluded tabs. Can include or ignore collapsed
+     * tabs. Prioritizes tabs before the {@code excludedTabs} in {@code allTabs}, though the
+     * ordering of {@param allTabs} does not necessarily reflect that of the {@link TabModel}.
+     *
+     * @param allTabs All of the {@link StripLayoutTab}s. Ordered to either prefer picking tabs
+     *     before or after the excluded tabs, in the {@link TabModel}.
+     * @param excludedTabs The excluded {@link StripLayoutTab}s.
+     * @param ignoreCollapsedTabs Whether we should include collapsed tabs or not.
+     */
+    private int getNearbyTabIndex(
+            Collection<StripLayoutTab> allTabs,
+            Collection<StripLayoutTab> excludedTabs,
+            boolean ignoreCollapsedTabs) {
+        StripLayoutTab nearbyTab = null;
+        boolean seenExcludedTab = false;
+        for (StripLayoutTab tab : allTabs) {
+            // 1. If we encounter an excluded tab and already have a nearby tab, return its index.
+            if (excludedTabs.contains(tab)) {
+                if (nearbyTab != null) return findIndexForTab(nearbyTab.getTabId());
+                seenExcludedTab = true;
+                continue;
+            }
+            // 2. Potentially ignore collapsed tabs.
+            if (tab.isCollapsed() && ignoreCollapsedTabs) continue;
+            // 3. Process the current tab as a candidate nearby tab.
+            if (seenExcludedTab) {
+                // If we didn't return a tab when we saw the first closing tab, it means there's
+                // none before the excluded tabs. Return the closest tab after them instead.
+                return findIndexForTab(tab.getTabId());
+            } else {
+                nearbyTab = tab;
+            }
         }
-
         return TabModel.INVALID_TAB_INDEX;
     }
 
@@ -3442,10 +4147,11 @@ public class StripLayoutHelper
      */
     private void onTabMergeToOrMoveOutOfGroup() {
         finishAnimations();
-        // Moving a tab into/out-of a group may cause the orders of views (i.e. the
-        // group indicator) to change. The bottom indicator width may also change.
-        // Rebuild views to address this.
-        rebuildStripTabs(/* delayResize= */ false, /* deferAnimations= */ false);
+        // Moving a tab into/out-of a group may cause the orders of views (i.e. the group indicator)
+        // to change. The bottom indicator width may also change. Rebuild views to address this. We
+        // need to rebuild tabs as well, since we get this signal before we get the #didMoveTab
+        // event, meaning mStripViews is still stale.
+        rebuildStripTabs(/* deferAnimations= */ false);
         // Since views may have swapped, re-calculate ideal positions here.
         computeIdealViewPositions();
     }
@@ -3456,7 +4162,8 @@ public class StripLayoutHelper
      *
      * @param groupTitle The group title to refresh the bitmap for.
      */
-    private void updateGroupTitleBitmapIfNeeded(@NonNull StripLayoutGroupTitle groupTitle) {
+    private void updateGroupTitleBitmapIfNeeded(StripLayoutGroupTitle groupTitle) {
+        if (mLayerTitleCache == null) return;
         if (groupTitle.isVisible()) {
             mLayerTitleCache.getUpdatedGroupTitle(
                     groupTitle.getTabGroupId(), groupTitle.getTitle(), mIncognito);
@@ -3465,14 +4172,15 @@ public class StripLayoutHelper
     }
 
     private void updateGroupTitleTint(StripLayoutGroupTitle groupTitle) {
-        int colorId = mTabGroupModelFilter.getTabGroupColor(groupTitle.getRootId());
+        if (mTabGroupModelFilter == null) return;
+        int colorId = mTabGroupModelFilter.getTabGroupColor(groupTitle.getTabGroupId());
         // If the color is invalid, temporarily assign a default placeholder color.
         if (colorId == TabGroupColorUtils.INVALID_COLOR_ID) colorId = TabGroupColorId.GREY;
         updateGroupTitleTint(groupTitle, colorId);
     }
 
     private void updateGroupTitleTint(
-            StripLayoutGroupTitle groupTitle, @TabGroupColorId int newColor) {
+            @Nullable StripLayoutGroupTitle groupTitle, @TabGroupColorId int newColor) {
         if (groupTitle == null) return;
 
         groupTitle.updateTint(newColor);
@@ -3480,34 +4188,38 @@ public class StripLayoutHelper
     }
 
     @VisibleForTesting
-    void updateGroupTextAndSharedState(int rootId) {
-        updateGroupTextAndSharedState(findGroupTitle(rootId));
+    void updateGroupTextAndSharedState(@Nullable Token tabGroupId) {
+        updateGroupTextAndSharedState(findGroupTitle(tabGroupId));
     }
 
-    private void updateGroupTextAndSharedState(StripLayoutGroupTitle groupTitle) {
-        if (groupTitle == null) return;
-        updateGroupTextAndSharedState(
-                groupTitle, mTabGroupModelFilter.getTabGroupTitle(groupTitle.getRootId()));
+    private void updateGroupTextAndSharedState(@Nullable StripLayoutGroupTitle groupTitle) {
+        if (groupTitle == null
+                || mTabGroupModelFilter == null
+                || !mTabGroupModelFilter.tabGroupExists(groupTitle.getTabGroupId())) {
+            return;
+        }
+        updateGroupTextAndSharedStateUnchecked(groupTitle);
     }
 
     /**
      * Sets a non-empty title text for the given group indicator. Also updates the title text
      * bitmap, accessibility description, and tab/indicator sizes if necessary. If the group is
-     * shared, it may also update user avatars and the notification bubble.
+     * shared, it may also update user avatars and the notification bubble. This method does not
+     * check if the group exists as during initialization it may not yet exist, but should be drawn.
      *
      * @param groupTitle The {@link StripLayoutGroupTitle} that we're update the title text for.
-     * @param titleText The title text to apply. If empty, use a default title text.
      */
-    private void updateGroupTextAndSharedState(StripLayoutGroupTitle groupTitle, String titleText) {
-        assert groupTitle != null;
+    private void updateGroupTextAndSharedStateUnchecked(StripLayoutGroupTitle groupTitle) {
+        if (mLayerTitleCache == null || mTabGroupModelFilter == null) return;
+
         // Ignore updates for closing group indicators. This prevents assertion errors from using
         // stale group properties.
         if (groupTitle.willClose()) return;
 
         // 1. Update indicator text and width.
-        titleText =
-                StripLayoutUtils.getDefaultGroupTitleTextIfEmpty(
-                        mContext, mTabGroupModelFilter, groupTitle.getTabGroupId(), titleText);
+        String titleText =
+                TabGroupTitleUtils.getDisplayableTitle(
+                        mContext, mTabGroupModelFilter, groupTitle.getTabGroupId());
         int widthPx = mLayerTitleCache.getGroupTitleWidth(mIncognito, titleText);
         float widthDp = widthPx / mContext.getResources().getDisplayMetrics().density;
         float oldWidth = groupTitle.getWidth();
@@ -3524,8 +4236,7 @@ public class StripLayoutHelper
             if (groupTitle.isVisible()) {
                 // If on-screen, this may result in the ideal tab width changing.
                 finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
-                computeAndUpdateTabWidth(
-                        /* animate= */ false, /* deferAnimations= */ false, /* closedTab= */ null);
+                computeAndUpdateTabWidth(/* animate= */ false, /* deferAnimations= */ false);
             } else {
                 // If off-screen, request an update so we re-calculate tab initial positions and the
                 // scroll offset limit.
@@ -3534,20 +4245,17 @@ public class StripLayoutHelper
         }
     }
 
-    private StripLayoutGroupTitle findGroupTitle(int rootId) {
-        return StripLayoutUtils.findGroupTitle(mStripGroupTitles, rootId);
-    }
-
-    private StripLayoutGroupTitle findGroupTitle(Token tabGroupId) {
+    @Contract("!null -> !null")
+    private @Nullable StripLayoutGroupTitle findGroupTitle(@Nullable Token tabGroupId) {
         return StripLayoutUtils.findGroupTitle(mStripGroupTitles, tabGroupId);
     }
 
-    private StripLayoutGroupTitle findOrCreateGroupTitle(int rootId, Token tabGroupId) {
-        StripLayoutGroupTitle groupTitle = findGroupTitle(rootId);
-        return groupTitle == null ? createGroupTitle(rootId, tabGroupId) : groupTitle;
+    private StripLayoutGroupTitle findOrCreateGroupTitle(Token tabGroupId) {
+        StripLayoutGroupTitle groupTitle = findGroupTitle(tabGroupId);
+        return groupTitle == null ? createGroupTitle(tabGroupId) : groupTitle;
     }
 
-    private StripLayoutGroupTitle createGroupTitle(int rootId, Token tabGroupId) {
+    private StripLayoutGroupTitle createGroupTitle(Token tabGroupId) {
         // Delay setting the collapsed state, since mStripViews may not yet be up to date.
         StripLayoutGroupTitle groupTitle =
                 new StripLayoutGroupTitle(
@@ -3555,11 +4263,10 @@ public class StripLayoutHelper
                         /* delegate= */ this,
                         /* keyboardFocusHandler= */ this,
                         mIncognito,
-                        rootId,
                         tabGroupId);
         pushPropertiesToGroupTitle(groupTitle);
 
-        // Must pass in the group title instead of rootId, since the StripLayoutGroupTitle has not
+        // Must pass in the group title instead of group id, since the StripLayoutGroupTitle has not
         // been added to mStripViews yet.
         updateGroupTitleTint(groupTitle);
         updateGroupTextAndSharedState(groupTitle);
@@ -3584,33 +4291,71 @@ public class StripLayoutHelper
         } else {
             copyTabs();
         }
-        mUpdateHost.requestUpdate();
+        // If views are reordered, the CompositorView's keyboard focus index will be wrong; fix it.
+        mUpdateHost.requestUpdate(
+                () -> {
+                    @Nullable StripLayoutView keyboardFocusedView = getKeyboardFocusedView();
+                    if (keyboardFocusedView != null) {
+                        mManagerHost.requestKeyboardFocus(mSceneOverlay, keyboardFocusedView);
+                    }
+                });
     }
 
+    private void rebuildStripViewsAfterMove() {
+        if (mReorderDelegate.isReorderingTab()) {
+            // Update strip start and end margins to create more space for first tab or last tab
+            // to drag out of group.
+            mReorderDelegate.setEdgeMarginsForReorder(mStripTabs);
+        }
+        // When tab groups are moved, each tab is moved one-by-one. During this process, the
+        // invariant that tab groups must be contiguous is temporarily broken, so we suppress
+        // rebuilding until the entire group is moved. See https://crbug.com/329318567.
+        // TODO(crbug.com/329335086): Investigate reordering (with #moveElement) instead of
+        // rebuilding here.
+        rebuildStripViews();
+        computeIdealViewPositions();
+    }
+
+    /**
+     * Returns the tab group count. Should only be called when rebuilding the tab strip, as we've
+     * previously seen {@link TabGroupModelFilter#getTabGroupCount()} be incorrect on startup. That
+     * said, other call-sites should use the aforementioned TabGroupModelFilter method if possible.
+     * TODO(crbug.com/454960178): Investigate if this is still needed.
+     */
     private int getTabGroupCount() {
-        Set<Integer> groupRootIds = new HashSet<>();
+        if (mModel == null || mTabGroupModelFilter == null) return 0;
+
+        Set<Token> groupIds = new HashSet<>();
 
         for (int i = 0; i < mStripTabs.length; ++i) {
             final StripLayoutTab stripTab = mStripTabs[i];
-            final Tab tab = getTabById(stripTab.getTabId());
-            if (mTabGroupModelFilter.isTabInTabGroup(tab)
-                    && !groupRootIds.contains(tab.getRootId())) {
-                groupRootIds.add(tab.getRootId());
-            }
+            final Tab tab = mModel.getTabByIdChecked(stripTab.getTabId());
+            if (mTabGroupModelFilter.isTabInTabGroup(tab)) groupIds.add(tab.getTabGroupId());
         }
 
-        return groupRootIds.size();
+        Token tabGroupIdToHide = mGroupIdToHideSupplier.get();
+        if (tabGroupIdToHide != null && !groupIds.contains(tabGroupIdToHide)) {
+            // Rebuilding tab strip with a group ID to hide without a matching Tab.
+            // TODO(crbug.com/443337907): When we migrate the close button flow to the new closure
+            //  flow, we should be able to assert that this should be unreachable, rather than just
+            //  clearing the invalid state. This is currently possible because of the sequence of
+            //  events we get when confirming a group deletion: we rebuild on the tab closure event,
+            //  but clear the state on the group removal event.
+            mGroupIdToHideSupplier.set(null);
+        }
+
+        return groupIds.size();
     }
 
     private void buildBottomIndicator() {
-        if (mStripTabs.length == 0 || mTabResizeAnimRunning) {
+        if (mStripTabs.length == 0 || mTabResizeAnimRunning || mTabGroupModelFilter == null) {
             return;
         }
         for (int i = 0; i < mStripGroupTitles.length; i++) {
             StripLayoutGroupTitle groupTitle = mStripGroupTitles[i];
             if (groupTitle == null
                     || groupTitle.isCollapsed()
-                    || groupTitle.getRootId() == mGroupIdToHideSupplier.get()) {
+                    || groupTitle.getTabGroupId().equals(mGroupIdToHideSupplier.get())) {
                 continue;
             }
 
@@ -3619,7 +4364,7 @@ public class StripLayoutHelper
                     StripLayoutUtils.calculateBottomIndicatorWidth(
                             groupTitle,
                             StripLayoutUtils.getNumOfTabsInGroup(mTabGroupModelFilter, groupTitle),
-                            getEffectiveTabWidth());
+                            getEffectiveTabWidth(/* isPinned= */ false));
 
             // Update the bottom indicator width.
             if (groupTitle.getBottomIndicatorWidth() != bottomIndicatorWidth) {
@@ -3630,17 +4375,24 @@ public class StripLayoutHelper
 
     private void copyTabsWithGroupTitles() {
         if (mStripTabs.length == 0) return;
+        if (mTabGroupModelFilter == null) return;
 
         int numGroups = getTabGroupCount();
 
         // If we have tab group to hide due to running tab group delete dialog, then skip the tab
         // group when rebuilding StripViews.
-        if (mGroupIdToHideSupplier.get() != Tab.INVALID_TAB_ID && numGroups > 0) {
-            numGroups -= 1;
+        if (mGroupIdToHideSupplier.get() != null) {
+            if (mTabGroupModelFilter.tabGroupExists(mGroupIdToHideSupplier.get())) {
+                if (numGroups > 0) numGroups--;
+            } else {
+                assert false : "Rebuilding tab strip with a nonexistent group ID to hide.";
+                mGroupIdToHideSupplier.set(null);
+            }
         }
 
         int groupTitleIndex = 0;
         StripLayoutGroupTitle[] groupTitles = new StripLayoutGroupTitle[numGroups];
+        Set<Token> seenGroupIds = new HashSet<>();
 
         int numViews = mStripTabs.length + numGroups;
         if (numViews != mStripViews.length) {
@@ -3649,14 +4401,15 @@ public class StripLayoutHelper
 
         int viewIndex = 0;
         // First view will be tab group title if first tab is grouped.
-        Tab firstTab = getTabById(mStripTabs[0].getTabId());
+        Tab firstTab = assumeNonNull(getTabById(mStripTabs[0].getTabId()));
         if (mTabGroupModelFilter.isTabInTabGroup(firstTab)) {
-            int rootId = firstTab.getRootId();
             Token tabGroupId = firstTab.getTabGroupId();
-            StripLayoutGroupTitle groupTitle = findOrCreateGroupTitle(rootId, tabGroupId);
-            if (rootId != mGroupIdToHideSupplier.get()) {
+            assert tabGroupId != null;
+            StripLayoutGroupTitle groupTitle = findOrCreateGroupTitle(tabGroupId);
+            seenGroupIds.add(tabGroupId);
+            if (!tabGroupId.equals(mGroupIdToHideSupplier.get())) {
                 if (TabUiUtils.shouldShowIphForSync(mTabGroupSyncService, tabGroupId)) {
-                    mLastSyncedGroupRootIdForIph = rootId;
+                    mLastSyncedGroupIdForIph = tabGroupId;
                 }
                 groupTitles[groupTitleIndex++] = groupTitle;
                 mStripViews[viewIndex++] = groupTitle;
@@ -3667,18 +4420,25 @@ public class StripLayoutHelper
             final StripLayoutTab stripTab = mStripTabs[i];
             mStripViews[viewIndex++] = stripTab;
 
-            Tab currTab = getTabById(stripTab.getTabId());
-            Tab nextTab = getTabById(mStripTabs[i + 1].getTabId());
-            int nextRootId = nextTab.getRootId();
+            Tab currTab = assumeNonNull(getTabById(stripTab.getTabId()));
+            Tab nextTab = assumeNonNull(getTabById(mStripTabs[i + 1].getTabId()));
             Token nextTabGroupId = nextTab.getTabGroupId();
             boolean nextTabInGroup = mTabGroupModelFilter.isTabInTabGroup(nextTab);
-            boolean areRelatedTabs = currTab.getRootId() == nextRootId;
+            boolean areRelatedTabs =
+                    nextTabInGroup
+                            ? assumeNonNull(nextTabGroupId).equals(currTab.getTabGroupId())
+                            : false;
             if (nextTabInGroup && !areRelatedTabs) {
-                StripLayoutGroupTitle groupTitle =
-                        findOrCreateGroupTitle(nextRootId, nextTabGroupId);
-                if (nextRootId != mGroupIdToHideSupplier.get()) {
+                assumeNonNull(nextTabGroupId);
+                if (seenGroupIds.contains(nextTabGroupId)) {
+                    assert false : "Rebuilding tab strip with a non-contiguous tab group.";
+                    continue;
+                }
+                seenGroupIds.add(nextTabGroupId);
+                StripLayoutGroupTitle groupTitle = findOrCreateGroupTitle(nextTabGroupId);
+                if (!nextTabGroupId.equals(mGroupIdToHideSupplier.get())) {
                     if (TabUiUtils.shouldShowIphForSync(mTabGroupSyncService, nextTabGroupId)) {
-                        mLastSyncedGroupRootIdForIph = nextRootId;
+                        mLastSyncedGroupIdForIph = nextTabGroupId;
                     }
                     groupTitles[groupTitleIndex++] = groupTitle;
                     mStripViews[viewIndex++] = groupTitle;
@@ -3703,12 +4463,11 @@ public class StripLayoutHelper
             for (int i = 0; i < mStripGroupTitles.length; ++i) {
                 final StripLayoutGroupTitle groupTitle = mStripGroupTitles[i];
                 boolean isCollapsed =
-                        mTabGroupModelFilter.getTabGroupCollapsed(groupTitle.getRootId());
+                        mTabGroupModelFilter.getTabGroupCollapsed(groupTitle.getTabGroupId());
                 updateTabGroupCollapsed(groupTitle, isCollapsed, false);
             }
             finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
-            computeAndUpdateTabWidth(
-                    /* animate= */ true, /* deferAnimations= */ false, /* closedTab= */ null);
+            computeAndUpdateTabWidth(/* animate= */ true, /* deferAnimations= */ false);
         }
     }
 
@@ -3729,25 +4488,23 @@ public class StripLayoutHelper
 
     @Override
     public void resizeTabStrip(
-            boolean animate, StripLayoutTab tabToAnimate, boolean tabAddedAnimation) {
+            boolean animate, @Nullable StripLayoutTab tabToAnimate, boolean tabAddedAnimation) {
         finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
         if (tabToAnimate != null) {
             assert animate;
             if (!tabAddedAnimation) {
                 mMultiStepTabCloseAnimRunning = true;
                 // Resize the tab strip accordingly.
-                resizeStripOnTabClose(getTabById(tabToAnimate.getTabId()));
+                resizeStripOnTabClose();
             } else {
                 List<Animator> animationList =
-                        computeAndUpdateTabWidth(
-                                /* animate= */ true,
-                                /* deferAnimations= */ true,
-                                /* closedTab= */ null);
-                if (animationList != null) runTabAddedAnimator(animationList, tabToAnimate);
+                        computeAndUpdateTabWidth(/* animate= */ true, /* deferAnimations= */ true);
+                if (animationList != null) {
+                    runTabAddedAnimator(animationList, tabToAnimate, /* fromTabCreation= */ false);
+                }
             }
         } else {
-            computeAndUpdateTabWidth(
-                    animate, /* deferAnimations= */ animate, /* closedTab= */ null);
+            computeAndUpdateTabWidth(animate, /* deferAnimations= */ animate);
         }
 
         // Update the ideal view positions, since these are needed for reorder offset calculations.
@@ -3763,16 +4520,15 @@ public class StripLayoutHelper
                         /* keyboardFocusHandler= */ this,
                         mTabLoadTrackerHost,
                         mUpdateHost,
-                        mIncognito);
-
-        tab.setIsPlaceholder(true);
-        tab.setContainerOpacity(TAB_OPACITY_VISIBLE);
+                        mIncognito,
+                        /* isPinned= */ false);
+        mTabDelegate.setIsTabPlaceholder(tab, true);
 
         // TODO(crbug.com/40942588): Added placeholder a11y descriptions to prevent crash due
         //  to invalid a11y node. Replace with official strings when available.
         String description = "Placeholder Tab";
         String title = "Placeholder";
-        tab.setAccessibilityDescription(description, title, ResourcesCompat.ID_NULL);
+        tab.setAccessibilityDescription(description, title, Resources.ID_NULL);
 
         pushPropertiesToTab(tab);
 
@@ -3780,7 +4536,7 @@ public class StripLayoutHelper
     }
 
     @VisibleForTesting
-    StripLayoutTab createStripTab(int id) {
+    StripLayoutTab createStripTab(int id, boolean isPinned) {
         // TODO: Cache these
         StripLayoutTab tab =
                 new StripLayoutTab(
@@ -3790,10 +4546,11 @@ public class StripLayoutHelper
                         /* keyboardFocusHandler= */ this,
                         mTabLoadTrackerHost,
                         mUpdateHost,
-                        mIncognito);
+                        mIncognito,
+                        isPinned);
 
         if (isSelectedTab(id)) {
-            tab.setContainerOpacity(TAB_OPACITY_VISIBLE);
+            StripLayoutTabDelegate.setTabVisibility(tab, /* isVisible= */ true);
         }
 
         pushPropertiesToTab(tab);
@@ -3801,19 +4558,24 @@ public class StripLayoutHelper
         return tab;
     }
 
-    private void pushPropertiesToPlaceholder(StripLayoutTab placeholderTab, Tab tab) {
+    private void pushPropertiesToPlaceholder(StripLayoutTab placeholderTab, @Nullable Tab tab) {
+        if (tab == null) return;
         placeholderTab.setTabId(tab.getId());
-        placeholderTab.setIsPlaceholder(false);
-        placeholderTab.setContainerOpacity(TAB_OPACITY_HIDDEN);
-
+        mTabDelegate.setIsTabPlaceholder(placeholderTab, false);
         setAccessibilityDescription(placeholderTab, tab);
     }
 
     private void pushPropertiesToTab(StripLayoutTab tab) {
-        // The close button is visible by default. If it should be hidden on tab creation, do not
-        // animate the fade-out. See (https://crbug.com/1342654).
-        boolean shouldShowCloseButton = mCachedTabWidthSupplier.get() >= TAB_WIDTH_MEDIUM;
+        // The close button is visible by default except for pinned tabs. If it should be hidden on
+        // tab creation, do not animate the fade-out. See (https://crbug.com/1342654).
+        boolean shouldShowCloseButton =
+                !tab.getIsPinned()
+                        && getCachedTabWidth(/* isPinned= */ false)
+                                >= StripLayoutTabDelegate.TAB_WIDTH_MEDIUM;
         tab.setCanShowCloseButton(shouldShowCloseButton, false);
+
+        // This is an effective width of 0 due to how we overlap tabs.
+        tab.setWidth(TAB_OVERLAP_WIDTH_DP);
         tab.setHeight(mHeight);
         tab.setTouchTargetInsets(null, mTopPadding, null, -mTopPadding);
     }
@@ -3831,45 +4593,101 @@ public class StripLayoutHelper
         return StripLayoutUtils.findIndexForTab(mStripTabs, id);
     }
 
-    private int getNumLiveTabs() {
+    private boolean isEndMostTab(int tabId) {
+        return mStripTabs.length > 0 && tabId == mStripTabs[mStripTabs.length - 1].getTabId();
+    }
+
+    private boolean isLiveTab(StripLayoutTab tab) {
+        return !tab.isClosed()
+                && !tab.isDraggedOffStrip()
+                && !tab.isCollapsed()
+                && !(tab.isDying() && ChromeFeatureList.sTabletTabStripAnimation.isEnabled());
+    }
+
+    /** Returns the total number of unpinned tabs that are live. */
+    private int getNumLiveUnpinnedTabs() {
         int numLiveTabs = 0;
 
-        for (int i = 0; i < mStripTabs.length; i++) {
+        for (int i = mStripTabs.length - 1; i >= 0; i--) {
             final StripLayoutTab tab = mStripTabs[i];
-            if (tab.isDying() && !ChromeFeatureList.sTabletTabStripAnimation.isEnabled()) continue;
-            if (!tab.isClosed() && !tab.isDraggedOffStrip() && !tab.isCollapsed()) numLiveTabs++;
+            if (tab.getIsPinned()) break;
+            if (isLiveTab(tab)) numLiveTabs++;
         }
 
         return numLiveTabs;
     }
 
-    /**
-     * Computes and updates the tab width when resizing the tab strip.
-     *
-     * @param animate Whether to animate the update.
-     * @param deferAnimations Whether to defer animations.
-     * @param closedTab The tab that is closing. This value should be non-null, if the resize is
-     *     caused by tab closing.
-     * @return A list of animators for the tab width update.
-     */
-    private List<Animator> computeAndUpdateTabWidth(
-            boolean animate, boolean deferAnimations, Tab closedTab) {
-        // Skip updating the tab width when the tab strip width is unavailable.
-        if (mWidth == 0) {
-            return null;
+    /** Returns the total number of pinned tabs that are live. */
+    private int getNumLivePinnedTabs() {
+        int numPinnedTabs = 0;
+
+        for (StripLayoutTab tab : mStripTabs) {
+            if (!tab.getIsPinned()) break;
+            if (isLiveTab(tab)) numPinnedTabs++;
         }
 
-        // Remove any queued resize messages.
-        mStripTabEventHandler.removeMessages(MESSAGE_RESIZE);
+        return numPinnedTabs;
+    }
 
-        int numTabs = Math.max(getNumLiveTabs(), 1);
+    /**
+     * Calculates the strip width such that it aligns with the end-most (closing) tab's far edge.
+     * This is so that the next tab's far edge will (at most) slide to this position. This will
+     * guarantee that either a) the next tab's close button will slide to where the cursor clicked
+     * or b) the tabs will expand to their max width, but won't reach the cursor. Should only be
+     * called from {@link #getStripWidthForResizing}.
+     *
+     * @param closingEndMostTabDrawX The drawX of the end-most (closing) {@link StripLayoutTab}.
+     * @param closingEndMostTabWidth The width of the end-most (closing) {@link StripLayoutTab}.
+     * @return The target available width, such that the next tab's close button will align with the
+     *     cursor, as it just clicked to close the end-most tab.
+     */
+    private float getStripWidthForEndMostTabMouseClosure(
+            float closingEndMostTabDrawX, float closingEndMostTabWidth) {
+        if (LocalizationUtils.isLayoutRtl()) {
+            return mWidth - mRightMargin - closingEndMostTabDrawX;
+        } else {
+            return closingEndMostTabDrawX + closingEndMostTabWidth - mLeftMargin;
+        }
+    }
 
-        // 1. Compute the width of the available space for all tabs.
-        float stripWidth = mWidth - mLeftMargin - mRightMargin;
+    /**
+     * Returns the width of the tab strip when resizing the strip. Accounts for the restricted
+     * resizing when closing tabs with the mouse. Should only be called from {@link
+     * #getAvailableTabWidthForResizing}.
+     */
+    private float getStripWidthForResizing() {
+        // If we're resizing in response to a mouse click closing the end-most tab, we may restrict
+        // the resize to align the next tab's close button with the cursor.
+        if (ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_STRIP_MOUSE_CLOSE_RESIZE_DELAY)
+                && mClosingEndMostTabDrawX != null
+                && mClosingEndMostTabWidth != null) {
+            return getStripWidthForEndMostTabMouseClosure(
+                    mClosingEndMostTabDrawX, mClosingEndMostTabWidth);
+        }
+
+        // Otherwise, the entirety of the tab strip width is available.
+        return mWidth - mLeftMargin - mRightMargin;
+    }
+
+    /**
+     * Returns the available width for tabs when resizing the strip. Accounts for both tab group
+     * indicators and restricted resizing when closing tabs with the mouse.
+     */
+    private float getAvailableTabWidthForResizing() {
+        // TODO(crbug.com/419015257): Move to separate file/delegate and add tests.
+        float stripWidth = getStripWidthForResizing();
         for (int i = 0; i < mStripGroupTitles.length; i++) {
             final StripLayoutGroupTitle groupTitle = mStripGroupTitles[i];
+            if (groupTitle.isDying()) continue;
             stripWidth -= (groupTitle.getWidth() - mGroupTitleOverlapWidth);
         }
+        return stripWidth - getTotalPinnedTabsWidth();
+    }
+
+    private void computeCachedTabWidth() {
+        // 1. Compute the number of unpinned tabs and the available width for them.
+        int numTabs = Math.max(getNumLiveUnpinnedTabs(), 1);
+        float stripWidth = getAvailableTabWidthForResizing();
 
         // 2. Compute additional width we gain from overlapping the tabs.
         float overlapWidth = TAB_OVERLAP_WIDTH_DP * (numTabs - 1);
@@ -3880,31 +4698,52 @@ public class StripLayoutHelper
         // 4. Calculate the realistic tab width.
         mCachedTabWidthSupplier.set(
                 MathUtils.clamp(optimalTabWidth, MIN_TAB_WIDTH_DP, MAX_TAB_WIDTH_DP));
+    }
 
-        // 5. Prepare animations and propagate width to all tabs.
+    /**
+     * Computes and updates the tab width when resizing the tab strip.
+     *
+     * @param animate Whether to animate the update.
+     * @param deferAnimations Whether to defer animations.
+     * @return A list of animators for the tab width update.
+     */
+    private @Nullable List<Animator> computeAndUpdateTabWidth(
+            boolean animate, boolean deferAnimations) {
+        // Skip updating the tab width when the tab strip width is unavailable.
+        if (mWidth == 0) {
+            return null;
+        }
+
+        // Suppress resizes from tab closures from mouse. We may still need to animate the closing
+        // tab shrinking, though. If closing the end-most tab, we may need to partially resize to
+        // align the next tab's close button with the cursor (if possible).
+        boolean delayingResizeForMouseClose =
+                ChromeFeatureList.isEnabled(ChromeFeatureList.TAB_STRIP_MOUSE_CLOSE_RESIZE_DELAY)
+                        && mPendingMouseTabClosure
+                        && mClosingEndMostTabDrawX == null
+                        && mClosingEndMostTabWidth == null;
+
+        // 1. Recompute cached tab width.
+        if (!delayingResizeForMouseClose) {
+            computeCachedTabWidth();
+        }
+
+        // 2. Prepare animations and propagate width to all tabs.
         ArrayList<Animator> resizeAnimationList = null;
         if (animate) resizeAnimationList = new ArrayList<>();
         for (int i = 0; i < mStripTabs.length; i++) {
             StripLayoutTab tab = mStripTabs[i];
-            if (tab.isClosed()) tab.setWidth(TAB_OVERLAP_WIDTH_DP);
             if ((tab.isDying() && !ChromeFeatureList.sTabletTabStripAnimation.isEnabled())
                     || tab.isCollapsed()) {
                 continue;
             }
-            Float cachedTabWidth = mCachedTabWidthSupplier.get();
+            float cachedTabWidth = getCachedTabWidth(tab.getIsPinned());
             if (resizeAnimationList != null) {
-                CompositorAnimator animator;
                 // Handle animating a tab being closed for TabletTabStripAnimation.
                 if (tab.isDying()) {
-                    animator =
-                            CompositorAnimator.ofFloatProperty(
-                                    mUpdateHost.getAnimationHandler(),
-                                    tab,
-                                    StripLayoutTab.WIDTH,
-                                    tab.getWidth(),
-                                    TAB_OVERLAP_WIDTH_DP,
-                                    NEW_ANIM_TAB_RESIZE_MS);
-                    resizeAnimationList.add(animator);
+                    resizeAnimationList.add(
+                            getViewWidthAnimator(
+                                    tab, TAB_OVERLAP_WIDTH_DP, NEW_ANIM_TAB_RESIZE_MS));
                     continue;
                 }
 
@@ -3913,21 +4752,11 @@ public class StripLayoutHelper
                     continue;
                 }
 
-                int duration = ANIM_TAB_RESIZE_MS;
-
-                if (ChromeFeatureList.sTabletTabStripAnimation.isEnabled()) {
-                    duration = NEW_ANIM_TAB_RESIZE_MS;
-                }
-                animator =
-                        CompositorAnimator.ofFloatProperty(
-                                mUpdateHost.getAnimationHandler(),
-                                tab,
-                                StripLayoutTab.WIDTH,
-                                tab.getWidth(),
-                                cachedTabWidth,
-                                duration);
-
-                resizeAnimationList.add(animator);
+                int duration =
+                        ChromeFeatureList.sTabletTabStripAnimation.isEnabled()
+                                ? NEW_ANIM_TAB_RESIZE_MS
+                                : ANIM_TAB_RESIZE_MS;
+                resizeAnimationList.add(getViewWidthAnimator(tab, cachedTabWidth, duration));
             } else {
                 mStripTabs[i].setWidth(cachedTabWidth);
             }
@@ -3940,7 +4769,7 @@ public class StripLayoutHelper
             return null;
         }
 
-        // 6. Animate bottom indicator when tab width change.
+        // 3. Animate bottom indicator when tab width change.
         for (int i = 0; i < mStripGroupTitles.length; i++) {
             StripLayoutGroupTitle groupTitle = mStripGroupTitles[i];
             if (groupTitle == null) {
@@ -3950,26 +4779,12 @@ public class StripLayoutHelper
                 continue;
             }
             float bottomIndicatorStartWidth = groupTitle.getBottomIndicatorWidth();
-            float bottomIndicatorEndWidth;
-
-            // When a grouped tab is closed, the bottom indicator end width needs to subtract the
-            // width of the closed tab.
-            if (closedTab != null && closedTab.getRootId() == groupTitle.getRootId()) {
-                bottomIndicatorEndWidth =
-                        StripLayoutUtils.calculateBottomIndicatorWidth(
-                                groupTitle,
-                                StripLayoutUtils.getNumOfTabsInGroup(
-                                                mTabGroupModelFilter, groupTitle)
-                                        - 1,
-                                getEffectiveTabWidth());
-            } else {
-                bottomIndicatorEndWidth =
-                        StripLayoutUtils.calculateBottomIndicatorWidth(
-                                groupTitle,
-                                StripLayoutUtils.getNumOfTabsInGroup(
-                                        mTabGroupModelFilter, groupTitle),
-                                getEffectiveTabWidth());
-            }
+            float bottomIndicatorEndWidth =
+                    StripLayoutUtils.calculateBottomIndicatorWidth(
+                            groupTitle,
+                            StripLayoutUtils.getNumLiveGroupedTabs(
+                                    assumeNonNull(mModel), mStripTabs, groupTitle.getTabGroupId()),
+                            getEffectiveTabWidth(/* isPinned= */ false));
 
             if (bottomIndicatorEndWidth > 0f
                     && bottomIndicatorStartWidth == bottomIndicatorEndWidth) {
@@ -4008,13 +4823,6 @@ public class StripLayoutHelper
     }
 
     private void updateStrip() {
-        // TODO(dtrainor): Remove this once tabCreated() is refactored to be called even from
-        // restore.
-        if (mTabStateInitialized
-                && (mStripTabs == null || mModel.getCount() != mStripTabs.length)) {
-            rebuildStripTabs(false, false);
-        }
-
         // 1. Update the scroll offset limits
         updateScrollOffsetLimits();
 
@@ -4022,49 +4830,48 @@ public class StripLayoutHelper
         computeIdealViewPositions();
 
         // 3. Calculate view stacking - update view draw properties and visibility.
-        float stripWidth = getVisibleRightBound() - getVisibleLeftBound();
+        float stripWidth =
+                getVisibleRightBound(/* clampToUnpinnedViews= */ false)
+                        - getVisibleLeftBound(/* clampToUnpinnedViews= */ false);
         mStripStacker.pushDrawPropertiesToViews(
-                mStripViews,
-                getVisibleLeftBound(),
-                stripWidth,
-                mMultiStepTabCloseAnimRunning,
-                mCachedTabWidthSupplier.get());
+                mStripViews, getVisibleLeftBound(/* clampToUnpinnedViews= */ false), stripWidth);
+        mStripStacker.pushDrawPropertiesToButtons(
+                mNewTabButton,
+                mStripTabs,
+                mLeftMargin,
+                mRightMargin,
+                mWidth,
+                mNewTabButtonWidth,
+                isTabStripFull());
 
         // 4. Create render list.
         createRenderList();
 
-        // 5. Figure out where to put the new tab button. If a tab is being closed, the new tab
-        // button position will be updated with the tab resize and drawX animations.
-        if (!mNewTabButtonAnimRunning) updateNewTabButtonState();
-
-        // 6. Invalidate the accessibility provider in case the visible virtual views have changed.
+        // 5. Invalidate the accessibility provider in case the visible virtual views have changed.
         mRenderHost.invalidateAccessibilityProvider();
 
-        // 7. Hide close buttons if tab width gets lower than 156dp.
+        // 6. Hide close buttons if tab width gets lower than 156dp.
         updateCloseButtons();
 
-        // 8. Show dividers between inactive tabs.
+        // 7. Show dividers between inactive tabs.
         updateTabContainersAndDividers();
 
-        // 9. Update the touchable rect.
+        // 8. Update the touchable rect.
         updateTouchableRect();
 
         // TODO(crbug.com/396213514): Move the show bubble logic somewhere less frequently called.
-        // 10. Trigger show notification bubble for all shared tab groups that have recent updates.
+        // 9. Trigger show notification bubble for all shared tab groups that have recent updates.
         showNotificationBubblesForSharedTabGroups();
     }
 
     private float getStartPositionForStripViews() {
-        // Shift all of the strip views over by the the left margin because we're
-        // no longer base lined at 0
+        // Shift all of the strip views over by the the left margin because we're no longer base
+        // lined at 0.
         if (!LocalizationUtils.isLayoutRtl()) {
-            return mScrollDelegate.getScrollOffset()
-                    + mLeftMargin
-                    + mScrollDelegate.getReorderStartMargin();
+            return mLeftMargin + mScrollDelegate.getReorderStartMargin();
         } else {
             return mWidth
-                    - mCachedTabWidthSupplier.get()
-                    - mScrollDelegate.getScrollOffset()
+                    - TAB_OVERLAP_WIDTH_DP
                     - mRightMargin
                     - mScrollDelegate.getReorderStartMargin();
         }
@@ -4072,40 +4879,74 @@ public class StripLayoutHelper
 
     private void computeIdealViewPositions() {
         float startX = getStartPositionForStripViews();
+        boolean scrollOffsetAdded = false;
+        boolean rtl = LocalizationUtils.isLayoutRtl();
         for (int i = 0; i < mStripViews.length; i++) {
             final StripLayoutView view = mStripViews[i];
+
+            if (!scrollOffsetAdded
+                    && (!(view instanceof StripLayoutTab)
+                            || !((StripLayoutTab) view).getIsPinned())) {
+                startX += MathUtils.flipSignIf(mScrollDelegate.getScrollOffset(), rtl);
+                scrollOffsetAdded = true;
+            }
 
             float delta;
             if (view instanceof StripLayoutTab tab) {
                 if (tab.isClosed()) continue;
                 // idealX represents where a tab should be placed in the tab strip.
-                view.setIdealX(startX);
-                if (ChromeFeatureList.sTabletTabStripAnimation.isEnabled()) {
+                setTabIdealX(tab, startX);
+
+                if (ChromeFeatureList.sTabletTabStripAnimation.isEnabled() || !tab.isDying()) {
                     delta = (tab.getWidth() - TAB_OVERLAP_WIDTH_DP) * tab.getWidthWeight();
                 } else {
-                    delta =
-                            tab.isDying()
-                                    ? getEffectiveTabWidth()
-                                    : (tab.getWidth() - TAB_OVERLAP_WIDTH_DP)
-                                            * tab.getWidthWeight();
+                    delta = getEffectiveTabWidth(tab.getIsPinned());
                 }
-
-            } else {
+            } else if (view instanceof StripLayoutGroupTitle groupTitle) {
                 // Offset to "undo" the tab overlap width as that doesn't apply to non-tab views.
                 // Also applies the desired overlap with the previous tab.
-                float drawXOffset = mGroupTitleDrawXOffset;
-                // Adjust for RTL.
-                if (LocalizationUtils.isLayoutRtl()) {
-                    drawXOffset = mCachedTabWidthSupplier.get() - view.getWidth() - drawXOffset;
-                }
+                float drawXOffset = MathUtils.flipSignIf(mGroupTitleDrawXOffset, rtl);
+                setGroupTitleIdealX(groupTitle, startX + drawXOffset);
 
-                view.setIdealX(startX + drawXOffset);
                 delta = (view.getWidth() - mGroupTitleOverlapWidth) * view.getWidthWeight();
+            } else {
+                assert false : "Unexpected view type in tab strip views.";
+                delta = 0;
             }
             // Trailing margins will only be nonzero during reorder mode.
             delta += view.getTrailingMargin();
-            delta = MathUtils.flipSignIf(delta, LocalizationUtils.isLayoutRtl());
+            delta = MathUtils.flipSignIf(delta, rtl);
             startX += delta;
+        }
+    }
+
+    /**
+     * Sets the idealX for the given {@link StripLayoutTab}. For LTR, this is the same as the
+     * startX. For RTL, however, draw coordinates are still always anchored at the top-left of the
+     * screen. This means we need to set the idealX to the left-side of the tab. This is the startX
+     * minus the effective width of the tab.
+     *
+     * @param stripTab The {@link StripLayoutTab} to set the idealX for.
+     * @param startX The idealX of the tab's starting side. This is the left side in LTR and the
+     *     right side in RTL.
+     */
+    private void setTabIdealX(StripLayoutTab stripTab, float startX) {
+        if (LocalizationUtils.isLayoutRtl()) {
+            stripTab.setIdealX(startX - (stripTab.getWidth() - TAB_OVERLAP_WIDTH_DP));
+        } else {
+            stripTab.setIdealX(startX);
+        }
+    }
+
+    /** See {@link #setTabIdealX}. Same concept, but for group titles. */
+    private void setGroupTitleIdealX(StripLayoutGroupTitle groupTitle, float startX) {
+        if (LocalizationUtils.isLayoutRtl()) {
+            // Use the tab overlap width here. The group title's true width accounts for how much it
+            // overlaps previous tab (i.e. the tab overlap width). Note that this is different from
+            // the visual size, which can be found through StripLayoutGroupTitle#getPaddedWidth.
+            groupTitle.setIdealX(startX - (groupTitle.getWidth() - TAB_OVERLAP_WIDTH_DP));
+        } else {
+            groupTitle.setIdealX(startX);
         }
     }
 
@@ -4147,100 +4988,40 @@ public class StripLayoutHelper
         populateVisibleViews(mStripGroupTitles, mStripGroupTitlesToRender);
     }
 
-    private float adjustNewTabButtonOffsetIfFull(float offset) {
-        if (!isTabStripFull()) {
-            // Move NTB close to tabs by 4 dp when tab strip is not full.
-            boolean isLtr = !LocalizationUtils.isLayoutRtl();
-            offset += MathUtils.flipSignIf(NEW_TAB_BUTTON_X_OFFSET_TOWARDS_TABS, isLtr);
-        }
-        return offset;
-    }
-
-    private CompositorAnimator getLastTabClosedNtbAnimator() {
-        // TODO(crbug.com/338332428): Unify with the stacker methods.
-        float viewsWidth = (getNumLiveTabs() * getEffectiveTabWidth()) + TAB_OVERLAP_WIDTH_DP;
-        for (int i = 0; i < mStripViews.length; ++i) {
-            final StripLayoutView view = mStripViews[i];
-            if (!(view instanceof StripLayoutTab)) viewsWidth += view.getWidth();
-        }
-
-        boolean rtl = LocalizationUtils.isLayoutRtl();
-        float offset = getStartPositionForStripViews() + MathUtils.flipSignIf(viewsWidth, rtl);
-        if (rtl) offset += mCachedTabWidthSupplier.get() - mNewTabButtonWidth;
-        offset = adjustNewTabButtonOffsetIfFull(offset);
-
-        CompositorAnimator animator =
-                CompositorAnimator.ofFloatProperty(
-                        mUpdateHost.getAnimationHandler(),
-                        mNewTabButton,
-                        StripLayoutView.DRAW_X,
-                        mNewTabButton.getDrawX(),
-                        offset,
-                        ANIM_TAB_RESIZE_MS);
-        return animator;
-    }
-
-    private void updateNewTabButtonState() {
-        // 1. The NTB is faded out upon entering reorder mode and hidden when the model is empty.
-        boolean isEmpty = mStripTabs.length == 0;
-        mNewTabButton.setVisible(!isEmpty);
-        if (isEmpty) return;
-
-        // 2. Get offset from strip stacker.
-        // Note: This method anchors the NTB to either a static position at the end of the strip OR
-        // right next to the final tab in the strip. This only WAI if the final view in the strip is
-        // guaranteed to be a tab. If this changes (e.g. we allow empty tab groups), then this will
-        // need to be updated.
-        float offset =
-                mStripStacker.computeNewTabButtonOffset(
-                        mStripTabs,
-                        TAB_OVERLAP_WIDTH_DP,
-                        mLeftMargin,
-                        mRightMargin,
-                        mWidth,
-                        mNewTabButtonWidth);
-        offset = adjustNewTabButtonOffsetIfFull(offset);
-
-        // 3. Hide the new tab button if it's not visible on the screen.
-        boolean isRtl = LocalizationUtils.isLayoutRtl();
-        if ((isRtl && offset + mNewTabButtonWidth < getVisibleLeftBound())
-                || (!isRtl && offset > getVisibleRightBound())) {
-            mNewTabButton.setVisible(false);
-            return;
-        }
-        mNewTabButton.setVisible(true);
-
-        // 4. Position the new tab button.
-        mNewTabButton.setDrawX(offset);
-    }
-
     /**
      * @param view The {@link StripLayoutView} to make fully visible.
      * @return a 1-D vector on the X axis of the window coordinate system that can make the tab
      *     fully visible.
      */
-    private float calculateDeltaToMakeViewVisible(StripLayoutView view) {
+    private float calculateDeltaToMakeViewVisible(@Nullable StripLayoutView view) {
         if (view == null) return 0.f;
         // These are always in view.
         if (view.equals(mNewTabButton) || view.equals(mModelSelectorButton)) return 0.f;
+        if (view instanceof StripLayoutTab tab && tab.getIsPinned()) return 0.f;
 
-        // 1. Calculate offsets to fully show the view on the left/right side of the
-        // strip. These offsets are scalars.
+        // 1. Calculate the bounds to fully show the regular view on the left/right side of the
+        // strip.
         // TODO(wenyufu): Account for offsetX{Left,Right} result too much offset. Is this expected?
-        final float rightOffset = mRightFadeWidth + mRightMargin;
-        final float leftOffset = mLeftFadeWidth + mLeftMargin;
+        boolean rtl = LocalizationUtils.isLayoutRtl();
+        final float rightBound =
+                getVisibleRightBound(/* clampToUnpinnedViews= */ true)
+                        - mRightFadeWidth
+                        - (rtl ? 0f : mReservedEndMargin);
+        final float leftBound =
+                getVisibleLeftBound(/* clampToUnpinnedViews= */ true)
+                        + mLeftFadeWidth
+                        - (rtl ? mReservedEndMargin : 0f);
 
         // 2. Calculate vectors from the view's ideal position to the farthest left/right point
-        // where
-        // the view can be visible.
+        // where the view can be visible.
         // These are 1-D vectors on the X axis of the window coordinate system.
         if (view instanceof TintedCompositorButton closeButton
                 && closeButton.getParentView() instanceof StripLayoutTab stripTab) {
             view = stripTab;
         }
-        final float deltaToFarLeft = leftOffset - view.getIdealX();
+        final float deltaToFarLeft = leftBound - view.getIdealX();
         final float deltaToFarRight =
-                mWidth - rightOffset - mCachedTabWidthSupplier.get() - view.getIdealX();
+                rightBound - getCachedTabWidth(/* isPinned= */ false) - view.getIdealX();
 
         // 3. The following case means the view is already completely in the visible area of the
         // strip, i.e., it needs to be:
@@ -4258,11 +5039,11 @@ public class StripLayoutHelper
         mTabAtPositionForTesting = tab;
     }
 
-    StripLayoutTab getTabAtPosition(float x) {
+    @Nullable StripLayoutTab getTabAtPosition(float x) {
         return (StripLayoutTab) getViewAtPositionX(x, false);
     }
 
-    StripLayoutView getViewAtPositionX(float x, boolean includeGroupTitles) {
+    @Nullable StripLayoutView getViewAtPositionX(float x, boolean includeGroupTitles) {
         if (mTabAtPositionForTesting != null) {
             return mTabAtPositionForTesting;
         }
@@ -4273,15 +5054,11 @@ public class StripLayoutHelper
         return mReorderDelegate.getInReorderMode();
     }
 
-    public float getStripStartMarginForReorderForTesting() {
-        return mScrollDelegate.getReorderStartMargin();
-    }
-
     public void startReorderModeAtIndexForTesting(int index) {
         StripLayoutTab tab = mStripTabs[index];
         updateStrip();
         float x = tab.getDrawX() + (tab.getWidth() / 2);
-        startReorderMode(x, 0, getTabAtPosition(x), ReorderType.DRAG_WITHIN_STRIP);
+        startReorderMode(x, 0, tab, ReorderType.DRAG_WITHIN_STRIP);
     }
 
     @Override
@@ -4319,7 +5096,7 @@ public class StripLayoutHelper
         Tab tab = getTabById(id);
         if (tab == null) return Color.TRANSPARENT;
 
-        StripLayoutGroupTitle groupTitle = findGroupTitle(tab.getRootId());
+        StripLayoutGroupTitle groupTitle = findGroupTitle(tab.getTabGroupId());
         if (groupTitle == null) return Color.TRANSPARENT;
 
         return groupTitle.getTint();
@@ -4335,8 +5112,9 @@ public class StripLayoutHelper
         // temporarily hidden while delete dialog is showing.
         Tab tab = getTabById(stripLayoutTab.getTabId());
         if (tab == null
+                || mTabGroupModelFilter == null
                 || !mTabGroupModelFilter.isTabInTabGroup(tab)
-                || tab.getRootId() == mGroupIdToHideSupplier.get()) {
+                || assumeNonNull(tab.getTabGroupId()).equals(mGroupIdToHideSupplier.get())) {
             return false;
         }
 
@@ -4344,23 +5122,24 @@ public class StripLayoutHelper
         // tab is in foreground (e.g. the previously selected tab in destination strip).
         return stripLayoutTab.getFolioAttached()
                 && (isSelectedTab(stripLayoutTab.getTabId())
-                        || stripLayoutTab.getContainerOpacity() == TAB_OPACITY_VISIBLE);
+                        || StripLayoutTabDelegate.isTabVisible(stripLayoutTab));
     }
 
     private void handleReorderAutoScrolling(long time) {
         if (!mReorderDelegate.getInReorderMode()) return;
+        boolean rtl = LocalizationUtils.isLayoutRtl();
+        float leftBound =
+                getVisibleLeftBound(/* clampToUnpinnedViews= */ true)
+                        + (rtl ? mReservedEndMargin : 0f);
+        float rightBound =
+                getVisibleRightBound(/* clampToUnpinnedViews= */ true)
+                        + (rtl ? 0f : mReservedEndMargin);
         mReorderDelegate.updateReorderPositionAutoScroll(
-                mStripViews,
-                mStripGroupTitles,
-                mStripTabs,
-                time,
-                mWidth,
-                mLeftMargin,
-                mRightMargin);
+                mStripViews, mStripGroupTitles, mStripTabs, time, leftBound, rightBound);
     }
 
-    private Tab getTabById(int tabId) {
-        return mModel.getTabById(tabId);
+    private @Nullable Tab getTabById(int tabId) {
+        return mModel == null ? null : mModel.getTabById(tabId);
     }
 
     private int getSelectedTabId() {
@@ -4382,7 +5161,7 @@ public class StripLayoutHelper
                 : mActiveTabIndexOnStartup;
     }
 
-    private StripLayoutTab getSelectedStripTab() {
+    private @Nullable StripLayoutTab getSelectedStripTab() {
         int index = getSelectedStripTabIndex();
 
         return index >= 0 && index < mStripTabs.length ? mStripTabs[index] : null;
@@ -4390,16 +5169,6 @@ public class StripLayoutHelper
 
     private boolean isSelectedTab(int id) {
         return id != Tab.INVALID_TAB_ID && id == getSelectedTabId();
-    }
-
-    private void resetResizeTimeout(boolean postIfNotPresent) {
-        final boolean present = mStripTabEventHandler.hasMessages(MESSAGE_RESIZE);
-
-        if (present) mStripTabEventHandler.removeMessages(MESSAGE_RESIZE);
-
-        if (present || postIfNotPresent) {
-            mStripTabEventHandler.sendEmptyMessageAtTime(MESSAGE_RESIZE, RESIZE_DELAY_MS);
-        }
     }
 
     protected void scrollTabToView(long time, boolean requestUpdate) {
@@ -4416,10 +5185,11 @@ public class StripLayoutHelper
      */
     @Override
     public void updateTabStripNotificationBubble(
-            @NonNull Set<Integer> tabIdsToBeUpdated, boolean hasUpdate) {
+            Set<Integer> tabIdsToBeUpdated, boolean hasUpdate) {
         boolean updateForCollapsedGroup = false;
         boolean showIph =
-                mTabStripIphController.wouldTriggerIph(IphType.GROUP_TITLE_NOTIFICATION_BUBBLE);
+                assumeNonNull(mTabStripIphController)
+                        .wouldTriggerIph(IphType.GROUP_TITLE_NOTIFICATION_BUBBLE);
 
         for (int tabId : tabIdsToBeUpdated) {
             Tab tab = getTabById(tabId);
@@ -4428,14 +5198,14 @@ public class StripLayoutHelper
             // Skip invalid tabs or selected tabs when showing updates.
             if (tab == null || stripTab == null || (isSelectedTab(tabId) && hasUpdate)) continue;
 
-            int rootId = tab.getRootId();
-            final StripLayoutGroupTitle groupTitle = findGroupTitle(rootId);
+            Token tabGroupId = tab.getTabGroupId();
+            final StripLayoutGroupTitle groupTitle = findGroupTitle(tabGroupId);
 
             // Show bubble and iph on group title if collapsed, otherwise show iph on the updated
             // tab.
             if (groupTitle != null && groupTitle.isCollapsed() && !updateForCollapsedGroup) {
                 groupTitle.setNotificationBubbleShown(hasUpdate);
-                updateGroupTextAndSharedState(rootId);
+                updateGroupTextAndSharedState(tabGroupId);
                 if (hasUpdate && showIph) {
                     mQueuedIphList.add(
                             () ->
@@ -4460,7 +5230,7 @@ public class StripLayoutHelper
             // Update tab bubble and the related accessibility description.
             stripTab.setNotificationBubbleShown(hasUpdate);
             setAccessibilityDescription(stripTab, tab);
-            mLayerTitleCache.updateTabBubble(tabId, hasUpdate);
+            if (mLayerTitleCache != null) mLayerTitleCache.updateTabBubble(tabId, hasUpdate);
         }
         mUpdateHost.requestUpdate();
     }
@@ -4475,14 +5245,6 @@ public class StripLayoutHelper
         @Override
         public void handleMessage(Message m) {
             switch (m.what) {
-                case MESSAGE_RESIZE:
-                    finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
-                    computeAndUpdateTabWidth(
-                            /* animate= */ true,
-                            /* deferAnimations= */ false,
-                            /* closedTab= */ null);
-                    mUpdateHost.requestUpdate();
-                    break;
                 case MESSAGE_UPDATE_SPINNER:
                     mUpdateHost.requestUpdate();
                     break;
@@ -4521,12 +5283,16 @@ public class StripLayoutHelper
      */
     @VisibleForTesting
     void showCloseButtonMenu(StripLayoutTab anchorTab) {
+        if (mModel == null) return;
+
         // 1. Bring the anchor tab to the foreground.
         int tabIndex = TabModelUtils.getTabIndexById(mModel, anchorTab.getTabId());
         TabModelUtils.setIndex(mModel, tabIndex);
 
         // 2. Anchor the popupMenu to the view associated with the tab
-        View tabView = TabModelUtils.getCurrentTab(mModel).getView();
+        @Nullable Tab tab = TabModelUtils.getCurrentTab(mModel);
+        if (tab == null) return;
+        View tabView = tab.getView();
         mCloseButtonMenu.setAnchorView(tabView);
         // 3. Set the vertical offset to align the close button menu with bottom of the tab strip
         int tabHeight = mManagerHost.getHeight();
@@ -4579,15 +5345,19 @@ public class StripLayoutHelper
     }
 
     /** Scrolls to {@param view} if it's not fully visible. */
-    private void bringViewToVisibleArea(StripLayoutView view, long time, boolean animate) {
+    private void bringViewToVisibleArea(
+            @Nullable StripLayoutView view, long time, boolean animate) {
         if (mWidth == 0) return;
         float delta = calculateDeltaToMakeViewVisible(view);
         setScrollForScrollingTabStacker(delta, /* isDeltaHorizontal= */ true, animate, time);
     }
 
     private boolean isViewCompletelyVisible(StripLayoutView view) {
-        float leftBound = getVisibleLeftBound() + mLeftFadeWidth;
-        float rightBound = getVisibleRightBound() - mRightFadeWidth;
+        boolean isPinned = (view instanceof StripLayoutTab tab) && tab.getIsPinned();
+        float leftBound =
+                getVisibleLeftBound(/* clampToUnpinnedViews= */ !isPinned) + mLeftFadeWidth;
+        float rightBound =
+                getVisibleRightBound(/* clampToUnpinnedViews= */ !isPinned) - mRightFadeWidth;
         float viewStart = 0f;
         float viewEnd = 0f;
         if (view instanceof StripLayoutTab tab) {
@@ -4609,7 +5379,9 @@ public class StripLayoutHelper
      */
     @VisibleForTesting
     boolean isViewCompletelyHidden(StripLayoutView view) {
-        return !view.isVisible() || isViewCompletelyHiddenAt(view.getDrawX(), view.getWidth());
+        boolean isPinned = (view instanceof StripLayoutTab tab) && tab.getIsPinned();
+        return !view.isVisible()
+                || isViewCompletelyHiddenAt(view.getDrawX(), view.getWidth(), isPinned);
     }
 
     /**
@@ -4620,37 +5392,22 @@ public class StripLayoutHelper
      * @return {@code true} if the view will be completely hidden, {@code false} otherwise.
      */
     private boolean willViewBeCompletelyHidden(StripLayoutView view) {
-        return isViewCompletelyHiddenAt(view.getIdealX(), view.getWidth());
+        boolean isPinned = (view instanceof StripLayoutTab tab) && tab.getIsPinned();
+        return isViewCompletelyHiddenAt(view.getIdealX(), view.getWidth(), isPinned);
     }
 
-    private boolean isViewCompletelyHiddenAt(float viewX, float viewWidth) {
+    private boolean isViewCompletelyHiddenAt(float viewX, float viewWidth, boolean isPinned) {
+        float leftBound =
+                getVisibleLeftBound(/* clampToUnpinnedViews= */ !isPinned) + mLeftFadeWidth;
+        float rightBound =
+                getVisibleRightBound(/* clampToUnpinnedViews= */ !isPinned) - mRightFadeWidth;
         // Check if the tab is outside the visible bounds to the left...
-        return viewX + viewWidth <= getVisibleLeftBound() + mLeftFadeWidth
+        return viewX + viewWidth <= leftBound
                 // ... or to the right.
-                || viewX >= getVisibleRightBound() - mRightFadeWidth;
+                || viewX >= rightBound;
     }
 
-    /**
-     * To prevent accidental tab closures, when the close button of a tab is very close to the edge
-     * of the tab strip, we hide the close button. The threshold for hiding is different based on
-     * the length of the fade at the end of the strip.
-     *
-     * @param start Whether its the start of the tab strip.
-     * @return The distance threshold from the edge of the tab strip to hide the close button.
-     */
-    private float getCloseBtnVisibilityThreshold(boolean start) {
-        if (start) {
-            // TODO(zheliooo): Add unit tests to cover start tab cases for testTabSelected in
-            // StripLayoutHelperTest.
-            return CLOSE_BTN_VISIBILITY_THRESHOLD_START;
-        } else {
-            return LocalizationUtils.isLayoutRtl() ? mLeftFadeWidth : mRightFadeWidth;
-        }
-    }
-
-    /**
-     * @return true if the close button menu is showing
-     */
+    /** Returns true if the close button menu is showing */
     public boolean isCloseButtonMenuShowingForTesting() {
         return mCloseButtonMenu.isShowing();
     }
@@ -4662,38 +5419,38 @@ public class StripLayoutHelper
         mCloseButtonMenu.performItemClick(menuItemId);
     }
 
-    /**
-     * @return The width of the tab strip.
-     */
+    /** Returns The width of the tab strip. */
     float getWidthForTesting() {
         return mWidth;
     }
 
     /**
+     * @param isPinned Whether the tab has been pinned.
      * @return The width of a tab.
      */
-    float getCachedTabWidthForTesting() {
-        return mCachedTabWidthSupplier.get();
+    private float getCachedTabWidth(boolean isPinned) {
+        return isPinned ? PINNED_TAB_WIDTH_DP : assumeNonNull(mCachedTabWidthSupplier.get());
+    }
+
+    /** Returns The width of a tab. */
+    float getUnpinnedTabWidthForTesting() {
+        return getCachedTabWidth(/* isPinned= */ false);
     }
 
     /**
-     * @return The strip's scroll offset limit (a 1-D vector along the X axis, under the dynamic
-     *     coordinate system used by {@link ScrollDelegate}).
+     * Returns The strip's scroll offset limit (a 1-D vector along the X axis, under the dynamic
+     * coordinate system used by {@link ScrollDelegate}).
      */
     float getScrollOffsetLimitForTesting() {
         return mScrollDelegate.getScrollOffsetLimitForTesting(); // IN-TEST
     }
 
-    /**
-     * @return The scroller.
-     */
+    /** Returns The scroller. */
     StackScroller getScrollerForTesting() {
         return mScrollDelegate.getScrollerForTesting(); // IN-TEST
     }
 
-    /**
-     * @return An array containing the StripLayoutTabs.
-     */
+    /** Returns An array containing the StripLayoutTabs. */
     StripLayoutTab[] getStripLayoutTabsForTesting() {
         return mStripTabs;
     }
@@ -4703,28 +5460,30 @@ public class StripLayoutHelper
         this.mStripTabs = stripTabs;
     }
 
-    /**
-     * @return An array containing the StripLayoutViews.
-     */
+    /** Returns An array containing the StripLayoutViews. */
     StripLayoutView[] getStripLayoutViewsForTesting() {
         return mStripViews;
     }
 
-    /**
-     * @return The currently interacting tab.
-     */
-    StripLayoutTab getInteractingTabForTesting() {
+    /** Returns The currently interacting tab. */
+    @Nullable StripLayoutTab getInteractingTabForTesting() {
         return mReorderDelegate.getInteractingTabForTesting(); // IN-TEST
     }
 
-    /**
-     * @return The view that we'll delay enter reorder mode for.
-     */
-    StripLayoutView getDelayedReorderViewForTesting() {
+    /** Returns The view that we'll delay enter reorder mode for. */
+    @Nullable StripLayoutView getDelayedReorderViewForTesting() {
         return mDelayedReorderView;
     }
 
-    Animator getRunningAnimatorForTesting() {
+    Set<StripLayoutTab> getClosingTabsForTesting() {
+        return mClosingTabs;
+    }
+
+    Set<StripLayoutGroupTitle> getClosingGroupTitlesForTesting() {
+        return mClosingGroupTitles;
+    }
+
+    @Nullable Animator getRunningAnimatorForTesting() {
         return mRunningAnimator;
     }
 
@@ -4760,7 +5519,19 @@ public class StripLayoutHelper
         return mIsStripScrollInProgress;
     }
 
-    private void setAccessibilityDescription(StripLayoutTab stripTab, Tab tab) {
+    void setPendingMouseTabClosureForTesting(boolean pendingMouseTabClosure) {
+        mPendingMouseTabClosure = pendingMouseTabClosure;
+    }
+
+    boolean getPendingMouseTabClosureForTesting() {
+        return mPendingMouseTabClosure;
+    }
+
+    ObservableSupplierImpl<@Nullable Token> getGroupIdToHideSupplierForTesting() {
+        return mGroupIdToHideSupplier;
+    }
+
+    private void setAccessibilityDescription(@Nullable StripLayoutTab stripTab, @Nullable Tab tab) {
         if (tab != null) setAccessibilityDescription(stripTab, tab.getTitle(), tab.isHidden());
     }
 
@@ -4772,23 +5543,16 @@ public class StripLayoutHelper
      * @param isHidden Current visibility state of the Tab.
      */
     private void setAccessibilityDescription(
-            StripLayoutTab stripTab, @Nullable String title, boolean isHidden) {
+            @Nullable StripLayoutTab stripTab, @Nullable String title, boolean isHidden) {
         if (stripTab == null) return;
 
-        @StringRes int resId;
-        if (mIncognito) {
-            resId =
-                    isHidden
-                            ? R.string.accessibility_tabstrip_tab_incognito
-                            : R.string.accessibility_tabstrip_tab_incognito_selected;
-        } else if (isHidden) {
-            resId =
-                    stripTab.getNotificationBubbleShown()
-                            ? R.string.accessibility_tabstrip_tab_notification
-                            : R.string.accessibility_tabstrip_tab;
-        } else {
-            resId = R.string.accessibility_tabstrip_tab_selected;
-        }
+        @StringRes
+        int resId =
+                getTabAccessibilityLabelRes(
+                        stripTab.getIsPinned(),
+                        stripTab.getNotificationBubbleShown(),
+                        isHidden,
+                        stripTab.getIsMultiSelected());
 
         if (!stripTab.needsAccessibilityDescriptionUpdate(title, resId)) {
             // The resulting accessibility description would be the same as the current description,
@@ -4798,6 +5562,81 @@ public class StripLayoutHelper
 
         final String description = mContext.getString(resId, title);
         stripTab.setAccessibilityDescription(description, title, resId);
+    }
+
+    /**
+     * Get the accessibility description string resource of a {@link StripLayoutTab}.
+     *
+     * @param isPinned Whether the tab is pinned.
+     * @param notificationShown Whether the tab has notification shown.
+     * @param isHidden Current visibility state of the Tab.
+     * @param isMultiSelected Whether the tab is multi-selected.
+     */
+    private @StringRes int getTabAccessibilityLabelRes(
+            boolean isPinned,
+            boolean notificationShown,
+            boolean isHidden,
+            boolean isMultiSelected) {
+        if (notificationShown) {
+            return R.string.accessibility_tabstrip_tab_notification;
+        }
+
+        @StringRes
+        int pinnedUnselected =
+                mIncognito
+                        ? R.string.accessibility_tabstrip_tab_pinned_incognito
+                        : R.string.accessibility_tabstrip_tab_pinned;
+        @StringRes
+        int pinnedSelected =
+                mIncognito
+                        ? R.string.accessibility_tabstrip_tab_pinned_selected_incognito
+                        : R.string.accessibility_tabstrip_tab_pinned_selected;
+        @StringRes
+        int unpinnedUnselected =
+                mIncognito
+                        ? R.string.accessibility_tabstrip_tab_incognito
+                        : R.string.accessibility_tabstrip_tab;
+        @StringRes
+        int unpinnedSelected =
+                mIncognito
+                        ? R.string.accessibility_tabstrip_tab_selected_incognito
+                        : R.string.accessibility_tabstrip_tab_selected;
+
+        @StringRes
+        int multiselected =
+                mIncognito
+                        ? R.string.accessibility_tabstrip_tab_multiselected_incognito
+                        : R.string.accessibility_tabstrip_tab_multiselected;
+
+        @StringRes
+        int multiselectedPinned =
+                mIncognito
+                        ? R.string.accessibility_tabstrip_tab_multiselected_pinned_incognito
+                        : R.string.accessibility_tabstrip_tab_multiselected_pinned;
+
+        // A selected tab is always considered part of multi-selection. and so does not need to have
+        // a separate string.
+        if (isHidden) {
+            if (isPinned) {
+                if (isMultiSelected) {
+                    return multiselectedPinned;
+                } else {
+                    return pinnedUnselected;
+                }
+            } else {
+                if (isMultiSelected) {
+                    return multiselected;
+                } else {
+                    return unpinnedUnselected;
+                }
+            }
+        } else {
+            if (isPinned) {
+                return pinnedSelected;
+            } else {
+                return unpinnedSelected;
+            }
+        }
     }
 
     // ============================================================================================
@@ -4824,7 +5663,11 @@ public class StripLayoutHelper
 
             // 2. StartX indicates where the external drag enters the  tab strip.
             // Adjust by a half tab-width so that we target the nearest tab gap.
-            float startX = StripLayoutUtils.adjustXForTabDrop(currX, mCachedTabWidthSupplier);
+            float startX =
+                    StripLayoutUtils.adjustXForTabDrop(
+                            currX,
+                            mCachedTabWidthSupplier,
+                            TabStripDragHandler.isDraggingPinnedItem());
 
             // 3. Mark the "interacting" view. This is not the DnD dragged view, but rather the view
             // in the strip that is currently being hovered by the DnD drag.
@@ -4837,10 +5680,9 @@ public class StripLayoutHelper
         }
     }
 
-    public void handleDragWithin(
-            long time, float x, float y, float deltaX, boolean draggedTabIncognito) {
+    public void handleDragWithin(float x, float y, float deltaX, boolean draggedTabIncognito) {
         if (mIncognito == draggedTabIncognito) {
-            drag(time, x, y, deltaX);
+            drag(x, y, deltaX);
         }
     }
 
@@ -4875,13 +5717,12 @@ public class StripLayoutHelper
                 mReorderDelegate.handleDropForExternalView(mStripGroupTitles, tabIds, index);
 
         // Expand strip tabs if needed.
-        if (mergeToGroup && isCollapsed) {
+        if (mergeToGroup && isCollapsed && mModel != null) {
             // Selects the first tab in the collapsed group. For expanded groups, the correct tab
             // should be selected during tab creation.
             TabModelUtils.setIndex(mModel, index);
             finishAnimationsAndCloseDyingTabs(/* allowUndo= */ true);
-            computeAndUpdateTabWidth(
-                    /* animate= */ true, /* deferAnimations= */ false, /* closedTab= */ null);
+            computeAndUpdateTabWidth(/* animate= */ true, /* deferAnimations= */ false);
         }
     }
 
@@ -4891,7 +5732,7 @@ public class StripLayoutHelper
         }
     }
 
-    public int getTabIndexForTabDrop(float x) {
+    public int getTabIndexForTabDrop(float x, boolean isPinned) {
         for (int i = 0; i < mStripViews.length; i++) {
             final StripLayoutView stripView = mStripViews[i];
             final float leftEdge;
@@ -4899,14 +5740,15 @@ public class StripLayoutHelper
             boolean rtl = LocalizationUtils.isLayoutRtl();
             if (stripView instanceof StripLayoutTab tab) {
                 if (tab.isCollapsed()) continue;
-                final float halfTabWidth = mCachedTabWidthSupplier.get() / 2;
+                final float halfTabWidth = getCachedTabWidth(tab.getIsPinned()) / 2;
                 leftEdge = tab.getTouchTargetLeft();
                 rightEdge = tab.getTouchTargetRight();
 
                 boolean hasReachedThreshold =
                         rtl ? x > rightEdge - halfTabWidth : x < leftEdge + halfTabWidth;
                 if (hasReachedThreshold) {
-                    return StripLayoutUtils.findIndexForTab(mStripTabs, tab.getTabId());
+                    int tabIndex = StripLayoutUtils.findIndexForTab(mStripTabs, tab.getTabId());
+                    return isPinned == tab.getIsPinned() ? tabIndex : getNumLivePinnedTabs();
                 }
             } else {
                 final StripLayoutGroupTitle groupTitle = (StripLayoutGroupTitle) stripView;
@@ -4919,22 +5761,30 @@ public class StripLayoutHelper
                                 ? x > rightEdge - halfGroupTitleWidth
                                 : x < leftEdge + halfGroupTitleWidth;
                 if (hasReachedThreshold) {
-                    return StripLayoutUtils.findIndexForTab(
-                            mStripTabs, ((StripLayoutTab) mStripViews[i + 1]).getTabId());
+                    int tabIndex =
+                            StripLayoutUtils.findIndexForTab(
+                                    mStripTabs, ((StripLayoutTab) mStripViews[i + 1]).getTabId());
+                    return isPinned ? getNumLivePinnedTabs() : tabIndex;
                 }
             }
         }
-        return mStripTabs.length;
+        return isPinned ? getNumLivePinnedTabs() : mStripTabs.length;
+    }
+
+    public @MediaState int getMediaIndicatorState(StripLayoutTab stripLayoutTab) {
+        Tab tab = getTabById(stripLayoutTab.getTabId());
+        if (tab == null) return MediaState.NONE;
+        return tab.getMediaState();
     }
 
     private boolean isViewDraggingInProgress() {
         return mTabStripDragHandler != null && mTabStripDragHandler.isViewDraggingInProgress();
     }
 
-    private void onWillCloseView(StripLayoutView view) {
+    private void onWillCloseView(@Nullable StripLayoutView view) {
         if (view == null) return;
 
-        view.setWillClose();
+        view.setWillClose(/* willClose= */ true);
         if (view == mDelayedReorderView) resetDelayedReorderState();
         if (view == mReorderDelegate.getInteractingView()) stopReorderMode();
     }
@@ -4945,7 +5795,7 @@ public class StripLayoutHelper
     }
 
     private void sendMoveWindowBroadcast(View view, float startXInView, float startYInView) {
-        if (!XrUtils.isXrDevice()) return;
+        if (!DeviceInfo.isXr()) return;
         if (mWindowAndroid.getActivity().get() == null) return;
 
         // The start position is in the view coordinate system and related to the top left position
@@ -4970,8 +5820,17 @@ public class StripLayoutHelper
         mWindowAndroid.sendBroadcast(intent);
     }
 
-    void startDragAndDropTabForTesting(
-            @NonNull StripLayoutTab clickedTab, @NonNull PointF dragStartPointF) {
+    /** Returns the keyboard-focused view, or null if there is none. */
+    private @Nullable StripLayoutView getKeyboardFocusedView() {
+        List<VirtualView> virtualViews = new ArrayList<>();
+        getVirtualViews(virtualViews);
+        for (VirtualView view : virtualViews) {
+            if (view.isKeyboardFocused()) return (StripLayoutView) view;
+        }
+        return null;
+    }
+
+    void startDragAndDropTabForTesting(StripLayoutTab clickedTab, PointF dragStartPointF) {
         startReorderMode(
                 dragStartPointF.x, dragStartPointF.y, clickedTab, ReorderType.START_DRAG_DROP);
     }

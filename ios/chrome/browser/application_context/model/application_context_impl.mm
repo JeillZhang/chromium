@@ -56,6 +56,7 @@
 #import "ios/chrome/browser/gcm/model/ios_chrome_gcm_profile_service_factory.h"
 #import "ios/chrome/browser/history/model/history_service_factory.h"
 #import "ios/chrome/browser/metrics/model/ios_chrome_metrics_services_manager_client.h"
+#import "ios/chrome/browser/optimization_guide/model/optimization_guide_global_state.h"
 #import "ios/chrome/browser/policy/model/browser_policy_connector_ios.h"
 #import "ios/chrome/browser/policy/model/configuration_policy_handler_list_factory.h"
 #import "ios/chrome/browser/prefs/model/ios_chrome_pref_service_factory.h"
@@ -91,11 +92,6 @@
 #import "services/network/public/mojom/network_service.mojom.h"
 #import "ui/base/resource/resource_bundle.h"
 
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-#import "components/optimization_guide/core/model_execution/on_device_model_component.h"  // nogncheck
-#import "ios/chrome/browser/optimization_guide/model/on_device_model_service_controller_ios.h"
-#endif  // BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE
-
 ApplicationContextImpl::ApplicationContextImpl(
     base::SequencedTaskRunner* local_state_task_runner,
     const base::CommandLine& command_line,
@@ -106,12 +102,14 @@ ApplicationContextImpl::ApplicationContextImpl(
   DCHECK(!GetApplicationContext());
   SetApplicationContext(this);
 
-  SetApplicationLocale(locale);
   application_locale_storage_->Set(locale);
   application_country_ = country;
 
   update_client::UpdateQueryParams::SetDelegate(
       IOSChromeUpdateQueryParamsDelegate::GetInstance());
+
+  translate::TranslateDownloadManager::GetInstance()->set_application_locale(
+      locale);
 }
 
 ApplicationContextImpl::~ApplicationContextImpl() {
@@ -302,12 +300,6 @@ network::mojom::NetworkContext*
 ApplicationContextImpl::GetSystemNetworkContext() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   return ios_chrome_io_thread_->GetSystemNetworkContext();
-}
-
-const std::string& ApplicationContextImpl::GetApplicationLocale() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  DCHECK(!application_locale_.empty());
-  return application_locale_;
 }
 
 ApplicationLocaleStorage*
@@ -574,21 +566,14 @@ ApplicationContextImpl::GetAutoDeletionService() {
   return auto_deletion_service_.get();
 }
 
-#if BUILDFLAG(BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE)
-optimization_guide::OnDeviceModelServiceController*
-ApplicationContextImpl::GetOnDeviceModelServiceController(
-    base::WeakPtr<optimization_guide::OnDeviceModelComponentStateManager>
-        on_device_component_manager) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (!on_device_model_service_controller_) {
-    on_device_model_service_controller_ = base::MakeRefCounted<
-        optimization_guide::OnDeviceModelServiceControllerIOS>(
-        std::move(on_device_component_manager));
-    on_device_model_service_controller_->Init();
+optimization_guide::OptimizationGuideGlobalState*
+ApplicationContextImpl::GetOptimizationGuideGlobalState() {
+  if (!optimization_guide_global_state_) {
+    optimization_guide_global_state_ =
+        std::make_unique<optimization_guide::OptimizationGuideGlobalState>();
   }
-  return on_device_model_service_controller_.get();
+  return optimization_guide_global_state_.get();
 }
-#endif  // BUILD_WITH_INTERNAL_OPTIMIZATION_GUIDE
 
 os_crypt_async::OSCryptAsync* ApplicationContextImpl::GetOSCryptAsync() {
   return os_crypt_async_.get();
@@ -694,13 +679,6 @@ void ApplicationContextImpl::OnAppEnterState(AppState app_state) {
   // handling is necessary on iOS.
 }
 
-void ApplicationContextImpl::SetApplicationLocale(const std::string& locale) {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  application_locale_ = locale;
-  translate::TranslateDownloadManager::GetInstance()->set_application_locale(
-      application_locale_);
-}
-
 void ApplicationContextImpl::CreateLocalState() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!local_state_);
@@ -765,7 +743,7 @@ void ApplicationContextImpl::CreateGCMDriver() {
       GetApplicationContext()->GetNetworkConnectionTracker(), ::GetChannel(),
       IOSChromeGCMProfileServiceFactory::GetProductCategoryForSubtypes(),
       web::GetUIThreadTaskRunner({}), web::GetIOThreadTaskRunner({}),
-      blocking_task_runner);
+      blocking_task_runner, GetApplicationContext()->GetOSCryptAsync());
 }
 
 void ApplicationContextImpl::RequestProxyResolvingSocketFactory(

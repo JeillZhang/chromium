@@ -4,6 +4,9 @@
 
 package org.chromium.chrome.browser.payments;
 
+import static com.google.common.truth.Truth.assertThat;
+import static com.google.common.truth.Truth.assertWithMessage;
+
 import androidx.annotation.Nullable;
 import androidx.test.filters.MediumTest;
 
@@ -21,6 +24,8 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
+import org.chromium.chrome.browser.preferences.Pref;
+import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.transit.ChromeTransitTestRules;
 import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
@@ -38,7 +43,8 @@ import org.chromium.components.payments.PaymentAppFactoryParams;
 import org.chromium.components.payments.PaymentFeatureList;
 import org.chromium.components.payments.PaymentManifestDownloader;
 import org.chromium.components.payments.PaymentManifestParser;
-import org.chromium.components.payments.PaymentManifestWebDataService;
+import org.chromium.components.payments.WebPaymentsWebDataService;
+import org.chromium.components.user_prefs.UserPrefs;
 import org.chromium.content_public.browser.RenderFrameHost;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.payments.mojom.PaymentDetailsModifier;
@@ -80,7 +86,9 @@ public class AndroidPaymentAppFinderTest
          * @param url The URL of the test server.
          */
         /* package */ void setTestServerUrl(GURL url) {
-            assert mTestServerUrl == null : "Test server URL should be set only once";
+            assertWithMessage("Test server URL should be set only once")
+                    .that(mTestServerUrl)
+                    .isNull();
             mTestServerUrl = url;
         }
 
@@ -106,8 +114,7 @@ public class AndroidPaymentAppFinderTest
             GURL changedUrl =
                     new GURL(url.getSpec().replaceAll("https://", mTestServerUrl.getSpec()));
             if (!changedUrl.isValid()) {
-                assert false;
-                return null;
+                throw new AssertionError();
             }
             return changedUrl;
         }
@@ -143,6 +150,15 @@ public class AndroidPaymentAppFinderTest
     @Override
     public void onPaymentAppCreationError(
             String errorMessage, @AppCreationFailureReason int errorReason) {}
+
+    // PaymentAppFactoryDelegate implementation.
+    @Override
+    public boolean prefsCanMakePayment() {
+        WebContents webContents = getWebContents();
+        return webContents != null
+                && UserPrefs.get(Profile.fromWebContents(webContents))
+                        .getBoolean(Pref.CAN_MAKE_PAYMENT_ENABLED);
+    }
 
     // PaymentAppFactoryDelegate implementation.
     @Override
@@ -186,7 +202,7 @@ public class AndroidPaymentAppFinderTest
     // PaymentAppFactoryParams implementation.
     @Override
     public Map<String, PaymentDetailsModifier> getUnmodifiableModifiers() {
-        return Collections.unmodifiableMap(new HashMap<String, PaymentDetailsModifier>());
+        return Collections.unmodifiableMap(new HashMap<>());
     }
 
     // PaymentAppFactoryParams implementation.
@@ -790,6 +806,68 @@ public class AndroidPaymentAppFinderTest
 
         Assert.assertEquals("1 app should match the query again", 1, mPaymentApps.size());
         Assert.assertEquals("com.davepay.dev", mPaymentApps.get(0).getIdentifier());
+    }
+
+    /**
+     * Test a valid installation of QuincyPay with 55555555551111111111 signature and
+     * https://quincypay.test/webpay payment method, which supports a couple of different signatures
+     * (with the same package name) through two "related_applications" in the same web app manifest.
+     * Repeated app look ups should be successful.
+     */
+    @Test
+    @Feature({"Payments"})
+    public void testValidQuincyPay1() throws Throwable {
+        Set<String> methods = new HashSet<>();
+        methods.add("https://quincypay.test/webpay");
+        mPackageManager.installPaymentApp(
+                "QuincyPay",
+                "com.quincypay.app",
+                "https://quincypay.test/webpay",
+                /* signature= */ "55555555551111111111");
+
+        findApps(methods);
+
+        Assert.assertEquals("1 app should match the query", 1, mPaymentApps.size());
+        Assert.assertEquals("com.quincypay.app", mPaymentApps.get(0).getIdentifier());
+
+        mPaymentApps.clear();
+        mAllPaymentAppsCreated = false;
+
+        findApps(methods);
+
+        Assert.assertEquals("1 app should match the query again", 1, mPaymentApps.size());
+        Assert.assertEquals("com.quincypay.app", mPaymentApps.get(0).getIdentifier());
+    }
+
+    /**
+     * Test a valid installation of QuincyPay with 55555555552222222222 signature and
+     * https://quincypay.test/webpay payment method, which supports a couple of different signatures
+     * (with the same package name) through two "related_applications" in the same web app manifest.
+     * Repeated app look ups should be successful.
+     */
+    @Test
+    @Feature({"Payments"})
+    public void testValidQuincyPay2() throws Throwable {
+        Set<String> methods = new HashSet<>();
+        methods.add("https://quincypay.test/webpay");
+        mPackageManager.installPaymentApp(
+                "QuincyPay",
+                "com.quincypay.app",
+                "https://quincypay.test/webpay",
+                /* signature= */ "55555555552222222222");
+
+        findApps(methods);
+
+        Assert.assertEquals("1 app should match the query", 1, mPaymentApps.size());
+        Assert.assertEquals("com.quincypay.app", mPaymentApps.get(0).getIdentifier());
+
+        mPaymentApps.clear();
+        mAllPaymentAppsCreated = false;
+
+        findApps(methods);
+
+        Assert.assertEquals("1 app should match the query again", 1, mPaymentApps.size());
+        Assert.assertEquals("com.quincypay.app", mPaymentApps.get(0).getIdentifier());
     }
 
     /**
@@ -1765,7 +1843,7 @@ public class AndroidPaymentAppFinderTest
                 () -> {
                     AndroidPaymentAppFinder finder =
                             new AndroidPaymentAppFinder(
-                                    new PaymentManifestWebDataService(getWebContents()),
+                                    new WebPaymentsWebDataService(getWebContents()),
                                     mDownloader,
                                     new PaymentManifestParser(),
                                     mPackageManager,
@@ -1773,8 +1851,8 @@ public class AndroidPaymentAppFinderTest
                                     /* factory= */ null);
                     AndroidPaymentAppFinder.bypassIsReadyToPayServiceInTest();
                     if (appStorePackageName != null) {
-                        assert appStorePaymentMethod != null;
-                        assert appStorePaymentMethod.isValid();
+                        assertThat(appStorePaymentMethod).isNotNull();
+                        assertThat(appStorePaymentMethod.isValid()).isTrue();
                         finder.addAppStoreForTest(appStorePackageName, appStorePaymentMethod);
                     }
                     finder.findAndroidPaymentApps();

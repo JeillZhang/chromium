@@ -15,12 +15,11 @@
 #include "components/omnibox/browser/autocomplete_scheme_classifier.h"
 #include "components/omnibox/browser/remote_suggestions_service.h"
 #include "components/omnibox/browser/search_suggestion_parser.h"
+#include "components/optimization_guide/core/hints/hints_fetcher.h"
 #include "components/optimization_guide/core/hints/optimization_guide_decider.h"
-#include "components/optimization_guide/core/optimization_guide_features.h"
 #include "components/optimization_guide/proto/common_types.pb.h"
 #include "components/optimization_guide/proto/hints.pb.h"
 #include "components/optimization_guide/proto/salient_image_metadata.pb.h"
-#include "components/page_image_service/features.h"
 #include "components/page_image_service/image_service_consent_helper.h"
 #include "components/page_image_service/metrics_util.h"
 #include "components/search_engines/search_engine_type.h"
@@ -177,6 +176,7 @@ ImageServiceImpl::ImageServiceImpl(
         autocomplete_scheme_classifier)
     : template_url_service_(template_url_service),
       remote_suggestions_service_(remote_suggestions_service),
+      opt_guide_(opt_guide),
       history_consent_helper_(std::make_unique<ImageServiceConsentHelper>(
           sync_service,
           syncer::DataType::HISTORY_DELETE_DIRECTIVES)),
@@ -184,12 +184,7 @@ ImageServiceImpl::ImageServiceImpl(
           sync_service,
           syncer::DataType::BOOKMARKS)),
       autocomplete_scheme_classifier_(
-          std::move(autocomplete_scheme_classifier)) {
-  if (opt_guide && base::FeatureList::IsEnabled(
-                       kImageServiceOptimizationGuideSalientImages)) {
-    opt_guide_ = opt_guide;
-  }
-}
+          std::move(autocomplete_scheme_classifier)) {}
 
 ImageServiceImpl::OptGuideRequest::OptGuideRequest() = default;
 ImageServiceImpl::OptGuideRequest::~OptGuideRequest() = default;
@@ -203,15 +198,9 @@ base::WeakPtr<ImageService> ImageServiceImpl::GetWeakPtr() {
 }
 
 void ImageServiceImpl::FetchImageFor(mojom::ClientId client_id,
-                                 const GURL& page_url,
-                                 const mojom::Options& options,
-                                 ResultCallback callback) {
-  if (!base::FeatureList::IsEnabled(kImageService)) {
-    // In general this should never happen, because each UI should have its own
-    // feature gate, but this is just so we have a whole-service killswitch.
-    return std::move(callback).Run(GURL());
-  }
-
+                                     const GURL& page_url,
+                                     const mojom::Options& options,
+                                     ResultCallback callback) {
   GetConsentToFetchImage(
       client_id,
       base::BindOnce(&ImageServiceImpl::OnConsentResult, weak_factory_.GetWeakPtr(),
@@ -254,9 +243,8 @@ void ImageServiceImpl::OnConsentResult(mojom::ClientId client_id,
     return std::move(callback).Run(GURL());
   }
 
-  if (options.suggest_images &&
-      base::FeatureList::IsEnabled(kImageServiceSuggestPoweredImages) &&
-      template_url_service_ && remote_suggestions_service_) {
+  if (options.suggest_images && template_url_service_ &&
+      remote_suggestions_service_) {
     auto search_metadata =
         template_url_service_->ExtractSearchMetadata(page_url);
     // Fetch entity-keyed images for Google SRP visits only, because only
@@ -276,9 +264,7 @@ void ImageServiceImpl::OnConsentResult(mojom::ClientId client_id,
     }
   }
 
-  if (options.optimization_guide_images && opt_guide_ &&
-      base::FeatureList::IsEnabled(
-          kImageServiceOptimizationGuideSalientImages)) {
+  if (options.optimization_guide_images && opt_guide_) {
     UmaHistogramEnumerationForClient(
         kBackendHistogramName, PageImageServiceBackend::kOptimizationGuide,
         client_id);
@@ -332,9 +318,7 @@ void ImageServiceImpl::FetchOptimizationGuideImage(mojom::ClientId client_id,
   auto& request_list = unsent_opt_guide_requests_[client_id];
   request_list.push_back(std::move(request));
 
-  if (request_list.size() >=
-      optimization_guide::features::
-          MaxUrlsForOptimizationGuideServiceHintsFetch()) {
+  if (request_list.size() >= optimization_guide::HintsFetcher::kMaxUrls) {
     // Erasing the timer also cancels the timer callback.
     opt_guide_timers_.erase(client_id);
     ProcessAllBatchedOptimizationGuideRequests(client_id);

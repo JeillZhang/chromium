@@ -10,8 +10,13 @@ import json
 import logging as log
 import os
 import re
-import collections
+import sys
 import shlex
+
+REPOSITORY_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), os.pardir, os.pardir, os.pardir))
+sys.path.insert(0, REPOSITORY_ROOT)
+import components.cronet.gn2bp.common as gn2bp_common  # pylint: disable=wrong-import-position
 
 LINKER_UNIT_TYPES = ('executable', 'shared_library', 'static_library',
                      'source_set')
@@ -35,6 +40,13 @@ def _get_build_path_from_label(target_name: str) -> str:
 def _clean_string(string):
   return string.replace('\\', '').replace('../../', '').replace('"', '').strip()
 
+
+def _extract_rust_package_version(env_args):
+  for arg in env_args:
+    is_match = re.match(r'CARGO_PKG_VERSION=(.+)', arg)
+    if is_match:
+      return is_match.group(1)
+  return None
 
 def _extract_includes_from_aidl_args(args):
   for arg in args:
@@ -79,6 +91,19 @@ def _remove_out_prefix(label):
   return re.sub('^//out/.+?/(gen|obj)/', '', label)
 
 
+def _filter_defines(defines):
+  # These C++ defines are not actually used in code; Chromium only uses them to
+  # force rebuilds on rolls of certain dependencies. They don't hurt, per se,
+  # but they do create annoying diff noise on Android.bp files, so we drop them
+  # for aesthetic/convenience reasons.
+  EXCLUDED_DEFINES = {
+      "CR_CLANG_REVISION", "CR_LIBCXX_REVISION", "ANDROID_NDK_VERSION_ROLL"
+  }
+  return (define for define in defines if not any(
+      define.startswith(f"{excluded_define}=")
+      for excluded_define in EXCLUDED_DEFINES))
+
+
 class GnParser:
   """A parser with some cleverness for GN json desc files
 
@@ -109,7 +134,7 @@ class GnParser:
 
       def __init__(self):
         self.sources = set()
-        self.cflags = set()
+        self.cflags = []
         self.defines = set()
         self.include_dirs = set()
         self.deps = set()
@@ -122,6 +147,7 @@ class GnParser:
         self.args = []
         self.response_file_contents = ''
         self.rust_flags = list()
+        self.libs = set()
 
     def __init__(self, name, gn_type):
       self.name = name  # e.g. //src/ipc:ipc
@@ -149,9 +175,6 @@ class GnParser:
       # These are valid only for gn_type == 'action'
       self.script = ''
 
-      # These variables are propagated up when encountering a dependency
-      # on a source_set target.
-      self.libs = set()
       self.proto_deps = set()
       self.rtti = False
 
@@ -179,6 +202,10 @@ class GnParser:
 
       self.java_jar_excluded_patterns = []
       self.java_jar_included_patterns = []
+      # This is only populated for build script actions. It refers to the directory for which
+      # the original source files are.
+      self.rust_source_dir = None
+      self.rust_package_version = None
 
     # Properties to forward access to common arch.
     # TODO: delete these after the transition has been completed.
@@ -201,6 +228,10 @@ class GnParser:
     @property
     def outputs(self):
       return self.arch['common'].outputs
+
+    @property
+    def libs(self):
+      return self.arch['common'].libs
 
     @outputs.setter
     def outputs(self, val):
@@ -225,6 +256,10 @@ class GnParser:
     @property
     def cflags(self):
       return self.arch['common'].cflags
+
+    @cflags.setter
+    def cflags(self, val):
+      self.arch['common'].cflags = val
 
     @property
     def defines(self):
@@ -281,13 +316,24 @@ class GnParser:
 
     def update(self, other, arch):
       for key in ('cflags', 'defines', 'deps', 'include_dirs', 'ldflags',
-                  'proto_deps', 'libs', 'proto_paths'):
-        getattr(self, key).update(getattr(other, key, []))
+                  'proto_deps', 'proto_paths'):
+        val = getattr(self, key)
+        if isinstance(val, set):
+          # The pylint is confused as it does not understand that this line is protected
+          # behind a type-check via `isinstance`
+          # pylint: disable=no-member
+          val.update(getattr(other, key, ()))
+        elif isinstance(val, list):
+          val.extend(getattr(other, key, []))
 
       for key_in_arch in ('cflags', 'defines', 'include_dirs', 'deps',
-                          'ldflags'):
-        getattr(self.arch[arch],
-                key_in_arch).update(getattr(other.arch[arch], key_in_arch, []))
+                          'ldflags', 'libs'):
+        val = getattr(self.arch[arch], key_in_arch)
+        if isinstance(val, set):
+          val.update(getattr(other.arch[arch], key_in_arch, []))
+        elif isinstance(val, list):
+          val.extend(getattr(other.arch[arch], key_in_arch, []))
+
 
     def get_archs(self):
       """ Returns a dict of archs without the common arch """
@@ -333,7 +379,7 @@ class GnParser:
 
       for key in ('sources', 'cflags', 'defines', 'include_dirs', 'deps',
                   'inputs', 'outputs', 'args', 'response_file_contents',
-                  'ldflags', 'rust_flags'):
+                  'ldflags', 'rust_flags', 'libs'):
         self._finalize_attribute(key)
 
     def get_target_name(self):
@@ -437,11 +483,8 @@ class GnParser:
       # return early, no need to parse any further as the module is a builtin.
       return target
 
-    if (target_name.startswith("//build/rust/std")
-        or desc.get("crate_name", "").endswith("_build_script")):
+    if target_name.startswith("//build/rust/std"):
       # We intentionally don't parse build/rust/std as we use AOSP's stdlib.
-      # Don't parse build_script as we can't execute them in AOSP, we use a different
-      # source of truth.
       return target
 
     target.testonly = desc.get('testonly', False)
@@ -537,7 +580,7 @@ class GnParser:
           raise ValueError(
               f"Unexpected android_sdk_dep: {android_sdk_dep} for target {target.name}"
           )
-    elif target.script == "//build/rust/run_bindgen.py":
+    elif target.script == "//build/rust/gni_impl/run_bindgen.py":
       # rust_bindgen is a supported module in Soong but GN depend on actions
       # so we need to copy the action fields (sources, outputs and args) in
       # order to correctly generate the `rust_bindgen` module.
@@ -582,6 +625,14 @@ class GnParser:
       target.transitive_jni_java_sources.update(
           metadata.get("jni_source_files", set()))
       self.jni_java_sources.update(metadata.get("jni_source_files", set()))
+      if gn2bp_common.is_rust_build_script(target.script):
+
+        def _extract_crate_path(args):
+          return args[args.index("--src-dir") + 1].replace("../../", "")
+
+        target.rust_source_dir = _extract_crate_path(desc['args'])
+        # Don't continue the dependencies exploration.
+        return target
     elif target.type == 'group':
       # Group targets are bubbled upward without creating an equivalent GN target.
       pass
@@ -594,6 +645,8 @@ class GnParser:
       target.arch[arch].sources.update(source
                                        for source in desc.get('sources', [])
                                        if not source.startswith("//out"))
+      target.rust_package_version = _extract_rust_package_version(
+          desc['rustenv'])
     else:
       raise Exception(
           f"Encountered GN target with unknown type\nCulprit target: {gn_target_name}\ntype: {target.type}"
@@ -607,11 +660,11 @@ class GnParser:
     public_headers = [x for x in desc.get('public', []) if x != '*']
     target.public_headers.update(public_headers)
     target.build_file_path = _get_build_path_from_label(target_name)
-    target.arch[arch].cflags.update(
+    target.arch[arch].cflags.extend(
         desc.get('cflags', []) + desc.get('cflags_cc', []))
-    target.libs.update(desc.get('libs', []))
+    target.arch[arch].libs.update(desc.get('libs', []))
     target.arch[arch].ldflags.update(desc.get('ldflags', []))
-    target.arch[arch].defines.update(desc.get('defines', []))
+    target.arch[arch].defines.update(_filter_defines(desc.get('defines', [])))
     target.arch[arch].include_dirs.update(desc.get('include_dirs', []))
     target.output_name = desc.get('output_name', None)
     target.crate_name = desc.get("crate_name", None)

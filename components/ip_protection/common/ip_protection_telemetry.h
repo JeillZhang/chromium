@@ -10,11 +10,15 @@
 #include <optional>
 
 #include "base/time/time.h"
+#include "base/types/optional_ref.h"
+
+namespace net {
+class ProxyChain;
+}
 
 namespace ip_protection {
 
 enum class TryGetAuthTokensResult;
-enum class TryGetAuthTokensAndroidResult;
 enum class TryGetProbabilisticRevealTokensStatus;
 enum class ProxyLayer;
 
@@ -56,7 +60,9 @@ enum class ProxyResolutionResult {
   kAttemptProxy = 7,
   // A site exception created by User Bypass disables protections.
   kHasSiteException = 8,
-  kMaxValue = kHasSiteException,
+  // The request bypassed the IP Protection proxies through DevTools.
+  kBypassedByDevTools = 9,
+  kMaxValue = kBypassedByDevTools,
 };
 
 // An enumeration of the result of an attempt to fetch a proxy list. These
@@ -80,15 +86,29 @@ enum class AuthTokenResultForGeo {
   kAvailableForOtherCachedGeo = 3,
   kMaxValue = kAvailableForOtherCachedGeo,
 };
-// LINT.ThenChange(//tools/metrics/histograms/metadata/network/enums.xml:IpProtectionGetAuthTokenResultForGeo)
+// LINT.ThenChange(//tools/metrics/histograms/metadata/ip_protection/enums.xml:IpProtectionGetAuthTokenResultForGeo)
 
-// An enumeration of events affecting the token count.
+// An enumeration of events affecting the token count. These values are
+// persisted to logs. Entries should not be renumbered and numeric values should
+// never be reused.
 enum class IpProtectionTokenCountEvent {
   kIssued = 0,
   kSpent = 1,
   kExpired = 2,
-  kMaxValue = kExpired,
+  kOrphaned = 3,
+  kRecycled = 4,
+  kMaxValue = kRecycled,
 };
+
+// An enumeration of the phases of BSA.
+// LINT.IfChange(BlindSignAuthPhase)
+enum class BlindSignAuthPhase {
+  kGetInitialData,
+  kGenerateBlindedTokenRequests,
+  kAuthAndSign,
+  kUnblindTokens,
+};
+// LINT.ThenChange(//tools/metrics/histograms/metadata/ip_protection/histograms.xml:BlindSignAuthPhase)
 
 // An abstract interface for all of the telemetry associated with IP Protection.
 //
@@ -115,12 +135,6 @@ class IpProtectionTelemetry {
   // `IpProtectionConfigGetter` for blind-signed tokens from BSA.
   virtual void TokenBatchFetchComplete(
       TryGetAuthTokensResult result,
-      std::optional<base::TimeDelta> duration) = 0;
-
-  // Completed an attempt to fetch tokens via the system-provided auth service
-  // on Android.
-  virtual void AndroidTokenBatchFetchComplete(
-      TryGetAuthTokensAndroidResult result,
       std::optional<base::TimeDelta> duration) = 0;
 
   // Chrome has determined that a proxy chain with the given chain ID has failed
@@ -151,6 +165,10 @@ class IpProtectionTelemetry {
   // `IpProtectionConfigGetter::TryGetAuthTokens` until `OnGotAuthTokens`.
   virtual void TokenBatchGenerationComplete(base::TimeDelta duration) = 0;
 
+  // Records the time taken for a given step of generating auth tokens.
+  virtual void TokenBatchGenerationPhaseTime(BlindSignAuthPhase phase,
+                                             base::TimeDelta duration) = 0;
+
   // Record the `base::PersistentHash` of an error string that resulted from a
   // TryGetAuthTokens call.
   virtual void TryGetAuthTokensError(uint32_t hash) = 0;
@@ -164,10 +182,6 @@ class IpProtectionTelemetry {
   virtual void ProxyListRefreshComplete(
       GetProxyListResult result,
       std::optional<base::TimeDelta> duration) = 0;
-
-  // Token spend rate, in tokens per hour. This value is expected to be less
-  // than 1000.
-  virtual void TokenSpendRate(ProxyLayer, int) = 0;
 
   // Token expiration rate, in tokens per hour. This value is expected to be
   // less than 100,000.
@@ -185,18 +199,11 @@ class IpProtectionTelemetry {
   // The size of the MDL protobuf data, in KB.
   virtual void MdlSize(int64_t) = 0;
 
-  // Time taken to create an Android IP Protection auth client, including
-  // binding to the system-provided auth service.
-  virtual void AndroidAuthClientCreationTime(base::TimeDelta duration) = 0;
+  // The time it takes to build the MDL flatbuffer, in ms.
+  virtual void MdlFlatbufferBuildTime(base::TimeDelta duration) = 0;
 
-  // Time taken to perform a successful GetInitialData request via
-  // the Android auth client/service.
-  virtual void AndroidAuthClientGetInitialDataTime(
-      base::TimeDelta duration) = 0;
-
-  // Time taken to perform a successful AuthAndSign request via
-  // the Android auth client/service.
-  virtual void AndroidAuthClientAuthAndSignTime(base::TimeDelta duration) = 0;
+  // Whether updating the MDL via component updater was successful.
+  virtual void MdlUpdateSuccess(bool success) = 0;
 
   // Delay between the MDL manager being created and UpdateMaskedDomainList
   // first being called.
@@ -230,6 +237,15 @@ class IpProtectionTelemetry {
   virtual void RecordTokenCountEvent(ProxyLayer layer,
                                      IpProtectionTokenCountEvent event,
                                      int count) = 0;
+
+  // Records the number of tokens that were demanded while a token fetch was in
+  // flight.
+  virtual void TokenDemandDuringBatchGeneration(int count) = 0;
+
+  virtual void RecordStreamCreationAttemptedMetrics(
+      const net::ProxyChain& proxy_chain,
+      base::TimeDelta duration,
+      base::optional_ref<int> net_error) = 0;
 };
 
 // Get the singleton instance of this type. This will be implemented by each

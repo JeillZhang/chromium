@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/views/extensions/extension_keybinding_registry_views.h"
 
 #include "chrome/browser/extensions/commands/command_service.h"
+#include "chrome/browser/extensions/extension_commands_global_registry.h"
 #include "chrome/browser/extensions/extension_keybinding_registry.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/extensions/accelerator_priority.h"
@@ -24,6 +25,12 @@ ExtensionKeybindingRegistryViews::ExtensionKeybindingRegistryViews(
 }
 
 ExtensionKeybindingRegistryViews::~ExtensionKeybindingRegistryViews() {
+  if (extensions::ExtensionCommandsGlobalRegistry* const global_registry =
+          extensions::ExtensionCommandsGlobalRegistry::Get(profile_);
+      global_registry->registry_for_active_window() == this) {
+    global_registry->set_registry_for_active_window(nullptr);
+  }
+
   focus_manager_->UnregisterAccelerators(this);
 }
 
@@ -41,7 +48,9 @@ bool ExtensionKeybindingRegistryViews::PopulateCommands(
 }
 
 bool ExtensionKeybindingRegistryViews::RegisterAccelerator(
-    const ui::Accelerator& accelerator) {
+    const ui::Accelerator& accelerator,
+    const extensions::ExtensionId& extension_id,
+    const std::string& command_name) {
   focus_manager_->RegisterAccelerator(accelerator,
                                       kExtensionAcceleratorPriority, this);
   return true;
@@ -64,4 +73,15 @@ bool ExtensionKeybindingRegistryViews::AcceleratorPressed(
 
 bool ExtensionKeybindingRegistryViews::CanHandleAccelerators() const {
   return true;
+}
+
+void ExtensionKeybindingRegistryViews::OnHostActivationChanged(bool active) {
+  if (extensions::ExtensionCommandsGlobalRegistry* const global_registry =
+          extensions::ExtensionCommandsGlobalRegistry::Get(profile_)) {
+    if (active) {
+      global_registry->set_registry_for_active_window(this);
+    } else if (global_registry->registry_for_active_window() == this) {
+      global_registry->set_registry_for_active_window(nullptr);
+    }
+  }
 }

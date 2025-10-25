@@ -30,10 +30,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
-#if BUILDFLAG(IS_CHROMEOS)
-#include "chrome/test/base/scoped_testing_local_state.h"
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
 using content::WebContents;
 
 using safe_browsing::PhishyInteractionTracker;
@@ -206,13 +202,6 @@ class PhishyInteractionTrackerTest : public ChromeRenderViewHostTestHarness {
  protected:
   raw_ptr<TestingBrowserProcess> browser_process_;
 
-#if BUILDFLAG(IS_CHROMEOS)
-  // Local state is needed to construct ProxyConfigService, which is a
-  // dependency of PingManager on ChromeOS.
-  ScopedTestingLocalState scoped_testing_local_state_{
-      TestingBrowserProcess::GetGlobal()};
-#endif  // BUILDFLAG(IS_CHROMEOS)
-
   scoped_refptr<safe_browsing::TestSafeBrowsingService> sb_service_;
   std::unique_ptr<PhishyInteractionTracker> phishy_interaction_tracker_;
   scoped_refptr<MockSafeBrowsingUIManager> ui_manager_;
@@ -252,9 +241,7 @@ TEST_F(PhishyInteractionTrackerTest, CheckHistogramCountsOnPhishyUserEvents) {
 
   base::RunLoop run_loop;
   base::StatisticsRecorder::ScopedHistogramSampleObserver observer(
-      "SafeBrowsing.PhishySite.PasteEventCount",
-      base::IgnoreArgs<std::string_view, uint64_t,
-                       base::HistogramBase::Sample32>(run_loop.QuitClosure()));
+      "SafeBrowsing.PhishySite.PasteEventCount", run_loop.QuitClosure());
   run_loop.Run();
 
   histogram_tester_.ExpectUniqueSample(

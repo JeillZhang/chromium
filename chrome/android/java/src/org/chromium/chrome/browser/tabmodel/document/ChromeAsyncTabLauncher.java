@@ -13,6 +13,9 @@ import android.provider.Browser;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.IntentUtils;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.ActivityUtils;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.IntentHandler;
@@ -30,6 +33,7 @@ import org.chromium.chrome.browser.tabmodel.AsyncTabLauncher;
 import org.chromium.content_public.browser.LoadUrlParams;
 
 /** Asynchronously creates Tabs by creating/starting up Activities. */
+@NullMarked
 public class ChromeAsyncTabLauncher implements AsyncTabLauncher {
     private final boolean mIsIncognito;
 
@@ -44,7 +48,7 @@ public class ChromeAsyncTabLauncher implements AsyncTabLauncher {
     /**
      * @return Running Activity that owns the given Tab, null if the Activity couldn't be found.
      */
-    private static Activity getActivityForTabId(int id) {
+    private static @Nullable Activity getActivityForTabId(int id) {
         if (id == Tab.INVALID_TAB_ID) return null;
 
         Tab tab = TabWindowManagerSingleton.getInstance().getTabById(id);
@@ -63,11 +67,19 @@ public class ChromeAsyncTabLauncher implements AsyncTabLauncher {
      * @param parentId The ID of the parent tab, or {@link Tab#INVALID_TAB_ID}.
      * @param otherActivity The activity to create a new tab in. This is non-null when we have a
      *     visible activity running adjacently.
+     * @param entryPoint The entry point of the new window used for metrics.
      */
     public void launchTabInOtherWindow(
-            LoadUrlParams loadUrlParams, Activity activity, int parentId, Activity otherActivity) {
-        Intent intent = createNewTabIntent(new AsyncTabCreationParams(loadUrlParams), parentId,
-                TabLaunchType.FROM_CHROME_UI);
+            LoadUrlParams loadUrlParams,
+            Activity activity,
+            int parentId,
+            @Nullable Activity otherActivity,
+            @MultiWindowUtils.NewWindowEntryPoint int entryPoint) {
+        Intent intent =
+                createNewTabIntent(
+                        new AsyncTabCreationParams(loadUrlParams),
+                        parentId,
+                        TabLaunchType.FROM_CHROME_UI);
 
         Class<? extends Activity> targetActivity =
                 MultiWindowUtils.getInstance().getOpenInOtherWindowActivity(activity);
@@ -88,7 +100,14 @@ public class ChromeAsyncTabLauncher implements AsyncTabLauncher {
             intent.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
         }
         MultiInstanceManager.onMultiInstanceModeStarted();
+        if (!activity.isInMultiWindowMode() && !MultiWindowUtils.shouldOpenInAdjacentWindow()) {
+            intent.setFlags(intent.getFlags() & ~Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT);
+        }
         activity.startActivity(intent);
+        RecordHistogram.recordEnumeratedHistogram(
+                    "Android.MultiWindowMode.NewWindow.AppSource",
+                    entryPoint,
+                    MultiWindowUtils.NewWindowEntryPoint.NUM_ENTRIES);
     }
 
     /**
@@ -104,7 +123,8 @@ public class ChromeAsyncTabLauncher implements AsyncTabLauncher {
     }
 
     @Override
-    public void launchNewTab(LoadUrlParams loadUrlParams, @TabLaunchType int type, Tab parent) {
+    public void launchNewTab(
+            LoadUrlParams loadUrlParams, @TabLaunchType int type, @Nullable Tab parent) {
         AsyncTabCreationParams asyncParams = new AsyncTabCreationParams(loadUrlParams);
         launchNewTab(asyncParams, type, parent == null ? Tab.INVALID_TAB_ID : parent.getId());
     }

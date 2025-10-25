@@ -6,16 +6,19 @@
 
 #import <optional>
 
+#import "base/containers/contains.h"
 #import "base/memory/raw_ptr.h"
 #import "base/metrics/field_trial_params.h"
 #import "base/metrics/histogram_macros.h"
 #import "base/strings/string_number_conversions.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
+#import "components/application_locale_storage/application_locale_storage.h"
 #import "components/bookmarks/browser/bookmark_model.h"
 #import "components/bookmarks/browser/bookmark_node.h"
 #import "components/commerce/core/commerce_constants.h"
 #import "components/commerce/core/commerce_feature_list.h"
+#import "components/commerce/core/pref_names.h"
 #import "components/commerce/core/price_tracking_utils.h"
 #import "components/commerce/core/shopping_service.h"
 #import "components/payments/core/currency_formatter.h"
@@ -47,20 +50,6 @@
 #import "ios/chrome/common/ui/favicon/favicon_view.h"
 #import "ios/chrome/grit/ios_strings.h"
 #import "ui/base/l10n/l10n_util_mac.h"
-
-namespace {
-
-bool IsShopCardImpressionLimitsEnabled() {
-  return base::FeatureList::IsEnabled(commerce::kShopCardImpressionLimits);
-}
-
-int GetImpressionLimit() {
-  return base::GetFieldTrialParamByFeatureAsInt(
-      commerce::kShopCard, commerce::kShopCardMaxImpressions,
-      kShopCardMaxImpressions);
-}
-
-}  // namespace
 
 @interface ShopCardMediator () <ImpressionLimitServiceObserverBridgeDelegate,
                                 MagicStackModuleDelegate,
@@ -104,8 +93,7 @@ int GetImpressionLimit() {
     _prefObserverBridge = std::make_unique<PrefObserverBridge>(self);
     _prefChangeRegistrar.Init(prefService);
     _prefObserverBridge->ObserveChangesForPreference(
-        prefs::kHomeCustomizationMagicStackShopCardPriceTrackingEnabled,
-        &_prefChangeRegistrar);
+        commerce::kPriceTrackingHomeModuleEnabled, &_prefChangeRegistrar);
     _prefObserverBridge->ObserveChangesForPreference(
         prefs::kHomeCustomizationMagicStackShopCardReviewsEnabled,
         &_prefChangeRegistrar);
@@ -129,6 +117,7 @@ int GetImpressionLimit() {
 
 - (void)reset {
   _shopCardItem = nil;
+  _shoppingDataForShopCardFound = false;
 }
 
 #pragma mark - ShopCardFaviconConsumerSource
@@ -144,9 +133,7 @@ int GetImpressionLimit() {
 }
 
 - (void)fetchLatestShopCardItem {
-  if (commerce::kShopCardVariation.Get() == commerce::kShopCardArm1 &&
-      !_prefService->GetBoolean(
-          prefs::kHomeCustomizationMagicStackShopCardPriceTrackingEnabled)) {
+  if (!_prefService->GetBoolean(commerce::kPriceTrackingHomeModuleEnabled)) {
     return;
   }
   if (commerce::kShopCardVariation.Get() == commerce::kShopCardArm2 &&
@@ -155,28 +142,38 @@ int GetImpressionLimit() {
     return;
   }
 
-  if (commerce::kShopCardVariation.Get() == commerce::kShopCardArm1) {
-    _shoppingDataForShopCardFound = false;
-    __weak ShopCardMediator* weakSelf = self;
+  [self fetchPriceTrackedBookmarksIfApplicable];
+}
 
-    GetAllPriceTrackedBookmarks(
-        _shoppingService, _bookmarkModel,
-        base::BindOnce(
-            ^(std::vector<const bookmarks::BookmarkNode*> subscriptions) {
-              ShopCardMediator* strongSelf = weakSelf;
-              if (!strongSelf || !strongSelf.delegate) {
-                return;
-              }
-              [strongSelf onPriceTrackedBookmarksReceived:subscriptions];
-            }));
-  } else if (commerce::kShopCardVariation.Get() == commerce::kShopCardArm2) {
-    // TODO(crbug.com/392971752): populate for card 2.
-    _shopCardItem = [[ShopCardItem alloc] init];
+- (void)fetchPriceTrackedBookmarksIfApplicable {
+  if (self->_shopCardItem) {
+    return;
   }
+  [self fetchPriceTrackedBookmarks];
+}
+
+- (void)fetchPriceTrackedBookmarks {
+  _shoppingDataForShopCardFound = false;
+  __weak ShopCardMediator* weakSelf = self;
+
+  GetAllPriceTrackedBookmarks(
+      _shoppingService, _bookmarkModel,
+      base::BindOnce(
+          ^(std::vector<const bookmarks::BookmarkNode*> subscriptions) {
+            ShopCardMediator* strongSelf = weakSelf;
+            if (!strongSelf || !strongSelf.delegate) {
+              return;
+            }
+            [strongSelf onPriceTrackedBookmarksReceived:subscriptions];
+          }));
 }
 
 - (void)onPriceTrackedBookmarksReceived:
     (std::vector<const bookmarks::BookmarkNode*>)subscriptions {
+  if (_shoppingDataForShopCardFound) {
+    // Prevent duplicate Magic Stack insertions.
+    return;
+  }
   // Iterate through all subscriptions, find the first recent one with a drop
   // populate item.
   for (const bookmarks::BookmarkNode* bookmark : subscriptions) {
@@ -197,7 +194,7 @@ int GetImpressionLimit() {
       continue;
     }
 
-    [self populateShopCardItem:specifics bookmark:bookmark];
+    _shoppingDataForShopCardFound = true;
 
     GURL productImageUrl = GURL(meta->lead_image().url());
     __weak ShopCardMediator* weakSelf = self;
@@ -209,6 +206,7 @@ int GetImpressionLimit() {
           if (!strongSelf || !strongSelf.delegate) {
             return;
           }
+          [strongSelf populateShopCardItem:specifics url:bookmark->url()];
           [strongSelf onProductImageFetchedResult:imageData
                                        productUrl:GURL(bookmark->url())];
         }),
@@ -219,7 +217,7 @@ int GetImpressionLimit() {
 }
 
 - (void)populateShopCardItem:(const power_bookmarks::ShoppingSpecifics)specifics
-                    bookmark:(const bookmarks::BookmarkNode*)bookmark {
+                         url:(const GURL&)url {
   _shopCardItem = [[ShopCardItem alloc] init];
   _shopCardItem.delegate = self;
   _shopCardItem.shopCardData = [[ShopCardData alloc] init];
@@ -227,15 +225,13 @@ int GetImpressionLimit() {
   _shopCardItem.shopCardFaviconConsumerSource = self;
   _shopCardItem.shopCardData.shopCardItemType =
       ShopCardItemType::kPriceDropForTrackedProducts;
-  if (commerce::kShopCardVariation.Get() == commerce::kShopCardArm1) {
-    _shopCardItem.shouldShowSeeMore = YES;
-  }
+  _shopCardItem.shouldShowSeeMore = YES;
   PriceDrop priceDrop;
 
   std::unique_ptr<payments::CurrencyFormatter> formatter =
       std::make_unique<payments::CurrencyFormatter>(
           specifics.previous_price().currency_code(),
-          GetApplicationContext()->GetApplicationLocale());
+          GetApplicationContext()->GetApplicationLocaleStorage()->Get());
 
   float current_price_micros =
       static_cast<float>(specifics.current_price().amount_micros());
@@ -247,7 +243,7 @@ int GetImpressionLimit() {
   priceDrop.previous_price = [self GetFormattedPrice:formatter.get()
                                         price_micros:previous_price_micros];
   _shopCardItem.shopCardData.priceDrop = priceDrop;
-  _shopCardItem.shopCardData.productURL = bookmark->url();
+  _shopCardItem.shopCardData.productURL = url;
   _shopCardItem.shopCardData.productTitle =
       [NSString stringWithUTF8String:specifics.title().c_str()];
 
@@ -258,7 +254,7 @@ int GetImpressionLimit() {
       base::SysNSStringToUTF16(
           _shopCardItem.shopCardData.priceDrop->current_price),
       base::SysNSStringToUTF16(_shopCardItem.shopCardData.productTitle),
-      GetHostnameFromGURL(bookmark->url()));
+      GetHostnameFromGURL(url));
 }
 
 std::u16string GetHostnameFromGURL(const GURL& url) {
@@ -323,10 +319,7 @@ std::u16string GetHostnameFromGURL(const GURL& url) {
 
 #pragma mark - Public
 - (void)disableModule {
-  if (commerce::kShopCardVariation.Get() == commerce::kShopCardArm1) {
-    _prefService->SetBoolean(
-        prefs::kHomeCustomizationMagicStackShopCardPriceTrackingEnabled, false);
-  }
+  _prefService->SetBoolean(commerce::kPriceTrackingHomeModuleEnabled, false);
   UMA_HISTOGRAM_ENUMERATION(kMagicStackModuleDisabledHistogram,
                             ContentSuggestionsModuleType::kShopCard);
 }
@@ -373,10 +366,8 @@ std::u16string GetHostnameFromGURL(const GURL& url) {
 #pragma mark - PrefObserverDelegate
 
 - (void)onPreferenceChanged:(const std::string&)preferenceName {
-  if (preferenceName ==
-      prefs::kHomeCustomizationMagicStackShopCardPriceTrackingEnabled) {
-    if (_prefService->GetBoolean(
-            prefs::kHomeCustomizationMagicStackShopCardPriceTrackingEnabled)) {
+  if (preferenceName == commerce::kPriceTrackingHomeModuleEnabled) {
+    if (_prefService->GetBoolean(commerce::kPriceTrackingHomeModuleEnabled)) {
       // TODO(crbug.com/404564187) Fetch ShopCardData if ShopCardData
       // is nil, then insert the card.
       [self.delegate insertShopCard];
@@ -397,7 +388,7 @@ std::u16string GetHostnameFromGURL(const GURL& url) {
 }
 
 - (void)logImpressionForItem:(ShopCardItem*)item {
-  if (!_impressionLimitService || !IsShopCardImpressionLimitsEnabled()) {
+  if (!_impressionLimitService) {
     return;
   }
   _impressionLimitService->LogImpressionForURL(
@@ -406,7 +397,7 @@ std::u16string GetHostnameFromGURL(const GURL& url) {
 }
 
 - (void)logEngagementForItem:(ShopCardItem*)item {
-  if (!_impressionLimitService || !IsShopCardImpressionLimitsEnabled()) {
+  if (!_impressionLimitService) {
     return;
   }
   _impressionLimitService->LogCardEngagement(
@@ -415,16 +406,16 @@ std::u16string GetHostnameFromGURL(const GURL& url) {
 }
 
 - (BOOL)hasReachedImpressionLimit:(const GURL&)url {
-  if (!_impressionLimitService || !IsShopCardImpressionLimitsEnabled()) {
+  if (!_impressionLimitService) {
     return NO;
   }
   std::optional<int> count = _impressionLimitService->GetImpressionCount(
       url, shop_card_prefs::kShopCardPriceDropUrlImpressions);
-  return count.has_value() && count.value() >= GetImpressionLimit();
+  return count.has_value() && count.value() >= kShopCardMaxImpressions;
 }
 
 - (BOOL)hasBeenOpened:(const GURL&)url {
-  if (!_impressionLimitService || !IsShopCardImpressionLimitsEnabled()) {
+  if (!_impressionLimitService) {
     return NO;
   }
   return _impressionLimitService->HasBeenEngagedWith(
@@ -461,6 +452,14 @@ std::u16string GetHostnameFromGURL(const GURL& url) {
 }
 - (void)onUrlUntrackedForTesting:(GURL)url {
   [self onUrlUntracked:url];
+}
+
+- (void)fetchPriceTrackedBookmarksForTesting {
+  [self fetchPriceTrackedBookmarks];
+}
+
+- (void)fetchPriceTrackedBookmarksIfApplicableForTesting {
+  [self fetchPriceTrackedBookmarksIfApplicable];
 }
 
 @end

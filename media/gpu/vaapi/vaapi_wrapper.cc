@@ -41,6 +41,7 @@
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/posix/eintr_wrapper.h"
@@ -63,12 +64,13 @@
 #include "media/gpu/chromeos/frame_resource.h"
 #include "media/gpu/macros.h"
 // Auto-generated for dlopen libva libraries
+#include "components/viz/common/resources/shared_image_format.h"
+#include "components/viz/common/resources/shared_image_format_utils.h"
 #include "media/gpu/vaapi/va_stubs.h"
 #include "media/media_buildflags.h"
 #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "third_party/libva_protected_content/va_protected_content.h"
 #include "third_party/libyuv/include/libyuv.h"
-#include "ui/gfx/buffer_format_util.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/linux/drm_util_linux.h"
@@ -352,25 +354,30 @@ class VADisplayStateSingleton {
 
 namespace {
 
-uint32_t BufferFormatToVAFourCC(gfx::BufferFormat fmt) {
-  switch (fmt) {
-    case gfx::BufferFormat::BGRX_8888:
-      return VA_FOURCC_BGRX;
-    case gfx::BufferFormat::BGRA_8888:
-      return VA_FOURCC_BGRA;
-    case gfx::BufferFormat::RGBX_8888:
-      return VA_FOURCC_RGBX;
-    case gfx::BufferFormat::RGBA_8888:
-      return VA_FOURCC_RGBA;
-    case gfx::BufferFormat::YVU_420:
-      return VA_FOURCC_YV12;
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      return VA_FOURCC_NV12;
-    case gfx::BufferFormat::P010:
-      return VA_FOURCC_P010;
-    default:
-      NOTREACHED() << gfx::BufferFormatToString(fmt);
+uint32_t SharedImageFormatToVAFourCC(viz::SharedImageFormat format) {
+  if (format == viz::SinglePlaneFormat::kBGRX_8888) {
+    return VA_FOURCC_BGRX;
   }
+  if (format == viz::SinglePlaneFormat::kBGRA_8888) {
+    return VA_FOURCC_BGRA;
+  }
+  if (format == viz::SinglePlaneFormat::kRGBX_8888) {
+    return VA_FOURCC_RGBX;
+  }
+  if (format == viz::SinglePlaneFormat::kRGBA_8888) {
+    return VA_FOURCC_RGBA;
+  }
+  if (format == viz::MultiPlaneFormat::kYV12) {
+    return VA_FOURCC_YV12;
+  }
+  if (format == viz::MultiPlaneFormat::kNV12) {
+    return VA_FOURCC_NV12;
+  }
+  if (format == viz::MultiPlaneFormat::kP010) {
+    return VA_FOURCC_P010;
+  }
+
+  NOTREACHED() << "Unsupported format: " << format.ToString();
 }
 
 media::VAImplementation VendorStringToImplementationType(
@@ -415,13 +422,14 @@ bool FillVADRMPRIMESurfaceDescriptor(const gfx::NativePixmap& pixmap,
                                      VADRMPRIMESurfaceDescriptor& descriptor) {
   memset(&descriptor, 0, sizeof(VADRMPRIMESurfaceDescriptor));
 
-  const gfx::BufferFormat buffer_format = pixmap.GetBufferFormat();
-  const uint32_t va_fourcc = BufferFormatToVAFourCC(buffer_format);
+  auto shared_image_format = pixmap.GetSharedImageFormat();
+  const uint32_t va_fourcc = SharedImageFormatToVAFourCC(shared_image_format);
   DCHECK(va_fourcc);
 
   const gfx::Size size = pixmap.GetBufferSize();
   const size_t num_planes = pixmap.GetNumberOfPlanes();
-  const int drm_fourcc = ui::GetFourCCFormatFromBufferFormat(buffer_format);
+  const int drm_fourcc =
+      ui::GetFourCCFormatFromSharedImageFormat(shared_image_format);
   if (drm_fourcc == DRM_FORMAT_INVALID) {
     LOG(ERROR) << "Failed to get the DRM format from the buffer format";
     return false;
@@ -501,7 +509,8 @@ bool FillVASurfaceAttribExternalBuffers(
   memset(&va_attrib_extbuf_and_fd, 0,
          sizeof(VASurfaceAttribExternalBuffersAndFD));
 
-  const uint32_t va_fourcc = BufferFormatToVAFourCC(pixmap.GetBufferFormat());
+  auto shared_image_format = pixmap.GetSharedImageFormat();
+  const uint32_t va_fourcc = SharedImageFormatToVAFourCC(shared_image_format);
   DCHECK(va_fourcc);
 
   const gfx::Size size = pixmap.GetBufferSize();
@@ -1616,7 +1625,7 @@ bool VADisplayStateSingleton::Initialize() {
   int major_version, minor_version;
   VAStatus va_res = vaInitialize(va_display, &major_version, &minor_version);
   if (va_res != VA_STATUS_SUCCESS) {
-    VLOGF(1) << "vaInitialize failed: " << vaErrorStr(va_res);
+    LOG(ERROR) << "vaInitialize failed: " << vaErrorStr(va_res);
     return false;
   }
 
@@ -1638,6 +1647,9 @@ bool VADisplayStateSingleton::Initialize() {
   const base::Version build_time_version({VA_MAJOR_VERSION, VA_MINOR_VERSION});
   CHECK(build_time_version.IsValid());
   if (!IsLibVACompatible(runtime_version, build_time_version)) {
+    LOG(ERROR) << "Installed VAAPI version is too old."
+               << " min supported version: " << build_time_version
+               << " installed version: " << runtime_version;
     return false;
   }
 
@@ -2108,21 +2120,22 @@ VAEntrypoint VaapiWrapper::GetDefaultVaEntryPoint(CodecMode mode,
 }
 
 // static
-uint32_t VaapiWrapper::BufferFormatToVARTFormat(gfx::BufferFormat fmt) {
-  switch (fmt) {
-    case gfx::BufferFormat::BGRX_8888:
-    case gfx::BufferFormat::BGRA_8888:
-    case gfx::BufferFormat::RGBX_8888:
-    case gfx::BufferFormat::RGBA_8888:
-      return VA_RT_FORMAT_RGB32;
-    case gfx::BufferFormat::YVU_420:
-    case gfx::BufferFormat::YUV_420_BIPLANAR:
-      return VA_RT_FORMAT_YUV420;
-    case gfx::BufferFormat::P010:
-      return VA_RT_FORMAT_YUV420_10BPP;
-    default:
-      NOTREACHED() << gfx::BufferFormatToString(fmt);
+uint32_t VaapiWrapper::SharedImageFormatToVARTFormat(
+    viz::SharedImageFormat format) {
+  if (format == viz::SinglePlaneFormat::kBGRX_8888 ||
+      format == viz::SinglePlaneFormat::kBGRA_8888 ||
+      format == viz::SinglePlaneFormat::kRGBX_8888 ||
+      format == viz::SinglePlaneFormat::kRGBA_8888) {
+    return VA_RT_FORMAT_RGB32;
   }
+  if (format == viz::MultiPlaneFormat::kYV12 ||
+      format == viz::MultiPlaneFormat::kNV12) {
+    return VA_RT_FORMAT_YUV420;
+  }
+  if (format == viz::MultiPlaneFormat::kP010) {
+    return VA_RT_FORMAT_YUV420_10BPP;
+  }
+  NOTREACHED() << "Unsupported format: " << format.ToString();
 }
 
 bool VaapiWrapper::CreateContextAndSurfaces(
@@ -2411,8 +2424,8 @@ std::unique_ptr<ScopedVASurface> VaapiWrapper::CreateVASurfaceForPixmap(
     scoped_refptr<const gfx::NativePixmap> pixmap,
     bool protected_content) {
   VAAPI_CHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  const gfx::BufferFormat buffer_format = pixmap->GetBufferFormat();
-  if (!BufferFormatToVAFourCC(buffer_format)) {
+  auto shared_image_format = pixmap->GetSharedImageFormat();
+  if (!SharedImageFormatToVAFourCC(shared_image_format)) {
     LOG(ERROR) << "Failed to get the VA fourcc from the buffer format";
     return nullptr;
   }
@@ -2443,8 +2456,8 @@ std::unique_ptr<ScopedVASurface> VaapiWrapper::CreateVASurfaceForPixmap(
       return nullptr;
   }
 
-  unsigned int va_format =
-      base::strict_cast<unsigned int>(BufferFormatToVARTFormat(buffer_format));
+  unsigned int va_format = base::strict_cast<unsigned int>(
+      SharedImageFormatToVARTFormat(shared_image_format));
   if (!va_format) {
     LOG(ERROR) << "Failed to get the VA RT format from the buffer format";
     return nullptr;
@@ -2573,26 +2586,26 @@ VaapiWrapper::ExportVASurfaceAsNativePixmapDmaBufUnwrapped(
                          nullptr);
   }
 
-  // Translate the pixel format to a gfx::BufferFormat.
-  gfx::BufferFormat buffer_format;
+  // Translate the pixel format to a viz::SharedImageFormat.
+  viz::SharedImageFormat si_format;
   switch (descriptor.fourcc) {
     case VA_FOURCC_IMC3:
       // IMC3 is like I420 but all the planes have the same stride. This is used
-      // for decoding 4:2:0 JPEGs in the Intel i965 driver. We don't currently
-      // have a gfx::BufferFormat for YUV420. Instead, we reuse YVU_420 and
+      // for decoding 4:2:0 JPEGs in the Intel i965 driver. We reuse YVU_420 and
       // later swap the U and V planes.
       //
-      // TODO(andrescj): revisit this once crrev.com/c/1573718 lands.
-      buffer_format = gfx::BufferFormat::YVU_420;
+      // TODO(andrescj): Determine whether it's feasible to change this to use
+      // viz::MultiPlaneFormat::kI420.
+      si_format = viz::MultiPlaneFormat::kYV12;
       break;
     case VA_FOURCC_NV12:
-      buffer_format = gfx::BufferFormat::YUV_420_BIPLANAR;
+      si_format = viz::MultiPlaneFormat::kNV12;
       break;
     case VA_FOURCC_P010:
-      buffer_format = gfx::BufferFormat::P010;
+      si_format = viz::MultiPlaneFormat::kP010;
       break;
     case VA_FOURCC_ARGB:
-      buffer_format = gfx::BufferFormat::BGRA_8888;
+      si_format = viz::SinglePlaneFormat::kBGRA_8888;
       break;
     default:
       LOG(ERROR) << "Cannot export a surface with FOURCC "
@@ -2667,7 +2680,7 @@ VaapiWrapper::ExportVASurfaceAsNativePixmapDmaBufUnwrapped(
     return nullptr;
   }
   exported_pixmap->pixmap = base::MakeRefCounted<gfx::NativePixmapDmaBuf>(
-      va_surface_size, buffer_format, std::move(handle));
+      va_surface_size, si_format, std::move(handle));
   return exported_pixmap;
 }
 

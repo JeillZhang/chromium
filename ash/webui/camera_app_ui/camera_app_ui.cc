@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "ash/webui/camera_app_ui/camera_app_ui.h"
 
 #include "ash/public/cpp/window_properties.h"
@@ -47,9 +42,7 @@ namespace ash {
 
 namespace {
 
-BASE_FEATURE(kCCALocalOverride,
-             "CCALocalOverride",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kCCALocalOverride, base::FEATURE_DISABLED_BY_DEFAULT);
 const base::FilePath::CharType kCCALocalOverrideDirectoryPath[] =
     FILE_PATH_LITERAL("/etc/camera/cca");
 
@@ -70,7 +63,7 @@ void HandleLocalOverrideRequest(
                        base::FilePath file_path =
                            base::FilePath(kCCALocalOverrideDirectoryPath)
                                .Append(base::TrimString(
-                                   parsed_url.path_piece(), "/",
+                                   parsed_url.path(), "/",
                                    base::TrimPositions::TRIM_LEADING));
                        std::string result;
                        if (base::ReadFileToString(file_path, &result)) {
@@ -305,8 +298,7 @@ void CameraAppUI::BindInterface(
   views::Widget* widget = views::Widget::GetWidgetForNativeWindow(window());
   if (widget) {
     // Camera app is always dark.
-    widget->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kDark,
-                                 /*background_color=*/std::nullopt);
+    widget->SetColorModeOverride(ui::ColorProviderKey::ColorMode::kDark);
   } else {
     LOG(ERROR) << "Can't find widget for CCA window.";
   }

@@ -12,6 +12,7 @@
 #include "base/functional/callback.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/observer_list.h"
 #include "remoting/base/http_status.h"
 #include "remoting/base/oauth_token_info.h"
 #include "remoting/protocol/client_stub.h"
@@ -31,8 +32,10 @@ class HostInfo;
 
 class DirectoryServiceClient;
 class OAuthTokenGetter;
+class ClientStatusObserver;
 
 namespace protocol {
+class AudioStub;
 class ConnectionToHost;
 class FrameConsumer;
 class SessionManager;
@@ -47,6 +50,7 @@ class RemotingClient : public SignalStrategy::Listener,
   RemotingClient(
       base::OnceClosure quit_closure,
       protocol::FrameConsumer* frame_consumer,
+      base::WeakPtr<protocol::AudioStub> audio_stream_consumer,
       scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
 
   RemotingClient(const RemotingClient&) = delete;
@@ -58,6 +62,9 @@ class RemotingClient : public SignalStrategy::Listener,
                     OAuthTokenInfo oauth_token_info);
 
   void StopSession();
+
+  void AddObserver(ClientStatusObserver* observer);
+  void RemoveObserver(ClientStatusObserver* observer);
 
   base::WeakPtr<RemotingClient> GetWeakPtr();
 
@@ -72,6 +79,8 @@ class RemotingClient : public SignalStrategy::Listener,
   void SetActiveDisplay(const protocol::ActiveDisplay& active_display) override;
   void InjectClipboardEvent(const protocol::ClipboardEvent& event) override;
   void SetCursorShape(const protocol::CursorShapeInfo& cursor_shape) override;
+  void SetHostCursorPosition(
+      const protocol::HostCursorPosition& position) override;
   void SetKeyboardLayout(const protocol::KeyboardLayout& layout) override;
 
   // ConnectionToHost::HostEventCallback implementation.
@@ -97,6 +106,7 @@ class RemotingClient : public SignalStrategy::Listener,
   std::string host_secret_;
   OAuthTokenInfo oauth_token_info_;
   base::OnceClosure quit_closure_;
+  base::ObserverList<ClientStatusObserver> observers_;
 
   // Used to provide an OAuth access token for service requests. Since a raw *
   // is passed around, this field should be destroyed after the service clients.
@@ -114,6 +124,7 @@ class RemotingClient : public SignalStrategy::Listener,
 
   // |frame_consumer_| must outlive |video_renderer_|.
   const raw_ptr<protocol::FrameConsumer> frame_consumer_;
+  base::WeakPtr<protocol::AudioStub> audio_stream_consumer_;
 
   // Session related members.
   std::unique_ptr<protocol::ConnectionToHost> connection_;

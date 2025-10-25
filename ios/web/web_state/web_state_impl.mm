@@ -74,6 +74,11 @@ std::optional<web::proto::WebStateStorage> SessionStorageToProto(
   return storage;
 }
 
+// Returns whether `web_state` has a SerializableUserDataManager.
+bool HasSerializableUserDataManager(const WebState* web_state) {
+  return SerializableUserDataManager::FromWebState(web_state) != nullptr;
+}
+
 // Key used to store an empty base::SupportsUserData::Data to all WebStateImpl
 // instances. Used by WebStateImpl::FromWebState(...) to assert the pointer is
 // pointing to a WebStateImpl instance and not another sub-class of WebState.
@@ -94,8 +99,8 @@ WebStateImpl::WebStateImpl(const CreateParams& params) {
   const base::Time last_active_time =
       params.last_active_time.value_or(creation_time);
 
-  pimpl_ = std::make_unique<RealizedWebState>(
-      this, creation_time, [[NSUUID UUID] UUIDString], WebStateID::NewUnique());
+  pimpl_ = std::make_unique<RealizedWebState>(this, creation_time,
+                                              WebStateID::NewUnique());
   pimpl_->Init(params.browser_state, last_active_time,
                params.created_with_opener);
 
@@ -122,8 +127,8 @@ WebStateImpl::WebStateImpl(const CreateParams& params,
   [session_storage serializeMetadataToProto:metadata];
 
   saved_ = std::make_unique<SerializedData>(
-      this, params.browser_state, session_storage.stableIdentifier,
-      session_storage.uniqueIdentifier, std::move(metadata),
+      this, params.browser_state, session_storage.uniqueIdentifier,
+      std::move(metadata),
       base::BindOnce(&SessionStorageToProto, session_storage),
       std::move(session_fetcher));
   saved_->SetSessionStorage(session_storage);
@@ -139,9 +144,8 @@ WebStateImpl::WebStateImpl(BrowserState* browser_state,
   AddWebStateImplMarker();
 
   saved_ = std::make_unique<SerializedData>(
-      this, browser_state, [[NSUUID UUID] UUIDString], unique_identifier,
-      std::move(metadata), std::move(storage_loader),
-      std::move(session_fetcher));
+      this, browser_state, unique_identifier, std::move(metadata),
+      std::move(storage_loader), std::move(session_fetcher));
 
   SendGlobalCreationEvent();
 }
@@ -162,7 +166,6 @@ WebStateImpl::WebStateImpl(CloneFrom, const RealizedWebState& pimpl) {
   });
 
   pimpl_ = std::make_unique<RealizedWebState>(this, pimpl.GetCreationTime(),
-                                              [[NSUUID UUID] UUIDString],
                                               WebStateID::NewUnique());
   pimpl_->InitWithProto(pimpl.GetBrowserState(), base::Time::Now(),
                         pimpl.GetTitle(), pimpl.GetVisibleURL(),
@@ -535,19 +538,33 @@ bool WebStateImpl::IsRealized() const {
   return !!pimpl_;
 }
 
-WebState* WebStateImpl::ForceRealized() {
+WebState* WebStateImpl::ForceRealizedWithPolicy(RealizationPolicy policy) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!is_being_destroyed_);
 
   if (!pimpl_) [[unlikely]] {
     DCHECK(saved_);
 
+    if (policy == RealizationPolicy::kEnforceNoAttachedData) {
+      // WebStateImpl attaches a base::SupportsUserData::Data object in its
+      // constructor (see AddWebStateImplMarker() method) in order to check
+      // the cast from WebState* to WebStateImpl* is valid.
+      //
+      // Additionally, if the legacy session storage is used then user data
+      // is attached to the instance via SerializableUserDataManager.
+      //
+      // This means that there should be at least one tab helpers attached
+      // to the current object, and at most two if legacy session storage
+      // is used (determined if a SerializableUserDataManager is attached).
+      const size_t expected = HasSerializableUserDataManager(this) ? 2u : 1u;
+      CHECK_EQ(UserDataCount(), expected, base::NotFatalUntil::M160);
+    }
+
     // Create the RealizedWebState. At this point the WebStateImpl has
     // both `pimpl_` and `saved_` that are non-null. This is one of the
     // reason why the initialisation of the RealizedWebState needs to
     // be done after the constructor is done.
     pimpl_ = std::make_unique<RealizedWebState>(this, saved_->GetCreationTime(),
-                                                saved_->GetStableIdentifier(),
                                                 saved_->GetUniqueIdentifier());
 
     // Take the SerializedData out of `saved_`. This ensures that `saved_` is
@@ -568,11 +585,9 @@ WebState* WebStateImpl::ForceRealized() {
     // RealizedWebState in WebStateImpl destructor.
     saved.reset();
 
-    // Notify all observers that the WebState has become realized.
-    for (auto& observer : observers_) {
-      observer.WebStateRealized(this);
-    }
-
+    // Notify all observers that the WebState has become realized but take
+    // care to not notify any observer that is registered while iterating.
+    NotifyWebStateRealized(observers_);
     CheckForOverRealization();
   }
 
@@ -736,7 +751,7 @@ CRWSessionStorage* WebStateImpl::BuildSessionStorage() const {
     session_storage =
         [[CRWSessionStorage alloc] initWithProto:storage
                                 uniqueIdentifier:GetUniqueIdentifier()
-                                stableIdentifier:GetStableIdentifier()];
+                                stableIdentifier:[[NSUUID UUID] UUIDString]];
   } else {
     session_storage = saved_->GetSessionStorage();
   }
@@ -764,14 +779,6 @@ void WebStateImpl::LoadData(NSData* data,
 void WebStateImpl::ExecuteUserJavaScript(NSString* javascript) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   RealizedState()->ExecuteUserJavaScript(javascript);
-}
-
-NSString* WebStateImpl::GetStableIdentifier() const {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-  if (pimpl_) [[likely]] {
-    return pimpl_->GetStableIdentifier();
-  }
-  return saved_->GetStableIdentifier();
 }
 
 WebStateID WebStateImpl::GetUniqueIdentifier() const {
@@ -1087,7 +1094,7 @@ UIColor* WebStateImpl::GetUnderPageBackgroundColor() {
 WebStateImpl::RealizedWebState* WebStateImpl::RealizedState() {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (!IsRealized()) [[unlikely]] {
-    ForceRealized();
+    std::ignore = ForceRealized();
   }
 
   DCHECK(pimpl_);

@@ -23,10 +23,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-
-#if !BUILDFLAG(IS_NACL)
 #include "third_party/boringssl/src/include/openssl/rand.h"
-#endif
 
 namespace memory_simulator {
 class MemoryHolder;
@@ -40,9 +37,7 @@ namespace base {
 
 namespace internal {
 
-#if !BUILDFLAG(IS_NACL)
 void ConfigureBoringSSLBackedRandBytesFieldTrial();
-#endif
 
 // Returns a random double in range [0, 1). For use in allocator shim to avoid
 // infinite recursion. Thread-safe.
@@ -116,8 +111,11 @@ T RandomizeByPercentage(T value, double percentage) {
   // adjustment may not fit in a `T`. The clamped value described in pseudocode
   // step (2) above will always fit in a `uint64_t`, so do math in `uint64_t`s.
   const uint64_t abs_value = SafeUnsignedAbs(value);
+  // Explicitly cast to double to avoid implicit conversion warnings on stricter
+  // toolchains. The potential precision loss from converting a large uint64_t
+  // is acceptable for this percentage-based randomization.
   const uint64_t max_abs_adjustment =
-      ClampRound<uint64_t>(abs_value * percentage / 100);
+      ClampRound<uint64_t>(static_cast<double>(abs_value) * percentage / 100.0);
   if (!max_abs_adjustment) {
     return value;
   }
@@ -193,7 +191,6 @@ class RandomBitGenerator {
   ~RandomBitGenerator() = default;
 };
 
-#if !BUILDFLAG(IS_NACL)
 class NonAllocatingRandomBitGenerator {
  public:
   using result_type = uint64_t;
@@ -209,7 +206,6 @@ class NonAllocatingRandomBitGenerator {
   NonAllocatingRandomBitGenerator() = default;
   ~NonAllocatingRandomBitGenerator() = default;
 };
-#endif
 
 // Shuffles [first, last) randomly. Thread-safe.
 template <typename Itr>

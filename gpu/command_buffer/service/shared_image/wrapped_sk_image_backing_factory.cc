@@ -33,8 +33,7 @@ namespace {
 constexpr SharedImageUsageSet kSupportedUsage =
     SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_DISPLAY_WRITE |
     SHARED_IMAGE_USAGE_RASTER_READ | SHARED_IMAGE_USAGE_RASTER_WRITE |
-    SHARED_IMAGE_USAGE_OOP_RASTERIZATION | SHARED_IMAGE_USAGE_CPU_UPLOAD |
-    SHARED_IMAGE_USAGE_MIPMAP;
+    SHARED_IMAGE_USAGE_CPU_UPLOAD | SHARED_IMAGE_USAGE_MIPMAP;
 
 SharedImageUsageSet GetSupportedUsage(const SharedContextState* context_state) {
 #if BUILDFLAG(SKIA_USE_DAWN) && !BUILDFLAG(IS_ANDROID)
@@ -43,10 +42,7 @@ SharedImageUsageSet GetSupportedUsage(const SharedContextState* context_state) {
   // for interop with WebGL and WebGPU.
   constexpr SharedImageUsageSet kGraphiteDawnFallbackUsage =
       SHARED_IMAGE_USAGE_GLES2_READ | SHARED_IMAGE_USAGE_GLES2_WRITE |
-      SHARED_IMAGE_USAGE_GLES2_FOR_RASTER_ONLY |
       SHARED_IMAGE_USAGE_HIGH_PERFORMANCE_GPU |
-      // NOTE: In this case, it is also possible to support raster-over-GLES2.
-      SHARED_IMAGE_USAGE_RASTER_OVER_GLES2_ONLY |
       SHARED_IMAGE_USAGE_WEBGPU_READ | SHARED_IMAGE_USAGE_WEBGPU_WRITE |
       SHARED_IMAGE_USAGE_WEBGPU_SWAP_CHAIN_TEXTURE;
 
@@ -83,9 +79,7 @@ WrappedSkImageBackingFactory::WrappedSkImageBackingFactory(
     : SharedImageBackingFactory(GetSupportedUsage(context_state.get())),
       context_state_(std::move(context_state)),
       use_graphite_(context_state_->graphite_shared_context()),
-      is_drdc_enabled_(
-          features::IsDrDcEnabled() &&
-          !context_state_->feature_info()->workarounds().disable_drdc),
+      is_drdc_enabled_(context_state_->is_drdc_enabled()),
       graphite_supports_compressed_textures_(
           GraphiteSupportsCompressedTextures(context_state_.get())) {}
 
@@ -173,18 +167,19 @@ bool WrappedSkImageBackingFactory::IsSupported(
     return false;
   }
 
-  // Note that this backing support thread safety only for vulkan mode because
-  // the underlying vulkan resources like vulkan images can be shared across
-  // multiple vulkan queues. Also note that this backing currently only supports
-  // thread safety for DrDc mode where both gpu main and drdc thread uses/shared
-  // a single vulkan queue to submit work and hence do not need to synchronize
-  // the reads/writes using semaphores. For this backing to support thread
-  // safety across multiple queues, we need to synchronize the reads/writes via
-  // semaphores.
+  // Note that this backing support thread safety only for DawnMetal or Vulkan
+  // mode because DawnMetal is already thread safe and the underlying vulkan
+  // resources like vulkan images can be shared across multiple vulkan queues.
+  // Also note that this backing currently only supports thread safety for DrDc
+  // mode where both gpu main and drdc thread uses/shared a single vulkan queue
+  // to submit work and hence do not need to synchronize the reads/writes using
+  // semaphores. For this backing to support thread safety across multiple
+  // queues, we need to synchronize the reads/writes via semaphores.
   if (thread_safe) {
     bool is_vulkan = gr_context_type == GrContextType::kVulkan ||
                      context_state_->IsGraphiteDawnVulkan();
-    if (!is_drdc_enabled_ || !is_vulkan) {
+    bool is_dawn_metal = context_state_->IsGraphiteDawnMetal();
+    if (!is_drdc_enabled_ || (!is_vulkan && !is_dawn_metal)) {
       return false;
     }
   }

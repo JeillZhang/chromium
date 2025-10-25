@@ -8,7 +8,10 @@ import org.jni_zero.JNINamespace;
 import org.jni_zero.JniType;
 import org.jni_zero.NativeMethods;
 
+import org.chromium.base.Callback;
 import org.chromium.base.ResettersForTesting;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
@@ -20,26 +23,28 @@ import org.chromium.url.GURL;
 
 /** A helper class for using the DOM Distiller. */
 @JNINamespace("android")
+@NullMarked
 public class DomDistillerTabUtils {
     /** Triggering heuristics encoded in native enum DistillerHeuristicsType. */
-    private static Integer sHeuristics;
+    private static @Nullable Integer sHeuristics;
 
     /** Used to specify whether mobile friendly is enabled for testing purposes. */
-    private static Boolean sExcludeMobileFriendlyForTesting;
+    private static @Nullable Boolean sExcludeMobileFriendlyForTesting;
 
-    @DistillerHeuristicsType private static Integer sHeuristicsForTesting;
+    @DistillerHeuristicsType private static @Nullable Integer sHeuristicsForTesting;
 
     private DomDistillerTabUtils() {}
 
     /**
-     * Creates a new WebContents and navigates the {@link WebContents} to view the URL of the
-     * current page, while in the background starts distilling the current page. This method takes
-     * ownership over the old WebContents after swapping in the new one.
+     * Distills the given WebContents and waits for the result. If the distillation succeeds, then
+     * the Viewer is opened via a navigation.
      *
-     * @param webContents the WebContents to distill.
+     * @param webContents The WebContents to distill.
+     * @param callback The callback which will be called upon success/failure of the distillation.
      */
-    public static void distillCurrentPageAndView(WebContents webContents) {
-        DomDistillerTabUtilsJni.get().distillCurrentPageAndView(webContents);
+    public static void distillCurrentPageAndViewIfSuccessful(
+            WebContents webContents, Callback<Boolean> callback) {
+        DomDistillerTabUtilsJni.get().distillCurrentPageAndViewIfSuccessful(webContents, callback);
     }
 
     /**
@@ -63,6 +68,18 @@ public class DomDistillerTabUtils {
     public static void distillAndView(
             WebContents sourceWebContents, WebContents destinationWebContents) {
         DomDistillerTabUtilsJni.get().distillAndView(sourceWebContents, destinationWebContents);
+    }
+
+    /**
+     * Override the default zoom for a reader mode page. This allows reader mode font scaling
+     * preferences to be applied to a page without having conflicting with the default zoom which
+     * may be set by the accessibility zoom setting.
+     *
+     * @param webContents the WebContents that is distilled.
+     * @param url the distiller view URL for the reader mode page.
+     */
+    public static void overrideDefaultZoomForReaderModePage(WebContents webContents, String url) {
+        DomDistillerTabUtilsJni.get().overrideDefaultZoomForReaderModePage(webContents, url);
     }
 
     /**
@@ -107,7 +124,10 @@ public class DomDistillerTabUtils {
      */
     public static boolean shouldExcludeMobileFriendly(Tab tab) {
         if (sExcludeMobileFriendlyForTesting != null) return sExcludeMobileFriendlyForTesting;
-        if (DomDistillerFeatures.triggerOnMobileFriendlyPages()) {
+        // Including mobile-friendly by default only applies to the CPA, otherwise we fallback to
+        // the accessibility setting.
+        if (DomDistillerFeatures.triggerOnMobileFriendlyPages()
+                && !ReaderModeManager.shouldUseReaderModeMessages(tab)) {
             return false;
         }
 
@@ -148,9 +168,24 @@ public class DomDistillerTabUtils {
         DomDistillerTabUtilsJni.get().setInterceptNavigationDelegate(delegate, webContents);
     }
 
+    /**
+     * Runs distillability heuristics on the page to determine if it's suitable for reader mode.
+     *
+     * @param webContents The web contents to run the heuristic against.
+     * @param callback The callback which informs the caller whether the given web contents are
+     *     suitable for reader mode.
+     */
+    public static void runReadabilityHeuristicsOnWebContents(
+            @Nullable WebContents webContents, Callback<Boolean> callback) {
+        DomDistillerTabUtilsJni.get().runReadabilityHeuristicsOnWebContents(webContents, callback);
+    }
+
     @NativeMethods
-    interface Natives {
-        void distillCurrentPageAndView(WebContents webContents);
+    public interface Natives {
+        void distillCurrentPageAndViewIfSuccessful(
+                WebContents webContents, Callback<Boolean> callback);
+
+        void overrideDefaultZoomForReaderModePage(WebContents webContents, String url);
 
         void distillCurrentPage(WebContents webContents);
 
@@ -163,5 +198,8 @@ public class DomDistillerTabUtils {
 
         void setInterceptNavigationDelegate(
                 InterceptNavigationDelegate delegate, WebContents webContents);
+
+        void runReadabilityHeuristicsOnWebContents(
+                @Nullable WebContents webContents, Callback<Boolean> callback);
     }
 }

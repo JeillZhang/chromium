@@ -4,8 +4,6 @@
 
 #import "ios/chrome/browser/send_tab_to_self/ui_bundled/send_tab_to_self_coordinator.h"
 
-#import <MaterialComponents/MaterialSnackbar.h>
-
 #import <memory>
 #import <optional>
 #import <utility>
@@ -14,6 +12,7 @@
 #import "base/check.h"
 #import "base/ios/block_types.h"
 #import "base/memory/raw_ptr.h"
+#import "base/scoped_observation.h"
 #import "base/strings/sys_string_conversions.h"
 #import "components/send_tab_to_self/entry_point_display_reason.h"
 #import "components/send_tab_to_self/metrics_util.h"
@@ -42,7 +41,7 @@
 #import "ios/chrome/browser/shared/public/commands/show_signin_command.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
 #import "ios/chrome/browser/shared/public/commands/toolbar_commands.h"
-#import "ios/chrome/browser/shared/ui/util/snackbar_util.h"
+#import "ios/chrome/browser/shared/public/snackbar/snackbar_message.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/authentication_service_factory.h"
@@ -56,10 +55,6 @@
 
 namespace {
 
-// Snackbar category for activity services.
-NSString* const kActivityServicesSnackbarCategory =
-    @"ActivityServicesSnackbarCategory";
-
 class TargetDeviceListWaiter : public syncer::SyncServiceObserver {
  public:
   using GetDisplayReasonCallback = base::RepeatingCallback<
@@ -72,17 +67,16 @@ class TargetDeviceListWaiter : public syncer::SyncServiceObserver {
       syncer::SyncService* sync_service,
       const GetDisplayReasonCallback& get_display_reason_callback,
       base::OnceClosure on_list_known_callback)
-      : sync_service_(sync_service),
-        get_display_reason_callback_(get_display_reason_callback),
+      : get_display_reason_callback_(get_display_reason_callback),
         on_list_known_callback_(std::move(on_list_known_callback)) {
-    sync_service_->AddObserver(this);
-    OnStateChanged(sync_service_);
+    sync_observation_.Observe(sync_service);
+    OnStateChanged(sync_observation_.GetSource());
   }
 
   TargetDeviceListWaiter(const TargetDeviceListWaiter&) = delete;
   TargetDeviceListWaiter& operator=(const TargetDeviceListWaiter&) = delete;
 
-  ~TargetDeviceListWaiter() override { sync_service_->RemoveObserver(this); }
+  ~TargetDeviceListWaiter() override = default;
 
   void OnStateChanged(syncer::SyncService*) override {
     std::optional<send_tab_to_self::EntryPointDisplayReason> display_reason =
@@ -96,34 +90,22 @@ class TargetDeviceListWaiter : public syncer::SyncServiceObserver {
         break;
       case send_tab_to_self::EntryPointDisplayReason::kOfferFeature:
       case send_tab_to_self::EntryPointDisplayReason::kInformNoTargetDevice:
-        sync_service_->RemoveObserver(this);
+        sync_observation_.Reset();
         std::move(on_list_known_callback_).Run();
         break;
     }
   }
 
+  void OnSyncShutdown(syncer::SyncService*) override {
+    sync_observation_.Reset();
+  }
+
  private:
-  const raw_ptr<syncer::SyncService> sync_service_;
+  base::ScopedObservation<syncer::SyncService, TargetDeviceListWaiter>
+      sync_observation_{this};
   const GetDisplayReasonCallback get_display_reason_callback_;
   base::OnceClosure on_list_known_callback_;
 };
-
-void ShowSendingMessage(CommandDispatcher* dispatcher, NSString* deviceName) {
-  if (!dispatcher) {
-    return;
-  }
-
-  TriggerHapticFeedbackForNotification(UINotificationFeedbackTypeSuccess);
-  NSString* text =
-      l10n_util::GetNSStringF(IDS_IOS_SEND_TAB_TO_SELF_SNACKBAR_MESSAGE,
-                              base::SysNSStringToUTF16(deviceName));
-  MDCSnackbarMessage* message = CreateSnackbarMessage(text);
-  message.accessibilityLabel = text;
-  message.duration = 2.0;
-  message.category = kActivityServicesSnackbarCategory;
-  [HandlerForProtocol(dispatcher, SnackbarCommands)
-      showSnackbarMessage:message];
-}
 
 void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
   if (!dispatcher) {
@@ -161,7 +143,9 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
 
 @end
 
-@implementation SendTabToSelfCoordinator
+@implementation SendTabToSelfCoordinator {
+  id<BrowserCoordinatorCommands> __weak _browserCoordinatorHandler;
+}
 
 #pragma mark - Public
 
@@ -178,6 +162,8 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
   _signinPresenter = signinPresenter;
   _url = url;
   _title = title;
+  _browserCoordinatorHandler = HandlerForProtocol(
+      browser->GetCommandDispatcher(), BrowserCoordinatorCommands);
   return self;
 }
 
@@ -246,8 +232,7 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
 #pragma mark - SendTabToSelfModalDelegate
 
 - (void)dismissViewControllerAnimated {
-  [HandlerForProtocol(self.browser->GetCommandDispatcher(),
-                      BrowserCoordinatorCommands) hideSendTabToSelfUI];
+  [_browserCoordinatorHandler hideSendTabToSelfUI];
 }
 
 - (void)sendTabToTargetDeviceCacheGUID:(NSString*)cacheGUID
@@ -258,13 +243,11 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
                  base::SysNSStringToUTF8(cacheGUID));
 
   // ShowSendingMessage() opens UI, so wait for the dialog to be dismissed.
-  __weak CommandDispatcher* weakDispatcher =
-      self.browser->GetCommandDispatcher();
+  __weak __typeof(self) weakSelf = self;
   self.dismissedCompletion = ^{
-    ShowSendingMessage(weakDispatcher, deviceName);
+    [weakSelf showSnackbarMessageWithDeviceName:deviceName];
   };
-  [HandlerForProtocol(self.browser->GetCommandDispatcher(),
-                      BrowserCoordinatorCommands) hideSendTabToSelfUI];
+  [_browserCoordinatorHandler hideSendTabToSelfUI];
 }
 
 - (void)openManageDevicesTab {
@@ -274,12 +257,34 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
   self.dismissedCompletion = ^{
     OpenManageDevicesTab(weakDispatcher);
   };
-  [HandlerForProtocol(self.browser->GetCommandDispatcher(),
-                      BrowserCoordinatorCommands) hideSendTabToSelfUI];
+  [_browserCoordinatorHandler hideSendTabToSelfUI];
 }
 
 #pragma mark - Private
 
+// Shows a snackbar message confirming that the tab was sent to `deviceName`.
+- (void)showSnackbarMessageWithDeviceName:(NSString*)deviceName {
+  CommandDispatcher* dispatcher = self.browser->GetCommandDispatcher();
+  if (!dispatcher) {
+    return;
+  }
+
+  TriggerHapticFeedbackForNotification(UINotificationFeedbackTypeSuccess);
+  NSString* text =
+      l10n_util::GetNSStringF(IDS_IOS_SEND_TAB_TO_SELF_SNACKBAR_MESSAGE,
+                              base::SysNSStringToUTF16(deviceName));
+  SnackbarMessage* message = [[SnackbarMessage alloc] initWithTitle:text];
+  id<SnackbarCommands> handler =
+      HandlerForProtocol(dispatcher, SnackbarCommands);
+  [handler showSnackbarMessage:message];
+}
+
+// Closes the current tab in preparation for changing the profile.
+- (void)prepareForChangeProfile {
+  [_browserCoordinatorHandler closeCurrentTab];
+}
+
+// Shows the Send Tab To Self UI, either the device list or the sign-in promo.
 - (void)show {
   std::optional<send_tab_to_self::EntryPointDisplayReason> displayReason =
       [self displayReason];
@@ -332,11 +337,8 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
           };
       ChangeProfileContinuationProvider provider = base::BindRepeating(
           &CreateChangeProfileSendTabToOtherDevice, _url, self.title);
-      id<BrowserCoordinatorCommands> browserCoordinatorCommandsHandler =
-          HandlerForProtocol(self.browser->GetCommandDispatcher(),
-                             BrowserCoordinatorCommands);
       void (^prepareChangeProfile)() = ^() {
-        [browserCoordinatorCommandsHandler closeCurrentTab];
+        [weakSelf prepareForChangeProfile];
       };
 
       ShowSigninCommand* command = [[ShowSigninCommand alloc]
@@ -356,10 +358,10 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
   }
 }
 
+// Called when the sign-in flow is complete.
 - (void)onSigninComplete:(BOOL)succeeded {
   if (!succeeded) {
-    [HandlerForProtocol(self.browser->GetCommandDispatcher(),
-                        BrowserCoordinatorCommands) hideSendTabToSelfUI];
+    [_browserCoordinatorHandler hideSendTabToSelfUI];
     return;
   }
   __weak __typeof(self) weakSelf = self;
@@ -375,11 +377,13 @@ void OpenManageDevicesTab(CommandDispatcher* dispatcher) {
           weakSelf));
 }
 
+// Called when the list of target devices is ready.
 - (void)onTargetDeviceListReady {
   _targetDeviceListWaiter.reset();
   [self show];
 }
 
+// Returns the reason for displaying the Send Tab To Self entry point.
 - (std::optional<send_tab_to_self::EntryPointDisplayReason>)displayReason {
   send_tab_to_self::SendTabToSelfSyncService* service =
       SendTabToSelfSyncServiceFactory::GetForProfile(self.profile);

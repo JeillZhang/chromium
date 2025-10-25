@@ -168,9 +168,7 @@ void ColorInputType::HandleDOMActivateEvent(Event& event) {
 }
 
 AppearanceValue ColorInputType::AutoAppearance() const {
-  return GetElement().FastHasAttribute(html_names::kListAttr)
-             ? AppearanceValue::kMenulist
-             : AppearanceValue::kSquareButton;
+  return AppearanceValue::kSquareButton;
 }
 
 void ColorInputType::OpenPopupView() {

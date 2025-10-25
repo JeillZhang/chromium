@@ -10,9 +10,9 @@
 #include "base/functional/bind.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "chrome/browser/extensions/extension_sync_data.h"
-#include "chrome/browser/extensions/extension_sync_service.h"
 #include "chrome/browser/extensions/launch_util.h"
+#include "chrome/browser/extensions/sync/extension_sync_data.h"
+#include "chrome/browser/extensions/sync/extension_sync_service.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/test/integration/apps_helper.h"
 #include "chrome/browser/sync/test/integration/apps_sync_test_base.h"
@@ -70,16 +70,19 @@ class TwoClientExtensionAppsSyncTest : public AppsSyncTestBase {
   ~TwoClientExtensionAppsSyncTest() override = default;
 };
 
+#if BUILDFLAG(IS_CHROMEOS)
+// Chrome Apps are fully deprecated on all platforms except ChromeOS.
+
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                        E2E_ENABLED(StartWithNoApps)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 }
 
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                        E2E_ENABLED(StartWithSameApps)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupClients());
 
   const int kNumApps = 5;
@@ -130,7 +133,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest, StartWithDifferentApps) {
 // end up with all apps, and the app and page ordinals should be identical.
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                        E2E_ENABLED(InstallDifferentApps)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupClients());
 
   int i = 0;
@@ -157,7 +160,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
 }
 
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest, E2E_ENABLED(Add)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
@@ -167,7 +170,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest, E2E_ENABLED(Add)) {
 }
 
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest, E2E_ENABLED(Uninstall)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
@@ -184,7 +187,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest, E2E_ENABLED(Uninstall)) {
 // ordinals.
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                        E2E_ENABLED(UninstallThenInstall)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
@@ -199,7 +202,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
 }
 
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest, E2E_ENABLED(Merge)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
@@ -219,7 +222,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest, E2E_ENABLED(Merge)) {
 
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                        E2E_ENABLED(UpdateEnableDisableApp)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
@@ -235,7 +238,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
 
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                        E2E_ENABLED(UpdateIncognitoEnableDisable)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
@@ -254,7 +257,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
 // the app.
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                        E2E_ENABLED(UpdatePageOrdinal)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
@@ -273,7 +276,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
 // launch ordinal for the app.
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                        E2E_ENABLED(UpdateAppLaunchOrdinal)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
@@ -293,7 +296,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
 // page and app launch ordinal values for the CWS.
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                        E2E_ENABLED(UpdateCWSOrdinals)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
@@ -324,7 +327,7 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
 // have the same launch type values for the CWS.
 IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                        E2E_ENABLED(UpdateLaunchType)) {
-  ResetSyncForPrimaryAccount();
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
   ASSERT_TRUE(SetupSync());
   ASSERT_TRUE(AppsMatchChecker().Wait());
 
@@ -446,6 +449,58 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
                    ->enabled_extensions()
                    .Contains(kHostedAppId0));
 }
+
+#elif BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
+
+IN_PROC_BROWSER_TEST_F(TwoClientExtensionAppsSyncTest,
+                       E2E_ENABLED(UninstallOnWML)) {
+  ASSERT_TRUE(ResetSyncForPrimaryAccount());
+  ASSERT_TRUE(SetupClients());
+
+  auto appid1 = InstallHostedApp(GetProfile(0), 0);
+  auto appid2 = InstallHostedApp(GetProfile(1), 0);
+  EXPECT_EQ(appid1, appid2);
+
+  int i = 1;
+
+  const int kNumCommonApps = 4;
+  for (int j = 0; j < kNumCommonApps; ++i, ++j) {
+    InstallHostedApp(GetProfile(0), i);
+    InstallHostedApp(GetProfile(1), i);
+  }
+
+  ASSERT_TRUE(SetupSync());
+  const int kNumProfile0Apps = 10;
+  for (int j = 0; j < kNumProfile0Apps; ++i, ++j) {
+    InstallHostedApp(GetProfile(0), i);
+  }
+
+  const int kNumProfile1Apps = 10;
+  for (int j = 0; j < kNumProfile1Apps; ++i, ++j) {
+    InstallHostedApp(GetProfile(1), i);
+  }
+
+  ASSERT_TRUE(AwaitQuiescence());
+
+  // Chrome App installs via sync are disabled on WML.
+  ASSERT_FALSE(apps_helper::HasSameApps(GetProfile(0), GetProfile(1)));
+
+  ASSERT_TRUE(
+      GetExtensionRegistry(GetProfile(0))->GetInstalledExtension(appid1));
+  ASSERT_TRUE(
+      GetExtensionRegistry(GetProfile(1))->GetInstalledExtension(appid2));
+
+  UninstallApp(GetProfile(0), 0);
+  ASSERT_TRUE(AwaitQuiescence());
+
+  // Uninstalls are still sync-ed and applied on WML devices.
+  ASSERT_FALSE(
+      GetExtensionRegistry(GetProfile(0))->GetInstalledExtension(appid1));
+  ASSERT_FALSE(
+      GetExtensionRegistry(GetProfile(1))->GetInstalledExtension(appid1));
+}
+
+#endif
 
 // TODO(akalin): Add tests exercising:
 //   - Offline installation/uninstallation behavior

@@ -7,7 +7,6 @@
 
 #include <memory>
 #include <optional>
-#include <tuple>
 
 #include "base/containers/flat_set.h"
 #include "base/containers/lru_cache.h"
@@ -21,6 +20,7 @@
 #include "components/services/storage/public/cpp/buckets/bucket_info.h"
 #include "components/services/storage/public/cpp/quota_error_or.h"
 #include "components/services/storage/public/mojom/service_worker_storage_control.mojom.h"
+#include "components/services/storage/service_worker/service_worker_storage.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/common/content_export.h"
 #include "mojo/public/cpp/bindings/remote.h"
@@ -100,7 +100,8 @@ class CONTENT_EXPORT ServiceWorkerRegistry {
 
   ServiceWorkerRegistry(ServiceWorkerContextCore& context,
                         storage::QuotaManagerProxy* quota_manager_proxy,
-                        storage::SpecialStoragePolicy* special_storage_policy);
+                        storage::SpecialStoragePolicy* special_storage_policy,
+                        base::TimeTicks start_time);
 
   // For re-creating the registry from the old one. This is called when
   // something went wrong during storage access.
@@ -275,6 +276,18 @@ class CONTENT_EXPORT ServiceWorkerRegistry {
   // The set doesn't include installing/uninstalling/uninstalled registrations.
   void GetRegisteredStorageKeys(GetRegisteredStorageKeysCallback callback);
 
+  // Returns false only when we are sure that there's no service worker
+  // registrations for the given storage key. If we are not sure, this function
+  // must return true to suggest that we need to check the service worker
+  // registration specifically (e.g. by calling FindRegistrationForClientUrl()).
+  // This function is a lot faster than FindRegistrationForClientUrl().
+  bool MaybeHasRegistrationForStorageKey(const blink::StorageKey& key);
+
+  // This method waits for service worker registrations to be initialized, and
+  // depends on |on_registrations_initialized_| and |registrations_initialized_|
+  // which are called in InitializeRegisteredOrigins().
+  void WaitForRegistrationsInitializedForTest();
+
   // Performs internal storage cleanup. Operations to the storage in the past
   // (e.g. deletion) are usually recorded in disk for a certain period until
   // compaction happens. This method wipes them out to ensure that the deleted
@@ -290,6 +303,11 @@ class CONTENT_EXPORT ServiceWorkerRegistry {
   mojo::Remote<storage::mojom::ServiceWorkerStorageControl>&
   GetRemoteStorageControl();
 
+  // Binds a ServiceWorkerStorageControl.
+  void BindStorageControl(
+      mojo::PendingReceiver<storage::mojom::ServiceWorkerStorageControl>
+          receiver);
+
   // Call storage::mojom::ServiceWorkerStorageControl::Disable() immediately.
   // This method sends an IPC message without using the queuing mechanism.
   void DisableStorageForTesting(base::OnceClosure callback);
@@ -300,7 +318,7 @@ class CONTENT_EXPORT ServiceWorkerRegistry {
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerRegistryTest,
                            RetryInflightCalls_ApplyPolicyUpdates);
 
-  void Start();
+  void Start(base::TimeTicks start_time);
   void FindRegistrationForIdInternal(
       int64_t registration_id,
       const std::optional<blink::StorageKey>& key,
@@ -454,7 +472,18 @@ class CONTENT_EXPORT ServiceWorkerRegistry {
   void DidApplyPolicyUpdates(
       storage::mojom::ServiceWorkerDatabaseStatus status);
   void DidGetRegisteredStorageKeysOnStartup(
+      base::TimeTicks start_time,
       const std::vector<blink::StorageKey>& storage_keys);
+
+  // This is used as a callback of GetRegisteredStorageKeys when initialising to
+  // store a list of storage keys that have registered service workers.
+  void DidGetRegisteredStorageKeysOnStartupDeprecated(
+      base::TimeTicks start_time,
+      const std::vector<blink::StorageKey>& storage_keys);
+
+  void SetRegisteredStorageKeys(
+      const std::vector<blink::StorageKey>& storage_keys);
+
   void ApplyPolicyUpdates(
       std::vector<storage::mojom::StoragePolicyUpdatePtr> policy_updates);
   bool ShouldPurgeOnShutdownForTesting(const blink::StorageKey& key);
@@ -475,6 +504,14 @@ class CONTENT_EXPORT ServiceWorkerRegistry {
 
   void StartRemoteCall(std::unique_ptr<InflightCall> call);
   void FinishRemoteCall(const InflightCall* call);
+
+  void ClearAllInternalCache();
+  void ClearInternalCacheForStorageKey(const blink::StorageKey& storage_key);
+
+  storage::ServiceWorkerStorage::StorageSharedBuffer& storage_shared_buffer() {
+    // storage_shared_buffer_  always exists.
+    return *storage_shared_buffer_;
+  }
 
   // A helper function to call a mojo remote call that will automatically be
   // reissued if the mojo::Remote becomes disconnected. To allow the call to be
@@ -510,10 +547,21 @@ class CONTENT_EXPORT ServiceWorkerRegistry {
   // The ServiceWorkerContextCore object must outlive this.
   const raw_ref<ServiceWorkerContextCore> context_;
 
+  // This is a direct communication channel between this ServiceWorkerRegistry
+  // in the UI thread and the ServiceWorkerStorage in the thread pool.
+  // This must not be null.
+  scoped_refptr<storage::ServiceWorkerStorage::StorageSharedBuffer>
+      storage_shared_buffer_;
+
   mojo::Remote<storage::mojom::ServiceWorkerStorageControl>
       remote_storage_control_;
 
   bool is_storage_disabled_ = false;
+
+  // A set of StorageKeys that have at least one registration.
+  std::set<blink::StorageKey> registered_storage_keys_;
+  bool registrations_initialized_ = false;
+  base::OnceClosure on_registrations_initialized_for_test_;
 
   // TODO(crbug.com/40103974): Consider moving QuotaManagerProxy to
   // ServiceWorkerStorage once QuotaManager gets mojofied.
@@ -541,8 +589,9 @@ class CONTENT_EXPORT ServiceWorkerRegistry {
   base::LRUCache<blink::StorageKey, std::set<GURL>> registration_scope_cache_;
 
   // Live registration's `registration_id` cache to skip calling
-  // FindRegistrationForClientUrl mojo function (https://crbug.com/1446216).
-  base::LRUCache<std::tuple<GURL, blink::StorageKey>, int64_t>
+  // FindRegistrationForClientUrl mojo function (https://crbug.com/1446216). The
+  // key is a pair of {registration_scope, storage_key}.
+  base::LRUCache<std::pair<GURL, blink::StorageKey>, int64_t>
       registration_id_cache_;
 
   enum class ConnectionState {

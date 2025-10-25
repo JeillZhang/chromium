@@ -12,6 +12,7 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "base/notreached.h"
@@ -26,6 +27,8 @@
 #include "chrome/browser/enterprise/util/managed_browser_utils.h"
 #include "chrome/browser/feature_engagement/tracker_factory.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/profiles/batch_upload/batch_upload_service.h"
+#include "chrome/browser/profiles/batch_upload/batch_upload_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
@@ -37,6 +40,7 @@
 #include "chrome/browser/signin/chrome_signin_client_factory.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_error_controller_factory.h"
+#include "chrome/browser/signin/signin_hats_util.h"
 #include "chrome/browser/signin/signin_ui_util.h"
 #include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/sync/sync_service_factory.h"
@@ -47,12 +51,15 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/color/chrome_color_id.h"
+#include "chrome/browser/ui/hats/survey_config.h"
 #include "chrome/browser/ui/managed_ui.h"
 #include "chrome/browser/ui/passwords/ui_utils.h"
 #include "chrome/browser/ui/profiles/profile_colors_util.h"
 #include "chrome/browser/ui/profiles/profile_picker.h"
 #include "chrome/browser/ui/profiles/profile_view_utils.h"
+#include "chrome/browser/ui/signin/signin_view_controller.h"
 #include "chrome/browser/ui/sync/sync_passphrase_dialog.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/user_education/browser_user_education_interface.h"
@@ -62,11 +69,15 @@
 #include "chrome/browser/ui/views/controls/hover_button.h"
 #include "chrome/browser/ui/views/profiles/badged_profile_photo.h"
 #include "chrome/browser/ui/web_applications/app_browser_controller.h"
+#include "chrome/browser/ui/webui/signin/signin_ui_error.h"
+#include "chrome/browser/ui/webui/signin/signin_utils_desktop.h"
 #include "chrome/common/pref_names.h"
-#include "chrome/common/url_constants.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/branded_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
+#include "components/autofill/core/browser/metrics/autofill_settings_metrics.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "components/feature_engagement/public/feature_constants.h"
 #include "components/signin/core/browser/signin_error_controller.h"
 #include "components/signin/public/base/consent_level.h"
@@ -74,10 +85,14 @@
 #include "components/signin/public/base/signin_pref_names.h"
 #include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_info.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/signin/public/identity_manager/primary_account_mutator.h"
 #include "components/strings/grit/components_strings.h"
+#include "components/sync/base/features.h"
+#include "components/sync/service/sync_service.h"
 #include "components/vector_icons/vector_icons.h"
 #include "net/base/url_util.h"
+#include "ui/base/interaction/element_tracker.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/image_model.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -91,6 +106,7 @@
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/accessibility/view_accessibility.h"
+#include "ui/views/widget/widget.h"
 
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
 #include "chrome/browser/enterprise/signin/enterprise_signin_prefs.h"
@@ -103,34 +119,43 @@
 
 namespace {
 
-std::u16string GetSyncErrorButtonText(AvatarSyncErrorType error) {
+std::u16string GetSyncErrorButtonText(
+    Profile* profile,
+    syncer::SyncService::UserActionableError error) {
   switch (error) {
-    case AvatarSyncErrorType::kSyncPaused:
-    case AvatarSyncErrorType::kUnrecoverableError:
+    case syncer::SyncService::UserActionableError::kUnrecoverableError:
+      if (!ChromeSigninClientFactory::GetForProfile(profile)
+               ->IsClearPrimaryAccountAllowed()) {
+        // As opposed to the corresponding error in an unmanaged account,
+        // sign-out hasn't happened here yet. The button directs to the sign-out
+        // confirmation dialog in settings.
+        return l10n_util::GetStringUTF16(
+            IDS_SYNC_ERROR_USER_MENU_SIGNOUT_BUTTON);
+      }
+      [[fallthrough]];
+    case syncer::SyncService::UserActionableError::kSignInNeedsUpdate:
       // The user was signed out. Offer them to sign in again.
       return l10n_util::GetStringUTF16(IDS_SYNC_ERROR_USER_MENU_SIGNIN_BUTTON);
-    case AvatarSyncErrorType::kManagedUserUnrecoverableError:
-      // As opposed to the corresponding error in an unmanaged account
-      // (AvatarSyncErrorType::kUnrecoverableError), sign-out hasn't happened
-      // here yet. The button directs to the sign-out confirmation dialog in
-      // settings.
-      return l10n_util::GetStringUTF16(IDS_SYNC_ERROR_USER_MENU_SIGNOUT_BUTTON);
-    case AvatarSyncErrorType::kUpgradeClientError:
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
       return l10n_util::GetStringUTF16(IDS_SYNC_ERROR_USER_MENU_UPGRADE_BUTTON);
-    case AvatarSyncErrorType::kPassphraseError:
+    case syncer::SyncService::UserActionableError::kNeedsPassphrase:
       return l10n_util::GetStringUTF16(
           IDS_SYNC_ERROR_USER_MENU_PASSPHRASE_BUTTON);
-    case AvatarSyncErrorType::kTrustedVaultKeyMissingForEverythingError:
-    case AvatarSyncErrorType::kTrustedVaultKeyMissingForPasswordsError:
-    case AvatarSyncErrorType::
-        kTrustedVaultRecoverabilityDegradedForEverythingError:
-    case AvatarSyncErrorType::
-        kTrustedVaultRecoverabilityDegradedForPasswordsError:
+    case syncer::SyncService::UserActionableError::
+        kNeedsTrustedVaultKeyForEverything:
+    case syncer::SyncService::UserActionableError::
+        kNeedsTrustedVaultKeyForPasswords:
+    case syncer::SyncService::UserActionableError::
+        kTrustedVaultRecoverabilityDegradedForEverything:
+    case syncer::SyncService::UserActionableError::
+        kTrustedVaultRecoverabilityDegradedForPasswords:
       return l10n_util::GetStringUTF16(
           IDS_SYNC_ERROR_USER_MENU_RETRIEVE_KEYS_BUTTON);
-    case AvatarSyncErrorType::kSettingsUnconfirmedError:
+    case syncer::SyncService::UserActionableError::kNeedsSettingsConfirmation:
       return l10n_util::GetStringUTF16(
           IDS_SYNC_ERROR_USER_MENU_CONFIRM_SYNC_SETTINGS_BUTTON);
+    case syncer::SyncService::UserActionableError::kNone:
+      NOTREACHED();
   }
 }
 
@@ -146,74 +171,44 @@ std::u16string GetProfileIdentifier(const ProfileAttributesEntry& entry) {
   }
 }
 
-std::u16string GetSyncPromoDescription(std::string_view email) {
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-  if (base::FeatureList::IsEnabled(
-          switches::kEnableHistorySyncOptinExpansionPill)) {
-    switch (switches::kHistorySyncOptinExpansionPillOption.Get()) {
-      case switches::HistorySyncOptinExpansionPillOption::kBrowseAcrossDevices:
-        return l10n_util::GetStringFUTF16(
-            IDS_PROFILE_MENU_SYNC_PROMO_BROWSE_ACROSS_DEVICES_DESCRIPTION,
-            base::UTF8ToUTF16(email));
-      case switches::HistorySyncOptinExpansionPillOption::kSyncHistory:
-        return l10n_util::GetStringFUTF16(
-            IDS_PROFILE_MENU_SYNC_PROMO_SYNC_HISTORY_DESCRIPTION,
-            base::UTF8ToUTF16(email));
-      case switches::HistorySyncOptinExpansionPillOption::
-          kSeeTabsFromOtherDevices:
-        return l10n_util::GetStringFUTF16(
-            IDS_PROFILE_MENU_SYNC_PROMO_SEE_TABS_FROM_OTHER_DEVICES_DESCRIPTION,
-            base::UTF8ToUTF16(email));
-      case switches::HistorySyncOptinExpansionPillOption::
-          kBrowseAcrossDevicesNewProfileMenuPromoVariant:
-        // If the new promo variant is enabled, the identity section
-        // shouldn't contain a sync promo.
-        NOTREACHED();
-    }
-  }
-#endif
-  return l10n_util::GetStringUTF16(IDS_PROFILES_DICE_SYNC_PROMO);
-}
-
-std::u16string GetSyncPromoButtonLabel() {
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-  if (base::FeatureList::IsEnabled(
-          switches::kEnableHistorySyncOptinExpansionPill)) {
-    return l10n_util::GetStringUTF16(IDS_PROFILE_MENU_SYNC_PROMO_BUTTON_LABEL);
-  }
-#endif
-  return l10n_util::GetStringUTF16(IDS_PROFILES_DICE_SIGNIN_BUTTON);
-}
-
-bool IsNewSyncPromoVariantEnabled() {
-#if BUILDFLAG(ENABLE_DICE_SUPPORT)
-  if (base::FeatureList::IsEnabled(
-          switches::kEnableHistorySyncOptinExpansionPill) &&
-      switches::kHistorySyncOptinExpansionPillOption.Get() ==
-          switches::HistorySyncOptinExpansionPillOption::
-              kBrowseAcrossDevicesNewProfileMenuPromoVariant) {
-    return true;
-  }
-#endif
-  return false;
-}
-
 }  // namespace
 
 // static
 bool ProfileMenuView::close_on_deactivate_for_testing_ = true;
 
 ProfileMenuView::ProfileMenuView(
-    views::Button* anchor_button,
+    ui::TrackedElement* anchor_element,
     Browser* browser,
+    signin::ProfileMenuAvatarButtonPromoInfo promo_info,
     std::optional<signin_metrics::AccessPoint> explicit_signin_access_point)
-    : ProfileMenuViewBase(anchor_button, browser),
+    : ProfileMenuViewBase(anchor_element, browser),
       browser_(raw_ref<Browser>::from_ptr(browser)),
+      promo_info_(promo_info),
       explicit_signin_access_point_(explicit_signin_access_point) {
   set_close_on_deactivate(close_on_deactivate_for_testing_);
+
+  // Set the callback to launch a HaTS survey upon menu dismissal.
+  // We use `SetCloseCallback` instead of `SetCancelCallback` because the close
+  // callback is also executed when users dismiss the menu by clicking outside,
+  // unlike the cancel callback.
+  SetCloseCallback(
+      base::BindOnce(&ProfileMenuView::OnClose, base::Unretained(this)));
 }
 
 ProfileMenuView::~ProfileMenuView() = default;
+
+void ProfileMenuView::OnClose() {
+  bool is_browser_window_active =
+      skip_window_active_check_for_testing_ ||
+      (browser().window() && browser().window()->IsActive());
+  if (!actionable_item_clicked() && is_browser_window_active) {
+    // Launch a HaTS survey only if the user dismissed the menu without
+    // selecting an item (e.g., by clicking outside or pressing ESC), and the
+    // browser window remains active.
+    signin::LaunchSigninHatsSurveyForProfile(
+        kHatsSurveyTriggerIdentityProfileMenuDismissed, &profile());
+  }
+}
 
 void ProfileMenuView::BuildMenu() {
   if (profile().IsGuestSession()) {
@@ -229,9 +224,10 @@ void ProfileMenuView::BuildMenu() {
 
   const bool is_web_app = web_app::AppBrowserController::IsWebApp(&browser());
   if (is_web_app) {
-    browser().window()->NotifyFeaturePromoFeatureUsed(
-        feature_engagement::kIPHPasswordsWebAppProfileSwitchFeature,
-        FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
+    BrowserUserEducationInterface::From(&browser())
+        ->NotifyFeaturePromoFeatureUsed(
+            feature_engagement::kIPHPasswordsWebAppProfileSwitchFeature,
+            FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   }
 
   // Users should not be able to use features from WebApps.
@@ -272,7 +268,7 @@ std::u16string ProfileMenuView::GetAccessibleWindowTitle() const {
 }
 
 void ProfileMenuView::OnProfileManagementButtonClicked() {
-  RecordClick(ActionableItem::kProfileManagementLabel);
+  OnActionableItemClicked(ActionableItem::kProfileManagementLabel);
   if (!perform_menu_actions()) {
     return;
   }
@@ -280,7 +276,7 @@ void ProfileMenuView::OnProfileManagementButtonClicked() {
 }
 
 void ProfileMenuView::OnManageGoogleAccountButtonClicked() {
-  RecordClick(ActionableItem::kManageGoogleAccountButton);
+  OnActionableItemClicked(ActionableItem::kManageGoogleAccountButton);
   if (!perform_menu_actions()) {
     return;
   }
@@ -294,33 +290,8 @@ void ProfileMenuView::OnManageGoogleAccountButtonClicked() {
           .email);
 }
 
-void ProfileMenuView::OnPasswordsButtonClicked() {
-  RecordClick(ActionableItem::kPasswordsButton);
-  if (!perform_menu_actions()) {
-    return;
-  }
-  NavigateToManagePasswordsPage(
-      &browser(), password_manager::ManagePasswordsReferrer::kProfileChooser);
-}
-
-void ProfileMenuView::OnCreditCardsButtonClicked() {
-  RecordClick(ActionableItem::kCreditCardsButton);
-  if (!perform_menu_actions()) {
-    return;
-  }
-  chrome::ShowSettingsSubPage(&browser(), chrome::kPaymentsSubPage);
-}
-
-void ProfileMenuView::OnAddressesButtonClicked() {
-  RecordClick(ActionableItem::kAddressesButton);
-  if (!perform_menu_actions()) {
-    return;
-  }
-  chrome::ShowSettingsSubPage(&browser(), chrome::kAddressesSubPage);
-}
-
 void ProfileMenuView::OnGuestProfileButtonClicked() {
-  RecordClick(ActionableItem::kGuestProfileButton);
+  OnActionableItemClicked(ActionableItem::kGuestProfileButton);
   if (!perform_menu_actions()) {
     return;
   }
@@ -329,7 +300,7 @@ void ProfileMenuView::OnGuestProfileButtonClicked() {
 }
 
 void ProfileMenuView::OnExitProfileButtonClicked() {
-  RecordClick(ActionableItem::kExitProfileButton);
+  OnActionableItemClicked(ActionableItem::kExitProfileButton);
   if (!perform_menu_actions()) {
     return;
   }
@@ -337,27 +308,48 @@ void ProfileMenuView::OnExitProfileButtonClicked() {
 }
 
 void ProfileMenuView::OnSyncSettingsButtonClicked() {
-  RecordClick(ActionableItem::kSyncSettingsButton);
+  OnActionableItemClicked(ActionableItem::kSyncSettingsButton);
   if (!perform_menu_actions()) {
     return;
   }
   chrome::ShowSettingsSubPage(&browser(), chrome::kSyncSetupSubPage);
 }
 
-void ProfileMenuView::OnSyncErrorButtonClicked(AvatarSyncErrorType error) {
-  RecordClick(ActionableItem::kSyncErrorButton);
+void ProfileMenuView::OnGoogleServicesSettingsButtonClicked() {
+  OnActionableItemClicked(ActionableItem::kGoogleServicesSettingsButton);
+  if (!perform_menu_actions()) {
+    return;
+  }
+  chrome::ShowSettingsSubPage(&browser(), chrome::kGoogleServicesSubpage);
+}
+
+void ProfileMenuView::OnAccountSettingsButtonClicked() {
+  OnActionableItemClicked(ActionableItem::kAccountSettingsButton);
+  if (!perform_menu_actions()) {
+    return;
+  }
+  chrome::ShowSettingsSubPage(&browser(), chrome::kPeopleSubPage);
+}
+
+void ProfileMenuView::OnSyncErrorButtonClicked(
+    syncer::SyncService::UserActionableError error) {
+  OnActionableItemClicked(ActionableItem::kSyncErrorButton);
   if (!perform_menu_actions()) {
     return;
   }
 
   // The logic below must be consistent with GetSyncInfoForAvatarErrorType().
   switch (error) {
-    case AvatarSyncErrorType::kManagedUserUnrecoverableError:
-      chrome::ShowSettingsSubPage(&browser(), chrome::kSignOutSubPage);
-      break;
-    case AvatarSyncErrorType::kUnrecoverableError: {
+    case syncer::SyncService::UserActionableError::kUnrecoverableError: {
       signin::IdentityManager* identity_manager =
           IdentityManagerFactory::GetForProfile(&profile());
+      // Managed users get directed to the sign-out confirmation dialog in
+      // settings.
+      if (!ChromeSigninClientFactory::GetForProfile(&profile())
+               ->IsClearPrimaryAccountAllowed()) {
+        chrome::ShowSettingsSubPage(&browser(), chrome::kSignOutSubPage);
+        break;
+      }
       // This error means that the Sync engine failed to initialize. Shutdown
       // Sync engine by revoking sync consent.
       identity_manager->GetPrimaryAccountMutator()->RevokeSyncConsent(
@@ -371,38 +363,42 @@ void ProfileMenuView::OnSyncErrorButtonClicked(AvatarSyncErrorType error) {
           signin_metrics::AccessPoint::kAvatarBubbleSignIn);
       break;
     }
-    case AvatarSyncErrorType::kSyncPaused:
+    case syncer::SyncService::UserActionableError::kSignInNeedsUpdate:
       GetWidget()->CloseWithReason(views::Widget::ClosedReason::kUnspecified);
       signin_ui_util::ShowReauthForPrimaryAccountWithAuthError(
           &profile(), signin_metrics::AccessPoint::kAvatarBubbleSignIn);
       break;
-    case AvatarSyncErrorType::kUpgradeClientError:
+    case syncer::SyncService::UserActionableError::kNeedsClientUpgrade:
       chrome::OpenUpdateChromeDialog(&browser());
       break;
-    case AvatarSyncErrorType::kTrustedVaultKeyMissingForEverythingError:
-    case AvatarSyncErrorType::kTrustedVaultKeyMissingForPasswordsError:
+    case syncer::SyncService::UserActionableError::
+        kNeedsTrustedVaultKeyForEverything:
+    case syncer::SyncService::UserActionableError::
+        kNeedsTrustedVaultKeyForPasswords:
       OpenTabForSyncKeyRetrieval(
           &browser(),
           syncer::TrustedVaultUserActionTriggerForUMA::kProfileMenu);
       break;
-    case AvatarSyncErrorType::
-        kTrustedVaultRecoverabilityDegradedForEverythingError:
-    case AvatarSyncErrorType::
-        kTrustedVaultRecoverabilityDegradedForPasswordsError:
+    case syncer::SyncService::UserActionableError::
+        kTrustedVaultRecoverabilityDegradedForEverything:
+    case syncer::SyncService::UserActionableError::
+        kTrustedVaultRecoverabilityDegradedForPasswords:
       OpenTabForSyncKeyRecoverabilityDegraded(
           &browser(),
           syncer::TrustedVaultUserActionTriggerForUMA::kProfileMenu);
       break;
-    case AvatarSyncErrorType::kPassphraseError:
+    case syncer::SyncService::UserActionableError::kNeedsPassphrase:
       ShowSyncPassphraseDialog(
           browser(),
           base::BindRepeating(
               &SyncPassphraseDialogDecryptData,
               base::Unretained(SyncServiceFactory::GetForProfile(&profile()))));
       break;
-    case AvatarSyncErrorType::kSettingsUnconfirmedError:
+    case syncer::SyncService::UserActionableError::kNeedsSettingsConfirmation:
       chrome::ShowSettingsSubPage(&browser(), chrome::kSyncSetupSubPage);
       break;
+    case syncer::SyncService::UserActionableError::kNone:
+      NOTREACHED();
   }
 }
 
@@ -410,21 +406,14 @@ void ProfileMenuView::OnSigninButtonClicked(
     CoreAccountInfo account,
     ActionableItem button_type,
     signin_metrics::AccessPoint access_point) {
-  RecordClick(button_type);
+  OnActionableItemClicked(button_type);
 
   if (!perform_menu_actions()) {
     return;
   }
   GetWidget()->CloseWithReason(views::Widget::ClosedReason::kUnspecified);
 
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-  // TODO(crbug.com/404807488): Update the button and the dialog strings.
-  if (base::FeatureList::IsEnabled(switches::kEnableHistorySyncOptin)) {
-    browser().signin_view_controller()->ShowModalHistorySyncOptInDialog();
-    return;
-  }
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-
+  // Pending while the HistorySyncPillExperiment is in progress.
   if (button_type == ActionableItem::kSigninReauthButton) {
     // The reauth button does not trigger a sync opt in.
     signin_ui_util::ShowReauthForAccount(&profile(), account.email,
@@ -436,20 +425,17 @@ void ProfileMenuView::OnSigninButtonClicked(
 }
 
 void ProfileMenuView::OnSignoutButtonClicked() {
-  signin::IdentityManager* identity_manager =
-      IdentityManagerFactory::GetForProfile(&profile());
   DCHECK(ChromeSigninClientFactory::GetForProfile(&profile())
-             ->IsClearPrimaryAccountAllowed(identity_manager->HasPrimaryAccount(
-                 signin::ConsentLevel::kSync)))
+             ->IsClearPrimaryAccountAllowed())
       << "Clear primary account is not allowed. Signout should not be offered "
          "in the UI.";
 
-  RecordClick(ActionableItem::kSignoutButton);
+  OnActionableItemClicked(ActionableItem::kSignoutButton);
   if (!perform_menu_actions()) {
     return;
   }
   GetWidget()->CloseWithReason(views::Widget::ClosedReason::kUnspecified);
-  browser().signin_view_controller()->SignoutOrReauthWithPrompt(
+  browser().GetFeatures().signin_view_controller()->SignoutOrReauthWithPrompt(
       signin_metrics::AccessPoint::kProfileMenuSignoutConfirmationPrompt,
       signin_metrics::ProfileSignout::kUserClickedSignoutProfileMenu,
       signin_metrics::SourceForRefreshTokenOperation::
@@ -458,14 +444,25 @@ void ProfileMenuView::OnSignoutButtonClicked() {
 
 void ProfileMenuView::OnOtherProfileSelected(
     const base::FilePath& profile_path) {
-  RecordClick(ActionableItem::kOtherProfileButton);
+  OnActionableItemClicked(ActionableItem::kOtherProfileButton);
   if (!perform_menu_actions()) {
     return;
   }
 
   if (!web_app::AppBrowserController::IsWebApp(&browser())) {
     GetWidget()->CloseWithReason(views::Widget::ClosedReason::kUnspecified);
-    profiles::SwitchToProfile(profile_path, /*always_create=*/false);
+    // Switch to the selected profile and launch a HaTS survey for the
+    // associated non-webapp browser.
+    profiles::SwitchToProfile(
+        profile_path, /*always_create=*/false,
+        base::BindOnce([](Browser* browser) {
+          if (!browser) {
+            return;
+          }
+          signin::LaunchSigninHatsSurveyForProfile(
+              kHatsSurveyTriggerIdentitySwitchProfileFromProfileMenu,
+              browser->GetProfile());
+        }));
   } else {
     // Open the same web app for another profile.
     // On non-macOS the only allowlisted case is PasswordManager WebApp, which
@@ -498,7 +495,7 @@ void ProfileMenuView::OnOtherProfileSelected(
 }
 
 void ProfileMenuView::OnAddNewProfileButtonClicked() {
-  RecordClick(ActionableItem::kAddNewProfileButton);
+  OnActionableItemClicked(ActionableItem::kAddNewProfileButton);
   if (!perform_menu_actions()) {
     return;
   }
@@ -507,7 +504,7 @@ void ProfileMenuView::OnAddNewProfileButtonClicked() {
 }
 
 void ProfileMenuView::OnManageProfilesButtonClicked() {
-  RecordClick(ActionableItem::kManageProfilesButton);
+  OnActionableItemClicked(ActionableItem::kManageProfilesButton);
   if (!perform_menu_actions()) {
     return;
   }
@@ -516,29 +513,53 @@ void ProfileMenuView::OnManageProfilesButtonClicked() {
 }
 
 void ProfileMenuView::OnEditProfileButtonClicked() {
-  RecordClick(ActionableItem::kEditProfileButton);
+  OnActionableItemClicked(ActionableItem::kEditProfileButton);
   if (!perform_menu_actions()) {
     return;
   }
   chrome::ShowSettingsSubPage(&browser(), chrome::kManageProfileSubPage);
 }
 
-void ProfileMenuView::OnCookiesClearedOnExitLinkClicked() {
-  RecordClick(ActionableItem::kCookiesClearedOnExitLink);
+void ProfileMenuView::OnAutofillSettingsButtonClicked() {
+  OnActionableItemClicked(ActionableItem::kAutofillSettingsButton);
   if (!perform_menu_actions()) {
     return;
   }
-  chrome::ShowSettingsSubPage(&browser(), chrome::kContentSettingsSubPage +
-                                              std::string("/") +
-                                              chrome::kCookieSettingsSubPage);
+  base::UmaHistogramEnumeration(
+      "Autofill.AutofillAndPasswordsSettingsPage.VisitReferrer",
+      autofill::autofill_metrics::AutofillSettingsReferrer::kProfileMenu);
+  chrome::ShowSettingsSubPage(&browser(), chrome::kAutofillSubPage);
 }
 
-void ProfileMenuView::OnAutofillSettingsButtonClicked() {
-  RecordClick(ActionableItem::kAutofillSettingsButton);
+void ProfileMenuView::OnBatchUploadButtonClicked(ActionableItem button_type) {
+  BatchUploadService::EntryPoint batch_upload_entry_point;
+  switch (button_type) {
+    case ActionableItem::kBatchUploadButton:
+      batch_upload_entry_point =
+          BatchUploadService::EntryPoint::kProfileMenuRowButtonAction;
+      break;
+    case ActionableItem::kBatchUploadAsPrimaryButton:
+      batch_upload_entry_point =
+          BatchUploadService::EntryPoint::kProfileMenuPrimaryButtonAction;
+      break;
+    case ActionableItem::kBatchUploadWithBookmarksAsPrimaryButton:
+      batch_upload_entry_point = BatchUploadService::EntryPoint::
+          kProfileMenuPrimaryButtonWithBookmarksAction;
+      break;
+    case ActionableItem::kBatchUploadWindows10DepreciationAsPrimaryButton:
+      batch_upload_entry_point = BatchUploadService::EntryPoint::
+          kProfileMenuPrimaryButtonWithWindows10DepreciationAction;
+      break;
+    default:
+      NOTREACHED() << "This actionable item should not trigger Batch Upload.";
+  }
+
+  OnActionableItemClicked(button_type);
   if (!perform_menu_actions()) {
     return;
   }
-  chrome::ShowSettingsSubPage(&browser(), chrome::kAutofillSubPage);
+  BatchUploadServiceFactory::GetForProfile(&profile())
+      ->OpenBatchUpload(&browser(), batch_upload_entry_point);
 }
 
 void ProfileMenuView::SetMenuTitleForAccessibility() {
@@ -600,12 +621,8 @@ void ProfileMenuView::BuildGuestIdentity() {
 
 ProfileMenuViewBase::IdentitySectionParams
 ProfileMenuView::GetIdentitySectionParams(const ProfileAttributesEntry& entry) {
-  const std::optional<AvatarSyncErrorType> error =
-      GetAvatarSyncErrorType(&profile());
   const signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(&profile());
-  const bool is_sync_feature_enabled =
-      identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync);
   const CoreAccountInfo primary_account_info =
       identity_manager->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin);
   const AccountInfo primary_extended_account_info =
@@ -661,16 +678,26 @@ ProfileMenuView::GetIdentitySectionParams(const ProfileAttributesEntry& entry) {
     return params;
   }
 
-  // Sync error, including "paused".
-  if (error.has_value()) {
-    params.subtitle = GetAvatarSyncErrorDescription(
-        *error, is_sync_feature_enabled, primary_account_info.email);
-    params.button_text = GetSyncErrorButtonText(error.value());
-    params.button_action =
-        base::BindRepeating(&ProfileMenuView::OnSyncErrorButtonClicked,
-                            base::Unretained(this), error.value());
-    params.has_dotted_ring = true;
-    return params;
+  syncer::SyncService* service = SyncServiceFactory::GetForProfile(&profile());
+  if (service) {
+    const syncer::SyncService::UserActionableError error =
+        service->GetUserActionableError();
+    // Avoid reacting to
+    // syncer::SyncService::UserActionableError::kSignInNeedsUpdate in case of
+    // no sync consent, as kSignInPending is handled differently below.
+    if (error != syncer::SyncService::UserActionableError::kNone &&
+        (error !=
+             syncer::SyncService::UserActionableError::kSignInNeedsUpdate ||
+         identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync))) {
+      params.subtitle =
+          GetAvatarSyncErrorDescription(error, primary_account_info.email);
+      params.button_text = GetSyncErrorButtonText(&profile(), error);
+      params.button_action =
+          base::BindRepeating(&ProfileMenuView::OnSyncErrorButtonClicked,
+                              base::Unretained(this), error);
+      params.has_dotted_ring = true;
+      return params;
+    }
   }
 
   ActionableItem button_type = ActionableItem::kSigninAccountButton;
@@ -678,28 +705,44 @@ ProfileMenuView::GetIdentitySectionParams(const ProfileAttributesEntry& entry) {
       signin_metrics::AccessPoint::kAvatarBubbleSignIn;
   switch (signin_util::GetSignedInState(identity_manager)) {
     case signin_util::SignedInState::kSignedOut:
-      if (profile().GetPrefs()->GetBoolean(prefs::kSigninAllowed)) {
-        button_type = ActionableItem::kSigninButton;
-        access_point =
-            signin_metrics::AccessPoint::kAvatarBubbleSignInWithSyncPromo;
-        params.subtitle = l10n_util::GetStringUTF16(
-            IDS_PROFILE_MENU_SIGNIN_PROMO_DESCRIPTION);
-        params.button_text =
-            l10n_util::GetStringUTF16(IDS_PROFILE_MENU_SIGNIN_PROMO_BUTTON);
-        signin_metrics::LogSignInOffered(
-            explicit_signin_access_point_.value_or(access_point),
-            signin_metrics::PromoAction::
-                PROMO_ACTION_NEW_ACCOUNT_NO_EXISTING_ACCOUNT);
-      }
-      break;
     case signin_util::SignedInState::kWebOnlySignedIn: {
-      access_point =
-          signin_metrics::AccessPoint::kAvatarBubbleSignInWithSyncPromo;
       AccountInfo account_info_for_promos =
           signin_ui_util::GetSingleAccountForPromos(identity_manager);
+      if (!CanOfferSignin(&profile(), account_info_for_promos.gaia,
+                          account_info_for_promos.email,
+                          /*allow_account_from_other_profile=*/true)
+               .IsOk()) {
+        break;
+      }
+
+      access_point =
+          signin_metrics::AccessPoint::kAvatarBubbleSignInWithSyncPromo;
+      signin_metrics::LogSignInOffered(
+          explicit_signin_access_point_.value_or(access_point),
+          account_info_for_promos.IsEmpty()
+              ? signin_metrics::PromoAction::
+                    PROMO_ACTION_NEW_ACCOUNT_NO_EXISTING_ACCOUNT
+              : signin_metrics::PromoAction::PROMO_ACTION_WITH_DEFAULT);
+
+      if (account_info_for_promos.IsEmpty()) {
+        // Non-personalized signin button.
+        button_type = ActionableItem::kSigninButton;
+        params.subtitle = l10n_util::GetStringUTF16(
+            base::FeatureList::IsEnabled(
+                syncer::kReplaceSyncPromosWithSignInPromos)
+                ? IDS_PROFILE_MENU_SIGNIN_PROMO_DESCRIPTION_WITH_BOOKMARKS
+                : IDS_PROFILE_MENU_SIGNIN_PROMO_DESCRIPTION);
+        params.button_text =
+            l10n_util::GetStringUTF16(IDS_PROFILE_MENU_SIGNIN_PROMO_BUTTON);
+        break;
+      }
+      // "Continue as" signin button.
       account_info_for_signin_action = account_info_for_promos;
       params.subtitle = l10n_util::GetStringFUTF16(
-          IDS_SETTINGS_PEOPLE_ACCOUNT_AWARE_SIGNIN_ACCOUNT_ROW_SUBTITLE_WITH_EMAIL,
+          base::FeatureList::IsEnabled(
+              syncer::kReplaceSyncPromosWithSignInPromos)
+              ? IDS_SETTINGS_PEOPLE_ACCOUNT_AWARE_SIGNIN_ACCOUNT_ROW_SUBTITLE_WITH_EMAIL_WITH_BOOKMARKS
+              : IDS_SETTINGS_PEOPLE_ACCOUNT_AWARE_SIGNIN_ACCOUNT_ROW_SUBTITLE_WITH_EMAIL,
           base::UTF8ToUTF16(account_info_for_promos.email));
       params.button_text = l10n_util::GetStringFUTF16(
           IDS_PROFILES_DICE_WEB_ONLY_SIGNIN_BUTTON,
@@ -727,26 +770,90 @@ ProfileMenuView::GetIdentitySectionParams(const ProfileAttributesEntry& entry) {
               account_image,
               /*width=*/kIdentityImageSizeForButton,
               /*height=*/kIdentityImageSizeForButton, profiles::SHAPE_CIRCLE));
-      signin_metrics::LogSignInOffered(
-          explicit_signin_access_point_.value_or(access_point),
-          signin_metrics::PromoAction::PROMO_ACTION_WITH_DEFAULT);
       break;
     }
     case signin_util::SignedInState::kSignedIn:
-      if (IsNewSyncPromoVariantEnabled()) {
-        // In the new variant, the sync button is displayed as the feature
-        // button.
-        params.subtitle = base::UTF8ToUTF16(primary_account_info.email);
-        break;
+      if (promo_info_.type.has_value()) {
+        switch (promo_info_.type.value()) {
+          case signin::ProfileMenuAvatarButtonPromoInfo::Type::
+              kHistorySyncPromo:
+            params.subtitle = l10n_util::GetStringFUTF16(
+                IDS_PROFILE_MENU_SYNC_PROMO_SYNC_HISTORY_DESCRIPTION,
+                base::UTF8ToUTF16(primary_account_info.email));
+            params.button_text = l10n_util::GetStringUTF16(
+                IDS_PROFILE_MENU_SYNC_PROMO_BUTTON_LABEL);
+            button_type = ActionableItem::kHistorySyncButton;
+            signin_metrics::LogHistorySyncOptInOffered(
+                explicit_signin_access_point_.value_or(access_point));
+            break;
+          case signin::ProfileMenuAvatarButtonPromoInfo::Type::
+              kBatchUploadPromo:
+            params.email_subtitle =
+                base::UTF8ToUTF16(primary_account_info.email);
+            params.subtitle = l10n_util::GetStringUTF16(
+                IDS_PROFILE_MENU_PROMO_DESCRIPTION_WITH_BATCH_UPLOAD);
+            params.button_text = l10n_util::GetStringUTF16(
+                IDS_PROFILE_MENU_PROMO_BUTTON_WITH_BATCH_UPLOAD);
+            params.button_action = base::BindRepeating(
+                &ProfileMenuView::OnBatchUploadButtonClicked,
+                base::Unretained(this),
+                ActionableItem::kBatchUploadAsPrimaryButton);
+            break;
+          case signin::ProfileMenuAvatarButtonPromoInfo::Type::
+              kBatchUploadBookmarksPromo:
+            params.email_subtitle =
+                base::UTF8ToUTF16(primary_account_info.email);
+            params.subtitle = l10n_util::GetStringUTF16(
+                IDS_PROFILE_MENU_PROMO_DESCRIPTION_WITH_BATCH_UPLOAD_BOOKMARK_CLEANUP);
+            params.button_text = l10n_util::GetStringUTF16(
+                IDS_PROFILE_MENU_PROMO_BUTTON_WITH_BATCH_UPLOAD);
+            params.button_action = base::BindRepeating(
+                &ProfileMenuView::OnBatchUploadButtonClicked,
+                base::Unretained(this),
+                ActionableItem::kBatchUploadWithBookmarksAsPrimaryButton);
+            break;
+          case signin::ProfileMenuAvatarButtonPromoInfo::Type::
+              kBatchUploadWindows10DepreciationPromo:
+            params.email_subtitle =
+                base::UTF8ToUTF16(primary_account_info.email);
+            // Note: Sync promo does not explicitly mention "sync" but invites
+            // the user to back-up their data. It is fine to be used here.
+            params.subtitle = l10n_util::GetStringUTF16(
+                IDS_PROFILE_MENU_DESCRIPTION_WITH_SYNC_PROMO);
+            params.button_text = l10n_util::GetStringUTF16(
+                IDS_PROFILE_MENU_BUTTON_LABEL_WITH_SYNC_PROMO);
+            params.button_action = base::BindRepeating(
+                &ProfileMenuView::OnBatchUploadButtonClicked,
+                base::Unretained(this),
+                ActionableItem::
+                    kBatchUploadWindows10DepreciationAsPrimaryButton);
+            break;
+          case signin::ProfileMenuAvatarButtonPromoInfo::Type::kSyncPromo:
+            CHECK(switches::IsAvatarSyncPromoFeatureEnabled());
+            params.subtitle = l10n_util::GetStringUTF16(
+                IDS_PROFILE_MENU_DESCRIPTION_WITH_SYNC_PROMO);
+            params.button_text = l10n_util::GetStringUTF16(
+                IDS_PROFILE_MENU_BUTTON_LABEL_WITH_SYNC_PROMO);
+            break;
+        }
+      } else {
+        if (base::FeatureList::IsEnabled(
+                syncer::kReplaceSyncPromosWithSignInPromos)) {
+          // No button.
+          params.email_subtitle = base::UTF8ToUTF16(primary_account_info.email);
+        } else {
+          params.subtitle =
+              l10n_util::GetStringUTF16(IDS_PROFILES_DICE_SYNC_PROMO);
+          params.button_text =
+              l10n_util::GetStringUTF16(IDS_PROFILES_DICE_SIGNIN_BUTTON);
+          signin_metrics::LogSyncOptInOffered(
+              explicit_signin_access_point_.value_or(access_point));
+        }
       }
-      params.subtitle = GetSyncPromoDescription(primary_account_info.email);
-      params.button_text = GetSyncPromoButtonLabel();
-      signin_metrics::LogSyncOptInOffered(
-          explicit_signin_access_point_.value_or(access_point));
       break;
     case signin_util::SignedInState::kSyncing:
       // No button.
-      params.subtitle = base::UTF8ToUTF16(primary_account_info.email);
+      params.email_subtitle = base::UTF8ToUTF16(primary_account_info.email);
       break;
     case signin_util::SignedInState::kSignInPending:
       button_type = ActionableItem::kSigninReauthButton;
@@ -762,7 +869,9 @@ ProfileMenuView::GetIdentitySectionParams(const ProfileAttributesEntry& entry) {
       NOTREACHED();
   }
 
-  if (!params.button_text.empty()) {
+  // Sets the default action if needed - if a button text was explicitly set and
+  // no prior action was set.
+  if (!params.button_text.empty() && params.button_action.is_null()) {
     params.button_action = base::BindRepeating(
         &ProfileMenuView::OnSigninButtonClicked, base::Unretained(this),
         account_info_for_signin_action, button_type,
@@ -781,34 +890,48 @@ void ProfileMenuView::BuildIdentityWithCallToAction() {
     // May happen if the profile is being deleted. https://crbug.com/1040079
     return;
   }
+
   SetProfileIdentityWithCallToAction(GetIdentitySectionParams(*entry));
 }
 
-void ProfileMenuView::BuildHistorySyncOptInButton() {
-  CHECK(!profile().IsGuestSession());
-  signin_metrics::AccessPoint access_point =
-      explicit_signin_access_point_.value_or(
-          signin_metrics::AccessPoint::kAvatarBubbleSignIn);
-  signin_metrics::LogSyncOptInOffered(access_point);
+void ProfileMenuView::MaybeBuildBatchUploadButton() {
+  if (!base::FeatureList::IsEnabled(
+          syncer::kReplaceSyncPromosWithSignInPromos)) {
+    return;
+  }
+
+  if (promo_info_.local_data_count == 0) {
+    return;
+  }
+
   AddFeatureButton(
-      l10n_util::GetStringUTF16(IDS_PROFILE_MENU_SYNC_PROMO_ROW_BUTTON_LABEL),
-      base::BindRepeating(
-          &ProfileMenuView::OnSigninButtonClicked, base::Unretained(this),
-          IdentityManagerFactory::GetForProfile(&profile())
-              ->GetPrimaryAccountInfo(signin::ConsentLevel::kSignin),
-          ActionableItem::kHistorySyncOptInButton, access_point),
-      kDevicesChromeRefreshIcon, /*icon_to_image_ratio=*/1.0f,
-      kColorProfileMenuSyncPromoButtonBackground,
-      /*add_vertical_margin=*/true);
+      l10n_util::GetPluralStringFUTF16(IDS_PROFILE_MENU_BATCH_UPLOAD_BUTTON,
+                                       promo_info_.local_data_count),
+      base::BindRepeating(&ProfileMenuView::OnBatchUploadButtonClicked,
+                          base::Unretained(this),
+                          ActionableItem::kBatchUploadButton),
+      vector_icons::kSaveCloudIcon);
 }
 
 void ProfileMenuView::BuildAutofillSettingsButton() {
   CHECK(!profile().IsGuestSession());
+
+  int message_id = IDS_PROFILE_MENU_AUTOFILL_SETTINGS_BUTTON;
+  const gfx::VectorIcon* icon = &vector_icons::kPasswordManagerIcon;
+
+  if (base::FeatureList::IsEnabled(
+          autofill::features::kYourSavedInfoSettingsPage) ||
+      base::FeatureList::IsEnabled(
+          autofill::features::kYourSavedInfoBrandingInSettings)) {
+    message_id = IDS_SETTINGS_YOUR_SAVED_INFO;
+    icon = &vector_icons::kPersonTextIcon;
+  }
+
   AddFeatureButton(
-      l10n_util::GetStringUTF16(IDS_PROFILE_MENU_AUTOFILL_SETTINGS_BUTTON),
+      l10n_util::GetStringUTF16(message_id),
       base::BindRepeating(&ProfileMenuView::OnAutofillSettingsButtonClicked,
                           base::Unretained(this)),
-      vector_icons::kPasswordManagerIcon);
+      *icon);
 }
 
 void ProfileMenuView::BuildCustomizeProfileButton() {
@@ -821,6 +944,35 @@ void ProfileMenuView::BuildCustomizeProfileButton() {
 }
 
 void ProfileMenuView::MaybeBuildChromeAccountSettingsButton() {
+  CHECK(!profile().IsGuestSession());
+
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(&profile());
+
+  if (!identity_manager) {
+    return;
+  }
+
+  // Show the settings button only when signed in to Chrome or pending sign in.
+  switch (signin_util::GetSignedInState(identity_manager)) {
+    case signin_util::SignedInState::kSignInPending:
+    case signin_util::SignedInState::kSignedIn:
+      break;
+    case signin_util::SignedInState::kSyncPaused:
+    case signin_util::SignedInState::kSignedOut:
+    case signin_util::SignedInState::kWebOnlySignedIn:
+    case signin_util::SignedInState::kSyncing:
+      return;
+  }
+
+  AddFeatureButton(
+      l10n_util::GetStringUTF16(IDS_PROFILE_MENU_ACCOUNT_SETTINGS_BUTTON),
+      base::BindRepeating(&ProfileMenuView::OnAccountSettingsButtonClicked,
+                          base::Unretained(this)),
+      vector_icons::kSettingsChromeRefreshIcon);
+}
+
+void ProfileMenuView::MaybeBuildChromeAccountSettingsButtonWithSync() {
   CHECK(!profile().IsGuestSession());
 
   signin::IdentityManager* identity_manager =
@@ -856,8 +1008,9 @@ void ProfileMenuView::MaybeBuildChromeAccountSettingsButton() {
       *icon);
 }
 
-void ProfileMenuView::MaybeBuildManageGoogleAccountButton() {
+void ProfileMenuView::MaybeBuildGoogleServicesSettingsButton() {
   CHECK(!profile().IsGuestSession());
+
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(&profile());
 
@@ -865,21 +1018,37 @@ void ProfileMenuView::MaybeBuildManageGoogleAccountButton() {
     return;
   }
 
-  bool show_button = true;
+  // Show the services settings button  if signin is disallowed.
+  if (profile().GetPrefs()->GetBoolean(prefs::kSigninAllowed)) {
+    return;
+  }
+  AddFeatureButton(
+      l10n_util::GetStringUTF16(IDS_PROFILE_MENU_OPEN_ACCOUNT_SETTINGS),
+      base::BindRepeating(
+          &ProfileMenuView::OnGoogleServicesSettingsButtonClicked,
+          base::Unretained(this)),
+      vector_icons::kSettingsChromeRefreshIcon);
+}
+
+void ProfileMenuView::MaybeBuildManageGoogleAccountButton() {
+  CHECK(!profile().IsGuestSession());
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(&profile());
+  if (!identity_manager) {
+    return;
+  }
+
   switch (signin_util::GetSignedInState(identity_manager)) {
     case signin_util::SignedInState::kSignInPending:
     case signin_util::SignedInState::kSyncPaused:
     case signin_util::SignedInState::kSignedOut:
     case signin_util::SignedInState::kWebOnlySignedIn:
-      show_button = false;
-      break;
+      // Do not show the button.
+      return;
     case signin_util::SignedInState::kSignedIn:
     case signin_util::SignedInState::kSyncing:
       // Show the button.
       break;
-  }
-  if (!show_button) {
-    return;
   }
 
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
@@ -895,7 +1064,8 @@ void ProfileMenuView::MaybeBuildManageGoogleAccountButton() {
   AddFeatureButton(
       l10n_util::GetStringUTF16(IDS_SETTINGS_MANAGE_GOOGLE_ACCOUNT),
       base::BindRepeating(&ProfileMenuView::OnManageGoogleAccountButtonClicked,
-                          base::Unretained(this)));
+                          base::Unretained(this)),
+      vector_icons::kFilterIcon);
 #endif
 }
 
@@ -972,15 +1142,22 @@ void ProfileMenuView::MaybeBuildSignoutButton() {
 
 void ProfileMenuView::BuildFeatureButtons() {
   CHECK(!profile().IsGuestSession());
-  if (signin_util::GetSignedInState(IdentityManagerFactory::GetForProfile(
-          &profile())) == signin_util::SignedInState::kSignedIn &&
-      IsNewSyncPromoVariantEnabled()) {
-    BuildHistorySyncOptInButton();
-  }
+  signin::IdentityManager* identity_manager =
+      IdentityManagerFactory::GetForProfile(&profile());
+  // May add the button asynchronously, order is not be guaranteed.
+  MaybeBuildBatchUploadButton();
   BuildAutofillSettingsButton();
   MaybeBuildManageGoogleAccountButton();
   BuildCustomizeProfileButton();
-  MaybeBuildChromeAccountSettingsButton();
+  (base::FeatureList::IsEnabled(syncer::kReplaceSyncPromosWithSignInPromos) &&
+   (!identity_manager ||
+    !identity_manager->HasPrimaryAccount(signin::ConsentLevel::kSync)))
+      ? MaybeBuildChromeAccountSettingsButton()
+      : MaybeBuildChromeAccountSettingsButtonWithSync();
+  if (base::FeatureList::IsEnabled(
+          syncer::kReplaceSyncPromosWithSignInPromos)) {
+    MaybeBuildGoogleServicesSettingsButton();
+  }
   MaybeBuildCloseBrowsersButton();
   MaybeBuildSignoutButton();
 }

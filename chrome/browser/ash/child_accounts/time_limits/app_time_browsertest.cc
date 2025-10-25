@@ -40,8 +40,7 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace ash {
-namespace app_time {
+namespace ash::app_time {
 
 namespace {
 
@@ -113,8 +112,7 @@ class AppTimeTest : public MixinBasedInProcessBrowserTest {
   }
 
   void UpdatePerAppTimeLimitsPolicy(const base::Value::Dict& policy) {
-    std::string policy_value;
-    base::JSONWriter::Write(policy, &policy_value);
+    std::string policy_value = base::WriteJson(policy).value_or("");
 
     logged_in_user_mixin_.GetUserPolicyMixin()
         ->RequestPolicyUpdate()
@@ -300,5 +298,4 @@ IN_PROC_BROWSER_TEST_F(AppTimeTest, PerAppTimeLimitsPolicyMultipleEntries) {
             app_registry_test.GetAppLimit(app4)->restriction());
 }
 
-}  // namespace app_time
-}  // namespace ash
+}  // namespace ash::app_time

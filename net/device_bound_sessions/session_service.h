@@ -10,6 +10,7 @@
 #include "base/functional/callback_forward.h"
 #include "base/functional/callback_helpers.h"
 #include "net/base/net_export.h"
+#include "net/device_bound_sessions/deletion_reason.h"
 #include "net/device_bound_sessions/registration_fetcher_param.h"
 #include "net/device_bound_sessions/session.h"
 #include "net/device_bound_sessions/session_access.h"
@@ -22,6 +23,7 @@ class FirstPartySetMetadata;
 class IsolationInfo;
 class URLRequest;
 class URLRequestContext;
+class HttpRequestHeaders;
 }
 
 namespace net::device_bound_sessions {
@@ -33,16 +35,21 @@ class NET_EXPORT SessionService {
   using OnAccessCallback = base::RepeatingCallback<void(const SessionAccess&)>;
 
   // Records the outcome of an attempt to refresh.
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused.
+  // LINT.IfChange(DeviceBoundSessionRefreshResult)
   enum class RefreshResult {
-    kRefreshed,           // Refresh was successful.
-    kInitializedService,  // Service is now initialized, refresh may still be
-                          // needed.
-    kUnreachable,         // Refresh endpoint was unreachable.
-    kServerError,         // Refresh endpoint eserved a transient error.
-    kQuotaExceeded,       // Refresh quota exceeded.
-    kFatalError,          // Refresh failed and session was terminated. No
-                          // further refresh needed.
+    kRefreshed = 0,           // Refresh was successful.
+    kInitializedService = 1,  // Service is now initialized, refresh may still
+                              // be needed.
+    kUnreachable = 2,         // Refresh endpoint was unreachable.
+    kServerError = 3,         // Refresh endpoint served a transient error.
+    kQuotaExceeded = 4,       // Refresh quota exceeded.
+    kFatalError = 5,          // Refresh failed and session was terminated. No
+                              // further refresh needed.
+    kMaxValue = kFatalError
   };
+  // LINT.ThenChange(//tools/metrics/histograms/metadata/net/enums.xml:DeviceBoundSessionRefreshResult)
   using RefreshCompleteCallback = base::OnceCallback<void(RefreshResult)>;
 
   // Indicates the reason for deferring. Exactly one of
@@ -79,17 +86,14 @@ class NET_EXPORT SessionService {
 
   virtual ~SessionService() = default;
 
-  // Called to register a new session after getting a Sec-Session-Registration
-  // header.
-  // Registration parameters to be used for creating the registration
-  // request.
-  // Isolation info to be used for registration request, this should be the
-  // same as was used for the response with the Sec-Session-Registration
-  // header.
-  // `net_log` is the log corresponding to the request receiving the
-  // Sec-Session-Registration header.
-  // 'original_request_initiator` was the initiator for the request that
-  // received the Sec-Session-Registration header.
+  // Called to register a new session after getting a
+  // Secure-Session-Registration header. Registration parameters to be used for
+  // creating the registration request. Isolation info to be used for
+  // registration request, this should be the same as was used for the response
+  // with the Secure-Session-Registration header. `net_log` is the log
+  // corresponding to the request receiving the Secure-Session-Registration
+  // header. 'original_request_initiator` was the initiator for the request that
+  // received the Secure-Session-Registration header.
   virtual void RegisterBoundSession(
       OnAccessCallback on_access_callback,
       RegistrationFetcherParam registration_params,
@@ -107,8 +111,11 @@ class NET_EXPORT SessionService {
   // `DeferralParams` containing the session id if the request should be
   // deferred due to a session, and returns std::nullopt if the request
   // does not need to be deferred.
+  // If sessions are skipped without deferring, they will be added to
+  // the Secure-Session-Skipped header in `extra_headers`.
   virtual std::optional<DeferralParams> ShouldDefer(
       URLRequest* request,
+      HttpRequestHeaders* extra_headers,
       const FirstPartySetMetadata& first_party_set_metadata) = 0;
 
   // Defer a request and maybe refresh the corresponding session.
@@ -123,10 +130,11 @@ class NET_EXPORT SessionService {
                                       RefreshCompleteCallback callback) = 0;
 
   // Set the challenge for a bound session after getting a
-  // Sec-Session-Challenge header.
+  // Secure-Session-Challenge header.
   virtual void SetChallengeForBoundSession(
       OnAccessCallback on_access_callback,
-      const GURL& request_url,
+      const URLRequest& request,
+      const FirstPartySetMetadata& first_party_set_metadata,
       const SessionChallengeParam& param) = 0;
 
   // Get all sessions. If sessions have not yet been loaded from disk,
@@ -134,16 +142,17 @@ class NET_EXPORT SessionService {
   virtual void GetAllSessionsAsync(
       base::OnceCallback<void(const std::vector<SessionKey>&)> callback) = 0;
 
-  // Delete the session on `site` with `id`, notifying
+  // Delete the session matching `session_key`, notifying
   // `per_request_callback` about any deletions.
   virtual void DeleteSessionAndNotify(
-      const SchemefulSite& site,
-      const Session::Id& id,
+      DeletionReason reason,
+      const SessionKey& session_key,
       SessionService::OnAccessCallback per_request_callback) = 0;
 
   // Delete all sessions that match the filtering arguments. See
   // `device_bound_sessions.mojom` for details on the filtering logic.
   virtual void DeleteAllSessions(
+      DeletionReason reason,
       std::optional<base::Time> created_after_time,
       std::optional<base::Time> created_before_time,
       base::RepeatingCallback<bool(const url::Origin&,
@@ -157,6 +166,9 @@ class NET_EXPORT SessionService {
   virtual base::ScopedClosureRunner AddObserver(
       const GURL& url,
       base::RepeatingCallback<void(const SessionAccess&)> callback) = 0;
+
+  // Get a session by key, or `nullptr` if no such session exists.
+  virtual const Session* GetSession(const SessionKey& session_key) const = 0;
 
  protected:
   SessionService() = default;

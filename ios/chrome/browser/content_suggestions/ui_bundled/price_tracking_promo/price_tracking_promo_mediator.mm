@@ -4,8 +4,6 @@
 
 #import "ios/chrome/browser/content_suggestions/ui_bundled/price_tracking_promo/price_tracking_promo_mediator.h"
 
-#import <MaterialComponents/MaterialSnackbar.h>
-
 #import "base/cancelable_callback.h"
 #import "base/functional/bind.h"
 #import "base/functional/callback.h"
@@ -24,6 +22,7 @@
 #import "components/prefs/ios/pref_observer_bridge.h"
 #import "components/prefs/pref_change_registrar.h"
 #import "components/prefs/pref_service.h"
+#import "google_apis/gaia/gaia_id.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/price_tracking_promo/price_tracking_promo_action_delegate.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/price_tracking_promo/price_tracking_promo_constants.h"
 #import "ios/chrome/browser/content_suggestions/ui_bundled/price_tracking_promo/price_tracking_promo_favicon_consumer_source.h"
@@ -39,7 +38,8 @@
 #import "ios/chrome/browser/shared/model/application_context/application_context.h"
 #import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
-#import "ios/chrome/browser/shared/ui/util/snackbar_util.h"
+#import "ios/chrome/browser/shared/public/snackbar/snackbar_message.h"
+#import "ios/chrome/browser/shared/public/snackbar/snackbar_message_action.h"
 #import "ios/chrome/browser/signin/model/authentication_service.h"
 #import "ios/chrome/browser/signin/model/system_identity.h"
 #import "ios/chrome/common/ui/favicon/favicon_attributes.h"
@@ -231,7 +231,7 @@ void LogOptInFlowHistogram(PriceTrackingPromoOptInFlow opt_in_flow) {
         signin::ConsentLevel::kSignin);
     if (push_notification_settings::
             GetMobileNotificationPermissionStatusForClient(
-                PushNotificationClientId::kCommerce, GaiaId(identity.gaiaID))) {
+                PushNotificationClientId::kCommerce, identity.gaiaId)) {
       [self disableModule];
     }
   }
@@ -291,27 +291,27 @@ void LogOptInFlowHistogram(PriceTrackingPromoOptInFlow opt_in_flow) {
   id<SystemIdentity> identity =
       _authenticationService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
   _pushNotificationService->SetPreference(
-      identity.gaiaID, PushNotificationClientId::kCommerce, true);
+      identity.gaiaId, PushNotificationClientId::kCommerce, true);
 }
 
 // Get snackbar indicating price tracking notifications are enabled with
 // an action to go to settings to toggle either.
-- (MDCSnackbarMessage*)snackbarMessage {
-  MDCSnackbarMessageAction* action = [[MDCSnackbarMessageAction alloc] init];
+- (SnackbarMessage*)snackbarMessage {
+  SnackbarMessageAction* action = [[SnackbarMessageAction alloc] init];
 
   action.handler = ^{
     [self.dispatcher showPriceTrackingNotificationsSettings];
   };
   action.title = l10n_util::GetNSString(
       IDS_IOS_CONTENT_SUGGESTIONS_PRICE_TRACKING_PROMO_SNACKBAR_MANAGE);
-  action.accessibilityIdentifier = kPriceTrackingSettingsAccessibilityID;
   action.accessibilityLabel = l10n_util::GetNSString(
       IDS_IOS_CONTENT_SUGGESTIONS_PRICE_TRACKING_PROMO_SNACKBAR_MANAGE);
 
-  MDCSnackbarMessage* message = CreateSnackbarMessage(l10n_util::GetNSString(
-      IDS_IOS_CONTENT_SUGGESTIONS_PRICE_TRACKING_PROMO_SNACKBAR_TITLE));
+  SnackbarMessage* message = [[SnackbarMessage alloc]
+      initWithTitle:
+          l10n_util::GetNSString(
+              IDS_IOS_CONTENT_SUGGESTIONS_PRICE_TRACKING_PROMO_SNACKBAR_TITLE)];
   message.action = action;
-  message.category = kPriceTrackingSnackbarCategory;
   return message;
 }
 
@@ -459,7 +459,7 @@ void LogOptInFlowHistogram(PriceTrackingPromoOptInFlow opt_in_flow) {
   return self->_priceTrackingPromoItem;
 }
 
-- (MDCSnackbarMessage*)snackbarMessageForTesting {
+- (SnackbarMessage*)snackbarMessageForTesting {
   return [self snackbarMessage];
 }
 

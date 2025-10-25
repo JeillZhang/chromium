@@ -13,6 +13,7 @@
 #include "content/public/browser/clipboard_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
+#include "ui/base/clipboard/clipboard_metadata.h"
 #include "ui/base/data_transfer_policy/data_transfer_endpoint.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
@@ -34,7 +35,8 @@ namespace {
 // CreateDataEndpoint
 std::unique_ptr<ui::DataTransferEndpoint> CreateDataEndpoint(
     RenderFrameHost* render_frame_host) {
-  if (!render_frame_host->GetMainFrame()->GetLastCommittedURL().is_valid()) {
+  if (render_frame_host == nullptr ||
+      !render_frame_host->GetMainFrame()->GetLastCommittedURL().is_valid()) {
     return nullptr;
   }
   return std::make_unique<ui::DataTransferEndpoint>(
@@ -67,7 +69,7 @@ ClipboardEndpoint CreateClipboardEndpoint(RenderFrameHost* render_frame_host) {
 void VerifyCopyIsAllowedByPolicy(
     const base::android::JavaParamRef<jobject>& jrender_frame_host,
     const JavaParamRef<jobject>& j_callback,
-    const content::ClipboardMetadata& metadata,
+    const ui::ClipboardMetadata& metadata,
     const content::ClipboardPasteData& data) {
   RenderFrameHost* render_frame_host =
       RenderFrameHost::FromJavaRenderFrameHost(jrender_frame_host);
@@ -91,7 +93,7 @@ void VerifyCopyIsAllowedByPolicy(
 void VerifyShareIsAllowedByPolicy(
     const base::android::JavaParamRef<jobject>& jrender_frame_host,
     const JavaParamRef<jobject>& j_callback,
-    const content::ClipboardMetadata& metadata,
+    const ui::ClipboardMetadata& metadata,
     const content::ClipboardPasteData& data) {
   RenderFrameHost* render_frame_host =
       RenderFrameHost::FromJavaRenderFrameHost(jrender_frame_host);
@@ -115,7 +117,7 @@ void VerifyShareIsAllowedByPolicy(
 void VerifyGenericCopyActionIsAllowedByPolicy(
     const base::android::JavaParamRef<jobject>& jrender_frame_host,
     const JavaParamRef<jobject>& j_callback,
-    const content::ClipboardMetadata& metadata,
+    const ui::ClipboardMetadata& metadata,
     const content::ClipboardPasteData& data) {
   RenderFrameHost* render_frame_host =
       RenderFrameHost::FromJavaRenderFrameHost(jrender_frame_host);

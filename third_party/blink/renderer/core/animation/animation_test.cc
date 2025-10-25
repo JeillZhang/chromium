@@ -39,21 +39,29 @@
 #include "cc/trees/target_property.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_script_source.h"
+#include "third_party/blink/public/web/web_settings.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_animation_play_state.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_optional_effect_timing.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_scroll_timeline_options.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_timeline_range_offset.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_cssnumericvalue_double.h"
 #include "third_party/blink/renderer/bindings/core/v8/v8_union_cssnumericvalue_string_unrestricteddouble.h"
 #include "third_party/blink/renderer/core/animation/animation_clock.h"
+#include "third_party/blink/renderer/core/animation/animation_trigger.h"
 #include "third_party/blink/renderer/core/animation/css/compositor_keyframe_double.h"
 #include "third_party/blink/renderer/core/animation/css/css_animation.h"
 #include "third_party/blink/renderer/core/animation/css_number_interpolation_type.h"
+#include "third_party/blink/renderer/core/animation/document_animations.h"
 #include "third_party/blink/renderer/core/animation/document_timeline.h"
 #include "third_party/blink/renderer/core/animation/element_animations.h"
 #include "third_party/blink/renderer/core/animation/keyframe_effect.h"
 #include "third_party/blink/renderer/core/animation/keyframe_effect_model.h"
 #include "third_party/blink/renderer/core/animation/pending_animations.h"
 #include "third_party/blink/renderer/core/animation/scroll_timeline.h"
+#include "third_party/blink/renderer/core/animation/timeline_trigger.h"
 #include "third_party/blink/renderer/core/animation/timing.h"
 #include "third_party/blink/renderer/core/css/cssom/css_unit_values.h"
 #include "third_party/blink/renderer/core/css/properties/longhands.h"
@@ -65,10 +73,14 @@
 #include "third_party/blink/renderer/core/dom/qualified_name.h"
 #include "third_party/blink/renderer/core/execution_context/agent.h"
 #include "third_party/blink/renderer/core/execution_context/security_context.h"
+#include "third_party/blink/renderer/core/exported/web_view_impl.h"
+#include "third_party/blink/renderer/core/frame/frame_test_helpers.h"
+#include "third_party/blink/renderer/core/frame/web_local_frame_impl.h"
 #include "third_party/blink/renderer/core/page/page_animator.h"
 #include "third_party/blink/renderer/core/paint/paint_layer.h"
 #include "third_party/blink/renderer/core/paint/paint_layer_scrollable_area.h"
 #include "third_party/blink/renderer/core/testing/core_unit_test_helper.h"
+#include "third_party/blink/renderer/core/testing/page_test_base.h"
 #include "third_party/blink/renderer/platform/animation/compositor_animation.h"
 #include "third_party/blink/renderer/platform/bindings/v8_per_isolate_data.h"
 #include "third_party/blink/renderer/platform/graphics/compositing/paint_artifact_compositor.h"
@@ -76,6 +88,8 @@
 #include "third_party/blink/renderer/platform/heap/thread_state.h"
 #include "third_party/blink/renderer/platform/scheduler/public/event_loop.h"
 #include "third_party/blink/renderer/platform/testing/paint_test_configurations.h"
+#include "third_party/blink/renderer/platform/testing/unit_test_helpers.h"
+#include "third_party/blink/renderer/platform/testing/url_test_helpers.h"
 #include "third_party/blink/renderer/platform/weborigin/kurl.h"
 
 namespace blink {
@@ -536,7 +550,7 @@ TEST_P(AnimationAnimationTestNoCompositing, SetStartTimeOnLimitedAnimation) {
 TEST_P(AnimationAnimationTestNoCompositing, StartTimePauseFinish) {
   NonThrowableExceptionState exception_state;
   animation->pause();
-  EXPECT_EQ("paused", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kPaused, animation->playState());
   EXPECT_TRUE(animation->pending());
   SimulateAwaitReady();
   EXPECT_FALSE(animation->pending());
@@ -550,11 +564,11 @@ TEST_P(AnimationAnimationTestNoCompositing, StartTimePauseFinish) {
 TEST_P(AnimationAnimationTestNoCompositing, FinishWhenPaused) {
   NonThrowableExceptionState exception_state;
   animation->pause();
-  EXPECT_EQ("paused", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kPaused, animation->playState());
   EXPECT_TRUE(animation->pending());
 
   SimulateFrame(10000);
-  EXPECT_EQ("paused", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kPaused, animation->playState());
   EXPECT_FALSE(animation->pending());
   animation->finish(exception_state);
   EXPECT_EQ(V8AnimationPlayState::Enum::kFinished, animation->playState());
@@ -565,7 +579,7 @@ TEST_P(AnimationAnimationTestNoCompositing, StartTimeFinishPause) {
   animation->finish(exception_state);
   EXPECT_TIME(-30000, GetStartTimeMs(animation));
   animation->pause();
-  EXPECT_EQ("paused", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kPaused, animation->playState());
   EXPECT_TRUE(animation->pending());
   SimulateAwaitReady();
   EXPECT_FALSE(animation->pending());
@@ -587,13 +601,13 @@ TEST_P(AnimationAnimationTestNoCompositing, PausePlay) {
   // Pause the animation at the 10s mark.
   SimulateFrame(10000);
   animation->pause();
-  EXPECT_EQ("paused", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kPaused, animation->playState());
   EXPECT_TRUE(animation->pending());
   EXPECT_TIME(10000, GetCurrentTimeMs(animation));
 
   // Resume playing the animation at the 20s mark.
   SimulateFrame(20000);
-  EXPECT_EQ("paused", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kPaused, animation->playState());
   EXPECT_FALSE(animation->pending());
   EXPECT_TIME(10000, GetCurrentTimeMs(animation));
   animation->play();
@@ -697,7 +711,7 @@ TEST_P(AnimationAnimationTestNoCompositing,
   animation->setPlaybackRate(0);
 
   SimulateFrame(1000);
-  EXPECT_EQ("paused", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kPaused, animation->playState());
   animation->play();
   EXPECT_EQ(V8AnimationPlayState::Enum::kRunning, animation->playState());
   EXPECT_TRUE(animation->pending());
@@ -951,7 +965,7 @@ TEST_P(AnimationAnimationTestNoCompositing, UpdatePlaybackRateWhilePaused) {
 
   // Pending playback rate on pending-paused animation is picked up after async
   // tick.
-  EXPECT_EQ("paused", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kPaused, animation->playState());
   EXPECT_TRUE(animation->pending());
   animation->updatePlaybackRate(2);
   EXPECT_EQ(1, animation->playbackRate());
@@ -1132,7 +1146,7 @@ TEST_P(AnimationAnimationTestNoCompositing, TimeToNextEffectWhenPaused) {
                    animation->TimeToEffectChange().value());
   animation->pause();
   EXPECT_TRUE(animation->pending());
-  EXPECT_EQ("paused", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kPaused, animation->playState());
   SimulateAwaitReady();
   EXPECT_FALSE(animation->pending());
   animation->Update(kTimingUpdateOnDemand);
@@ -1148,7 +1162,7 @@ TEST_P(AnimationAnimationTestNoCompositing,
   animation->setPlaybackRate(2);
   EXPECT_EQ(V8AnimationPlayState::Enum::kRunning, animation->playState());
   animation->cancel();
-  EXPECT_EQ("idle", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kIdle, animation->playState());
   EXPECT_FALSE(animation->pending());
   animation->Update(kTimingUpdateOnDemand);
   // This frame will fire the finish event event though no start time has been
@@ -1165,7 +1179,7 @@ TEST_P(AnimationAnimationTestNoCompositing,
   animation->setPlaybackRate(-3);
   EXPECT_EQ(V8AnimationPlayState::Enum::kRunning, animation->playState());
   animation->cancel();
-  EXPECT_EQ("idle", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kIdle, animation->playState());
   EXPECT_FALSE(animation->pending());
   animation->Update(kTimingUpdateOnDemand);
   EXPECT_EQ(std::nullopt, animation->TimeToEffectChange());
@@ -1177,7 +1191,7 @@ TEST_P(AnimationAnimationTestNoCompositing,
                    animation->TimeToEffectChange().value());
   EXPECT_EQ(V8AnimationPlayState::Enum::kRunning, animation->playState());
   animation->cancel();
-  EXPECT_EQ("idle", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kIdle, animation->playState());
   EXPECT_FALSE(animation->pending());
   animation->Update(kTimingUpdateOnDemand);
   EXPECT_EQ(std::nullopt, animation->TimeToEffectChange());
@@ -1211,7 +1225,7 @@ TEST_P(AnimationAnimationTestNoCompositing, HasLowerCompositeOrdering) {
 
 TEST_P(AnimationAnimationTestNoCompositing, PlayAfterCancel) {
   animation->cancel();
-  EXPECT_EQ("idle", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kIdle, animation->playState());
   EXPECT_FALSE(CurrentTimeIsSet(animation));
   EXPECT_FALSE(StartTimeIsSet(animation));
   animation->play();
@@ -1235,7 +1249,7 @@ TEST_P(AnimationAnimationTestNoCompositing, PlayBackwardsAfterCancel) {
   animation->setCurrentTime(MakeGarbageCollected<V8CSSNumberish>(15000),
                             ASSERT_NO_EXCEPTION);
   animation->cancel();
-  EXPECT_EQ("idle", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kIdle, animation->playState());
   EXPECT_FALSE(animation->pending());
   EXPECT_FALSE(CurrentTimeIsSet(animation));
   EXPECT_FALSE(StartTimeIsSet(animation));
@@ -1258,7 +1272,7 @@ TEST_P(AnimationAnimationTestNoCompositing, PlayBackwardsAfterCancel) {
 
 TEST_P(AnimationAnimationTestNoCompositing, ReverseAfterCancel) {
   animation->cancel();
-  EXPECT_EQ("idle", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kIdle, animation->playState());
   EXPECT_FALSE(animation->pending());
   EXPECT_FALSE(CurrentTimeIsSet(animation));
   EXPECT_FALSE(StartTimeIsSet(animation));
@@ -1282,7 +1296,7 @@ TEST_P(AnimationAnimationTestNoCompositing, ReverseAfterCancel) {
 TEST_P(AnimationAnimationTestNoCompositing, FinishAfterCancel) {
   NonThrowableExceptionState exception_state;
   animation->cancel();
-  EXPECT_EQ("idle", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kIdle, animation->playState());
   EXPECT_FALSE(CurrentTimeIsSet(animation));
   EXPECT_FALSE(StartTimeIsSet(animation));
 
@@ -1294,11 +1308,11 @@ TEST_P(AnimationAnimationTestNoCompositing, FinishAfterCancel) {
 
 TEST_P(AnimationAnimationTestNoCompositing, PauseAfterCancel) {
   animation->cancel();
-  EXPECT_EQ("idle", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kIdle, animation->playState());
   EXPECT_FALSE(CurrentTimeIsSet(animation));
   EXPECT_FALSE(StartTimeIsSet(animation));
   animation->pause();
-  EXPECT_EQ("paused", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kPaused, animation->playState());
   EXPECT_TRUE(animation->pending());
   EXPECT_TIME(0, GetCurrentTimeMs(animation));
   EXPECT_FALSE(StartTimeIsSet(animation));
@@ -1820,7 +1834,8 @@ TEST_P(AnimationAnimationTestCompositing,
       To<LayoutBoxModelObject>(GetLayoutObjectByElementId("scroller"));
   PaintLayerScrollableArea* scrollable_area = scroller->GetScrollableArea();
   scrollable_area->SetScrollOffset(ScrollOffset(0, 20),
-                                   mojom::blink::ScrollType::kProgrammatic);
+                                   mojom::blink::ScrollType::kProgrammatic,
+                                   cc::ScrollSourceType::kAbsoluteScroll);
   ScrollTimelineOptions* options = ScrollTimelineOptions::Create();
   options->setSource(GetElementById("scroller"));
   ScrollTimeline* scroll_timeline =
@@ -1892,7 +1907,8 @@ TEST_P(AnimationAnimationTestCompositing,
       To<LayoutBoxModelObject>(GetLayoutObjectByElementId("scroller"));
   PaintLayerScrollableArea* scrollable_area = scroller->GetScrollableArea();
   scrollable_area->SetScrollOffset(ScrollOffset(0, 100),
-                                   mojom::blink::ScrollType::kProgrammatic);
+                                   mojom::blink::ScrollType::kProgrammatic,
+                                   cc::ScrollSourceType::kAbsoluteScroll);
   ScrollTimelineOptions* options = ScrollTimelineOptions::Create();
   options->setSource(GetElementById("scroller"));
   ScrollTimeline* scroll_timeline =
@@ -1974,7 +1990,8 @@ TEST_P(AnimationAnimationTestNoCompositing, ScrollLinkedAnimationCreation) {
       To<LayoutBoxModelObject>(GetLayoutObjectByElementId("scroller"));
   PaintLayerScrollableArea* scrollable_area = scroller->GetScrollableArea();
   scrollable_area->SetScrollOffset(ScrollOffset(0, 20),
-                                   mojom::blink::ScrollType::kProgrammatic);
+                                   mojom::blink::ScrollType::kProgrammatic,
+                                   cc::ScrollSourceType::kAbsoluteScroll);
   ScrollTimelineOptions* options = ScrollTimelineOptions::Create();
   options->setSource(GetElementById("scroller"));
   ScrollTimeline* scroll_timeline =
@@ -2001,7 +2018,8 @@ TEST_P(AnimationAnimationTestNoCompositing, ScrollLinkedAnimationCreation) {
 
   // Verify current time after scroll.
   scrollable_area->SetScrollOffset(ScrollOffset(0, 40),
-                                   mojom::blink::ScrollType::kProgrammatic);
+                                   mojom::blink::ScrollType::kProgrammatic,
+                                   cc::ScrollSourceType::kAbsoluteScroll);
   SimulateFrameForScrollAnimations();
   EXPECT_TIME(40, GetCurrentTimePercent(scroll_animation));
 }
@@ -2099,7 +2117,7 @@ TEST_P(AnimationAnimationTestNoCompositing,
   SimulateFrame(1000);
   EXPECT_TRUE(animation->Update(kTimingUpdateForAnimationFrame));
   animation->cancel();
-  EXPECT_EQ("idle", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kIdle, animation->playState());
   EXPECT_FALSE(animation->Update(kTimingUpdateForAnimationFrame));
 }
 
@@ -2209,7 +2227,7 @@ TEST_P(AnimationAnimationTestNoCompositing,
   EXPECT_EQ(V8AnimationPlayState::Enum::kRunning, animation->playState());
   SimulateFrame(2000);
   animation->cancel();
-  EXPECT_EQ("idle", animation->playState());
+  EXPECT_EQ(V8AnimationPlayState::Enum::kIdle, animation->playState());
   EXPECT_FALSE(animation->Update(kTimingUpdateForAnimationFrame));
   EXPECT_FALSE(animation->HasPendingActivity());
 }
@@ -2392,7 +2410,8 @@ TEST_P(AnimationAnimationTestCompositing,
   PaintLayerScrollableArea* scrollable_area = scroller->GetScrollableArea();
   ASSERT_FALSE(UsesCompositedScrolling(*scroller));
   scrollable_area->SetScrollOffset(ScrollOffset(0, 20),
-                                   mojom::blink::ScrollType::kProgrammatic);
+                                   mojom::blink::ScrollType::kProgrammatic,
+                                   cc::ScrollSourceType::kAbsoluteScroll);
   ScrollTimelineOptions* options = ScrollTimelineOptions::Create();
   options->setSource(GetElementById("scroller"));
   ScrollTimeline* scroll_timeline =
@@ -2627,6 +2646,445 @@ TEST_P(AnimationAnimationTestNoCompositing,
   EXPECT_TRUE(animation->effect()->getTiming());
   EXPECT_TRUE(
       GetDocument().IsUseCounted(WebFeature::kGetEffectTimingDelayZero));
+}
+
+TEST_P(AnimationAnimationTestCompositing,
+       CanceledTriggeredAnimationGarbageCollected) {
+  SetBodyInnerHTML(R"HTML(
+    <style>
+      #target {
+        width: 100px; height: 50px; background: blue;
+      }
+    </style>
+    <div id ='target'></div>
+  )HTML");
+
+  Element* target = GetDocument().getElementById(AtomicString("target"));
+  WeakPersistent<AnimationTimeline> timeline =
+      MakeGarbageCollected<ViewTimeline>(&GetDocument(), target,
+                                         ScrollSnapshotTimeline::ScrollAxis::kY,
+                                         TimelineInset());
+  const HeapHashSet<WeakMember<AnimationTimeline>>& timelines =
+      GetDocument().GetDocumentAnimations().GetTimelinesForTesting();
+  EXPECT_TRUE(timelines.Contains(timeline));
+  TimelineTrigger* trigger;
+  Animation* animation;
+  {
+    // Create an animation.
+    animation = CreateAnimation(CSSPropertyID::kTransform,
+                                "translate(100%, 100%)", "translate(0%, 0%)");
+    // The animation should be associated with the target element and be idle.
+    EXPECT_TRUE(
+        target->GetElementAnimations()->Animations().Contains(animation));
+    EXPECT_EQ(animation->CalculateAnimationPlayState(),
+              V8AnimationPlayState::Enum::kIdle);
+
+    // Create a trigger.
+    TimelineRangeOffset* dummy_offset =
+        MakeGarbageCollected<TimelineRangeOffset>();
+    TimelineTrigger::RangeBoundary* dummy_range_boundary =
+        MakeGarbageCollected<TimelineTrigger::RangeBoundary>(dummy_offset);
+    trigger = MakeGarbageCollected<TimelineTrigger>(
+        timeline,
+        dummy_range_boundary, dummy_range_boundary, dummy_range_boundary,
+        dummy_range_boundary);
+
+    // Attach the trigger to the animation.
+    trigger->addAnimation(
+        animation,
+        V8AnimationTriggerBehavior(V8AnimationTriggerBehavior::Enum::kPlay),
+        V8AnimationTriggerBehavior(V8AnimationTriggerBehavior::Enum::kPause),
+        ASSERT_NO_EXCEPTION);
+    EXPECT_EQ(animation->CalculateAnimationPlayState(),
+              V8AnimationPlayState::Enum::kPaused);
+
+    // The trigger and animation are still connected and should persist beyond
+    // garbage collection. Same with the trigger's timeline.
+    ThreadState::Current()->CollectAllGarbageForTesting();
+    EXPECT_TRUE(timelines.Contains(timeline));
+    EXPECT_TRUE(
+        target->GetElementAnimations()->Animations().Contains(animation));
+
+    // Cancel the animation.
+    animation->cancel();
+    EXPECT_EQ(animation->CalculateAnimationPlayState(),
+              V8AnimationPlayState::Enum::kIdle);
+    EXPECT_TRUE(
+        target->GetElementAnimations()->Animations().Contains(animation));
+    EXPECT_TRUE(timelines.Contains(timeline));
+  }
+
+  // Do Garbage collection.
+  UpdateAllLifecyclePhasesForTest();
+  ThreadState::Current()->CollectAllGarbageForTesting();
+  EXPECT_EQ(timeline, nullptr);
+  EXPECT_FALSE(
+      target->GetElementAnimations()->Animations().Contains(animation));
+}
+
+class ScriptedTimelineTriggerTest : public PageTestBase {
+ public:
+  static void ConfigureSettings(WebSettings* settings) {
+    settings->SetJavaScriptEnabled(true);
+  }
+
+  ScriptedTimelineTriggerTest() {
+    helper_.InitializeWithSettings(&ConfigureSettings);
+  }
+
+  WebViewImpl* WebView() const { return helper_.GetWebView(); }
+  WebLocalFrame* WebLocalFrame() const { return WebView()->MainFrameImpl(); }
+  WebLocalFrameImpl* LocalMainFrame() const { return helper_.LocalMainFrame(); }
+
+  void ExecuteScript(const WebString& code) {
+    WebLocalFrame()->ExecuteScript(WebScriptSource(code));
+    WebLocalFrame()->View()->MainFrameWidget()->UpdateAllLifecyclePhases(
+        DocumentUpdateReason::kTest);
+    test::RunPendingTasks();
+  }
+
+  void Initialize() {
+    const char html[] = R"HTML(
+      <style>
+      div {
+        width: 100px; height: 50px; background: blue;
+      }
+      </style>
+      <div id ='subject'></div>
+      <div id ='target'></div>
+      )HTML";
+    frame_test_helpers::LoadHTMLString(WebLocalFrame(), html,
+                                       url_test_helpers::ToKURL("about:blank"));
+
+    UpdateAllLifecyclePhasesForTest();
+
+    const char make_animation_js[] = (R"JS(
+      function setupTriggeredAnimation() {
+        const animation = new Animation(
+          new KeyframeEffect(
+            document.getElementById('target'),
+            [
+              { left: "0px" },
+              { left: "100px" },
+            ],
+            { duration: 300, fill: "none" }
+          ));
+
+        let trigger = new TimelineTrigger({
+          timeline: new ViewTimeline({
+            subject: document.getElementById('subject'), axis: "y"
+          }),
+          rangeStart: "contain 0%",
+          rangeEnd: "contain 100%"});
+
+        trigger.addAnimation(animation, "play-forwards", "play-backwards");
+      }
+
+      setupTriggeredAnimation();
+    )JS");
+
+    ExecuteScript(make_animation_js);
+
+    WebLocalFrameImpl* frame = LocalMainFrame();
+    document_ = frame->GetFrame()->GetDocument();
+
+    target_ = document_->getElementById(AtomicString("target"));
+    subject_ = document_->getElementById(AtomicString("subject"));
+    animation_ = target_->GetElementAnimations()->Animations().begin()->key;
+    trigger_ = *animation_->triggers_.begin();
+    timeline_ = DynamicTo<TimelineTrigger>(trigger_.Get())->timeline();
+
+    ThreadState::Current()->CollectAllGarbageForTesting();
+
+    // All objects are still connected to the DOM.
+    EXPECT_NE(target_, nullptr);
+    EXPECT_NE(subject_, nullptr);
+    EXPECT_NE(trigger_, nullptr);
+    EXPECT_NE(timeline_, nullptr);
+    EXPECT_NE(animation_, nullptr);
+  }
+
+ protected:
+  frame_test_helpers::WebViewHelper helper_;
+  // The element that is the target of |animation_|.
+  WeakPersistent<Element> target_;
+  // The subject of |trigger_|'s timeline.
+  WeakPersistent<Element> subject_;
+  // The animation created by the test.
+  WeakPersistent<Animation> animation_;
+  // The trigger created by the test
+  WeakPersistent<AnimationTrigger> trigger_;
+  // The timeline driving |trigger_|.
+  WeakPersistent<AnimationTimeline> timeline_;
+  Persistent<Document> document_;
+};
+
+TEST_F(ScriptedTimelineTriggerTest, AttachDetachTrigger) {
+  // Keep no reference.
+  // Attach trigger to animation.
+  // Detach trigger from animation.
+  Initialize();
+
+  // The animation is paused. We must finish it. Otherwise, the document
+  // timeline keeps the animation alive via animations_needing_update_.
+  animation_->finish();
+  // This ensures the event listener is dispatched so the animation no longer
+  // has a pending_finish_event_ and can be destroyed.
+  document_->GetPage()->Animate(base::TimeTicks());
+
+  trigger_->removeAnimation(animation_);
+
+  UpdateAllLifecyclePhasesForTest();
+  ThreadState::Current()->CollectAllGarbageForTesting();
+
+  // Since the trigger no longer controls any animation and thus the animation
+  // is finished and can no longer run, all of the animation, trigger and
+  // associated timeline should be collected.
+  EXPECT_NE(target_, nullptr);
+  EXPECT_NE(subject_, nullptr);
+  EXPECT_EQ(trigger_, nullptr);
+  EXPECT_EQ(timeline_, nullptr);
+  EXPECT_EQ(animation_, nullptr);
+}
+
+TEST_F(ScriptedTimelineTriggerTest, RemoveTriggerTimelineSubject) {
+  // Keep no reference.
+  // Remove trigger timeline subject.
+  Initialize();
+
+  subject_->remove();
+
+  UpdateAllLifecyclePhasesForTest();
+  ThreadState::Current()->CollectAllGarbageForTesting();
+
+  // The trigger can no longer update the animation since its timeline's subject
+  // has been removed. Thus, we can garbage collect the removed |subject_| and
+  // the trigger and its timeline.
+  // The animation and its target should not be collected as the animation is
+  // paused and its target is still in the DOM.
+  EXPECT_NE(target_, nullptr);
+  EXPECT_EQ(subject_, nullptr);
+  EXPECT_EQ(trigger_, nullptr);
+  EXPECT_EQ(timeline_, nullptr);
+  EXPECT_NE(animation_, nullptr);
+
+  animation_->finish();
+  // This ensures the event listener is dispatched so the animation no longer
+  // has a pending_finish_event_ and can be destroyed.
+  document_->GetPage()->Animate(base::TimeTicks());
+
+  UpdateAllLifecyclePhasesForTest();
+  ThreadState::Current()->CollectAllGarbageForTesting();
+
+  // The (fill: "none") animation is now finished and can be collected.
+  EXPECT_NE(target_, nullptr);
+  EXPECT_EQ(animation_, nullptr);
+}
+
+TEST_F(ScriptedTimelineTriggerTest, KeepTriggerTimelineSubjectFinishAnimation) {
+  // Keep no reference.
+  // Add finish event listener.
+  // Remove trigger timeline subject.
+  Initialize();
+
+  // The animation is paused. We must finish it. Otherwise, the document
+  // timeline keeps the animation alive via animations_needing_update_.
+  animation_->finish();
+  // This ensures the event listener is dispatched so the animation no longer
+  // has a pending_finish_event_ and can be destroyed.
+  document_->GetPage()->Animate(base::TimeTicks());
+
+  UpdateAllLifecyclePhasesForTest();
+  ThreadState::Current()->CollectAllGarbageForTesting();
+
+  // The animation was finished but since its trigger is still active, it should
+  // not be collected.
+  EXPECT_NE(target_, nullptr);
+  EXPECT_NE(subject_, nullptr);
+  EXPECT_NE(trigger_, nullptr);
+  EXPECT_NE(timeline_, nullptr);
+  EXPECT_NE(animation_, nullptr);
+}
+
+TEST_F(ScriptedTimelineTriggerTest, KeepTriggerTimelineReference) {
+  // Keep trigger timeline reference.
+  // Remove trigger timeline subject.
+  Initialize();
+
+  Persistent<AnimationTimeline> timeline = timeline_;
+
+  subject_->remove();
+
+  UpdateAllLifecyclePhasesForTest();
+  ThreadState::Current()->CollectAllGarbageForTesting();
+
+  // Although the trigger's timeline's subject has been removed from the DOM,
+  // because we keep a reference to the trigger's timeline, the subject could be
+  // added back into the DOM which should make the trigger active again.
+  // Thus, none of them should be collected.
+  EXPECT_NE(target_, nullptr);
+  EXPECT_NE(subject_, nullptr);
+  EXPECT_NE(trigger_, nullptr);
+  EXPECT_NE(timeline_, nullptr);
+  EXPECT_NE(animation_, nullptr);
+}
+
+TEST_F(ScriptedTimelineTriggerTest, RemoveAnimationTargetAddFinishListener) {
+  // Keep no reference.
+  // Add finish event listener.
+  // Remove animation target.
+  Initialize();
+
+  MockEventListener* event_listener = MakeGarbageCollected<MockEventListener>();
+  animation_->addEventListener(event_type_names::kFinish, event_listener);
+
+  target_->remove();
+
+  UpdateAllLifecyclePhasesForTest();
+  ThreadState::Current()->CollectAllGarbageForTesting();
+
+  // The animation's target has been removed from the DOM but as the animation
+  // has a finish event listener and could still be played by the trigger,
+  // none of them should be collected.
+  EXPECT_NE(target_, nullptr);
+  EXPECT_NE(subject_, nullptr);
+  EXPECT_NE(trigger_, nullptr);
+  EXPECT_NE(timeline_, nullptr);
+  EXPECT_NE(animation_, nullptr);
+}
+
+TEST_F(ScriptedTimelineTriggerTest, RemoveAnimationTarget) {
+  // Keep no reference.
+  // Remove animation target.
+  Initialize();
+
+  // The animation is paused. We must finish it. Otherwise, the document
+  // timeline keeps the animation alive via animations_needing_update_.
+  animation_->finish();
+  // This ensures the event listener is dispatched so the animation no longer
+  // has a pending_finish_event_ and can be destroyed.
+  document_->GetPage()->Animate(base::TimeTicks());
+
+  target_->remove();
+
+  UpdateAllLifecyclePhasesForTest();
+  ThreadState::Current()->CollectAllGarbageForTesting();
+
+  // As the target has been removed from the DOM and the animation has no event
+  // listener, running the animation can't be observed so we should collect the
+  // animation and its target. Since we are collecting the only animation
+  // associated with the trigger, we can also collect the trigger and its
+  // timeline.
+  EXPECT_EQ(target_, nullptr);
+  EXPECT_NE(subject_, nullptr);
+  EXPECT_EQ(trigger_, nullptr);
+  EXPECT_EQ(timeline_, nullptr);
+  EXPECT_EQ(animation_, nullptr);
+}
+
+class AnimationTypeMetricsTest : public AnimationAnimationTestCompositing {
+ public:
+  AnimationTypeMetricsTest() = default;
+
+ protected:
+  void SetUp() override {
+    EnableCompositing();
+    AnimationAnimationTestNoCompositing::SetUp();
+    histogram_tester_ = std::make_unique<base::HistogramTester>();
+  }
+
+  void CreateSVGCompositedAnimation() {
+    SetBodyInnerHTML(R"HTML(
+      <svg>
+        <rect id="target" width="100" height="100"/>
+      </svg>
+    )HTML");
+    MakeCompositedAnimation();
+  }
+
+  void ExpectHistogramCounts(
+      const std::vector<std::pair<BlinkAnimationType, int>>& expected_counts) {
+    for (const auto& [animation_type, count] : expected_counts) {
+      histogram_tester_->ExpectBucketCount("Blink.Animation.AnimationType",
+                                           static_cast<int>(animation_type),
+                                           count);
+    }
+  }
+
+  void ExpectUseCounts(
+      const std::vector<std::pair<WebFeature, bool>>& expected_use_counts) {
+    for (const auto& [feature, should_be_counted] : expected_use_counts) {
+      EXPECT_EQ(GetDocument().IsUseCounted(feature), should_be_counted);
+    }
+  }
+
+ protected:
+  std::unique_ptr<base::HistogramTester> histogram_tester_;
+};
+
+INSTANTIATE_PAINT_TEST_SUITE_P(AnimationTypeMetricsTest);
+
+TEST_P(AnimationTypeMetricsTest, Animations) {
+  // Initially the animation in this test has no target, so it is invalid.
+  ASSERT_TRUE(animation->PreCommit(0, nullptr, true));
+  ExpectHistogramCounts({{BlinkAnimationType::kAllAnimations, 1},
+                         {BlinkAnimationType::kSvgAnimations, 0},
+                         {BlinkAnimationType::kNonCompositedAnimations, 1},
+                         {BlinkAnimationType::kCompositedAnimations, 0},
+                         {BlinkAnimationType::kSvgNonCompositedAnimations, 0},
+                         {BlinkAnimationType::kSvgCompositedAnimations, 0}});
+
+  // Restart the animation with a target and compositing state.
+  ResetWithCompositedAnimation();
+  ExpectHistogramCounts({{BlinkAnimationType::kAllAnimations, 2},
+                         {BlinkAnimationType::kSvgAnimations, 0},
+                         {BlinkAnimationType::kNonCompositedAnimations, 1},
+                         {BlinkAnimationType::kCompositedAnimations, 1},
+                         {BlinkAnimationType::kSvgNonCompositedAnimations, 0},
+                         {BlinkAnimationType::kSvgCompositedAnimations, 0}});
+
+  ExpectUseCounts({{WebFeature::kAnimationAllTypes, true},
+                   {WebFeature::kAnimationSvgTypes, false},
+                   {WebFeature::kAnimationNonCompositedTypes, true},
+                   {WebFeature::kAnimationCompositedTypes, true},
+                   {WebFeature::kAnimationSvgNonCompositedTypes, false},
+                   {WebFeature::kAnimationSvgCompositedTypes, false}});
+}
+
+TEST_P(AnimationTypeMetricsTest, SVGAnimations) {
+  CreateSVGCompositedAnimation();
+  ExpectHistogramCounts({{BlinkAnimationType::kAllAnimations, 1},
+                         {BlinkAnimationType::kSvgAnimations, 1},
+                         {BlinkAnimationType::kNonCompositedAnimations, 0},
+                         {BlinkAnimationType::kCompositedAnimations, 1},
+                         {BlinkAnimationType::kSvgNonCompositedAnimations, 0},
+                         {BlinkAnimationType::kSvgCompositedAnimations, 1}});
+
+  ExpectUseCounts({{WebFeature::kAnimationAllTypes, true},
+                   {WebFeature::kAnimationSvgTypes, true},
+                   {WebFeature::kAnimationNonCompositedTypes, false},
+                   {WebFeature::kAnimationCompositedTypes, true},
+                   {WebFeature::kAnimationSvgNonCompositedTypes, false},
+                   {WebFeature::kAnimationSvgCompositedTypes, true}});
+
+  // Now make the playback rate 0. This trips both the invalid animation and
+  // unsupported timing parameter reasons.
+  animation->setPlaybackRate(0);
+  animation->NotifyReady(ANIMATION_TIME_DELTA_FROM_SECONDS(100));
+  ASSERT_TRUE(animation->PreCommit(0, nullptr, true));
+  ExpectHistogramCounts({{BlinkAnimationType::kAllAnimations, 2},
+                         {BlinkAnimationType::kSvgAnimations, 2},
+                         {BlinkAnimationType::kNonCompositedAnimations, 1},
+                         {BlinkAnimationType::kCompositedAnimations, 1},
+                         {BlinkAnimationType::kSvgNonCompositedAnimations, 1},
+                         {BlinkAnimationType::kSvgCompositedAnimations, 1}});
+
+  ExpectUseCounts({{WebFeature::kAnimationAllTypes, true},
+                   {WebFeature::kAnimationSvgTypes, true},
+                   {WebFeature::kAnimationNonCompositedTypes, true},
+                   {WebFeature::kAnimationCompositedTypes, true},
+                   {WebFeature::kAnimationSvgNonCompositedTypes, true},
+                   {WebFeature::kAnimationSvgCompositedTypes, true}});
 }
 
 }  // namespace blink

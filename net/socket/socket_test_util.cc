@@ -9,6 +9,7 @@
 #include <stdio.h>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -59,7 +60,7 @@
 #include "third_party/abseil-cpp/absl/strings/ascii.h"
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #endif
 
 #define NET_TRACE(level, s) VLOG(level) << s << __FUNCTION__ << "() "
@@ -147,14 +148,28 @@ MockConnectCompleter::MockConnectCompleter() = default;
 
 MockConnectCompleter::~MockConnectCompleter() = default;
 
-void MockConnectCompleter::SetCallback(CompletionOnceCallback callback) {
-  CHECK(!callback_);
-  callback_ = std::move(callback);
+void MockConnectCompleter::WaitForConnect() {
+  // This class is single use - so either the RunLoop should already have been
+  // quit, or `connect_` is null (but not both).
+  CHECK(!callback_ || run_loop_.AnyQuitCalled());
+  CHECK(callback_ || !run_loop_.AnyQuitCalled());
+  run_loop_.Run();
 }
 
 void MockConnectCompleter::Complete(int result) {
   CHECK(callback_);
   std::move(callback_).Run(result);
+}
+
+void MockConnectCompleter::WaitForConnectAndComplete(int result) {
+  WaitForConnect();
+  Complete(result);
+}
+
+void MockConnectCompleter::SetCallback(CompletionOnceCallback callback) {
+  CHECK(!callback_);
+  callback_ = std::move(callback);
+  run_loop_.Quit();
 }
 
 MockConnect::MockConnect() : mode(ASYNC), result(OK) {
@@ -356,6 +371,13 @@ void StaticSocketDataProvider::Pause() {
 
 void StaticSocketDataProvider::Resume() {
   paused_ = false;
+}
+
+void StaticSocketDataProvider::ExpectAllReadDataConsumed() const {
+  helper_.ExpectAllReadDataConsumed(printer_.get());
+}
+void StaticSocketDataProvider::ExpectAllWriteDataConsumed() const {
+  helper_.ExpectAllWriteDataConsumed(printer_.get());
 }
 
 MockRead StaticSocketDataProvider::OnRead() {
@@ -957,6 +979,9 @@ std::unique_ptr<SSLClientSocket> MockClientSocketFactory::CreateSSLClientSocket(
   if (next_ssl_data->expected_trust_anchor_ids) {
     EXPECT_EQ(*next_ssl_data->expected_trust_anchor_ids,
               ssl_config.trust_anchor_ids);
+  }
+  if (next_ssl_data->expect_no_trust_anchor_ids) {
+    EXPECT_EQ(std::nullopt, ssl_config.trust_anchor_ids);
   }
   return std::make_unique<MockSSLClientSocket>(
       std::move(stream_socket), host_and_port, ssl_config, next_ssl_data);
@@ -1580,6 +1605,11 @@ int MockSSLClientSocket::ExportKeyingMaterial(
 
 std::vector<uint8_t> MockSSLClientSocket::GetECHRetryConfigs() {
   return data_->ech_retry_configs;
+}
+
+std::vector<std::vector<uint8_t>>
+MockSSLClientSocket::GetServerTrustAnchorIDsForRetry() {
+  return data_->server_trust_anchor_ids_for_retry;
 }
 
 void MockSSLClientSocket::RunCallbackAsync(CompletionOnceCallback callback,
@@ -2263,30 +2293,38 @@ MockTaggingClientSocketFactory::CreateDatagramClientSocket(
 const char kSOCKS4TestHost[] = "127.0.0.1";
 const int kSOCKS4TestPort = 80;
 
-const char kSOCKS4OkRequestLocalHostPort80[] = {0x04, 0x01, 0x00, 0x50, 127,
-                                                0,    0,    1,    0};
-const int kSOCKS4OkRequestLocalHostPort80Length =
-    std::size(kSOCKS4OkRequestLocalHostPort80);
+constexpr auto kSOCKS4OkRequestLocalHostPort80Data =
+    std::to_array<char>({0x04, 0x01, 0x00, 0x50, 127, 0, 0, 1, 0});
+const std::string_view kSOCKS4OkRequestLocalHostPort80(
+    kSOCKS4OkRequestLocalHostPort80Data.begin(),
+    kSOCKS4OkRequestLocalHostPort80Data.end());
 
-const char kSOCKS4OkReply[] = {0x00, 0x5A, 0x00, 0x00, 0, 0, 0, 0};
-const int kSOCKS4OkReplyLength = std::size(kSOCKS4OkReply);
+constexpr auto kSOCKS4OkReplyData =
+    std::to_array<char>({0x00, 0x5A, 0x00, 0x00, 0, 0, 0, 0});
+const std::string_view kSOCKS4OkReply(kSOCKS4OkReplyData.begin(),
+                                      kSOCKS4OkReplyData.end());
 
 const char kSOCKS5TestHost[] = "host";
 const int kSOCKS5TestPort = 80;
 
-const char kSOCKS5GreetRequest[] = {0x05, 0x01, 0x00};
-const int kSOCKS5GreetRequestLength = std::size(kSOCKS5GreetRequest);
+constexpr auto kSOCKS5GreetRequestData =
+    std::to_array<char>({0x05, 0x01, 0x00});
+const std::string_view kSOCKS5GreetRequest(kSOCKS5GreetRequestData.begin(),
+                                           kSOCKS5GreetRequestData.end());
 
-const char kSOCKS5GreetResponse[] = {0x05, 0x00};
-const int kSOCKS5GreetResponseLength = std::size(kSOCKS5GreetResponse);
+constexpr auto kSOCKS5GreetResponseData = std::to_array<char>({0x05, 0x00});
+const std::string_view kSOCKS5GreetResponse(kSOCKS5GreetResponseData.begin(),
+                                            kSOCKS5GreetResponseData.end());
 
-const char kSOCKS5OkRequest[] = {0x05, 0x01, 0x00, 0x03, 0x04, 'h',
-                                 'o',  's',  't',  0x00, 0x50};
-const int kSOCKS5OkRequestLength = std::size(kSOCKS5OkRequest);
+constexpr auto kSOCKS5OkRequestData = std::to_array<char>(
+    {0x05, 0x01, 0x00, 0x03, 0x04, 'h', 'o', 's', 't', 0x00, 0x50});
+const std::string_view kSOCKS5OkRequest(kSOCKS5OkRequestData.begin(),
+                                        kSOCKS5OkRequestData.end());
 
-const char kSOCKS5OkResponse[] = {0x05, 0x00, 0x00, 0x01, 127,
-                                  0,    0,    1,    0x00, 0x50};
-const int kSOCKS5OkResponseLength = std::size(kSOCKS5OkResponse);
+constexpr auto kSOCKS5OkResponseData =
+    std::to_array<char>({0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50});
+const std::string_view kSOCKS5OkResponse(kSOCKS5OkResponseData.begin(),
+                                         kSOCKS5OkResponseData.end());
 
 int64_t CountReadBytes(base::span<const MockRead> reads) {
   int64_t total = 0;
@@ -2313,8 +2351,8 @@ bool CanGetTaggedBytes() {
   // statistics for local traffic, only mobile and WiFi traffic, so it would not
   // work in tests that spin up a local server. So for now, GetTaggedBytes is
   // only supported on Android releases older than P.
-  return base::android::BuildInfo::GetInstance()->sdk_int() <
-         base::android::SDK_VERSION_P;
+  return base::android::android_info::sdk_int() <
+         base::android::android_info::SDK_VERSION_P;
 }
 
 uint64_t GetTaggedBytes(int32_t expected_tag) {

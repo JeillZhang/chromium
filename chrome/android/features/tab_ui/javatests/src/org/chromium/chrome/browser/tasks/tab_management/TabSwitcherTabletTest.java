@@ -21,6 +21,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import static org.chromium.chrome.test.util.ChromeTabUtils.getTabCountOnUiThread;
 import static org.chromium.ui.test.util.ViewUtils.onViewWaiting;
 
 import android.os.Build;
@@ -33,7 +34,6 @@ import androidx.test.platform.app.InstrumentationRegistry;
 
 import org.junit.After;
 import org.junit.Before;
-import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -66,9 +66,10 @@ import org.chromium.chrome.browser.tabmodel.TabCreator;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.R;
-import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
+import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.TabStripUtils;
 import org.chromium.components.browser_ui.styles.ChromeColors;
@@ -83,38 +84,39 @@ import java.util.concurrent.TimeoutException;
 @RunWith(ChromeJUnit4ClassRunner.class)
 @CommandLineFlags.Add(ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE)
 @Restriction({Restriction.RESTRICTION_TYPE_NON_LOW_END_DEVICE, DeviceFormFactor.TABLET_OR_DESKTOP})
+// TODO(crbug.com/439491767): Fix broken tests caused by desktop-like incognito window.
 @Features.DisableFeatures({
     ChromeFeatureList.ANDROID_SURFACE_COLOR_UPDATE,
     ChromeFeatureList.GRID_TAB_SWITCHER_SURFACE_COLOR_UPDATE,
     ChromeFeatureList.GRID_TAB_SWITCHER_UPDATE,
     ChromeFeatureList.ANDROID_THEME_MODULE,
-    ChromeFeatureList.TAB_STRIP_INCOGNITO_MIGRATION
+    ChromeFeatureList.TAB_STRIP_INCOGNITO_MIGRATION,
+    ChromeFeatureList.ANDROID_OPEN_INCOGNITO_AS_WINDOW
 })
 @Batch(Batch.PER_CLASS)
 public class TabSwitcherTabletTest {
-    @ClassRule
-    public static final ChromeTabbedActivityTestRule sActivityTestRule =
-            new ChromeTabbedActivityTestRule();
-
     @Rule
-    public final BlankCTATabInitialStateRule mInitialStateRule =
-            new BlankCTATabInitialStateRule(sActivityTestRule, false);
+    public AutoResetCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.fastAutoResetCtaActivityRule();
+
+    private WebPageStation mPage;
 
     @Before
     public void setUp() throws ExecutionException {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        mPage = mActivityTestRule.startOnBlankPage();
+        ChromeTabbedActivity cta = mPage.getActivity();
         CriteriaHelper.pollUiThread(cta.getTabModelSelectorSupplier().get()::isTabStateInitialized);
     }
 
     @After
     public void cleanup() throws TimeoutException {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
 
         LayoutManagerChrome layoutManager = cta.getLayoutManager();
         if (layoutManager.isLayoutVisible(LayoutType.TAB_SWITCHER)
                 && !layoutManager.isLayoutStartingToHide(LayoutType.TAB_SWITCHER)) {
             TabModelSelector selector = cta.getTabModelSelectorSupplier().get();
-            if (selector.getModel(false).getCount() == 0) {
+            if (getTabCountOnUiThread(selector.getModel(false)) == 0) {
                 ThreadUtils.runOnUiThreadBlocking(
                         () -> {
                             TabCreator tabCreator = cta.getTabCreator(/* incognito= */ false);
@@ -141,12 +143,13 @@ public class TabSwitcherTabletTest {
     @RequiresRestart
     @DisabledTest(message = "Flaky, see crbug.com/327457591")
     public void testEnterAndExitTabSwitcher() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         checkHubLayout(cta, false);
         checkTabSwitcherViewHolderStub(cta, true);
         checkTabSwitcherViewHolder(cta, false);
 
-        TabUiTestHelper.prepareTabsWithThumbnail(sActivityTestRule, 1, 0, null);
+        TabUiTestHelper.prepareTabsWithThumbnail(
+                mActivityTestRule.getActivityTestRule(), 1, 0, null);
         TabUiTestHelper.enterTabSwitcher(cta);
         ensureHubLayout();
 
@@ -161,7 +164,7 @@ public class TabSwitcherTabletTest {
     @Test
     @MediumTest
     public void testToggleIncognitoSwitcher() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         prepareTabs(1, 1);
         TabUiTestHelper.enterTabSwitcher(cta);
 
@@ -171,7 +174,8 @@ public class TabSwitcherTabletTest {
         // Toggle to normal switcher.
         clickIncognitoToggleButton();
 
-        final Tab newTab = cta.getCurrentTabModel().getTabAt(0);
+        final Tab newTab =
+                ThreadUtils.runOnUiThreadBlocking(() -> cta.getCurrentTabModel().getTabAt(0));
         assertFalse(newTab.isIncognito());
 
         exitSwitcherWithTabClick(0);
@@ -181,7 +185,7 @@ public class TabSwitcherTabletTest {
     @MediumTest
     @DisableIf.Build(sdk_equals = Build.VERSION_CODES.S_V2, message = "crbug.com/40901097")
     public void testTabSwitcherScrim() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         prepareTabs(1, 1);
         TabUiTestHelper.enterTabSwitcher(cta);
 
@@ -199,53 +203,8 @@ public class TabSwitcherTabletTest {
 
     @Test
     @MediumTest
-    public void testGridTabSwitcherOnNoNextTab_WithoutRestart() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
-        ensureHubLayout();
-
-        checkHubLayout(cta, /* isInitialized= */ true);
-        checkTabSwitcherViewHolderStub(cta, /* exists= */ false);
-        checkTabSwitcherViewHolder(cta, /* exists= */ true);
-
-        // Assert the grid tab switcher is not yet showing.
-        checkTabSwitcherViewHolderVisibility(false);
-
-        // Close the only tab through the tab strip.
-        closeTab(false, sActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0).getId());
-
-        LayoutTestUtils.waitForLayout(cta.getLayoutManager(), LayoutType.TAB_SWITCHER);
-
-        // Assert the grid tab switcher is shown automatically, since there is no next tab.
-        checkTabSwitcherViewHolderVisibility(true);
-    }
-
-    @Test
-    @MediumTest
-    @RequiresRestart
-    @DisabledTest(message = "crbug.com/342983248")
-    public void testGridTabSwitcherOnNoNextTab_WithRestart() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
-        checkHubLayout(cta, /* isInitialized= */ false);
-        checkTabSwitcherViewHolderStub(cta, /* exists= */ true);
-        checkTabSwitcherViewHolder(cta, /* exists= */ false);
-
-        // Close the only tab through the tab strip.
-        closeTab(false, sActivityTestRule.getActivity().getCurrentTabModel().getTabAt(0).getId());
-
-        LayoutTestUtils.waitForLayout(cta.getLayoutManager(), LayoutType.TAB_SWITCHER);
-
-        // Assert the grid tab switcher is shown automatically, since there is no next tab.
-        checkTabSwitcherViewHolderVisibility(true);
-
-        checkHubLayout(cta, /* isInitialized= */ true);
-        checkTabSwitcherViewHolderStub(cta, /* exists= */ false);
-        checkTabSwitcherViewHolder(cta, /* exists= */ true);
-    }
-
-    @Test
-    @MediumTest
     public void testGridTabSwitcherOnCloseAllTabs_WithoutRestart() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         ensureHubLayout();
 
         checkHubLayout(cta, /* isInitialized= */ true);
@@ -267,9 +226,9 @@ public class TabSwitcherTabletTest {
 
     @Test
     @MediumTest
-    @DisableIf.Build(sdk_equals = Build.VERSION_CODES.S_V2, message = "crbug.com/41484831")
+    @DisabledTest(message = "crbug.com/41484831")
     public void testGridTabSwitcherToggleIncognitoWithNoRegularTab() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         TabModel regularModel = cta.getTabModelSelectorSupplier().get().getModel(false);
 
         // Open an incognito tab.
@@ -286,7 +245,8 @@ public class TabSwitcherTabletTest {
                                             .build(),
                                     /* allowDialog= */ false);
                 });
-        assertEquals("Expected to be 0 tabs in regular model", 0, regularModel.getCount());
+        assertEquals(
+                "Expected to be 0 tabs in regular model", 0, getTabCountOnUiThread(regularModel));
         assertTrue("Expected to be in Incognito model", cta.getCurrentTabModel().isIncognito());
 
         // Assert the grid tab switcher is not yet showing.
@@ -305,7 +265,7 @@ public class TabSwitcherTabletTest {
     @MediumTest
     @RequiresRestart
     public void testGridTabSwitcher_DeferredHubLayoutCreation() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         prepareTabs(2, 0);
         // Verifies that the dialog visibility supplier doesn't crash when closing a Tab without the
         // grid tab switcher is inflated.
@@ -325,7 +285,7 @@ public class TabSwitcherTabletTest {
         checkTabSwitcherViewHolder(cta, /* exists= */ false);
 
         // Click tab switcher button
-        TabUiTestHelper.enterTabSwitcher(sActivityTestRule.getActivity());
+        TabUiTestHelper.enterTabSwitcher(mActivityTestRule.getActivity());
 
         checkHubLayout(cta, /* isInitialized= */ true);
         checkTabSwitcherViewHolderStub(cta, /* exists= */ false);
@@ -336,7 +296,7 @@ public class TabSwitcherTabletTest {
     @MediumTest
     @DisabledTest(message = "crbug.com/342983248")
     public void testEmptyStateView() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         prepareTabs(1, 0);
         TabUiTestHelper.enterTabSwitcher(cta);
 
@@ -358,9 +318,9 @@ public class TabSwitcherTabletTest {
     @MediumTest
     @DisableIf.Build(sdk_equals = Build.VERSION_CODES.S_V2, message = "crbug.com/41484831")
     public void testEmptyStateView_ToggleIncognito() {
-        ChromeTabbedActivity cta = sActivityTestRule.getActivity();
+        ChromeTabbedActivity cta = mActivityTestRule.getActivity();
         prepareTabs(1, 1);
-        TabUiTestHelper.enterTabSwitcher(sActivityTestRule.getActivity());
+        TabUiTestHelper.enterTabSwitcher(mActivityTestRule.getActivity());
 
         // Close the last normal tab.
         ThreadUtils.runOnUiThreadBlocking(
@@ -411,18 +371,18 @@ public class TabSwitcherTabletTest {
                 };
         ThreadUtils.runOnUiThreadBlocking(
                 () ->
-                        sActivityTestRule
+                        mActivityTestRule
                                 .getActivity()
                                 .getTabModelSelectorSupplier()
                                 .get()
                                 .getCurrentTabModelSupplier()
                                 .addObserver(observer));
         StripLayoutHelperManager manager =
-                TabStripUtils.getStripLayoutHelperManager(sActivityTestRule.getActivity());
+                TabStripUtils.getStripLayoutHelperManager(mActivityTestRule.getActivity());
         TabStripUtils.clickCompositorButton(
                 manager.getModelSelectorButton(),
                 InstrumentationRegistry.getInstrumentation(),
-                sActivityTestRule.getActivity());
+                mActivityTestRule.getActivity());
         try {
             tabModelSelectedCallback.waitForCallback(0);
         } catch (TimeoutException e) {
@@ -430,7 +390,7 @@ public class TabSwitcherTabletTest {
         }
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    sActivityTestRule
+                    mActivityTestRule
                             .getActivity()
                             .getTabModelSelector()
                             .getCurrentTabModelSupplier()
@@ -439,33 +399,33 @@ public class TabSwitcherTabletTest {
     }
 
     private void prepareTabs(int numTabs, int numIncognitoTabs) {
-        TabUiTestHelper.createTabs(sActivityTestRule.getActivity(), false, numTabs);
-        TabUiTestHelper.createTabs(sActivityTestRule.getActivity(), true, numIncognitoTabs);
+        TabUiTestHelper.createTabs(mActivityTestRule.getActivity(), false, numTabs);
+        TabUiTestHelper.createTabs(mActivityTestRule.getActivity(), true, numIncognitoTabs);
     }
 
     private void exitSwitcherWithTabClick(int index) {
-        TabUiTestHelper.clickNthCardFromTabSwitcher(sActivityTestRule.getActivity(), index);
+        TabUiTestHelper.clickNthCardFromTabSwitcher(mActivityTestRule.getActivity(), index);
         LayoutTestUtils.waitForLayout(
-                sActivityTestRule.getActivity().getLayoutManager(), LayoutType.BROWSING);
+                mActivityTestRule.getActivity().getLayoutManager(), LayoutType.BROWSING);
     }
 
     private void closeTab(final boolean incognito, final int id) {
         ChromeTabUtils.closeTabWithAction(
                 InstrumentationRegistry.getInstrumentation(),
-                sActivityTestRule.getActivity(),
+                mActivityTestRule.getActivity(),
                 () -> {
                     StripLayoutTab tab =
                             TabStripUtils.findStripLayoutTab(
-                                    sActivityTestRule.getActivity(), incognito, id);
+                                    mActivityTestRule.getActivity(), incognito, id);
                     TabStripUtils.clickCompositorButton(
                             tab.getCloseButton(),
                             InstrumentationRegistry.getInstrumentation(),
-                            sActivityTestRule.getActivity());
+                            mActivityTestRule.getActivity());
                 });
     }
 
     private void ensureHubLayout() {
-        LayoutManagerChrome layoutManager = sActivityTestRule.getActivity().getLayoutManager();
+        LayoutManagerChrome layoutManager = mActivityTestRule.getActivity().getLayoutManager();
         Layout tabSwitcherLayout = layoutManager.getHubLayoutForTesting();
         if (tabSwitcherLayout == null) {
             ThreadUtils.runOnUiThreadBlocking(layoutManager::initHubLayoutForTesting);

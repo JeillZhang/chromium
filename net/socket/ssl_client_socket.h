@@ -47,7 +47,39 @@ class NET_EXPORT SSLClientSocket : public SSLSocket {
       bool is_ech_capable,
       bool ech_enabled,
       const std::optional<std::vector<uint8_t>>& ech_retry_configs,
+      bool trust_anchor_ids_from_dns,
+      bool retried_with_trust_anchor_ids,
       const LoadTimingInfo::ConnectTiming& connect_timing);
+
+  // These values are persisted to logs. Entries should not be renumbered
+  // and numeric values should never be reused.
+  enum class TrustAnchorIDsResult {
+    // There was a DNS hint, and the connection succeeded on the initial
+    // connection.
+    kDnsSuccessInitial = 0,
+    // There was a DNS hint, and the connection failed on the initial
+    // connection, without retrying.
+    kDnsErrorInitial = 1,
+    // There was a DNS hint, and the connection succeeded after retrying with
+    // fresh Trust Anchor IDs.
+    kDnsSuccessRetry = 2,
+    // There was a DNS hint, and the connection failed after retrying with fresh
+    // Trust Anchor IDs.
+    kDnsErrorRetry = 3,
+    // There was no DNS hint, and the connection succeeded on the initial
+    // connection.
+    kNoDnsSuccessInitial = 4,
+    // There was no DNS hint, and the connection failed on the initial
+    // connection, without retrying.
+    kNoDnsErrorInitial = 5,
+    // There was no DNS hint, and the connection succeeded after retrying with
+    // fresh Trust Anchor IDs.
+    kNoDnsSuccessRetry = 6,
+    // There was no DNS hint, and the connection failed after retrying with
+    // fresh Trust Anchor IDs.
+    kNoDnsErrorRetry = 7,
+    kMaxValue = kNoDnsErrorRetry,
+  };
 
   SSLClientSocket();
 
@@ -58,6 +90,15 @@ class NET_EXPORT SSLClientSocket : public SSLSocket {
   // an empty string, the server has indicated ECH has been disabled. The
   // connection can be retried with ECH disabled.
   virtual std::vector<uint8_t> GetECHRetryConfigs() = 0;
+
+  // Called in response to a connection error in Connect(), when the client
+  // advertised the TLS Trust Anchor IDs extension. If this method returns a
+  // non-empty set, it is the Trust Anchor IDs (in binary representation) that
+  // the server provided in the handshake. The connection can be retried with
+  // these new Trust Anchor IDs, overriding the Trust Anchor IDs that the server
+  // advertised in DNS.
+  virtual std::vector<std::vector<uint8_t>>
+  GetServerTrustAnchorIDsForRetry() = 0;
 
   // Log SSL key material to |logger|. Must be called before any
   // SSLClientSockets are created.

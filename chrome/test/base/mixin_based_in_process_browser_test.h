@@ -147,6 +147,9 @@ template <typename Fixture>
 #endif
 class InProcessBrowserTestMixinHostSupport : public Fixture {
  public:
+  // Inherit ctors from the base class.
+  using Fixture::Fixture;
+
   // Fixture:
   void SetUp() override {
     mixin_host_.SetUp();
@@ -215,6 +218,12 @@ using MixinBasedInProcessBrowserTest =
 // The implementation is included in mixin_based_in_process_browser_test.cc
 extern template class InProcessBrowserTestMixinHostSupport<
     InProcessBrowserTest>;
+#endif
+
+#if BUILDFLAG(IS_ANDROID)
+using MixinBasedPlatformBrowserTest = MixinBasedAndroidBrowserTest;
+#else
+using MixinBasedPlatformBrowserTest = MixinBasedInProcessBrowserTest;
 #endif
 
 #endif  // CHROME_TEST_BASE_MIXIN_BASED_IN_PROCESS_BROWSER_TEST_H_

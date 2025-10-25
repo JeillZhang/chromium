@@ -4,6 +4,7 @@
 
 #include "third_party/blink/renderer/core/timing/performance_navigation_timing.h"
 
+#include "services/network/public/mojom/url_response_head.mojom-blink.h"
 #include "third_party/blink/public/mojom/confidence_level.mojom-blink.h"
 #include "third_party/blink/public/mojom/timing/resource_timing.mojom-blink-forward.h"
 #include "third_party/blink/public/web/web_navigation_type.h"
@@ -44,12 +45,14 @@ V8PerformanceTimingConfidenceValue::Enum GetNavigationConfidenceString(
 PerformanceNavigationTiming::PerformanceNavigationTiming(
     LocalDOMWindow& window,
     mojom::blink::ResourceTimingInfoPtr resource_timing,
-    base::TimeTicks time_origin)
+    base::TimeTicks time_origin,
+    uint32_t navigation_id)
     : PerformanceResourceTiming(std::move(resource_timing),
                                 AtomicString("navigation"),
                                 time_origin,
                                 window.CrossOriginIsolatedCapability(),
-                                &window),
+                                &window,
+                                navigation_id),
       ExecutionContextClient(&window),
       navigation_delivery_type_(
           window.document()->Loader()->GetNavigationDeliveryType()),
@@ -352,7 +355,7 @@ void PerformanceNavigationTiming::BuildJSONValue(
   builder.AddNumber("domComplete", domComplete());
   builder.AddNumber("loadEventStart", loadEventStart());
   builder.AddNumber("loadEventEnd", loadEventEnd());
-  builder.AddString("type", type().AsString());
+  builder.AddString("type", type().AsStringView());
   builder.AddNumber("redirectCount", redirectCount());
   builder.AddNumber(
       "activationStart",
@@ -374,7 +377,7 @@ void PerformanceNavigationTiming::BuildJSONValue(
   if (RuntimeEnabledFeatures::PerformanceNavigateSystemEntropyEnabled(
           ExecutionContext::From(builder.GetScriptState()))) {
     builder.AddString("systemEntropy",
-                      V8NavigationEntropy(GetSystemEntropy()).AsString());
+                      V8NavigationEntropy(GetSystemEntropy()).AsStringView());
   }
 
   if (RuntimeEnabledFeatures::PerformanceNavigationTimingConfidenceEnabled(

@@ -37,11 +37,11 @@ class BookmarkManagerPrivateApiUnitTest : public ExtensionServiceTestBase {
     params.enable_bookmark_model = true;
     InitializeExtensionService(std::move(params));
 
-    browser_window_ = std::make_unique<TestBrowserWindow>();
+    auto browser_window = std::make_unique<TestBrowserWindow>();
     Browser::CreateParams browser_params(profile(), true);
     browser_params.type = Browser::TYPE_NORMAL;
-    browser_params.window = browser_window_.get();
-    browser_ = std::unique_ptr<Browser>(Browser::Create(browser_params));
+    browser_params.window = browser_window.release();
+    browser_ = Browser::DeprecatedCreateOwnedForTesting(browser_params);
 
     model_ = BookmarkModelFactory::GetForBrowserContext(profile());
     bookmarks::test::WaitForBookmarkModelToLoad(model_);
@@ -56,7 +56,6 @@ class BookmarkManagerPrivateApiUnitTest : public ExtensionServiceTestBase {
   void TearDown() override {
     browser_->tab_strip_model()->CloseAllTabs();
     browser_.reset();
-    browser_window_.reset();
     ExtensionServiceTestBase::TearDown();
   }
 
@@ -68,7 +67,6 @@ class BookmarkManagerPrivateApiUnitTest : public ExtensionServiceTestBase {
  private:
   GURL url_;
   std::unique_ptr<Browser> browser_;
-  std::unique_ptr<TestBrowserWindow> browser_window_;
   raw_ptr<bookmarks::BookmarkModel> model_ = nullptr;
   std::string node_id_;
 };

@@ -7,11 +7,10 @@
 
 #import <UIKit/UIKit.h>
 
+#import "ios/chrome/common/ui/util/chrome_button.h"
+
 extern const CGFloat kButtonVerticalInsets;
 extern const CGFloat kPrimaryButtonCornerRadius;
-
-// Returns primary action button with rounded corners.
-UIButton* PrimaryActionButton(BOOL pointer_interaction_enabled);
 
 // Sets the title of `button` through `button.configuration`.
 void SetConfigurationTitle(UIButton* button, NSString* newString);
@@ -19,7 +18,15 @@ void SetConfigurationTitle(UIButton* button, NSString* newString);
 // Sets the font of `button` through `button.configuration`.
 void SetConfigurationFont(UIButton* button, UIFont* font);
 
-// Updates the button configuration if the button is enabled or disabled.
-void UpdateButtonColorOnEnableDisable(UIButton* button);
+// DEPRECATED: Most of the functionality in this file has been moved to
+// the ChromeButton class itself. Please use its properties instead.
+void UpdateButtonToMatchPrimaryAction(ChromeButton* button);
+void UpdateButtonToMatchPrimaryDestructiveAction(ChromeButton* button);
+void UpdateButtonToMatchSecondaryAction(ChromeButton* button);
+void UpdateButtonToMatchTertiaryAction(ChromeButton* button);
+ChromeButton* PrimaryActionButton();
+ChromeButton* PrimaryDestructiveActionButton();
+ChromeButton* SecondaryActionButton();
+ChromeButton* TertiaryActionButton();
 
 #endif  // IOS_CHROME_COMMON_UI_UTIL_BUTTON_UTIL_H_

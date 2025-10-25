@@ -23,7 +23,7 @@
 #include "base/trace_event/builtin_categories.h"
 #include "base/trace_event/common/trace_event_common.h"  // IWYU pragma: export
 #include "base/trace_event/trace_arguments.h"
-#include "base/trace_event/trace_log.h"
+#include "base/trace_event/trace_event_impl.h"
 #include "base/trace_event/traced_value_support.h"
 #include "base/tracing_buildflags.h"
 
@@ -191,6 +191,35 @@ class TraceScopedTrackableObject {
  private:
   const char* name_;
   IDType id_;
+};
+
+// Tracks that are used to group other tracks may not get any events of their
+// own, so their descriptor needs to be explicitly registered. This class wraps
+// a track to automatically register/unregistered its descriptor in the
+// constructor/destructor.
+template <class TrackType>
+class TrackRegistration {
+ public:
+  explicit TrackRegistration(const TrackType& track) : track_(track) {
+    if (perfetto::Tracing::IsInitialized()) {
+      // SetTrackDescriptor may crash in unit tests where tracing isn't
+      // initialized.
+      base::TrackEvent::SetTrackDescriptor(track, track.Serialize());
+    }
+  }
+  ~TrackRegistration() {
+    if (perfetto::Tracing::IsInitialized()) {
+      base::TrackEvent::EraseTrackDescriptor(track_);
+    }
+  }
+  TrackRegistration(const TrackRegistration&) = delete;
+  TrackRegistration& operator=(const TrackRegistration&) = delete;
+
+  const TrackType& operator*() const { return track_; }
+  const TrackType& track() const { return track_; }
+
+ private:
+  TrackType track_;
 };
 
 }  // namespace trace_event

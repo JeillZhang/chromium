@@ -78,12 +78,10 @@ bool FakeWebState::IsRealized() const {
   return is_realized_;
 }
 
-WebState* FakeWebState::ForceRealized() {
+WebState* FakeWebState::ForceRealizedWithPolicy(RealizationPolicy policy) {
   if (!is_realized_) {
     is_realized_ = true;
-    for (auto& observer : observers_) {
-      observer.WebStateRealized(this);
-    }
+    NotifyWebStateRealized(observers_);
   }
   return this;
 }
@@ -248,10 +246,6 @@ void FakeWebState::LoadData(NSData* data,
 }
 
 void FakeWebState::ExecuteUserJavaScript(NSString* javaScript) {}
-
-NSString* FakeWebState::GetStableIdentifier() const {
-  return stable_identifier_;
-}
 
 WebStateID FakeWebState::GetUniqueIdentifier() const {
   return unique_identifier_;

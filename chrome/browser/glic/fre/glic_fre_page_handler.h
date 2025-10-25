@@ -5,9 +5,9 @@
 #ifndef CHROME_BROWSER_GLIC_FRE_GLIC_FRE_PAGE_HANDLER_H_
 #define CHROME_BROWSER_GLIC_FRE_GLIC_FRE_PAGE_HANDLER_H_
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/glic/fre/glic_fre.mojom.h"
 #include "mojo/public/cpp/bindings/receiver.h"
-#include "mojo/public/cpp/bindings/remote.h"
 
 class GURL;
 namespace content {
@@ -32,10 +32,14 @@ class GlicFrePageHandler : public glic::mojom::FrePageHandler {
 
   // glic::mojom::FrePageHandler implementation.
   void AcceptFre() override;
-  void DismissFre() override;
+  void RejectFre() override;
+  void DismissFre(mojom::FreWebUiState panel_state) override;
+  void FreReloaded() override;
   void PrepareForClient(base::OnceCallback<void(bool)> callback) override;
   void ValidateAndOpenLinkInNewTab(const GURL& url) override;
   void WebUiStateChanged(mojom::FreWebUiState new_state) override;
+  void ExceededTimeoutError() override;
+  void LogWebUiLoadComplete() override;
 
  private:
   content::BrowserContext* browser_context() const;

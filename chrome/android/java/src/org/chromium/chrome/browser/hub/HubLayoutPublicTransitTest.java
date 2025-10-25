@@ -7,22 +7,16 @@ package org.chromium.chrome.browser.hub;
 import static org.chromium.base.test.transit.TransitAsserts.assertFinalDestination;
 import static org.chromium.chrome.browser.flags.ChromeFeatureList.START_SURFACE_RETURN_TIME;
 
-import android.os.Build;
-
 import androidx.test.filters.LargeTest;
 
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.transit.Station;
 import org.chromium.base.test.util.Batch;
-import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.Features.EnableFeatures;
-import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
-import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
 import org.chromium.chrome.test.transit.ChromeTransitTestRules;
@@ -34,18 +28,18 @@ import org.chromium.chrome.test.transit.hub.TabSwitcherListEditorFacility;
 import org.chromium.chrome.test.transit.ntp.IncognitoNewTabPageStation;
 import org.chromium.chrome.test.transit.ntp.RegularNewTabPageStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
-import org.chromium.chrome.test.util.ChromeApplicationTestUtils;
+import org.chromium.components.omnibox.OmniboxFeatureList;
 import org.chromium.components.tab_groups.TabGroupColorId;
 
 /** Public transit instrumentation/integration test of Hub. */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 // TODO(crbug.com/419289558): Re-enable color surface feature flags
 @Features.DisableFeatures({
     ChromeFeatureList.ANDROID_SURFACE_COLOR_UPDATE,
     ChromeFeatureList.GRID_TAB_SWITCHER_SURFACE_COLOR_UPDATE,
     ChromeFeatureList.GRID_TAB_SWITCHER_UPDATE,
-    ChromeFeatureList.ANDROID_THEME_MODULE
+    ChromeFeatureList.ANDROID_THEME_MODULE,
+    OmniboxFeatureList.ANDROID_HUB_SEARCH_TAB_GROUPS
 })
 @Batch(Batch.PER_CLASS)
 public class HubLayoutPublicTransitTest {
@@ -109,7 +103,7 @@ public class HubLayoutPublicTransitTest {
     @EnableFeatures(ChromeFeatureList.TAB_GROUP_ENTRY_POINTS_ANDROID)
     public void testTabGroupPane_newTabGroup() {
         WebPageStation firstPage = mCtaTestRule.startOnBlankPage();
-        int firstTabId = firstPage.loadedTabElement.get().getId();
+        int firstTabId = firstPage.loadedTabElement.value().getId();
         RegularTabSwitcherStation tabSwitcher = firstPage.openRegularTabSwitcher();
         TabSwitcherListEditorFacility<RegularTabSwitcherStation> editor =
                 tabSwitcher.openAppMenu().clickSelectTabs();
@@ -179,41 +173,14 @@ public class HubLayoutPublicTransitTest {
         blankPage = tabSwitcher.selectTabAtIndex(0, WebPageStation.newBuilder());
         tabSwitcher = blankPage.openRegularTabSwitcher();
 
-        newTabPage = pauseAndResumeActivity(tabSwitcher);
+        newTabPage =
+                mCtaTestRule
+                        .pauseAndResumeActivityTo(tabSwitcher)
+                        .arriveAt(
+                                RegularNewTabPageStation.newBuilder()
+                                        .initSelectingExistingTab()
+                                        .build());
 
         assertFinalDestination(newTabPage);
-    }
-
-    private RegularNewTabPageStation pauseAndResumeActivity(Station currentStation) {
-        RegularNewTabPageStation destination =
-                RegularNewTabPageStation.newBuilder()
-                        .withIsOpeningTabs(0)
-                        .withIsSelectingTabs(1)
-                        .build();
-        currentStation.travelToSync(
-                destination,
-                () -> {
-                    ChromeTabbedActivity cta = mCtaTestRule.getActivity();
-                    ChromeApplicationTestUtils.fireHomeScreenIntent(cta);
-                    try {
-                        mCtaTestRule.resumeMainActivityFromLauncher();
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                });
-
-        // crbug.com/324106495: Add an extra sleep in Android 12+ because SnapshotStartingWindow
-        // occludes the ChromeActivity and any input is considered an untrusted input until the
-        // SnapshotStartingWindow disappears.
-        // Since it is a system window being drawn on top, we don't have access to any signals that
-        // the SnapshotStartingWindow disappeared that we can wait for.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            try {
-                Thread.sleep(200);
-            } catch (InterruptedException e) {
-            }
-        }
-
-        return destination;
     }
 }

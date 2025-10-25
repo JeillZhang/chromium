@@ -17,7 +17,6 @@
 #include <utility>
 
 #include "base/functional/callback_helpers.h"
-#include "components/viz/common/resources/resource_sizes.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "gpu/command_buffer/service/service_utils.h"
@@ -41,6 +40,7 @@
 #include "third_party/skia/include/gpu/ganesh/GrBackendSurface.h"
 #include "third_party/skia/include/gpu/ganesh/SkImageGanesh.h"
 #include "third_party/skia/include/private/chromium/GrPromiseImageTexture.h"
+#include "ui/gfx/buffer_format_util.h"
 #include "ui/gl/buildflags.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/progress_reporter.h"
@@ -182,6 +182,21 @@ TEST_F(IOSurfaceImageBackingFactoryTest, GL_SkiaGL) {
 
   CheckSkiaPixels(mailbox, size, {0, 255, 0, 255});
   factory_ref.reset();
+}
+
+TEST_F(IOSurfaceImageBackingFactoryTest, CreateGpuMemoryBuffer) {
+  for (auto format : viz::GetMappableSharedImageFormatForTesting()) {
+    if (!gpu::GpuMemoryBufferSupport::
+            IsNativeGpuMemoryBufferConfigurationSupportedForTesting(
+                format, gfx::BufferUsage::GPU_READ)) {
+      continue;
+    }
+
+    gfx::GpuMemoryBufferHandle handle =
+        IOSurfaceImageBackingFactory::CreateGpuMemoryBufferHandle(
+            gfx::Size(2, 2), format);
+    EXPECT_EQ(handle.type, gfx::IO_SURFACE_BUFFER);
+  }
 }
 
 class IOSurfaceImageBackingFactoryDawnTest
@@ -343,11 +358,13 @@ class IOSurfaceImageBackingFactoryDawnTest
     return std::make_pair(std::move(src_rep), std::move(src_scoped_access));
   }
 
+  static constexpr auto kInstanceFeatures = std::array{
+      wgpu::InstanceFeatureName::MultipleDevicesPerAdapter,
+      wgpu::InstanceFeatureName::TimedWaitAny,
+  };
   static constexpr wgpu::InstanceDescriptor instance_desc_ = {
-      .capabilities =
-          {
-              .timedWaitAnyEnable = true,
-          },
+      .requiredFeatureCount = kInstanceFeatures.size(),
+      .requiredFeatures = kInstanceFeatures.data(),
   };
   dawn::native::Instance instance_ = dawn::native::Instance(&instance_desc_);
   wgpu::Adapter adapter_;
@@ -1335,14 +1352,9 @@ class IOSurfaceImageBackingFactoryGMBTest
     SkAlphaType alpha_type = kPremul_SkAlphaType;
     bool override_rgba_to_bgra = get_gr_context_type() == GrContextType::kGL;
 
-    gfx::BufferFormat buffer_format = gpu::ToBufferFormat(format);
-    gfx::GpuMemoryBufferHandle handle;
-    gfx::GpuMemoryBufferId kBufferId(1);
-    handle.type = gfx::IO_SURFACE_BUFFER;
-    handle.id = kBufferId;
-    handle.io_surface = gfx::CreateIOSurface(
-        size, buffer_format, /*should_clear=*/true, override_rgba_to_bgra);
-    DCHECK(handle.io_surface);
+    gfx::GpuMemoryBufferHandle handle(gfx::CreateIOSurface(
+        size, format, /*should_clear=*/true, override_rgba_to_bgra));
+    DCHECK(handle.io_surface());
 
     auto backing = backing_factory_->CreateSharedImage(
         mailbox, format, size, color_space, surface_origin, alpha_type, usage,

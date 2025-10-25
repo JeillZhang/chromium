@@ -64,9 +64,9 @@ class Receiver {
     }
     callback_ = std::move(callback);
     // Unretained is safe because |watcher_| is owned by |this|.
-    MojoResult rv = watcher_.Watch(
-        handle_.get(), MOJO_HANDLE_SIGNAL_READABLE,
-        WTF::BindRepeating(&Receiver::OnReadable, WTF::Unretained(this)));
+    MojoResult rv =
+        watcher_.Watch(handle_.get(), MOJO_HANDLE_SIGNAL_READABLE,
+                       BindRepeating(&Receiver::OnReadable, Unretained(this)));
     DCHECK_EQ(MOJO_RESULT_OK, rv);
     watcher_.ArmOrNotify();
   }
@@ -204,9 +204,9 @@ class Internal : public mojom::blink::ServiceWorkerInstalledScriptsManager {
     auto receivers = std::make_unique<BundledReceivers>(
         std::move(script_info->meta_data), script_info->meta_data_size,
         std::move(script_info->body), script_info->body_size, task_runner_);
-    receivers->Start(WTF::BindOnce(&Internal::OnScriptReceived,
-                                   weak_factory_.GetWeakPtr(),
-                                   std::move(script_info)));
+    receivers->Start(blink::BindOnce(&Internal::OnScriptReceived,
+                                     weak_factory_.GetWeakPtr(),
+                                     std::move(script_info)));
     DCHECK(!running_receivers_.Contains(script_url));
     running_receivers_.insert(script_url, std::move(receivers));
   }
@@ -307,8 +307,8 @@ ServiceWorkerInstalledScriptsManager::GetScriptData(const KURL& script_url) {
       std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
           TextResourceDecoderOptions::kPlainTextContent,
           raw_script_data->Encoding().empty()
-              ? UTF8Encoding()
-              : WTF::TextEncoding(raw_script_data->Encoding())));
+              ? Utf8Encoding()
+              : TextEncoding(raw_script_data->Encoding())));
 
   Vector<uint8_t> source_text = raw_script_data->TakeScriptText();
   String decoded_source_text = decoder->Decode(base::span(source_text));

@@ -25,7 +25,6 @@
 #include "media/audio/audio_io.h"
 #include "media/base/audio_parameters.h"
 #include "media/base/limits.h"
-#include "media/base/mac/audio_latency_mac.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
@@ -287,9 +286,8 @@ class FakeAudioInputCallback : public AudioInputStream::AudioInputCallback {
               double volume,
               const AudioGlitchInfo& glitch_info) override {
     EXPECT_GE(capture_time, base::TimeTicks());
-    for (int i = 0; i < src->channels(); i++) {
-      channel_data_.insert(channel_data_.end(), src->channel(i),
-                           src->channel(i) + src->frames());
+    for (auto channel : src->AllChannels()) {
+      std::ranges::copy(channel, std::back_inserter(channel_data_));
     }
   }
 

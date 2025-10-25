@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/location.h"
+#include "base/feature_list.h"
 #ifdef UNSAFE_BUFFERS_BUILD
 // TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
 #pragma allow_unsafe_buffers
@@ -17,12 +17,13 @@
 
 #include "base/base_switches.h"
 #include "base/check_is_test.h"
+#include "base/command_line.h"
 #include "base/containers/contains.h"
 #include "base/containers/span.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
-#include "base/feature_list.h"
 #include "base/feature_visitor.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
@@ -101,14 +102,12 @@ class EarlyFeatureAccessTracker {
   void Fail(const Feature* feature, bool with_feature_allow_list) {
     // TODO(crbug.com/40237050): Enable this check on all platforms.
 #if !BUILDFLAG(IS_IOS) && !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
-#if !BUILDFLAG(IS_NACL)
     // Create a crash key with the name of the feature accessed too early, to
     // facilitate crash triage.
     SCOPED_CRASH_KEY_STRING256("FeatureList", "feature-accessed-too-early",
                                feature->name);
     SCOPED_CRASH_KEY_BOOL("FeatureList", "early-access-allow-list",
                           with_feature_allow_list);
-#endif  // !BUILDFLAG(IS_NACL)
     CHECK(!feature) << "Accessed feature " << feature->name
                     << (with_feature_allow_list
                             ? " which is not on the allow list passed to "
@@ -361,18 +360,18 @@ void FeatureList::InitFromSharedMemory(PersistentMemoryAllocator* allocator) {
   }
 }
 
-bool FeatureList::IsFeatureOverridden(const std::string& feature_name) const {
+bool FeatureList::IsFeatureOverridden(std::string_view feature_name) const {
   return GetOverrideEntryByFeatureName(feature_name);
 }
 
 bool FeatureList::IsFeatureOverriddenFromCommandLine(
-    const std::string& feature_name) const {
+    std::string_view feature_name) const {
   const OverrideEntry* entry = GetOverrideEntryByFeatureName(feature_name);
   return entry && !entry->overridden_by_field_trial;
 }
 
 bool FeatureList::IsFeatureOverriddenFromCommandLine(
-    const std::string& feature_name,
+    std::string_view feature_name,
     OverrideState state) const {
   const OverrideEntry* entry = GetOverrideEntryByFeatureName(feature_name);
   return entry && !entry->overridden_by_field_trial &&
@@ -618,10 +617,8 @@ void FeatureList::SetInstance(std::unique_ptr<FeatureList> instance) {
   // FeatureList instance, as the state of the involved Features might change
   // with the final FeatureList for this process.
   if (!g_feature_list_instance->IsEarlyAccessInstance()) {
-#if !BUILDFLAG(IS_NACL)
     // Configured first because it takes precedence over the getrandom() trial.
     internal::ConfigureBoringSSLBackedRandBytesFieldTrial();
-#endif
   }
 
 #if BUILDFLAG(DCHECK_IS_CONFIGURABLE)
@@ -898,11 +895,9 @@ void FeatureList::RegisterOverridesFromCommandLine(
     if (pos != std::string::npos) {
       feature_name = std::string_view(value.data(), pos);
       trial = FieldTrialList::Find(value.substr(pos + 1));
-#if !BUILDFLAG(IS_NACL)
       // If the below DCHECK fires, it means a non-existent trial name was
       // specified via the "Feature<Trial" command-line syntax.
       DCHECK(trial) << "trial='" << value.substr(pos + 1) << "' does not exist";
-#endif  // !BUILDFLAG(IS_NACL)
     }
 
     RegisterOverride(feature_name, overridden_state, trial);

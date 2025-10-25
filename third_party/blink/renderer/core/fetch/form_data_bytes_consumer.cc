@@ -268,8 +268,8 @@ class DataPipeGetterConsumer : public BytesConsumer {
 
     data_pipe_getter->Read(
         std::move(pipe_producer_handle),
-        WTF::BindOnce(&DataPipeGetterConsumer::DataPipeGetterCallback,
-                      WrapWeakPersistent(consumer)));
+        BindOnce(&DataPipeGetterConsumer::DataPipeGetterCallback,
+                 WrapWeakPersistent(consumer)));
     return consumer;
   }
 
@@ -509,7 +509,8 @@ class UniversalBytesConsumer final : public BytesConsumer {
 
 FormDataBytesConsumer::FormDataBytesConsumer(const String& string)
     : impl_(MakeGarbageCollected<DataOnlyBytesConsumer>(EncodedFormData::Create(
-          UTF8Encoding().Encode(string, WTF::kNoUnencodables)))) {}
+          Utf8Encoding().Encode(string,
+                                UnencodableHandling::kNoUnencodables)))) {}
 
 FormDataBytesConsumer::FormDataBytesConsumer(DOMArrayBuffer* buffer)
     : FormDataBytesConsumer(buffer->ByteSpan()) {}

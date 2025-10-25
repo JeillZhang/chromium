@@ -105,12 +105,8 @@ MEDIA_EXPORT extern const char kUserGestureRequiredPolicy[];
 
 }  // namespace autoplay
 
-// TODO(crbug.com/414429305): Restrict this flag to USE_V4L2_CODEC.
-#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
-MEDIA_EXPORT extern const char kHardwareVideoDecodeFrameRate[];
-#endif
-
 #if BUILDFLAG(USE_V4L2_CODEC)
+MEDIA_EXPORT extern const char kHardwareVideoDecodeFrameRate[];
 MEDIA_EXPORT extern const char kEnablePrimaryNodeAccessForVkmsTesting[];
 #endif
 
@@ -153,14 +149,6 @@ MEDIA_EXPORT extern const char kCastStreamingForceDisableHardwareVp9[];
 // to take effect.
 MEDIA_EXPORT extern const char kCastStreamingForceEnableHardwareVp9[];
 
-#if !BUILDFLAG(IS_ANDROID)
-// If enabled, overrides the target playout delay for a casting mirroring
-// session. The value will be parsed as milliseconds. Lowering this value will
-// result in a lower end to end latency, but could come at the cost of other
-// quality standards such as dropped frames or FPS.
-MEDIA_EXPORT extern const char kCastMirroringTargetPlayoutDelay[];
-#endif  // !BUILDFLAG(IS_ANDROID)
-
 }  // namespace switches
 
 namespace media {
@@ -177,6 +165,10 @@ MEDIA_EXPORT extern const base::FeatureParam<int> kAudioDuckingAttenuation;
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAudioDuckingWin);
 #endif  // BUILDFLAG(IS_WIN)
 
+#if BUILDFLAG(ENABLE_FFMPEG)
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kAudioDecoderAudioFileReader);
+#endif
+
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAudioFocusDuckFlash);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAudioInputConfirmReadsViaShmem);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAutoPictureInPictureForVideoPlayback);
@@ -184,7 +176,6 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kAutoplayDisableSettings);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAVDColorSpaceChanges);
 
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS) && !BUILDFLAG(IS_FUCHSIA)
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kCameraMicEffects);
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS) &&
         // !BUILDFLAG(IS_FUCHSIA)
 
@@ -212,11 +203,16 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kContextMenuSaveVideoFrameAs);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kContextMenuSearchForVideoFrame);
 #if BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kChromeWideEchoCancellation);
-#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+#endif  // BUILDFLAG(CHROME_WIDE_ECHO_CANCELLATION)
+
+#if BUILDFLAG(SYSTEM_LOOPBACK_AS_AEC_REFERENCE)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kSystemLoopbackAsAecReference);
-MEDIA_EXPORT extern const base::FeatureParam<int> kAddedProcessingDelay;
-#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
-#endif
+MEDIA_EXPORT extern const base::FeatureParam<bool>
+    kSystemLoopbackAsAecReferenceForcedOn;
+MEDIA_EXPORT extern const base::FeatureParam<int> kAddedProcessingDelayMs;
+MEDIA_EXPORT extern const base::FeatureParam<int> kAecDelayNumFilters;
+#endif  // BUILDFLAG(SYSTEM_LOOPBACK_AS_AEC_REFERENCE)
+
 #if (BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN))
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kEnforceSystemEchoCancellation);
 MEDIA_EXPORT extern const base::FeatureParam<bool>
@@ -258,6 +254,7 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kFallbackAfterDecodeError);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kFeatureManagementLiveTranslateCrOS);
 #if !BUILDFLAG(IS_ANDROID)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kFileDialogsBlockPictureInPicture);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kFileDialogsTuckPictureInPicture);
 #endif  // !BUILDFLAG(IS_ANDROID)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kGetDisplayMediaConfersActivation);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kGlobalMediaControls);
@@ -285,13 +282,17 @@ MEDIA_EXPORT extern const base::FeatureParam<int>
 MEDIA_EXPORT extern const base::FeatureParam<bool>
     kHardwareSecureDecryptionFallbackOnHardwareContextReset;
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kHardwareSecureDecryptionAv1);
+#if BUILDFLAG(IS_WIN)
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kProtectedMediaIdentifierIndicator);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kHardwareSecureDecryptionRequireServerCert);
+#endif
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kInternalMediaSession);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kOnDeviceWebSpeech);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kOnDeviceWebSpeechGeminiNano);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kLiveCaption);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kLiveCaptionAutomaticLanguageDownload);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kLiveCaptionRightClick);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kLiveCaptionLogFlickerRate);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kLiveCaptionMultiLanguage);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kLiveCaptionExperimentalLanguages);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kLiveCaptionUseGreedyTextStabilizer);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kLiveCaptionUseWaitK);
@@ -299,30 +300,25 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kLiveCaptionWebAudio);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kLiveTranslate);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kLogSodaLoadFailures);
 #if BUILDFLAG(IS_MAC)
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMacLoopbackAudioForScreenShare);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kMacCatapLoopbackAudioForCast);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kMacCatapLoopbackAudioForScreenShare);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kUseSCContentSharingPicker);
 #endif  // BUILDFLAG(IS_MAC)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaCapabilitiesQueryGpuFactories);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaCapabilitiesWithParameters);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaCastOverlayButton);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaEngagementBypassAutoplayPolicies);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaEngagementHTTPSOnly);
 #if BUILDFLAG(IS_WIN)
 MEDIA_EXPORT extern const base::FeatureParam<std::string>
     kMediaFoundationClearKeyCdmPathForTesting;
 #endif  // BUILDFLAG(IS_WIN)
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaLearningExperiment);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaLearningFramework);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaLearningSmoothnessExperiment);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaOptimizer);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaPowerExperiment);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMemoryPressureBasedSourceBufferGC);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMultiBufferNeverDefer);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kOverlayFullscreenVideo);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kPauseBackgroundMutedAudio);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kPauseBackgroundTimer);
 #if !BUILDFLAG(IS_ANDROID)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kPictureInPictureOcclusionTracking);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kPictureInPictureShowWindowAnimation);
 #endif  // !BUILDFLAG(IS_ANDROID)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kPlatformAudioEncoder);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kEnableRtcpReporting);
@@ -349,15 +345,19 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kReduceHardwareVideoDecoderBuffers);
 #endif  // BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kResumeBackgroundVideo);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kRevokeMediaSourceObjectURLOnAttach);
+#if BUILDFLAG(ENABLE_SYMPHONIA)
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kSymphoniaAudioDecoding);
+#endif
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kShareThisTabInsteadButtonGetDisplayMedia);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(
     kShareThisTabInsteadButtonGetDisplayMediaAudio);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kSpeakerChangeDetection);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kSpecCompliantCanPlayThrough);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kSuspendMutedAudio);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kSuspendMediaForFrozenFrames);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kUnifiedAutoplay);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kUseAndroidOverlayForSecureOnly);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kUseFakeDeviceForMediaStream);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaStreamAccurateDroppedFrameCount);
 #if BUILDFLAG(IS_LINUX)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAcceleratedVideoDecodeLinux);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAcceleratedVideoDecodeLinuxGL);
@@ -384,13 +384,17 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kWebCodecsVideoEncoderFrameDrop);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kWebRTCHardwareVideoEncoderFrameDrop);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kWebRTCColorAccuracy);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kWebrtcMediaCapabilitiesParameters);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kWidevinePersistentLicenseSupport);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kResolutionBasedDecoderPriority);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kMatchSourceAudioChannelLayout);
 
 #if BUILDFLAG(IS_ANDROID)
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kAllowNonSecureOverlays);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kAllowEnhancedPipTransition);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kAutoPictureInPictureAndroid);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kContextMenuPictureInPictureAndroid);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kEnableSurfaceInputForAndroidVEA);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaCodecBlockModel);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaCodecCodedSizeGuessing);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaCodecElideEOS);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaCodecLowDelayMode);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaControlsExpandGesture);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaDrmPersistentLicense);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaDrmPreprovisioning);
@@ -410,17 +414,12 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kUseAudioManagerMaxChannelLayout);
 // the media-player based HLS player will NOT be used. This will roll out first
 // on android, but will eventually land in desktop chrome as well.
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kBuiltInHlsPlayer);
-
-// This feature enables the buildin hls player to play and demux additional
-// media containers, including Fragmented and unfragmented MP4, as well as
-// raw AAC bytestreams. It does nothing if kBuiltInHlsPlayer is disabled.
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kBuiltInHlsMP4);
 #endif  // BUILDFLAG(ENABLE_HLS_DEMUXER)
 
 #if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kChromeOSHWVBREncoding);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kLimitConcurrentDecoderInstances);
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kUSeSequencedTaskRunnerForVEA);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kUseSequencedTaskRunnerForVEA);
 #if defined(ARCH_CPU_ARM_FAMILY)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kUseGLForScaling);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kPreferGLImageProcessor);
@@ -432,6 +431,10 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kEnableArmHwdrm);
 #endif  // BUILDFLAG(USE_CHROMEOS_PROTECTED_MEDIA)
 #endif  // defined(ARCH_CPU_ARM_FAMILY)
 #endif  // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
+
+#if BUILDFLAG(ENABLE_OPENH264)
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kOpenH264SoftwareEncoder);
+#endif  // BUILDFLAG(ENABLE_OPENH264)
 
 #if BUILDFLAG(IS_WIN)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kDirectShowGetPhotoState);
@@ -447,27 +450,6 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaFoundationD3D11VideoCaptureZeroCopy);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaFoundationClearPlayback);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAllowMediaFoundationFrameServerMode);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kD3D11Vp9kSVCHWDecoding);
-
-// Strategy affecting how Media Foundation Renderer determines its rendering
-// mode when used with clear video media. This strategy does not impact
-// protected media which must always use Direct Composition mode.
-enum class MediaFoundationClearRenderingStrategy {
-  // The renderer will operate in Direct Composition mode (e.g. windowless
-  // swapchain).
-  kDirectComposition,
-  // The renderer will operate in Frame Server mode.
-  kFrameServer,
-  // The renderer is allowed to switch between Direct Composition & Frame Server
-  // mode at its discretion.
-  kDynamic,
-};
-
-// Under this feature, a given MediaFoundationClearRenderingStrategy param is
-// used by the Media Foundation Renderer for Clear content scenarios.
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaFoundationClearRendering);
-MEDIA_EXPORT extern const base::FeatureParam<
-    MediaFoundationClearRenderingStrategy>
-    kMediaFoundationClearRenderingStrategyParam;
 
 // Enables the batch audio/video buffers reading for media playback.
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaFoundationBatchRead);
@@ -493,6 +475,7 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kBackgroundListening);
 // is enabled instead of directly checking this feature flag. The reason is that
 // that function may perform checks beyond the feature flag.
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kUseOutOfProcessVideoDecoding);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kUseSharedImageInOOPVDProcess);
 #endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
 
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
@@ -510,6 +493,9 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kFuchsiaMediacodecVideoEncoder);
 
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kVideoDecodeBatching);
 
+MEDIA_EXPORT BASE_DECLARE_FEATURE(
+    kClearPipCachedBoundsWhenPermissionPromptVisible);
+
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kUseWindowBoundsForPip);
 
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaLogToConsole);
@@ -520,24 +506,38 @@ MEDIA_EXPORT BASE_DECLARE_FEATURE(kLibaomUseChromeThreads);
 #if BUILDFLAG(IS_WIN)
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kD3D12VideoDecoder);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kD3D12VideoEncodeAccelerator);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kD3D12VideoEncodeAcceleratorL1T3);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(
+    kD3D12VideoEncodeAcceleratorSharedHandleCaching);
 
 MEDIA_EXPORT extern const base::FeatureParam<double> kAudioOffloadBufferTimeMs;
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kAudioOffload);
 #endif  // BUILDFLAG(IS_WIN)
 
-#if BUILDFLAG(IS_WIN) && defined(ARCH_CPU_ARM64)
-MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaFoundationAcceleratedEncodeOnArm64);
-#endif
-
 #if BUILDFLAG(IS_WIN)
+// Enables D3D12 video encode accelerator taking shared image as input.
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kD3D12SharedImageEncode);
+
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaFoundationD3DVideoProcessing);
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaFoundationSharedImageEncode);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaFoundationVideoEncodeAccelerator);
 #endif
 
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kRenderMutedAudio);
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kPauseMutedBackgroundAudio);
 
 // Enable experimental headless captions.
 MEDIA_EXPORT BASE_DECLARE_FEATURE(kHeadlessLiveCaption);
+
+// Enable site-specific media link helpers.
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kMediaLinkHelpers);
+
+// Enables showing auto picture-in-picture permission details in page info.
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kAutoPictureInPicturePageInfoDetails);
+
+// Enables sending provisioning requests in the body of the POST request rather
+// than encoding it inside the URL.
+MEDIA_EXPORT BASE_DECLARE_FEATURE(kUsePostBodyForUrlProvisionFetcher);
 
 // Based on a |command_line| and the current platform, returns the effective
 // autoplay policy. In other words, it will take into account the default policy
@@ -548,8 +548,26 @@ MEDIA_EXPORT std::string GetEffectiveAutoplayPolicy(
     const base::CommandLine& command_line);
 
 MEDIA_EXPORT bool IsChromeWideEchoCancellationEnabled();
+
+#if BUILDFLAG(IS_MAC)
+MEDIA_EXPORT bool IsMacCatapSystemLoopbackCaptureSupported();
+MEDIA_EXPORT bool IsMacSckSystemLoopbackCaptureSupported();
+#endif
+
+// Returns true if system audio loopback capture is implemented for the current
+// OS.
+MEDIA_EXPORT bool IsSystemLoopbackCaptureSupported();
+
+// Returns true if loopback-based AEC can be used for audio input streams that
+// are configured to do so.
 MEDIA_EXPORT bool IsSystemLoopbackAsAecReferenceEnabled();
-MEDIA_EXPORT std::optional<base::TimeDelta> GetAecAddedDelay();
+// Returns true if loopback-based AEC is enabled and its usage is forced, which
+// means that loopback-based AEC will be used instead of chrome-wide AEC.
+MEDIA_EXPORT bool IsSystemLoopbackAsAecReferenceForcedOn();
+#if BUILDFLAG(SYSTEM_LOOPBACK_AS_AEC_REFERENCE)
+MEDIA_EXPORT base::TimeDelta GetAecAddedDelay();
+MEDIA_EXPORT int GetAecDelayNumFilters();
+#endif
 MEDIA_EXPORT bool IsSystemEchoCancellationEnforced();
 MEDIA_EXPORT bool IsSystemEchoCancellationEnforcedAndAllowAgcInTandem();
 MEDIA_EXPORT bool IsSystemEchoCancellationEnforcedAndAllowNsInTandem();
@@ -558,6 +576,7 @@ MEDIA_EXPORT bool IsDedicatedMediaServiceThreadEnabled(
 MEDIA_EXPORT bool IsHardwareSecureDecryptionEnabled();
 MEDIA_EXPORT bool IsLiveTranslateEnabled();
 MEDIA_EXPORT bool IsVideoCaptureAcceleratedJpegDecodingEnabled();
+MEDIA_EXPORT bool IsRestrictOwnAudioSupported();
 
 #if BUILDFLAG(IS_WIN)
 MEDIA_EXPORT bool IsMediaFoundationD3D11VideoCaptureEnabled();

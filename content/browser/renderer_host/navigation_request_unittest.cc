@@ -14,8 +14,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
+#include "content/browser/renderer_host/navigation_throttle_runner.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/origin_trials_controller_delegate.h"
+#include "content/public/browser/process_selection_user_data.h"
 #include "content/public/browser/ssl_status.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
@@ -41,6 +43,25 @@
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom.h"
 
 namespace content {
+
+namespace {
+
+// A simple ProcessSelectionUserData::Data implementation for testing.
+class ProcessSelectionTestData
+    : public ProcessSelectionUserData::Data<ProcessSelectionTestData> {
+ public:
+  explicit ProcessSelectionTestData(int value) : value_(value) {}
+  int value() const { return value_; }
+
+ private:
+  friend ProcessSelectionUserData::Data<ProcessSelectionTestData>;
+  PROCESS_SELECTION_USER_DATA_KEY_DECL();
+  int value_;
+};
+
+PROCESS_SELECTION_USER_DATA_KEY_IMPL(ProcessSelectionTestData);
+
+}  // namespace
 
 class NavigationRequestTest : public RenderViewHostImplTestHarness {
  public:
@@ -624,9 +645,11 @@ TEST_F(NavigationRequestTest, WillFailRequestCanAccessRenderFrameHost) {
       NavigationRequest::WILL_FAIL_REQUEST,
       NavigationRequest::From(navigation->GetNavigationHandle())->state());
   EXPECT_TRUE(navigation->GetNavigationHandle()->GetRenderFrameHost());
-  NavigationRequest::From(navigation->GetNavigationHandle())
-      ->GetNavigationThrottleRunnerForTesting()
-      ->CallResumeForTesting();
+  auto* registry = NavigationRequest::From(navigation->GetNavigationHandle())
+                       ->GetNavigationThrottleRegistryForTesting();
+  ASSERT_EQ(1u, registry->GetDeferringThrottles().size());
+  registry->ResumeProcessingNavigationEvent(
+      *registry->GetDeferringThrottles().cbegin());
   EXPECT_TRUE(navigation->GetNavigationHandle()->GetRenderFrameHost());
 
   SetBrowserClientForTesting(old_browser_client);
@@ -727,6 +750,27 @@ TEST_F(NavigationRequestTest, NoDnsAliases) {
 
   // Verify that there are no aliases in the NavigationRequest.
   EXPECT_TRUE(navigation->GetNavigationHandle()->GetDnsAliases().empty());
+}
+
+TEST_F(NavigationRequestTest, ProcessSelectionUserDataIsAvailableFromUrlInfo) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::kProcessSelectionDeferringConditions);
+
+  NavigationRequest* request =
+      main_test_rfh()->frame_tree_node()->navigation_request();
+  ProcessSelectionUserData& user_data = request->GetProcessSelectionUserData();
+  user_data.SetUserData(ProcessSelectionTestData::UserDataKey(),
+                        std::make_unique<ProcessSelectionTestData>(42));
+
+  UrlInfo url_info = request->GetUrlInfo();
+  ASSERT_TRUE(url_info.process_selection_user_data);
+
+  const ProcessSelectionTestData* retrieved_data_from_url_info =
+      ProcessSelectionTestData::FromProcessSelectionUserData(
+          url_info.process_selection_user_data);
+  ASSERT_TRUE(retrieved_data_from_url_info);
+  EXPECT_EQ(42, retrieved_data_from_url_info->value());
 }
 
 TEST_F(NavigationRequestTest, StorageKeyToCommit) {
@@ -1315,8 +1359,8 @@ class ResponseBodyNavigationThrottle : public NavigationThrottle {
   void OnResponseBodyReady(const std::string& response_body) {
     std::move(callback_).Run(response_body);
     NavigationRequest::From(navigation_handle())
-        ->GetNavigationThrottleRunnerForTesting()
-        ->CallResumeForTesting();
+        ->GetNavigationThrottleRegistryForTesting()
+        ->ResumeProcessingNavigationEvent(this);
   }
 
   ResponseBodyCallback callback_;

@@ -55,6 +55,7 @@
 #include "media/base/channel_layout.h"
 #include "media/base/limits.h"
 #include "media/base/media_switches.h"
+#include "media/base/sample_format.h"
 #include "media/base/timestamp_constants.h"
 
 using base::win::ScopedCoMem;
@@ -66,6 +67,8 @@ namespace media {
 namespace {
 
 constexpr uint32_t KSAUDIO_SPEAKER_UNSUPPORTED = 0;
+
+constexpr SampleFormat kSampleFormat = kSampleFormatS16;
 
 // Max allowed absolute difference between a QPC-based timestamp and a default
 // base::TimeTicks::Now() timestamp before switching to fake audio timestamps.
@@ -254,6 +257,12 @@ PROCESS_LOOPBACK_MODE GetProcessLoopbackMode(std::string_view device_id) {
   }
   CHECK(AudioDeviceDescription::IsLoopbackDevice(device_id));
   return PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE;
+}
+
+bool IsEndpointLoopbackCapture(std::string_view device_id,
+                               bool is_process_loopback) {
+  return AudioDeviceDescription::IsLoopbackDevice(device_id) &&
+         !is_process_loopback;
 }
 
 }  // namespace
@@ -623,7 +632,7 @@ WASAPIAudioInputStream::WASAPIAudioInputStream(
     const std::string& device_id,
     AudioManager::LogCallback log_callback)
     : manager_(manager),
-      glitch_reporter_(SystemGlitchReporter::StreamType::kCapture),
+      params_(params),
       peak_detector_(base::BindRepeating(&AudioManager::TraceAmplitudePeak,
                                          base::Unretained(manager_),
                                          /*trace_start=*/true)),
@@ -638,7 +647,11 @@ WASAPIAudioInputStream::WASAPIAudioInputStream(
               static_cast<void (WASAPIAudioInputStream::*)(std::string)>(
                   &WASAPIAudioInputStream::SendLogMessage),
               base::Unretained(this)))),
-      is_process_loopback_capture_(IsProcessLoopbackDevice(device_id)) {
+      is_loopback_capture_(AudioDeviceDescription::IsLoopbackDevice(device_id)),
+      is_process_loopback_capture_(IsProcessLoopbackDevice(device_id)),
+      glitch_reporter_(is_loopback_capture_
+                           ? SystemGlitchReporter::StreamType::kLoopback
+                           : SystemGlitchReporter::StreamType::kCapture) {
   DCHECK(manager_);
   DCHECK(!device_id_.empty());
   DCHECK(!log_callback_.is_null());
@@ -648,6 +661,10 @@ WASAPIAudioInputStream::WASAPIAudioInputStream(
          params.channel_layout() == CHANNEL_LAYOUT_DISCRETE);
   SendLogMessage("%s({device_id=%s}, {params=[%s]})", __func__,
                  device_id.c_str(), params.AsHumanReadableString().c_str());
+  if (AudioDeviceDescription::IsLoopbackDevice(device_id_)) {
+    SendLogMessage("%s => (audio loopback device is of type: %s)", __func__,
+                   is_process_loopback_capture_ ? "PROCESS" : "ENDPOINT");
+  }
   SendLogMessage("%s => (AEC is requested=[%s])", __func__,
                  aec_config_ ? "true" : "false");
 
@@ -656,8 +673,26 @@ WASAPIAudioInputStream::WASAPIAudioInputStream(
   if (!avrt_init)
     SendLogMessage("%s => (WARNING: failed to load Avrt.dll)", __func__);
 
-  const SampleFormat kSampleFormat = kSampleFormatS16;
+  UpdateFormats();
 
+  // All events are auto-reset events and non-signaled initially.
+
+  // Create the event which the audio engine will signal each time
+  // a buffer becomes ready to be processed by the client.
+  audio_samples_ready_event_.Set(CreateEvent(NULL, FALSE, FALSE, NULL));
+  DCHECK(audio_samples_ready_event_.IsValid());
+
+  // Create the event which will be set in Stop() when capturing shall stop.
+  stop_capture_event_.Set(CreateEvent(NULL, FALSE, FALSE, NULL));
+  DCHECK(stop_capture_event_.IsValid());
+}
+
+WASAPIAudioInputStream::~WASAPIAudioInputStream() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+}
+
+void WASAPIAudioInputStream::UpdateFormats() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   // The clients asks for an input stream specified by |params|. Start by
   // setting up an input device format according to the same specification.
   // If all goes well during the upcoming initialization, this format will not
@@ -667,8 +702,8 @@ WASAPIAudioInputStream::WASAPIAudioInputStream(
   // matches what the client asks for.
   WAVEFORMATEX* format = &input_format_.Format;
   format->wFormatTag = WAVE_FORMAT_EXTENSIBLE;
-  format->nChannels = params.channels();
-  format->nSamplesPerSec = params.sample_rate();
+  format->nChannels = params_.channels();
+  format->nSamplesPerSec = params_.sample_rate();
   format->wBitsPerSample = SampleFormatToBitsPerChannel(kSampleFormat);
   format->nBlockAlign = (format->wBitsPerSample / 8) * format->nChannels;
   format->nAvgBytesPerSec = format->nSamplesPerSec * format->nBlockAlign;
@@ -678,7 +713,7 @@ WASAPIAudioInputStream::WASAPIAudioInputStream(
   format->cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
   input_format_.Samples.wValidBitsPerSample = format->wBitsPerSample;
   input_format_.dwChannelMask =
-      ChannelLayoutToChannelConfig(params.channel_layout());
+      ChannelLayoutToChannelConfig(params_.channel_layout());
   input_format_.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
   SendLogMessage("%s => (audio engine format=[%s])", __func__,
                  CoreAudioUtil::WaveFormatToString(&input_format_).c_str());
@@ -701,27 +736,12 @@ WASAPIAudioInputStream::WASAPIAudioInputStream(
 
   // Store size of audio packets which we expect to get from the audio
   // endpoint device in each capture event.
-  packet_size_bytes_ = params.GetBytesPerBuffer(kSampleFormat);
+  packet_size_bytes_ = params_.GetBytesPerBuffer(kSampleFormat);
   packet_size_frames_ = packet_size_bytes_ / format->nBlockAlign;
   SendLogMessage(
       "%s => (packet size=[%zu bytes/%zu audio frames/%.3f milliseconds])",
       __func__, packet_size_bytes_, packet_size_frames_,
-      params.GetBufferDuration().InMillisecondsF());
-
-  // All events are auto-reset events and non-signaled initially.
-
-  // Create the event which the audio engine will signal each time
-  // a buffer becomes ready to be processed by the client.
-  audio_samples_ready_event_.Set(CreateEvent(NULL, FALSE, FALSE, NULL));
-  DCHECK(audio_samples_ready_event_.IsValid());
-
-  // Create the event which will be set in Stop() when capturing shall stop.
-  stop_capture_event_.Set(CreateEvent(NULL, FALSE, FALSE, NULL));
-  DCHECK(stop_capture_event_.IsValid());
-}
-
-WASAPIAudioInputStream::~WASAPIAudioInputStream() {
-  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+      params_.GetBufferDuration().InMillisecondsF());
 }
 
 AudioInputStream::OpenOutcome WASAPIAudioInputStream::Open() {
@@ -771,7 +791,9 @@ AudioInputStream::OpenOutcome WASAPIAudioInputStream::Open() {
   // Failure will not prevent opening but the method must succeed to be able
   // to select raw input capture mode.
   WORD audio_engine_channels = 0;
-  hr = GetAudioEngineNumChannels(&audio_engine_channels);
+  if (!AudioDeviceDescription::IsLoopbackDevice(device_id_)) {
+    hr = GetAudioEngineNumChannels(&audio_engine_channels);
+  }
 
   // Attempt to enable communications category and raw capture mode on the
   // audio stream. Ignoring return value since the method logs its own error
@@ -854,15 +876,6 @@ void WASAPIAudioInputStream::Start(AudioInputCallback* callback) {
   // using SetAutomaticGainControl().
   StartAgc();
 
-  // TODO(https://crbug.com/411452039): Waiting for the first audio sample ready
-  // event to be signaled is only needed for process loopback devices. We need
-  // to do it because, due to a Windows bug, the value returned by
-  // IAudioClient::GetBufferSize() can not be trusted until we get the first
-  // sample.
-  if (!is_process_loopback_capture_) {
-    CreateFifoIfNeeded();
-  }
-
   // Create and start the thread that will drive the capturing by waiting for
   // capture events.
   DCHECK(!capture_thread_.get());
@@ -876,6 +889,15 @@ void WASAPIAudioInputStream::Start(AudioInputCallback* callback) {
   if (FAILED(hr)) {
     SendLogMessage("%s => (ERROR: IAudioClient::Start=[%s])", __func__,
                    ErrorToString(hr).c_str());
+  }
+
+  if (SUCCEEDED(hr) && audio_render_client_for_loopback_.Get()) {
+    hr = audio_render_client_for_loopback_->Start();
+    if (FAILED(hr)) {
+      SendLogMessage(
+          "%s => (ERROR: IAudioClient::Start=[%s] (endpoint loopback))",
+          __func__, ErrorToString(hr).c_str());
+    }
   }
 
   started_ = SUCCEEDED(hr);
@@ -1062,9 +1084,15 @@ void WASAPIAudioInputStream::
   GetActivateAudioInterfaceAsyncCallback() = callback;
 }
 
-void WASAPIAudioInputStream::CreateFifoIfNeeded() {
+void WASAPIAudioInputStream::SimulateErrorForTesting() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  CHECK(capture_thread_);
+  simulate_error_for_testing_ = true;
+}
+
+HRESULT WASAPIAudioInputStream::CreateFifoIfNeeded() {
   if (fifo_) {
-    return;
+    return S_OK;
   }
 
   // Retrieve the length of the endpoint buffer shared between the client
@@ -1074,7 +1102,7 @@ void WASAPIAudioInputStream::CreateFifoIfNeeded() {
   uint32_t endpoint_buffer_size_frames = 0;
   HRESULT hr = audio_client_->GetBufferSize(&endpoint_buffer_size_frames);
   if (FAILED(hr)) {
-    return;
+    return hr;
   }
 
   // Allocate a buffer with a size that enables us to take care of cases like:
@@ -1099,6 +1127,7 @@ void WASAPIAudioInputStream::CreateFifoIfNeeded() {
   fifo_ = std::make_unique<AudioBlockFifo>(
       input_format_.Format.nChannels, packet_size_frames_, buffers_required);
   DVLOG(1) << "AudioBlockFifo buffer count: " << buffers_required;
+  return S_OK;
 }
 
 void WASAPIAudioInputStream::Run() {
@@ -1133,6 +1162,13 @@ void WASAPIAudioInputStream::Run() {
   while (recording && !error) {
     // Wait for a close-down event or a new capture event.
     DWORD wait_result = WaitForMultipleObjects(2, wait_array, FALSE, INFINITE);
+
+    // Test-only hook to simulate a failure in the capture loop.
+    if (simulate_error_for_testing_) {
+      wait_result = WAIT_FAILED;
+      simulate_error_for_testing_ = false;
+    }
+
     switch (wait_result) {
       case WAIT_OBJECT_0 + 0:
         // |stop_capture_event_| has been set.
@@ -1158,13 +1194,18 @@ void WASAPIAudioInputStream::Run() {
   }
 
   if (recording && error) {
-    // TODO(henrika): perhaps it worth improving the cleanup here by e.g.
-    // stopping the audio client, joining the thread etc.?
-    // TODO(crbug.com/417505389): We should handle pipeline errors in a more
-    // graceful way instead of using NOTREACHED() here.
     auto saved_last_error = GetLastError();
-    NOTREACHED() << "WASAPI capturing failed with error code "
-                 << saved_last_error;
+    LOG(ERROR) << "WAIS::" << __func__
+               << " => (ERROR: capturing failed with error code: "
+               << saved_last_error << ")";
+    // Stop audio rendering since something has gone wrong in our main thread
+    // loop. Note that, we are still in a "started" state, hence a Stop() call
+    // is required to join the thread properly. This approach is inline with the
+    // design in WASAPIAudioOutputStream.
+    audio_client_->Stop();
+
+    // There was an error while recording audio.
+    sink_->OnError();
   }
 
   // Disable MMCSS.
@@ -1299,7 +1340,9 @@ void WASAPIAudioInputStream::PullCaptureDataAndPushToSink() {
         glitch_reporter_.UpdateStats(glitch_duration);
         if (glitch_duration.is_positive()) {
           glitch_accumulator_.Add(AudioGlitchInfo::SingleBoundedSystemGlitch(
-              glitch_duration, AudioGlitchInfo::Direction::kCapture));
+              glitch_duration, is_loopback_capture_
+                                   ? AudioGlitchInfo::Direction::kLoopback
+                                   : AudioGlitchInfo::Direction::kCapture));
         }
       }
 
@@ -1379,8 +1422,11 @@ void WASAPIAudioInputStream::PullCaptureDataAndPushToSink() {
           base::CheckMul<size_t>(num_frames_to_read,
                                  input_format_.Format.nBlockAlign)
               .ValueOrDie()));
-      peak_detector_.FindPeak(audio_frames, bytes_per_sample);
-      fifo_->Push(audio_frames, num_frames_to_read, bytes_per_sample);
+      peak_detector_.FindPeak(audio_frames, kSampleFormat);
+      // TODO(crbug.com/354625679): For now, our pipeline is set for only
+      // kSampleFormatS16 only. We plan to implement changes to take higher bit
+      // depths such as 24bit or 32bit float.
+      fifo_->Push(audio_frames, num_frames_to_read, kSampleFormat);
     }
 
     hr = audio_capture_client_->ReleaseBuffer(num_frames_to_read);
@@ -1808,10 +1854,17 @@ HRESULT WASAPIAudioInputStream::InitializeAudioEngine() {
   DCHECK_EQ(OPEN_RESULT_OK, open_result_);
   SendLogMessage("%s()", __func__);
 
-  // Use event-driven mode for regular input devices and for loopback.
-  DWORD flags = AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
+  // Use event-driven mode only for regular input devices or process loopback.
+  // Loopback devices capturing from an endpoint device does not support event-
+  // driven mode since it requires active output audio to trigger the event.
+  // For endpoint loopback devices, EVENTCALLBACK flag is specified when
+  // initializing the extra |audio_render_client_for_loopback_|.
+  DWORD flags =
+      IsEndpointLoopbackCapture(device_id_, is_process_loopback_capture_)
+          ? 0
+          : AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
   if (!is_process_loopback_capture_) {
-    // Application loopback capture does not support the
+    // Process loopback capture does not support the
     // AUDCLNT_STREAMFLAGS_NOPERSIST flag.
     flags |= AUDCLNT_STREAMFLAGS_NOPERSIST;
   }
@@ -1847,6 +1900,19 @@ HRESULT WASAPIAudioInputStream::InitializeAudioEngine() {
     return hr;
   }
 
+  // TODO(https://crbug.com/411452039): Waiting for the first audio sample ready
+  // event to be signaled is only needed for process loopback devices. We need
+  // to do it because, due to a Windows bug, the value returned by
+  // IAudioClient::GetBufferSize() can not be trusted until we get the first
+  // sample.
+  if (!is_process_loopback_capture_) {
+    hr = CreateFifoIfNeeded();
+    if (FAILED(hr)) {
+      open_result_ = OPEN_RESULT_GET_BUFFER_SIZE_FAILED;
+      return hr;
+    }
+  }
+
 #ifndef NDEBUG
   // The period between processing passes by the audio engine is fixed for a
   // particular audio endpoint device and represents the smallest processing
@@ -1874,7 +1940,46 @@ HRESULT WASAPIAudioInputStream::InitializeAudioEngine() {
 
   // Set the event handle that the audio engine will signal each time a buffer
   // becomes ready to be processed by the client.
-  hr = audio_client_->SetEventHandle(audio_samples_ready_event_.Get());
+  //
+  // In endpoint loopback mode the capture device is not running in an event-
+  // driven mode so we need to create a separate playback client to get
+  // notifications.
+  if (IsEndpointLoopbackCapture(device_id_, is_process_loopback_capture_)) {
+    SendLogMessage("%s => (WARNING: endpoint loopback mode is selected)",
+                   __func__);
+    hr = endpoint_device_->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                    &audio_render_client_for_loopback_);
+    if (FAILED(hr)) {
+      open_result_ = OPEN_RESULT_LOOPBACK_ACTIVATE_FAILED;
+      return hr;
+    }
+
+    // To ensure that we can deliver a loopback stream capturing an audio
+    // endpoint also when no output audio is playing, we initialize a render
+    // stream in event-driven mode. Each time the client receives an event for
+    // the render stream, it must signal the capture client to run the capture
+    // thread that reads the next set of samples from the capture endpoint
+    // buffer. Note that |input_format_| corresponds to the preferred parameters
+    // of the default output device in loopback mode.
+    // http://msdn.microsoft.com/en-us/library/windows/desktop/dd316551(v=vs.85).aspx
+    hr = audio_render_client_for_loopback_->Initialize(
+        AUDCLNT_SHAREMODE_SHARED,
+        AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST, 0, 0,
+        reinterpret_cast<const WAVEFORMATEX*>(&input_format_),
+        AudioDeviceDescription::IsCommunicationsDevice(device_id_)
+            ? &kCommunicationsSessionId
+            : nullptr);
+    if (FAILED(hr)) {
+      open_result_ = OPEN_RESULT_LOOPBACK_INIT_FAILED;
+      return hr;
+    }
+
+    hr = audio_render_client_for_loopback_->SetEventHandle(
+        audio_samples_ready_event_.Get());
+  } else {
+    hr = audio_client_->SetEventHandle(audio_samples_ready_event_.Get());
+  }
+
   if (FAILED(hr)) {
     open_result_ = OPEN_RESULT_SET_EVENT_HANDLE;
     return hr;

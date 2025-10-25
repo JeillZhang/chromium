@@ -204,14 +204,17 @@ class ExtensionsToolbarContainer : public ToolbarIconContainerView,
                     base::OnceClosure closure) override;
   bool ShowToolbarActionPopupForAPICall(const std::string& action_id,
                                         ShowPopupCallback callback) override;
-  void ShowToolbarActionBubble(
-      std::unique_ptr<ToolbarActionsBarBubbleDelegate> bubble) override;
   void ToggleExtensionsMenu() override;
   bool HasAnyExtensions() const override;
   void UpdateToolbarActionHoverCard(
       ToolbarActionView* action_view,
       ToolbarActionHoverCardUpdateType update_type) override;
   void CollapseConfirmation() override;
+  void ShowContextMenuAsFallback(
+      const extensions::ExtensionId& action_id) override;
+  void OnPopupShown(const extensions::ExtensionId& action_id,
+                    bool by_user) override;
+  void OnPopupClosed(const extensions::ExtensionId& action_id) override;
 
   // ToolbarActionView::Delegate:
   content::WebContents* GetCurrentWebContents() override;

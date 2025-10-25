@@ -20,9 +20,9 @@
 #include "components/policy/proto/secure_connect.pb.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "google_apis/gaia/core_account_id.h"
-#include "google_apis/gaia/gaia_constants.h"
 #include "net/base/load_flags.h"
 #include "net/base/url_util.h"
+#include "net/http/http_response_headers.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/mojom/url_response_head.mojom.h"
@@ -73,7 +73,7 @@ void UserCloudSigninRestrictionPolicyFetcher::
     GetManagedAccountsSigninRestriction(
         signin::IdentityManager* identity_manager,
         const CoreAccountId& account_id,
-        base::OnceCallback<void(const ProfileSeparationPolicies&)> callback,
+        base::OnceCallback<void(ProfileSeparationPolicies)> callback,
         const std::string& response_for_testing) {
   if (!response_for_testing.empty()) {
     OnManagedAccountsSigninRestrictionResult(
@@ -98,26 +98,24 @@ void UserCloudSigninRestrictionPolicyFetcher::FetchAccessToken(
   CHECK(!account_id.empty());
 #if BUILDFLAG(IS_IOS)
   CHECK(identity_manager->HasAccountWithRefreshTokenOnDevice(account_id));
-  identity_manager->GetRefreshTokenFromDevice(
-      account_id, /*scopes=*/
-      {GaiaConstants::kSecureConnectOAuth2Scope},
-      base::BindOnce(
-          &UserCloudSigninRestrictionPolicyFetcher::OnFetchAccessTokenResult,
-          base::Unretained(this), std::move(callback)));
+  signin::AccessTokenFetcher::Source source =
+      signin::AccessTokenFetcher::Source::kDevice;
 #else
   CHECK(identity_manager->HasAccountWithRefreshToken(account_id));
+  signin::AccessTokenFetcher::Source source =
+      signin::AccessTokenFetcher::Source::kProfile;
+#endif  // BUILDFLAG(IS_IOS)
   CHECK(!access_token_fetcher_);
 
   // base::Unretained is safe here because `access_token_fetcher_` is owned by
   // `this`.
   access_token_fetcher_ = identity_manager->CreateAccessTokenFetcherForAccount(
-      account_id, /*oauth_consumer_name=*/"cloud_policy", /*scopes=*/
-      {GaiaConstants::kSecureConnectOAuth2Scope},
+      account_id,
+      signin::OAuthConsumerId::kUserCloudSigninRestrictionPolicyFetcher,
       base::BindOnce(
           &UserCloudSigninRestrictionPolicyFetcher::OnFetchAccessTokenResult,
           base::Unretained(this), std::move(callback)),
-      signin::AccessTokenFetcher::Mode::kImmediate);
-#endif  // BUILDFLAG(IS_IOS)
+      signin::AccessTokenFetcher::Mode::kImmediate, source);
 }
 
 void UserCloudSigninRestrictionPolicyFetcher::OnFetchAccessTokenResult(
@@ -130,7 +128,7 @@ void UserCloudSigninRestrictionPolicyFetcher::OnFetchAccessTokenResult(
 
 void UserCloudSigninRestrictionPolicyFetcher::
     GetManagedAccountsSigninRestrictionInternal(
-        base::OnceCallback<void(const ProfileSeparationPolicies&)> callback,
+        base::OnceCallback<void(ProfileSeparationPolicies)> callback,
         const std::string& access_token) {
   net::NetworkTrafficAnnotationTag annotation =
       net::DefineNetworkTrafficAnnotation(
@@ -175,7 +173,7 @@ void UserCloudSigninRestrictionPolicyFetcher::
 
 void UserCloudSigninRestrictionPolicyFetcher::
     OnManagedAccountsSigninRestrictionResult(
-        base::OnceCallback<void(const ProfileSeparationPolicies&)> callback,
+        base::OnceCallback<void(ProfileSeparationPolicies)> callback,
         std::unique_ptr<std::string> response_body) {
   std::string restriction;
   GoogleServiceAuthError error = GoogleServiceAuthError::AuthErrorNone();

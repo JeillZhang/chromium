@@ -26,7 +26,6 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_INSPECTOR_CSS_AGENT_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_INSPECTOR_INSPECTOR_CSS_AGENT_H_
 
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/animation/keyframe_effect.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/css/css_condition_rule.h"
@@ -197,14 +196,19 @@ class CORE_EXPORT InspectorCSSAgent final
       std::optional<int>* parent_layout_node_id,
       std::unique_ptr<protocol::Array<protocol::CSS::CSSFunctionRule>>*)
       override;
+  protocol::Response getEnvironmentVariables(
+      std::unique_ptr<protocol::DictionaryValue>* environment_variables)
+      override;
   protocol::Response getInlineStylesForNode(
       int node_id,
       std::unique_ptr<protocol::CSS::CSSStyle>* inline_style,
       std::unique_ptr<protocol::CSS::CSSStyle>* attributes_style) override;
   protocol::Response getComputedStyleForNode(
       int node_id,
-      std::unique_ptr<
-          protocol::Array<protocol::CSS::CSSComputedStyleProperty>>*) override;
+      std::unique_ptr<protocol::Array<protocol::CSS::CSSComputedStyleProperty>>*
+          style,
+      std::unique_ptr<protocol::CSS::ComputedStyleExtraFields>* extra_fields)
+      override;
   protocol::Response resolveValues(
       std::unique_ptr<protocol::Array<String>> values,
       int node_id,
@@ -401,7 +405,7 @@ class CORE_EXPORT InspectorCSSAgent final
   std::unique_ptr<protocol::CSS::CSSFontPaletteValuesRule> FontPalettesForNode(
       Element& element);
 
-  // If the |animating_element| is a pseudo element, then |element| is a
+  // If the |animating_element| is a pseudo-element, then |element| is a
   // reference to its originating DOM element.
   std::unique_ptr<protocol::Array<protocol::CSS::CSSKeyframesRule>>
   AnimationsForNode(Element* element, Element* animating_element);
@@ -435,7 +439,8 @@ class CORE_EXPORT InspectorCSSAgent final
       CSSStyleRule*,
       Element* element,
       PseudoId pseudo_id = kPseudoIdNone,
-      const AtomicString& pseudo_argument = g_null_atom);
+      const AtomicString& pseudo_argument = g_null_atom,
+      const TreeScope* tree_scope = nullptr);
   std::unique_ptr<protocol::CSS::RuleUsage> BuildCoverageInfo(CSSStyleRule*,
                                                               bool);
   std::unique_ptr<protocol::Array<protocol::CSS::RuleMatch>>

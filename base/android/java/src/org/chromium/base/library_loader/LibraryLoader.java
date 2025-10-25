@@ -347,11 +347,12 @@ public class LibraryLoader {
         /**
          * Optionally extracts RELRO and saves it for replacing the RELRO section in this process.
          * Can be invoked before initialization.
-         * @param bundle Where to deserialize from.
+         *
+         * @param relros Where to deserialize from.
          */
-        public void takeSharedRelrosFromBundle(Bundle bundle) {
+        public void takeSharedRelrosFromAidl(IRelroLibInfo relros) {
             if (useChromiumLinker()) {
-                getLinker().takeSharedRelrosFromBundle(bundle);
+                getLinker().takeSharedRelrosFromAidl(relros);
             }
         }
 
@@ -361,10 +362,10 @@ public class LibraryLoader {
          *
          * @param bundle Where to serialize.
          */
-        public @Nullable Bundle getSharedRelrosBundle() {
+        public @Nullable IRelroLibInfo getSharedRelrosAidl() {
             assert mInitDone;
             if (useChromiumLinker()) {
-                return getLinker().getSharedRelrosBundle();
+                return getLinker().getSharedRelrosAidl();
             }
             return null;
         }
@@ -431,13 +432,17 @@ public class LibraryLoader {
         mLibraryProcessType = type;
     }
 
+    public @LibraryProcessType int getLibraryProcessType() {
+        return mLibraryProcessType;
+    }
+
     /**
-     * Set native library preloader. If set and the Chromium linker is not used, the
-     * {@link NativeLibraryPreloader#loadLibrary(String)} ()} will be invoked before calling
+     * Set native library preloader. If set and the Chromium linker is not used, the {@link
+     * NativeLibraryPreloader#loadLibrary(String)} ()} will be invoked before calling
      * System.loadLibrary().
      *
-     * @param loader the NativeLibraryPreloader, it shall only be set once and before the
-     *               native library is loaded.
+     * @param loader the NativeLibraryPreloader, it shall only be set once and before the native
+     *     library is loaded.
      */
     public void setNativeLibraryPreloader(NativeLibraryPreloader loader) {
         synchronized (mLock) {

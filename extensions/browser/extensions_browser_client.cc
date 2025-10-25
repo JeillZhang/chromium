@@ -146,28 +146,6 @@ ScriptExecutor* ExtensionsBrowserClient::GetScriptExecutorForTab(
   return nullptr;
 }
 
-void ExtensionsBrowserClient::NotifyExtensionApiTabExecuteScript(
-    content::BrowserContext* context,
-    const ExtensionId& extension_id,
-    const std::string& code) const {}
-
-bool ExtensionsBrowserClient::IsExtensionTelemetryServiceEnabled(
-    content::BrowserContext* context) const {
-  return false;
-}
-
-void ExtensionsBrowserClient::NotifyExtensionApiDeclarativeNetRequest(
-    content::BrowserContext* context,
-    const ExtensionId& extension_id,
-    const std::vector<api::declarative_net_request::Rule>& rules) const {}
-
-void ExtensionsBrowserClient::
-    NotifyExtensionDeclarativeNetRequestRedirectAction(
-        content::BrowserContext* context,
-        const ExtensionId& extension_id,
-        const GURL& request_url,
-        const GURL& redirect_url) const {}
-
 bool ExtensionsBrowserClient::IsUsbDeviceAllowedByPolicy(
     content::BrowserContext* context,
     const ExtensionId& extension_id,
@@ -227,7 +205,7 @@ void ExtensionsBrowserClient::GetWebViewStoragePartitionConfig(
         callback) {
   const GURL& owner_site_url = owner_site_instance->GetSiteURL();
   auto partition_config = content::StoragePartitionConfig::Create(
-      browser_context, owner_site_url.host(), partition_name, in_memory);
+      browser_context, owner_site_url.GetHost(), partition_name, in_memory);
 
   if (owner_site_url.SchemeIs(extensions::kExtensionScheme)) {
     const auto& owner_config = owner_site_instance->GetStoragePartitionConfig();
@@ -250,9 +228,6 @@ void ExtensionsBrowserClient::GetWebViewStoragePartitionConfig(
   std::move(callback).Run(partition_config);
 }
 
-void ExtensionsBrowserClient::CreatePasswordReuseDetectionManager(
-    content::WebContents* web_contents) const {}
-
 media_device_salt::MediaDeviceSaltService*
 ExtensionsBrowserClient::GetMediaDeviceSaltService(
     content::BrowserContext* context) {
@@ -263,6 +238,33 @@ bool ExtensionsBrowserClient::HasControlledFrameCapability(
     content::BrowserContext* context,
     const GURL& url) {
   return false;
+}
+
+custom_handlers::ProtocolHandlerRegistry*
+ExtensionsBrowserClient::GetProtocolHandlerRegistry(
+    content::BrowserContext* context) {
+  return nullptr;
+}
+
+void ExtensionsBrowserClient::CheckManagementPolicy(
+    content::BrowserContext* context) {}
+
+bool ExtensionsBrowserClient::IsForceInstalledInLowTrustEnvironment(
+    content::BrowserContext* context,
+    const Extension& extension) {
+  return true;
+}
+
+bool ExtensionsBrowserClient::IsInstallationExplicitlyAllowed(
+    content::BrowserContext* context,
+    const ExtensionId& id) {
+  return true;
+}
+
+bool ExtensionsBrowserClient::UpdatesFromWebstore(
+    content::BrowserContext* context,
+    const Extension& extension) {
+  return true;
 }
 
 }  // namespace extensions

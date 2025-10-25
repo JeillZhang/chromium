@@ -29,10 +29,10 @@
 #include <memory>
 
 #include "base/memory/scoped_refptr.h"
-#include "base/memory/weak_ptr.h"
 #include "base/rand_util.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/task/single_thread_task_runner.h"
+#include "base/time/time.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/renderer/core/core_export.h"
 #include "third_party/blink/renderer/core/dom/parser_content_policy.h"
@@ -61,6 +61,7 @@ namespace blink {
 
 class AtomicHTMLToken;
 class BackgroundHTMLScanner;
+class ContainerNode;
 class Document;
 class DocumentFragment;
 class Element;
@@ -91,10 +92,11 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
   HTMLDocumentParser(HTMLDocument&,
                      ParserSynchronizationPolicy,
                      ParserPrefetchPolicy prefetch_policy = kAllowPrefetching);
-  HTMLDocumentParser(DocumentFragment*,
+  HTMLDocumentParser(ContainerNode* fragment_target,
                      Element* context_element,
                      ParserContentPolicy,
-                     ParserPrefetchPolicy prefetch_policy = kAllowPrefetching);
+                     ParserPrefetchPolicy prefetch_policy,
+                     CustomElementRegistry* registry);
   ~HTMLDocumentParser() override;
   void Trace(Visitor*) const override;
 
@@ -102,6 +104,7 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
       const String&,
       DocumentFragment*,
       Element* context_element,
+      CustomElementRegistry*,
       ParserContentPolicy = kAllowScriptingContent);
 
   // Exposed for testing.
@@ -135,6 +138,12 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
   // Start pausing the parser while waiting for the performance.mark() call.
   void NotifyParserPauseByUserTiming() override;
   void NotifyParserResumeByUserTiming() override;
+
+  // The execution context, i.e., the document, no longer blocks script
+  // execution.
+  void ExecuteScriptsWaitingForPrerenderActivation() override;
+
+  void SetPatchScope(ContainerNode* scope);
 
  protected:
   void insert(const String&) final;
@@ -280,10 +289,10 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
   std::unique_ptr<HTMLPreloadScanner> preload_scanner_;
   // A scanner used only for input provided to the insert() method.
   std::unique_ptr<HTMLPreloadScanner> insertion_preload_scanner_;
-  WTF::SequenceBound<BackgroundHTMLScanner> background_script_scanner_;
+  SequenceBound<BackgroundHTMLScanner> background_script_scanner_;
   HTMLPreloadScanner::BackgroundPtr background_scanner_;
   using BackgroundScanFn =
-      WTF::CrossThreadRepeatingFunction<void(const KURL&, const String&)>;
+      CrossThreadRepeatingFunction<void(const KURL&, const String&)>;
   BackgroundScanFn background_scan_fn_;
 
   scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner_;
@@ -307,9 +316,6 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
   // Set to true if PumpTokenizer() was called at least once.
   bool did_pump_tokenizer_ = false;
 
-  // Cached result of ShouldSkipPreloadScan()
-  bool should_skip_preload_scan_ = false;
-
   // Counts how many CSP meta tags have been seen (but not necessarily processed
   // yet). This is used to compare the number of seen tags with the number of
   // processed CSP tags in order to decide if resources can be preloaded.
@@ -321,6 +327,9 @@ class CORE_EXPORT HTMLDocumentParser : public ScriptableDocumentParser,
   base::TimeTicks time_waiting_for_user_timing_;
 
   base::MetricsSubSampler metrics_sub_sampler_;
+
+  base::TimeDelta total_tokenization_time_;
+  base::TimeDelta total_parsing_time_;
 };
 
 }  // namespace blink

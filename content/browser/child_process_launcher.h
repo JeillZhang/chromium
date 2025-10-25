@@ -95,6 +95,7 @@ struct RenderProcessPriority {
                         bool intersects_viewport,
                         bool boost_for_pending_views,
                         bool boost_for_loading,
+                        bool boost_for_discard,
                         bool is_spare_renderer
 #if BUILDFLAG(IS_ANDROID)
                         ,
@@ -167,6 +168,10 @@ struct RenderProcessPriority {
   // navigation and initial loading.
   bool boost_for_loading;
 
+  // |boost_for_discard| is true if this process is responsible for executing
+  // discard logic.
+  bool boost_for_discard;
+
   // |is_spare_renderer| is true if this process should be treated as a spare
   // renderer. The process will be given a moderate priority even it is not
   // visible and used.
@@ -232,6 +237,8 @@ class CONTENT_EXPORT ChildProcessLauncher
 #if BUILDFLAG(IS_ANDROID)
     // Whether the process can use pre-warmed up connection.
     virtual bool CanUseWarmUpConnection();
+    // Whether the process should be set to the priority of a spare renderer.
+    virtual bool HasSpareRendererPriority();
 #endif
 
    protected:
@@ -250,7 +257,7 @@ class CONTENT_EXPORT ChildProcessLauncher
   ChildProcessLauncher(
       std::unique_ptr<SandboxedProcessLauncherDelegate> delegate,
       std::unique_ptr<base::CommandLine> cmd_line,
-      int child_process_id,
+      ChildProcessId child_process_id,
       Client* client,
       mojo::OutgoingInvitation mojo_invitation,
       const mojo::ProcessErrorCallback& process_error_callback,
@@ -260,8 +267,7 @@ class CONTENT_EXPORT ChildProcessLauncher
       scoped_refptr<base::RefCountedData<base::ReadOnlySharedMemoryRegion>>
           trace_config_memory_region = nullptr,
       scoped_refptr<base::RefCountedData<base::UnsafeSharedMemoryRegion>>
-          trace_output_memory_region = nullptr,
-      bool terminate_on_shutdown = true);
+          trace_output_memory_region = nullptr);
 
   ChildProcessLauncher(const ChildProcessLauncher&) = delete;
   ChildProcessLauncher& operator=(const ChildProcessLauncher&) = delete;

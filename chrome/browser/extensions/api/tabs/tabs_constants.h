@@ -7,12 +7,19 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_TABS_TABS_CONSTANTS_H_
 #define CHROME_BROWSER_EXTENSIONS_API_TABS_TABS_CONSTANTS_H_
 
+#include "extensions/buildflags/buildflags.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
+
 namespace extensions {
 namespace tabs_constants {
 
 // Keys used in serializing tab data & events.
 inline constexpr char kActiveKey[] = "active";
 inline constexpr char kFaviconUrlKey[] = "favIconUrl";
+inline constexpr char kIsWindowClosingKey[] = "isWindowClosing";
+inline constexpr char kSelectedKey[] = "selected";
+inline constexpr char kStatusKey[] = "status";
 inline constexpr char kTitleKey[] = "title";
 inline constexpr char kUrlKey[] = "url";
 inline constexpr char kPendingUrlKey[] = "pendingUrl";

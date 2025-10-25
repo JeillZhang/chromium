@@ -5,6 +5,7 @@
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_groups_panel_coordinator.h"
 
 #import "base/memory/weak_ptr.h"
+#import "base/strings/sys_string_conversions.h"
 #import "components/collaboration/public/collaboration_flow_entry_point.h"
 #import "components/collaboration/public/collaboration_flow_type.h"
 #import "components/collaboration/public/collaboration_service.h"
@@ -16,14 +17,18 @@
 #import "ios/chrome/browser/data_sharing/model/data_sharing_service_factory.h"
 #import "ios/chrome/browser/favicon/model/ios_chrome_favicon_loader_factory.h"
 #import "ios/chrome/browser/policy/model/policy_util.h"
+#import "ios/chrome/browser/saved_tab_groups/coordinator/face_pile_configuration.h"
+#import "ios/chrome/browser/saved_tab_groups/coordinator/face_pile_coordinator.h"
 #import "ios/chrome/browser/saved_tab_groups/model/ios_tab_group_action_context.h"
 #import "ios/chrome/browser/saved_tab_groups/model/tab_group_sync_service_factory.h"
 #import "ios/chrome/browser/share_kit/model/share_kit_service_factory.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/browser/browser_list_factory.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
+#import "ios/chrome/browser/shared/public/commands/application_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/tab_grid_commands.h"
+#import "ios/chrome/browser/shared/public/commands/tab_groups_commands.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/disabled_grid_view_controller.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_container_view_controller.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/tab_groups/tab_groups_panel_mediator.h"
@@ -39,6 +44,13 @@ using collaboration::messaging::MessagingBackendServiceFactory;
 using ResultCallback =
     collaboration::CollaborationControllerDelegate::ResultCallback;
 using collaboration::CollaborationControllerDelegate;
+
+namespace {
+
+// The preferred size in points for the avatar icons.
+constexpr CGFloat kFacePileAvatarSize = 24;
+
+}  // namespace
 
 @interface TabGroupsPanelCoordinator () <TabGroupsPanelMediatorDelegate>
 
@@ -122,6 +134,10 @@ using collaboration::CollaborationControllerDelegate;
   _mediator.toolbarsMutator = _toolbarsMutator;
   _mediator.tabGridHandler =
       HandlerForProtocol(self.browser->GetCommandDispatcher(), TabGridCommands);
+  _mediator.applicationHandler = HandlerForProtocol(
+      self.browser->GetCommandDispatcher(), ApplicationCommands);
+  _mediator.tabGroupsCommands = HandlerForProtocol(
+      self.browser->GetCommandDispatcher(), TabGroupsCommands);
   _mediator.consumer = _gridViewController;
   _mediator.delegate = self;
   _gridViewController.mutator = _mediator;
@@ -220,6 +236,7 @@ using collaboration::CollaborationControllerDelegate;
           case TabGroupActionType::kLeaveOrKeepSharedTabGroup:
           case TabGroupActionType::kUngroupTabGroup:
           case TabGroupActionType::kDeleteTabGroup:
+          case TabGroupActionType::kCloseLastTabUnknownRole:
             NOTREACHED();
         }
       });
@@ -243,6 +260,22 @@ using collaboration::CollaborationControllerDelegate;
       collaboration::CollaborationServiceLeaveOrDeleteEntryPoint::kUnknown;
   collaborationService->StartLeaveOrDeleteFlow(std::move(delegate), syncID,
                                                entryPoint);
+}
+
+- (id<FacePileProviding>)facePileProviderForGroupID:
+    (const std::string&)groupID {
+  // Configure the face pile.
+  FacePileConfiguration* config = [[FacePileConfiguration alloc] init];
+  config.showsEmptyState = NO;
+  config.avatarSize = kFacePileAvatarSize;
+  config.groupID = data_sharing::GroupId(groupID);
+
+  FacePileCoordinator* facePileCoordinator =
+      [[FacePileCoordinator alloc] initWithFacePileConfiguration:config
+                                                         browser:self.browser];
+  [facePileCoordinator start];
+
+  return facePileCoordinator;
 }
 
 #pragma mark - Private

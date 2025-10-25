@@ -47,6 +47,7 @@
 #include "chrome/browser/web_applications/os_integration/web_app_uninstallation_via_os_settings_registration.h"
 #include "chrome/browser/web_applications/proto/web_app_os_integration_state.pb.h"
 #include "chrome/browser/web_applications/web_app_constants.h"
+#include "chrome/browser/web_applications/web_app_icon_manager.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_profile_deletion_manager.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
@@ -334,11 +335,12 @@ void OsIntegrationManager::GetShortcutInfoForAppFromRegistrar(
       GetDesiredIconSizesForShortcut());
 
   if (!icon_sizes_in_px.empty()) {
-    provider_->icon_manager().ReadIcons(
-        app_id, IconPurpose::ANY, icon_sizes_in_px,
-        base::BindOnce(&OsIntegrationManager::OnIconsRead,
-                       weak_ptr_factory_.GetWeakPtr(), app_id,
-                       std::move(callback)));
+    provider_->icon_manager().ReadTrustedIconsWithFallbackToManifestIcons(
+        app_id, icon_sizes_in_px, IconPurpose::ANY,
+        web_app::WebAppIconManager::BitmapsFromIconMetadataExtractor(
+            base::BindOnce(&OsIntegrationManager::OnIconsRead,
+                           weak_ptr_factory_.GetWeakPtr(), app_id,
+                           std::move(callback))));
     return;
   }
 
@@ -374,7 +376,8 @@ std::optional<GURL> OsIntegrationManager::TranslateProtocolUrl(
 }
 
 std::vector<custom_handlers::ProtocolHandler>
-OsIntegrationManager::GetAppProtocolHandlers(const webapps::AppId& app_id) {
+OsIntegrationManager::GetAppProtocolHandlers(
+    const webapps::AppId& app_id) const {
   if (!protocol_handler_manager_)
     return std::vector<custom_handlers::ProtocolHandler>();
 

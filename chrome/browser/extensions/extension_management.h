@@ -11,6 +11,7 @@
 
 #include "base/containers/flat_map.h"
 #include "base/containers/flat_set.h"
+#include "base/feature_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list.h"
@@ -36,6 +37,13 @@ class BrowserContext;
 }  // namespace content
 
 namespace extensions {
+
+enum class ManagedToolbarPinMode;
+
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+BASE_DECLARE_FEATURE(
+    kDisableForceInstalledExtensionsInLowTrustEnviromentWhenGreylisted);
+#endif
 
 namespace internal {
 
@@ -85,6 +93,14 @@ class ExtensionManagement : public KeyedService {
   // this means that even extensions without an ID should be blocklisted (e.g.
   // from the command line, or when loaded as an unpacked extension).
   bool BlocklistedByDefault() const;
+
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+  // Checks if extensions are enabled for Desktop Android for the current
+  // profile. This is temporary for until extensions are ready for dogfooding.
+  // TODO(crbug.com/422307625): Remove this check once extensions are ready for
+  // dogfooding.
+  bool ExtensionsEnabledForDesktopAndroid() const;
+#endif  // BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
 
   // Returns installation mode for an extension.
   ManagedInstallationMode GetInstallationMode(const Extension* extension);
@@ -151,7 +167,13 @@ class ExtensionManagement : public KeyedService {
   // is OFF.
   bool IsAllowedByUnpackedDeveloperModePolicy(const Extension& extension);
 
+  // Returns true if a greylisted extension is force-installed in a low-trust
+  // environment. Only applies to Windows and MacOS.
+  bool IsGreylistedForceInstalledInLowTrustEnvironment(
+      const ExtensionId& extension_id);
+
   // Returns true if a force-installed extension is in a low-trust environment.
+  // Only applies to Windows and MacOS.
   bool IsForceInstalledInLowTrustEnvironment(const Extension& extension);
 
   // Returns true if an off-store extension is force-installed in low trust
@@ -226,6 +248,10 @@ class ExtensionManagement : public KeyedService {
 
   // Returns if an extension with `id` can navigate to file URLs.
   bool IsFileUrlNavigationAllowed(const ExtensionId& id);
+
+  // Returns the toolbar pin mode for `extension_id`.
+  extensions::ManagedToolbarPinMode GetToolbarPinMode(
+      const ExtensionId& extension_id);
 
  private:
   using SettingsIdMap =

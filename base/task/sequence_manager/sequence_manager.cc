@@ -139,6 +139,24 @@ SequenceManager::Settings::Builder::SetPrioritySettings(
   return *this;
 }
 
+SequenceManager::Settings::Builder&
+SequenceManager::Settings::Builder::SetIsMainThread(bool is_main_thread_val) {
+  settings_.is_main_thread = is_main_thread_val;
+  return *this;
+}
+
+SequenceManager::Settings::Builder&
+SequenceManager::Settings::Builder::SetShouldReportLockMetrics(bool enable) {
+  settings_.should_report_lock_metrics = enable;
+  return *this;
+}
+
+SequenceManager::Settings::Builder&
+SequenceManager::Settings::Builder::SetShouldBlockOnScopedFences(bool enable) {
+  settings_.should_block_on_scoped_fences = enable;
+  return *this;
+}
+
 #if DCHECK_IS_ON()
 
 SequenceManager::Settings::Builder&
@@ -173,5 +191,9 @@ SequenceManager::Settings::Builder::SetLogTaskDelayExpiry(
 SequenceManager::Settings SequenceManager::Settings::Builder::Build() {
   return std::move(settings_);
 }
+
+SequenceManagerSettings::SequenceManagerSettings(
+    SequenceManager::Settings settings)
+    : settings(std::move(settings)) {}
 
 }  // namespace base::sequence_manager

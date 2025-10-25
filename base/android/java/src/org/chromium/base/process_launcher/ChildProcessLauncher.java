@@ -13,10 +13,13 @@ import android.os.Looper;
 
 import org.chromium.base.AndroidInfo;
 import org.chromium.base.ApkInfo;
+import org.chromium.base.ChildBindingState;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.DeviceInfo;
 import org.chromium.base.Log;
 import org.chromium.base.TraceEvent;
+import org.chromium.base.library_loader.IRelroLibInfo;
+import org.chromium.base.version_info.VersionConstants;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.build.annotations.RequiresNonNull;
@@ -45,7 +48,8 @@ public class ChildProcessLauncher {
          */
         public @Nullable ChildProcessConnection getBoundConnection(
                 ChildConnectionAllocator connectionAllocator,
-                ChildProcessConnection.ServiceCallback serviceCallback) {
+                ChildProcessConnection.ServiceCallback serviceCallback,
+                @ChildBindingState int initialBindingState) {
             return null;
         }
 
@@ -77,18 +81,27 @@ public class ChildProcessLauncher {
         /**
          * Called as part of establishing the connection. Saves the bundle for transferring to other
          * processes that did not inherit from the App Zygote.
+         *
          * @param connection the new connection
-         * @param relroBundle the bundle potentially containing useful information for relocation
-         * sharing across processes.
+         * @param relroInfo the IRelroLibInfo potentially containing useful information for
+         *     relocation sharing across processes.
          */
-        public void onReceivedZygoteInfo(ChildProcessConnection connection, Bundle relroBundle) {}
+        public void onReceivedZygoteInfo(
+                ChildProcessConnection connection, @Nullable IRelroLibInfo relroInfo) {}
 
         /**
          * Called when a connection has been disconnected. Only invoked if onConnectionEstablished
          * was called, meaning the connection was already established.
+         *
          * @param connection the connection that got disconnected.
          */
         public void onConnectionLost(ChildProcessConnection connection) {}
+
+        /**
+         * Gives us which process type we have, so we know which delegate to use when initializing
+         * the child process.
+         */
+        public abstract int getLibraryProcessType();
     }
 
     // Represents an invalid process handle; same as base/process/process.h kNullProcessHandle.
@@ -108,9 +121,6 @@ public class ChildProcessLauncher {
     // The IBinder interfaces provided to the created service.
     private final @Nullable List<IBinder> mClientInterfaces;
 
-    // A binder box which can be used by the child to unpack additional binders.
-    private final @Nullable IBinder mBinderBox;
-
     // The actual service connection. Set once we have connected to the service. Volatile as it is
     // accessed from threads other than the Launcher thread.
     private volatile @Nullable ChildProcessConnection mConnection;
@@ -125,7 +135,6 @@ public class ChildProcessLauncher {
      * @param connectionAllocator the allocator used to create connections to the service.
      * @param clientInterfaces the interfaces that should be passed to the started process so it can
      *     communicate with the parent process.
-     * @param binderBox an optional binder box the child can use to unpack additional binders
      */
     public ChildProcessLauncher(
             Handler launcherHandler,
@@ -133,8 +142,7 @@ public class ChildProcessLauncher {
             String[] commandLine,
             IFileDescriptorInfo[] filesToBeMapped,
             ChildConnectionAllocator connectionAllocator,
-            @Nullable List<IBinder> clientInterfaces,
-            @Nullable IBinder binderBox) {
+            @Nullable List<IBinder> clientInterfaces) {
         assert connectionAllocator != null;
         mLauncherHandler = launcherHandler;
         isRunningOnLauncherThread();
@@ -143,20 +151,23 @@ public class ChildProcessLauncher {
         mDelegate = delegate;
         mFilesToBeMapped = filesToBeMapped;
         mClientInterfaces = clientInterfaces;
-        mBinderBox = binderBox;
     }
 
     /**
      * Starts the child process and calls setup on it if {@param setupConnection} is true.
      *
      * @param setupConnection whether the setup should be performed on the connection once
-     *     established
+     *     established.
      * @param queueIfNoFreeConnection whether to queue that request if no service connection is
      *     available. If the launcher was created with a connection provider, this parameter has no
      *     effect.
+     * @param initialBindingState The initial binding state for the connection.
      * @return true if the connection was started or was queued.
      */
-    public boolean start(final boolean setupConnection, final boolean queueIfNoFreeConnection) {
+    public boolean start(
+            final boolean setupConnection,
+            final boolean queueIfNoFreeConnection,
+            @ChildBindingState int initialBindingState) {
         assert isRunningOnLauncherThread();
         try {
             TraceEvent.begin("ChildProcessLauncher.start");
@@ -171,18 +182,18 @@ public class ChildProcessLauncher {
                             assert mConnection == connection;
                             Log.e(TAG, "ChildProcessConnection.start failed, trying again");
                             mLauncherHandler.post(
-                                    new Runnable() {
-                                        @Override
-                                        public void run() {
-                                            // The child process may already be bound to another
-                                            // client (this can happen if multi-process WebView is
-                                            // used in more than one process), so try starting the
-                                            // process again.
-                                            // This connection that failed to start has not been
-                                            // freed, so a new bound connection will be allocated.
-                                            mConnection = null;
-                                            start(setupConnection, queueIfNoFreeConnection);
-                                        }
+                                    () -> {
+                                        // The child process may already be bound to another
+                                        // client (this can happen if multi-process WebView is
+                                        // used in more than one process), so try starting the
+                                        // process again.
+                                        // This connection that failed to start has not been
+                                        // freed, so a new bound connection will be allocated.
+                                        mConnection = null;
+                                        start(
+                                                setupConnection,
+                                                queueIfNoFreeConnection,
+                                                initialBindingState);
                                     });
                         }
 
@@ -193,13 +204,18 @@ public class ChildProcessLauncher {
                             ChildProcessLauncher.this.onChildProcessDied();
                         }
                     };
-            mConnection = mDelegate.getBoundConnection(mConnectionAllocator, serviceCallback);
+            mConnection =
+                    mDelegate.getBoundConnection(
+                            mConnectionAllocator, serviceCallback, initialBindingState);
             if (mConnection != null) {
                 setupConnection();
                 return true;
             }
             if (!allocateAndSetupConnection(
-                            serviceCallback, setupConnection, queueIfNoFreeConnection)
+                            serviceCallback,
+                            setupConnection,
+                            queueIfNoFreeConnection,
+                            initialBindingState)
                     && !queueIfNoFreeConnection) {
                 return false;
             }
@@ -220,14 +236,19 @@ public class ChildProcessLauncher {
     private boolean allocateAndSetupConnection(
             final ChildProcessConnection.ServiceCallback serviceCallback,
             final boolean setupConnection,
-            final boolean queueIfNoFreeConnection) {
+            final boolean queueIfNoFreeConnection,
+            @ChildBindingState int initialBindingState) {
         assert mConnection == null;
         Bundle serviceBundle = new Bundle();
         mDelegate.onBeforeConnectionAllocated(serviceBundle);
 
         mConnection =
                 mConnectionAllocator.allocate(
-                        ContextUtils.getApplicationContext(), serviceBundle, serviceCallback);
+                        ContextUtils.getApplicationContext(),
+                        serviceBundle,
+                        serviceCallback,
+                        initialBindingState);
+
         if (mConnection == null) {
             if (!queueIfNoFreeConnection) {
                 Log.d(TAG, "Failed to allocate a child connection (no queuing).");
@@ -236,7 +257,10 @@ public class ChildProcessLauncher {
             mConnectionAllocator.queueAllocation(
                     () ->
                             allocateAndSetupConnection(
-                                    serviceCallback, setupConnection, queueIfNoFreeConnection));
+                                    serviceCallback,
+                                    setupConnection,
+                                    queueIfNoFreeConnection,
+                                    initialBindingState));
             return false;
         }
 
@@ -252,8 +276,8 @@ public class ChildProcessLauncher {
                 new ChildProcessConnection.ZygoteInfoCallback() {
                     @Override
                     public void onReceivedZygoteInfo(
-                            ChildProcessConnection connection, Bundle relroBundle) {
-                        mDelegate.onReceivedZygoteInfo(connection, relroBundle);
+                            ChildProcessConnection connection, @Nullable IRelroLibInfo relroInfo) {
+                        mDelegate.onReceivedZygoteInfo(connection, relroInfo);
                     }
                 };
         ChildProcessConnection.ConnectionCallback connectionCallback =
@@ -266,11 +290,7 @@ public class ChildProcessLauncher {
         IChildProcessArgs connectionArgs = createConnectionArgs();
         mDelegate.onBeforeConnectionSetup(connectionArgs);
         mConnection.setupConnection(
-                connectionArgs,
-                getClientInterfaces(),
-                getBinderBox(),
-                connectionCallback,
-                zygoteInfoCallback);
+                connectionArgs, getClientInterfaces(), connectionCallback, zygoteInfoCallback);
     }
 
     private void onServiceConnected(@Nullable ChildProcessConnection connection) {
@@ -303,10 +323,6 @@ public class ChildProcessLauncher {
         return mClientInterfaces;
     }
 
-    public @Nullable IBinder getBinderBox() {
-        return mBinderBox;
-    }
-
     private boolean isRunningOnLauncherThread() {
         return mLauncherHandler.getLooper() == Looper.myLooper();
     }
@@ -318,6 +334,8 @@ public class ChildProcessLauncher {
         args.apkInfo = ApkInfo.getAidlInfo();
         args.androidInfo = AndroidInfo.getAidlInfo();
         args.deviceInfo = DeviceInfo.getAidlInfo();
+        args.channel = VersionConstants.CHANNEL;
+        args.libraryProcessType = mDelegate.getLibraryProcessType();
         return args;
     }
 

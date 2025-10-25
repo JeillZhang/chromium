@@ -172,6 +172,10 @@ bool IsCredentialLocalPassword(const CredentialUIEntry& credential) {
 
 - (void)setConsumer:(id<PasswordSettingsConsumer>)consumer {
   _consumer = consumer;
+  if (!_consumer) {
+    return;
+  }
+
   // Now that the consumer is set, ensure that the consumer starts out with the
   // correct initial value for `canExportPasswords` or else the export button
   // will not behave correctly on load.
@@ -226,7 +230,7 @@ bool IsCredentialLocalPassword(const CredentialUIEntry& credential) {
   _savedPasswordsPresenter->DeleteAllData(base::DoNothing());
 }
 
-- (void)userDidStartExportFlow {
+- (void)userDidStartExportFlow:(UIWindow*)window {
   std::vector<CredentialUIEntry> passwords =
       _savedPasswordsPresenter->GetSavedPasswords();
   [_passwordExporter startExportFlow:passwords];
@@ -248,9 +252,12 @@ bool IsCredentialLocalPassword(const CredentialUIEntry& credential) {
   [[PasswordAutoFillStatusManager sharedManager] removeObserver:self];
   _prefObserverBridge.reset();
   _prefChangeRegistrar.reset();
-
   _identityManagerObserver.reset();
   _syncObserver.reset();
+  _savedPasswordsPresenter = nullptr;
+  _prefService = nullptr;
+  _syncService = nullptr;
+  _trustedVaultClientBackend = nullptr;
 }
 
 - (CredentialCounts)passwordAndPasskeyCounts {
@@ -414,9 +421,7 @@ bool IsCredentialLocalPassword(const CredentialUIEntry& credential) {
   [self.consumer setUserEmail:base::SysUTF8ToNSString(
                                   _syncService->GetAccountInfo().email)];
   [self updateShowBulkMovePasswordsToAccount];
-  [self.consumer setCanChangeGPMPin:password_manager::features_util::
-                                        IsAccountStorageEnabled(_prefService,
-                                                                _syncService)];
+  // TODO(crbug.com/430876032): Update GPM Pin section properly.
 }
 
 #pragma mark - Private
@@ -453,8 +458,7 @@ bool IsCredentialLocalPassword(const CredentialUIEntry& credential) {
 // Computes the amount of local passwords and passes that on to the consumer.
 - (void)updateShowBulkMovePasswordsToAccount {
   [self.consumer setCanBulkMove:password_manager::features_util::
-                                    IsAccountStorageEnabled(_prefService,
-                                                            _syncService)
+                                    IsAccountStorageEnabled(_syncService)
             localPasswordsCount:[self computeLocalPasswordsCount]];
 }
 

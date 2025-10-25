@@ -6,10 +6,12 @@
 
 #include <memory>
 
+#include "base/android/device_info.h"
 #include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "components/collaboration/internal/collaboration_controller.h"
+#include "components/collaboration/public/pref_names.h"
 #include "components/collaboration/test_support/mock_collaboration_controller_delegate.h"
 #include "components/data_sharing/public/data_sharing_service.h"
 #include "components/data_sharing/public/features.h"
@@ -26,17 +28,12 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-#if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
-#endif  // BUILDFLAG(IS_ANDROID)
-
 using data_sharing::GroupData;
 using data_sharing::GroupId;
 using data_sharing::GroupMember;
 using data_sharing::MemberRole;
 using signin::PrimaryAccountChangeEvent;
 using testing::_;
-using testing::Invoke;
 using testing::Return;
 
 namespace collaboration {
@@ -61,13 +58,23 @@ class CollaborationServiceImplTest : public testing::Test {
 
   void SetUp() override {
 #if BUILDFLAG(IS_ANDROID)
-    if (base::android::BuildInfo::GetInstance()->is_automotive()) {
+    if (base::android::device_info::is_automotive()) {
       // TODO(crbug.com/399444939): Re-enable once automotive is supported.
       GTEST_SKIP() << "Test shouldn't run on automotive builders.";
     }
 #endif
     test_sync_service_ = std::make_unique<syncer::TestSyncService>();
-    pref_service_.registry()->RegisterBooleanPref(prefs::kSigninAllowed, true);
+    profile_pref_service_.registry()->RegisterIntegerPref(
+        prefs::kSharedTabGroupsManagedAccountSetting, 0 /* enabled */);
+    profile_pref_service_.registry()->RegisterBooleanPref(
+        ::prefs::kSigninAllowed, true);
+    profile_pref_service_.registry()->RegisterBooleanPref(
+        ::prefs::kSigninAllowedOnNextStartup, true);
+#if BUILDFLAG(IS_IOS)
+    local_pref_service_.registry()->RegisterIntegerPref(
+        ::prefs::kBrowserSigninPolicy,
+        static_cast<int>(BrowserSigninMode::kEnabled));
+#endif
     InitService();
   }
 
@@ -76,13 +83,15 @@ class CollaborationServiceImplTest : public testing::Test {
   void InitService() {
     service_ = std::make_unique<CollaborationServiceImpl>(
         &mock_tab_group_sync_service_, &mock_data_sharing_service_,
-        identity_test_env_.identity_manager(), &pref_service_);
+        identity_test_env_.identity_manager(), &profile_pref_service_,
+        &local_pref_service_);
     service_->OnSyncServiceInitialized(test_sync_service_.get());
   }
 
  protected:
   base::test::SingleThreadTaskEnvironment task_environment_;
-  sync_preferences::TestingPrefServiceSyncable pref_service_;
+  sync_preferences::TestingPrefServiceSyncable profile_pref_service_;
+  sync_preferences::TestingPrefServiceSyncable local_pref_service_;
   signin::IdentityTestEnvironment identity_test_env_;
   std::unique_ptr<syncer::TestSyncService> test_sync_service_;
   tab_groups::MockTabGroupSyncService mock_tab_group_sync_service_;
@@ -165,13 +174,15 @@ TEST_F(CollaborationServiceImplTest, GetServiceStatus_CreateOverridesJoinOnly) {
             CollaborationStatus::kEnabledCreateAndJoin);
 }
 
-TEST_F(CollaborationServiceImplTest, GetServiceStatus_SigninDisabled) {
+TEST_F(CollaborationServiceImplTest, GetServiceStatus_SigninDisabledByUser) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeature(
       data_sharing::features::kDataSharingFeature);
 
   // Set signin preference to disable signin.
-  pref_service_.SetBoolean(prefs::kSigninAllowed, false);
+  profile_pref_service_.SetBoolean(::prefs::kSigninAllowed, false);
+  profile_pref_service_.SetBoolean(::prefs::kSigninAllowedOnNextStartup, false);
+
   InitService();
 
   EXPECT_EQ(service_->GetServiceStatus().signin_status,
@@ -180,17 +191,37 @@ TEST_F(CollaborationServiceImplTest, GetServiceStatus_SigninDisabled) {
             CollaborationStatus::kEnabledCreateAndJoin);
   EXPECT_EQ(service_->GetServiceStatus().IsAllowedToJoin(), true);
   EXPECT_EQ(service_->GetServiceStatus().IsAllowedToCreate(), false);
+}
 
-  pref_service_.SetManagedPref(prefs::kSigninAllowed, base::Value(false));
+#if !BUILDFLAG(IS_IOS)
+TEST_F(CollaborationServiceImplTest, GetServiceStatus_SigninDisabledByPolicy) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      data_sharing::features::kDataSharingFeature);
+
+#if BUILDFLAG(IS_ANDROID)
+  profile_pref_service_.SetBoolean(::prefs::kSigninAllowed, false);
+  profile_pref_service_.SetManagedPref(::prefs::kSigninAllowed,
+                                       base::Value(false));
+#else
+  profile_pref_service_.SetBoolean(::prefs::kSigninAllowedOnNextStartup, false);
+  profile_pref_service_.SetManagedPref(::prefs::kSigninAllowedOnNextStartup,
+                                       base::Value(false));
+#endif
+
+  InitService();
   EXPECT_EQ(service_->GetServiceStatus().collaboration_status,
             CollaborationStatus::kDisabledForPolicy);
 }
+#endif
 
 TEST_F(CollaborationServiceImplTest, GetServiceStatus_ManagedAccount) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeature(
       data_sharing::features::kDataSharingFeature);
   InitService();
+  profile_pref_service_.SetInteger(prefs::kSharedTabGroupsManagedAccountSetting,
+                                   1 /* disabled */);
 
   EXPECT_EQ(service_->GetServiceStatus().signin_status,
             SigninStatus::kNotSignedIn);
@@ -302,6 +333,51 @@ TEST_F(CollaborationServiceImplTest, SyncStatusChanges) {
   }
 }
 
+TEST_F(CollaborationServiceImplTest, SyncTypeDisabledByEnterprise) {
+#if BUILDFLAG(IS_IOS) || BUILDFLAG(IS_ANDROID)
+  // Set up a policy to disable Tabs.
+  test_sync_service_->GetUserSettings()->SetTypeIsManagedByPolicy(
+      syncer::UserSelectableType::kTabs, true);
+  test_sync_service_->FireStateChanged();
+  EXPECT_EQ(service_->GetServiceStatus().sync_status,
+            SyncStatus::kSyncDisabledByEnterprise);
+
+  // Reset the policy.
+  test_sync_service_->GetUserSettings()->SetTypeIsManagedByPolicy(
+      syncer::UserSelectableType::kTabs, false);
+  test_sync_service_->FireStateChanged();
+  EXPECT_EQ(service_->GetServiceStatus().sync_status, SyncStatus::kSyncEnabled);
+
+  // Set up a policy to disable History.
+  test_sync_service_->GetUserSettings()->SetTypeIsManagedByPolicy(
+      syncer::UserSelectableType::kHistory, true);
+  test_sync_service_->FireStateChanged();
+  EXPECT_EQ(service_->GetServiceStatus().sync_status,
+            SyncStatus::kSyncDisabledByEnterprise);
+#else
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kReplaceSyncPromosWithSignInPromos);
+
+  // Set up a policy to disable Saved Tab Groups.
+  test_sync_service_->GetUserSettings()->SetTypeIsManagedByPolicy(
+      syncer::UserSelectableType::kSavedTabGroups, true);
+  test_sync_service_->FireStateChanged();
+  EXPECT_EQ(service_->GetServiceStatus().sync_status,
+            SyncStatus::kSyncDisabledByEnterprise);
+#endif
+}
+
+TEST_F(CollaborationServiceImplTest, SyncDisabledByEnterprise) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(syncer::kReplaceSyncPromosWithSignInPromos);
+
+  // Disable sync by enterprise policy.
+  test_sync_service_->SetAllowedByEnterprisePolicy(false);
+  test_sync_service_->FireStateChanged();
+  EXPECT_EQ(service_->GetServiceStatus().sync_status,
+            SyncStatus::kSyncDisabledByEnterprise);
+}
+
 TEST_F(CollaborationServiceImplTest, SyncStatusChanges_SettingInProgress) {
   // By default the test sync service is signed in with sync and every DataType
   // enabled.
@@ -333,14 +409,14 @@ TEST_F(CollaborationServiceImplTest, DeleteGroup) {
   EXPECT_CALL(mock_tab_group_sync_service_,
               OnCollaborationRemoved(syncer::CollaborationId(kGroupId)));
   EXPECT_CALL(mock_data_sharing_service_, DeleteGroup(group_id, _))
-      .WillOnce(Invoke(
+      .WillOnce(
           [](const data_sharing::GroupId&,
              base::OnceCallback<void(
                  data_sharing::DataSharingService::PeopleGroupActionOutcome)>
                  callback) {
             std::move(callback).Run(data_sharing::DataSharingService::
                                         PeopleGroupActionOutcome::kSuccess);
-          }));
+          });
 
   base::RunLoop run_loop;
   service_->DeleteGroup(group_id,
@@ -358,14 +434,14 @@ TEST_F(CollaborationServiceImplTest, LeaveGroup) {
   EXPECT_CALL(mock_tab_group_sync_service_,
               OnCollaborationRemoved(syncer::CollaborationId(kGroupId)));
   EXPECT_CALL(mock_data_sharing_service_, LeaveGroup(group_id, _))
-      .WillOnce(Invoke(
+      .WillOnce(
           [](const data_sharing::GroupId&,
              base::OnceCallback<void(
                  data_sharing::DataSharingService::PeopleGroupActionOutcome)>
                  callback) {
             std::move(callback).Run(data_sharing::DataSharingService::
                                         PeopleGroupActionOutcome::kSuccess);
-          }));
+          });
 
   base::RunLoop run_loop;
   service_->LeaveGroup(group_id, base::BindOnce(
@@ -401,16 +477,16 @@ TEST_F(CollaborationServiceImplTest, CancelAllFlows) {
             CollaborationControllerDelegate::Outcome::kSuccess);
         return true;
       });
-
-  base::RunLoop run_loop;
-  service_->CancelAllFlows(base::BindOnce(
-      [](base::RunLoop* run_loop) { run_loop->Quit(); }, &run_loop));
+  service_->CancelAllFlows();
 
   EXPECT_TRUE(cancel_called);
 
   // Wait for post tasks.
-  EXPECT_TRUE(base::test::RunUntil(
-      [&]() { return service_->GetJoinControllersForTesting().size() == 0; }));
+  EXPECT_TRUE(service_->GetJoinControllersForTesting().size() == 0);
+  EXPECT_TRUE(service_->GetDeletingControllersCountForTesting() == 1);
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return service_->GetDeletingControllersCountForTesting() == 0;
+  }));
 }
 
 TEST_F(CollaborationServiceImplTest,
@@ -645,6 +721,35 @@ TEST_F(CollaborationServiceImplTest,
   service_->OnPrimaryAccountChanged(event_details);
 
   EXPECT_TRUE(cancel_called);
+}
+
+TEST_F(CollaborationServiceImplTest,
+       GetServiceStatus_VersionOutOfDateShowUpdateChromeUi) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      {data_sharing::features::kDataSharingFeature,
+       data_sharing::features::kDataSharingEnableUpdateChromeUI,
+       data_sharing::features::kSharedDataTypesKillSwitch},
+      {data_sharing::features::kDataSharingJoinOnly});
+  InitService();
+
+  EXPECT_EQ(service_->GetServiceStatus().collaboration_status,
+            CollaborationStatus::kVersionOutOfDateShowUpdateChromeUi);
+}
+
+TEST_F(CollaborationServiceImplTest, GetServiceStatus_VersionOutOfDate) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      {
+          data_sharing::features::kDataSharingJoinOnly,
+          data_sharing::features::kSharedDataTypesKillSwitch,
+      },
+      {data_sharing::features::kDataSharingFeature,
+       data_sharing::features::kDataSharingEnableUpdateChromeUI});
+  InitService();
+
+  EXPECT_EQ(service_->GetServiceStatus().collaboration_status,
+            CollaborationStatus::kVersionOutOfDate);
 }
 
 }  // namespace collaboration

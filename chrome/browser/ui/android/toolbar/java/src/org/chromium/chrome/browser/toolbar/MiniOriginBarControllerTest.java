@@ -39,6 +39,7 @@ import org.mockito.Mockito;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 import org.robolectric.annotation.Config;
+import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.supplier.ObservableSupplierImpl;
@@ -61,6 +62,7 @@ import java.util.function.BooleanSupplier;
 public class MiniOriginBarControllerTest {
 
     private static final int CONTROL_CONTAINER_WIDTH = 400;
+    private static final int FULL_TOOLBAR_HEIGHT = 56;
     @Rule public MockitoRule mMockitoJUnit = MockitoJUnit.rule();
 
     @Mock private ControlContainer mControlContainer;
@@ -72,7 +74,7 @@ public class MiniOriginBarControllerTest {
     @Mock private WebContentsImpl mWebContents;
     @Mock private ImeAdapterImpl mImeAdapter;
     @Captor ArgumentCaptor<TouchEventObserver> mTouchEventObserverCaptor;
-    @Captor private ArgumentCaptor<FrameLayout.LayoutParams> mLayoutParamsCaptor;
+    @Captor private ArgumentCaptor<CoordinatorLayout.LayoutParams> mLayoutParamsCaptor;
 
     private Context mContext;
     private final CoordinatorLayout.LayoutParams mControlContainerLayoutParams =
@@ -89,8 +91,6 @@ public class MiniOriginBarControllerTest {
     ObservableSupplierImpl<Integer> mControlContainerTranslationSupplier =
             new ObservableSupplierImpl<>(0);
 
-    ObservableSupplierImpl<Integer> mControlContainerHeightSupplier =
-            new ObservableSupplierImpl<>(LayoutParams.WRAP_CONTENT);
     private final ObservableSupplierImpl<Boolean> mIsKeyboardAccessorySheetShowing =
             new ObservableSupplierImpl<>(false);
 
@@ -110,6 +110,7 @@ public class MiniOriginBarControllerTest {
         doReturn(mLocationBarView).when(mLocationBar).getContainerView();
         doReturn(mLocationBarLayoutParams).when(mLocationBarView).getLayoutParams();
         doReturn(mControlContainerView).when(mControlContainer).getView();
+        doReturn(FULL_TOOLBAR_HEIGHT).when(mControlContainer).getToolbarHeight();
         doReturn(mControlContainerLayoutParams.width).when(mControlContainerView).getWidth();
         doReturn(mImeAdapter).when(mWebContents).getOrSetUserData(eq(ImeAdapterImpl.class), any());
         mIsFormFieldFocused.onWebContentsChanged(mWebContents);
@@ -124,7 +125,6 @@ public class MiniOriginBarControllerTest {
                         mBrowserControlsSizer,
                         mInsetObserver,
                         mControlContainerTranslationSupplier,
-                        mControlContainerHeightSupplier,
                         mIsKeyboardAccessorySheetShowing,
                         mIsOmniboxFocusedSupplier);
     }
@@ -153,7 +153,6 @@ public class MiniOriginBarControllerTest {
         assertEquals(miniOriginBarHeight + hairlineHeight, mControlContainerLayoutParams.height);
         Assert.assertEquals(
                 MiniOriginState.SHOWING, mMiniOriginBarController.getCurrentStateForTesting());
-        Assert.assertEquals(miniOriginBarHeight, mControlContainerHeightSupplier.get().intValue());
 
         mKeyboardVisibilityDelegate.setVisibilityForTests(false);
         verify(mLocationBar).setShowOriginOnly(false);
@@ -161,9 +160,26 @@ public class MiniOriginBarControllerTest {
         assertEquals(LayoutParams.WRAP_CONTENT, mControlContainerLayoutParams.height);
         assertEquals(Gravity.TOP, mLocationBarLayoutParams.gravity);
         Assert.assertEquals(
-                LayoutParams.WRAP_CONTENT, mControlContainerHeightSupplier.get().intValue());
-        Assert.assertEquals(
                 MiniOriginState.READY, mMiniOriginBarController.getCurrentStateForTesting());
+    }
+
+    @Test
+    public void testFormFieldFocusLostFromShowing() {
+        doReturn(ControlsPosition.BOTTOM).when(mBrowserControlsSizer).getControlsPosition();
+        mMiniOriginBarController.onControlsPositionChanged(ControlsPosition.BOTTOM);
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+
+        Assert.assertEquals(
+                MiniOriginState.SHOWING, mMiniOriginBarController.getCurrentStateForTesting());
+
+        mIsFormFieldFocused.onNodeAttributeUpdated(false, false);
+        Assert.assertEquals(
+                MiniOriginState.SHOWING, mMiniOriginBarController.getCurrentStateForTesting());
+
+        mKeyboardVisibilityDelegate.setVisibilityForTests(false);
+        Assert.assertEquals(
+                MiniOriginState.NOT_READY, mMiniOriginBarController.getCurrentStateForTesting());
     }
 
     @Test
@@ -194,6 +210,17 @@ public class MiniOriginBarControllerTest {
 
         assertTrue(observer.onInterceptTouchEvent(clickEvent));
         verify(mImeAdapter).resetAndHideKeyboard();
+    }
+
+    @Test
+    public void testFormFieldFocusWithOmniboxFocused() {
+        doReturn(ControlsPosition.BOTTOM).when(mBrowserControlsSizer).getControlsPosition();
+        mMiniOriginBarController.onControlsPositionChanged(ControlsPosition.BOTTOM);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+        mOmniboxFocused = true;
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+        Assert.assertEquals(
+                MiniOriginState.NOT_READY, mMiniOriginBarController.getCurrentStateForTesting());
     }
 
     @Test
@@ -235,6 +262,19 @@ public class MiniOriginBarControllerTest {
     }
 
     @Test
+    public void testSkipAnimation() {
+        doReturn(ControlsPosition.BOTTOM).when(mBrowserControlsSizer).getControlsPosition();
+        mMiniOriginBarController.onControlsPositionChanged(ControlsPosition.BOTTOM);
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+
+        Assert.assertEquals(
+                MiniOriginState.SHOWING, mMiniOriginBarController.getCurrentStateForTesting());
+        verify(mLocationBarView).setScaleX(MiniOriginBarController.LOCATION_BAR_FINAL_SCALE);
+        verify(mLocationBarView).setScaleY(MiniOriginBarController.LOCATION_BAR_FINAL_SCALE);
+    }
+
+    @Test
     public void testAnimateWithKeyboard() {
         doReturn(ControlsPosition.BOTTOM).when(mBrowserControlsSizer).getControlsPosition();
         mMiniOriginBarController.onControlsPositionChanged(ControlsPosition.BOTTOM);
@@ -255,6 +295,11 @@ public class MiniOriginBarControllerTest {
                 locationBarMiniWidth * MiniOriginBarController.LOCATION_BAR_FINAL_SCALE;
         final float finalX = (CONTROL_CONTAINER_WIDTH - finalLocationBarWidth) / 2;
         final float positionDelta = finalX - locationBarStartPosition;
+        // The url bar height is smaller than the total height of the mobar due to vertical
+        // margin.
+        final float urlBarHeight =
+                mContext.getResources().getDimensionPixelSize(R.dimen.mini_origin_bar_height) - 6;
+        doReturn(urlBarHeight).when(mLocationBar).getUrlBarHeight();
 
         animationListener.onPrepare(mImeAnimation);
         mKeyboardVisibilityDelegate.setVisibilityForTests(true);
@@ -292,6 +337,8 @@ public class MiniOriginBarControllerTest {
                         1.0f
                                 - mImeAnimation.getFraction()
                                         / MiniOriginBarController.LOCATION_BAR_SCALE_DENOMINATOR);
+        verify(mLocationBarView).setPivotY(urlBarHeight / 2);
+        verify(mLocationBarView).setPivotX(0.0f);
 
         currentKeyboardHeight = 40;
         insets =
@@ -355,7 +402,6 @@ public class MiniOriginBarControllerTest {
 
         Mockito.clearInvocations(mLocationBarView);
         // Simulate hiding the keyboard
-        mIsFormFieldFocused.onNodeAttributeUpdated(false, false);
         mKeyboardVisibilityDelegate.setVisibilityForTests(false);
 
         animationListener.onPrepare(mImeAnimation);
@@ -382,7 +428,7 @@ public class MiniOriginBarControllerTest {
                                 - (1.0f - mImeAnimation.getFraction())
                                         / MiniOriginBarController.LOCATION_BAR_SCALE_DENOMINATOR);
 
-        currentKeyboardHeight = 40;
+        currentKeyboardHeight = 45;
         insets =
                 insetsBuilder
                         .setInsets(
@@ -420,6 +466,23 @@ public class MiniOriginBarControllerTest {
     }
 
     @Test
+    public void testAnimateWithKeyboard_animationWithZeroMaxHeight() {
+        doReturn(ControlsPosition.BOTTOM).when(mBrowserControlsSizer).getControlsPosition();
+        mMiniOriginBarController.onControlsPositionChanged(ControlsPosition.BOTTOM);
+        final MiniOriginWindowInsetsAnimationListener animationListener =
+                mMiniOriginBarController.getAnimationListenerForTesting();
+
+        final BoundsCompat bounds = new BoundsCompat(Insets.NONE, Insets.of(0, 0, 0, 0));
+
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+
+        animationListener.onPrepare(mImeAnimation);
+        animationListener.onStart(mImeAnimation, bounds);
+        Assert.assertEquals(
+                MiniOriginState.READY, mMiniOriginBarController.getCurrentStateForTesting());
+    }
+
+    @Test
     public void testAnimateWithKeyboard_animationFinishesInStartingState() {
         // Predictive back gestures can cause an IME hide animation to run but finish with the IME
         // still showing if the gesture is cancelled.
@@ -451,8 +514,6 @@ public class MiniOriginBarControllerTest {
         animationListener.onPrepare(mImeAnimation);
         Assert.assertEquals(
                 MiniOriginState.ANIMATING, mMiniOriginBarController.getCurrentStateForTesting());
-        Assert.assertEquals(
-                LayoutParams.WRAP_CONTENT, mControlContainerHeightSupplier.get().intValue());
 
         mKeyboardVisibilityDelegate.setVisibilityForTests(false);
         animationListener.onStart(mImeAnimation, bounds);
@@ -472,9 +533,49 @@ public class MiniOriginBarControllerTest {
         assertEquals(0, (int) mControlContainerTranslationSupplier.get());
         Assert.assertEquals(
                 MiniOriginState.SHOWING, mMiniOriginBarController.getCurrentStateForTesting());
+    }
+
+    @Test
+    public void testAnimateWithKeyboard_endEarly() {
+        doReturn(ControlsPosition.BOTTOM).when(mBrowserControlsSizer).getControlsPosition();
+        mMiniOriginBarController.onControlsPositionChanged(ControlsPosition.BOTTOM);
+        final MiniOriginWindowInsetsAnimationListener animationListener =
+                mMiniOriginBarController.getAnimationListenerForTesting();
+
+        final int finalKeyboardHeight = 100;
+        final BoundsCompat bounds =
+                new BoundsCompat(Insets.NONE, Insets.of(0, 0, 0, finalKeyboardHeight));
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+
+        animationListener.onPrepare(mImeAnimation);
+        animationListener.onStart(mImeAnimation, bounds);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+
+        animationListener.onEnd(mImeAnimation);
         Assert.assertEquals(
-                mContext.getResources().getDimensionPixelSize(R.dimen.mini_origin_bar_height),
-                mControlContainerHeightSupplier.get().intValue());
+                MiniOriginState.SHOWING, mMiniOriginBarController.getCurrentStateForTesting());
+
+        // Simulate the beginning of an animation hiding the keyboard
+        animationListener.onPrepare(mImeAnimation);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(false);
+        animationListener.onStart(mImeAnimation, bounds);
+
+        final int miniOriginBarHeight =
+                mContext.getResources().getDimensionPixelSize(R.dimen.mini_origin_bar_height);
+        int currentKeyboardHeight = FULL_TOOLBAR_HEIGHT - miniOriginBarHeight;
+        WindowInsetsCompat insets =
+                new WindowInsetsCompat.Builder()
+                        .setInsets(
+                                WindowInsetsCompat.Type.ime(),
+                                Insets.of(0, 0, 0, currentKeyboardHeight))
+                        .build();
+        animationListener.onProgress(insets, Collections.singletonList(mImeAnimation));
+
+        Assert.assertEquals(
+                MiniOriginState.READY, mMiniOriginBarController.getCurrentStateForTesting());
+        assertEquals(0, (int) mControlContainerTranslationSupplier.get());
+        verify(mLocationBarView).setScaleX(1.0f);
+        verify(mLocationBarView).setScaleY(1.0f);
     }
 
     @Test
@@ -493,5 +594,69 @@ public class MiniOriginBarControllerTest {
         verify(mLocationBar, never()).setShowOriginOnly(anyBoolean());
     }
 
-    // show again, start, finish showing (predictive back)
+    @Test
+    public void testOmniboxFocusCausesPositionChangeToBottom() {
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+        mOmniboxFocused = true;
+        doReturn(ControlsPosition.BOTTOM).when(mBrowserControlsSizer).getControlsPosition();
+        mMiniOriginBarController.onControlsPositionChanged(ControlsPosition.BOTTOM);
+
+        Assert.assertEquals(
+                MiniOriginState.NOT_READY, mMiniOriginBarController.getCurrentStateForTesting());
+    }
+
+    @Test
+    public void testAnimationReplacement() {
+        doReturn(ControlsPosition.BOTTOM).when(mBrowserControlsSizer).getControlsPosition();
+        mMiniOriginBarController.onControlsPositionChanged(ControlsPosition.BOTTOM);
+        final MiniOriginWindowInsetsAnimationListener animationListener =
+                mMiniOriginBarController.getAnimationListenerForTesting();
+
+        final int finalKeyboardHeight = 100;
+        final BoundsCompat bounds =
+                new BoundsCompat(Insets.NONE, Insets.of(0, 0, 0, finalKeyboardHeight));
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+
+        animationListener.onPrepare(mImeAnimation);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+        animationListener.onStart(mImeAnimation, bounds);
+
+        int currentKeyboardHeight = 50;
+        WindowInsetsCompat insets =
+                new WindowInsetsCompat.Builder()
+                        .setInsets(
+                                WindowInsetsCompat.Type.ime(),
+                                Insets.of(0, 0, 0, currentKeyboardHeight))
+                        .build();
+        mImeAnimation.setFraction(0.5f);
+        animationListener.onProgress(insets, Collections.singletonList(mImeAnimation));
+
+        // Start a second animation, this time hiding the keyboard.
+        final WindowInsetsAnimationCompat secondImeAnimation =
+                new WindowInsetsAnimationCompat(WindowInsetsCompat.Type.ime(), null, 160);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(false);
+        animationListener.onStart(secondImeAnimation, bounds);
+
+        secondImeAnimation.setFraction(0.5f);
+        animationListener.onProgress(insets, Collections.singletonList(secondImeAnimation));
+        assertEquals(-currentKeyboardHeight, (int) mControlContainerTranslationSupplier.get());
+    }
+
+    @Test
+    public void testAnimationCancel() {
+        doReturn(ControlsPosition.BOTTOM).when(mBrowserControlsSizer).getControlsPosition();
+        mMiniOriginBarController.onControlsPositionChanged(ControlsPosition.BOTTOM);
+        final MiniOriginWindowInsetsAnimationListener animationListener =
+                mMiniOriginBarController.getAnimationListenerForTesting();
+
+        mIsFormFieldFocused.onNodeAttributeUpdated(true, false);
+
+        animationListener.onPrepare(mImeAnimation);
+        mKeyboardVisibilityDelegate.setVisibilityForTests(true);
+
+        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
+        Assert.assertEquals(
+                MiniOriginState.SHOWING, mMiniOriginBarController.getCurrentStateForTesting());
+    }
 }

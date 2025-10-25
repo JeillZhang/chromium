@@ -158,6 +158,17 @@ bool SafetyCheckNotificationClient::CanHandleNotification(
   return ParseSafetyCheckNotificationType(notification.request).has_value();
 }
 
+std::optional<NotificationType>
+SafetyCheckNotificationClient::GetNotificationType(
+    UNNotification* notification) {
+  std::optional<SafetyCheckNotificationType> type =
+      ParseSafetyCheckNotificationType(notification.request);
+  if (!type) {
+    return std::nullopt;
+  }
+  return NotificationTypeForSafetyCheckNotificationType(type.value());
+}
+
 bool SafetyCheckNotificationClient::HandleNotificationInteraction(
     UNNotificationResponse* response) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -541,12 +552,12 @@ void SafetyCheckNotificationClient::ClearAndRescheduleSafetyCheckNotifications(
   if ([interacted_notification_metadata_ count]) {
     Browser* browser = GetActiveForegroundBrowser();
 
-    auto showUICallback = base::CallbackToBlock(base::BindOnce(
-        &SafetyCheckNotificationClient::ShowUIForNotificationMetadata,
-        weak_ptr_factory_.GetWeakPtr(), interacted_notification_metadata_,
-        browser->AsWeakPtr()));
-
     if (browser) {
+      auto showUICallback = base::CallbackToBlock(base::BindOnce(
+          &SafetyCheckNotificationClient::ShowUIForNotificationMetadata,
+          weak_ptr_factory_.GetWeakPtr(), interacted_notification_metadata_,
+          browser->AsWeakPtr()));
+
       [HandlerForProtocol(browser->GetCommandDispatcher(), ApplicationCommands)
           prepareToPresentModalWithSnackbarDismissal:NO
                                           completion:showUICallback];
@@ -590,13 +601,12 @@ void SafetyCheckNotificationClient::ShowUIForNotificationMetadata(
         AuthenticationServiceFactory::GetForProfile(browser->GetProfile());
     id<SystemIdentity> identity =
         authService->GetPrimaryIdentity(signin::ConsentLevel::kSignin);
-    const GaiaId gaiaID(identity.gaiaID);
     if (!push_notification_settings::
             GetMobileNotificationPermissionStatusForClient(
-                PushNotificationClientId::kSafetyCheck, gaiaID)) {
+                PushNotificationClientId::kSafetyCheck, identity.gaiaId)) {
       PushNotificationService* service =
           GetApplicationContext()->GetPushNotificationService();
-      service->SetPreference(gaiaID.ToNSString(),
+      service->SetPreference(identity.gaiaId,
                              PushNotificationClientId::kSafetyCheck, true);
     }
   }
@@ -664,9 +674,6 @@ void SafetyCheckNotificationClient::LogTriggeredNotifications() {
 
   base::UmaHistogramEnumeration("IOS.Notifications.SafetyCheck.Triggered",
                                 type);
-  base::UmaHistogramEnumeration(
-      "IOS.Notification.Received",
-      NotificationTypeForSafetyCheckNotificationType(type));
 
   local_pref_service->SetInteger(
       prefs::kIosSafetyCheckNotificationsLastTriggered, int(type));

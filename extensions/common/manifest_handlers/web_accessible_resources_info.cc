@@ -164,6 +164,22 @@ std::unique_ptr<WebAccessibleResourcesInfo> ParseEntryList(
   return info;
 }
 
+// Returns the initiator URL to use for the given `initiator_origin`. This
+// depends on whether the origin is present, as well as if it's opaque -- in the
+// case of an opaque origin, this falls back to the precursor origin.
+GURL GetInitiatorUrl(const std::optional<url::Origin>& initiator_origin) {
+  GURL initiator_url;
+  if (initiator_origin) {
+    initiator_url =
+        initiator_origin->opaque()
+            ? initiator_origin->GetTupleOrPrecursorTupleIfOpaque().GetURL()
+            : initiator_origin->GetURL();
+  }
+  return initiator_url;
+}
+
+// Shared implementation for `IsResourceWebAccessible` and
+// `IsResourceWebAccessibleRedirect`.
 bool IsResourceWebAccessibleImpl(
     const Extension& extension,
     const GURL& target_url,
@@ -174,16 +190,8 @@ bool IsResourceWebAccessibleImpl(
     return false;
   }
 
-  // Set the initiator_url.
-  GURL initiator_url;
-  if (initiator_origin) {
-    initiator_url =
-        initiator_origin->opaque()
-            ? initiator_origin->GetTupleOrPrecursorTupleIfOpaque().GetURL()
-            : initiator_url = initiator_origin->GetURL();
-  }
-
-  std::string relative_path = target_url.path();
+  GURL initiator_url = GetInitiatorUrl(initiator_origin);
+  std::string relative_path = target_url.GetPath();
 
   // Look for the first match in the array of web accessible resources.
   for (const auto& entry : info->web_accessible_resources) {
@@ -202,12 +210,12 @@ bool IsResourceWebAccessibleImpl(
       // `upstream_url` or the `target_url` because the goal of this feature is
       // to ensure that the dynamic url was used for fetching the resource.
       if (entry.use_dynamic_url) {
-        bool is_guid_target_url = extension.guid() == target_url.host_piece();
+        bool is_guid_target_url = extension.guid() == target_url.host();
         if (upstream_url.is_empty()) {
           result = is_guid_target_url;
         } else {
-          result = extension.guid() == upstream_url.host_piece() ||
-                   is_guid_target_url;
+          result =
+              extension.guid() == upstream_url.host() || is_guid_target_url;
         }
         if (!result) {
           continue;
@@ -230,8 +238,8 @@ bool IsResourceWebAccessibleImpl(
       // extension, or if the initiator host matches an entry extension id.
       if (initiator_url.SchemeIs(extensions::kExtensionScheme) &&
           (entry.allow_all_extensions ||
-           extension.id() == initiator_url.host() ||
-           base::Contains(entry.extension_ids, initiator_url.host()))) {
+           extension.id() == initiator_url.GetHost() ||
+           base::Contains(entry.extension_ids, initiator_url.GetHost()))) {
         return result;
       }
     }

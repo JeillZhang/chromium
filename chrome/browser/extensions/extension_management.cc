@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "chrome/browser/extensions/extension_management.h"
 
 #include <memory>
@@ -35,6 +30,7 @@
 #include "chrome/browser/extensions/extension_management_internal.h"
 #include "chrome/browser/extensions/external_policy_loader.h"
 #include "chrome/browser/extensions/external_provider_impl.h"
+#include "chrome/browser/extensions/forced_extensions/install_stage_tracker.h"
 #include "chrome/browser/extensions/forced_extensions/install_stage_tracker_factory.h"
 #include "chrome/browser/extensions/managed_installation_mode.h"
 #include "chrome/browser/extensions/managed_toolbar_pin_mode.h"
@@ -50,8 +46,10 @@
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/common/content_switches.h"
+#include "extensions/browser/blocklist_extension_prefs.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/pref_names.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_features.h"
 #include "extensions/common/extension_urls.h"
@@ -81,12 +79,18 @@
 #include "chrome/browser/extensions/management/management_util.h"
 #endif
 
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
+
 namespace extensions {
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 // Disables off-store force-installed extensions in low trust environments.
 BASE_FEATURE(kDisableOffstoreForceInstalledExtensionsInLowTrustEnviroment,
-             "DisableOffstoreForceInstalledExtensionsInLowTrustEnviroment",
+             base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Disables force-installed extensions in low trust environments when
+// greylisted.
+BASE_FEATURE(kDisableForceInstalledExtensionsInLowTrustEnviromentWhenGreylisted,
              base::FEATURE_ENABLED_BY_DEFAULT);
 #endif
 
@@ -121,6 +125,9 @@ ExtensionManagement::ExtensionManagement(Profile* profile)
                              pref_change_callback);
   pref_change_registrar_.Add(pref_names::kExtensionUnpublishedAvailability,
                              pref_change_callback);
+  pref_change_registrar_.Add(
+      pref_names::kExtensionForceInstallWithNonMalwareViolationsEnabled,
+      pref_change_callback);
   // Note that both |global_settings_| and |default_settings_| will be null
   // before first call to Refresh(), so in order to resolve this, Refresh() must
   // be called in the initialization of ExtensionManagement.
@@ -171,27 +178,39 @@ ManagedInstallationMode ExtensionManagement::GetInstallationMode(
                              update_url ? *update_url : std::string());
 }
 
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+bool ExtensionManagement::ExtensionsEnabledForDesktopAndroid() const {
+  // If Finch has enabled extensions for corp, allow them.
+  if (base::FeatureList::IsEnabled(
+          extensions_features::kEnableExtensionsForCorpDesktopAndroid)) {
+    return true;
+  }
+  // Disable extensions only for specific domains.
+  // This check keeps many tests from failing.
+  std::string user_name = profile_->GetProfileUserName();
+  // Crude check to avoid passing invalid strings to `ExtractDomainName`.
+  if (base::Contains(user_name, "@")) {
+    std::string domain = gaia::ExtractDomainName(user_name);
+    if (domain == "google.com" || domain == "managedchrome.com") {
+      return false;
+    }
+  }
+  return true;
+}
+#endif  // BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+
 ManagedInstallationMode ExtensionManagement::GetInstallationMode(
     const ExtensionId& extension_id,
     const std::string& update_url) {
-// Block extensions for managed profiles on Desktop Android. This is
-// temporary until extensions are ready for dogfooding.
-// TODO(crbug.com/422307625): Remove this check once extensions are ready for
-// dogfooding.
-#if BUILDFLAG(IS_ANDROID)
-  if (enterprise_util::IsBrowserManaged(profile_)) {
-    // Disable extensions only for specific managed accounts.
-    // This check keeps many tests from failing.
-    std::string user_name = profile_->GetProfileUserName();
-    // Crude check to avoid passing invalid strings to `ExtractDomainName`.
-    if (base::Contains(user_name, "@")) {
-      std::string domain = gaia::ExtractDomainName(user_name);
-      if (domain == "google.com" || domain == "managedchrome.com") {
-        return ManagedInstallationMode::kRemoved;
-      }
-    }
+#if BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
+  // Block extensions for managed profiles on Desktop Android. This is
+  // temporary until extensions are ready for dogfooding.
+  // TODO(crbug.com/422307625): Remove this check once extensions are ready for
+  // dogfooding.
+  if (!ExtensionsEnabledForDesktopAndroid()) {
+    return ManagedInstallationMode::kRemoved;
   }
-#endif  // BUILDFLAG(IS_ANDROID)
+#endif  // BUILDFLAG(ENABLE_DESKTOP_ANDROID_EXTENSIONS)
 
   // Check per-extension installation mode setting first.
   auto* setting = GetSettingsForId(extension_id);
@@ -285,8 +304,10 @@ bool ExtensionManagement::IsInstallationExplicitlyAllowed(
     const ExtensionId& id) {
   auto* setting = GetSettingsForId(id);
   // No settings explicitly specified for |id|.
-  if (setting == nullptr)
+  if (setting == nullptr) {
     return false;
+  }
+
   // Checks if the extension is on the automatically installed list or
   // install allow-list.
   ManagedInstallationMode mode = setting->installation_mode;
@@ -466,6 +487,37 @@ bool ExtensionManagement::IsAllowedByUnpackedDeveloperModePolicy(
   return in_developer_mode;
 }
 
+bool ExtensionManagement::IsGreylistedForceInstalledInLowTrustEnvironment(
+    const ExtensionId& extension_id) {
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
+  if (!base::FeatureList::IsEnabled(
+          kDisableForceInstalledExtensionsInLowTrustEnviromentWhenGreylisted)) {
+    return false;
+  }
+
+  if (profile_->GetPrefs()->GetBoolean(
+          pref_names::kExtensionForceInstallWithNonMalwareViolationsEnabled)) {
+    return false;
+  }
+
+  if (!blocklist_prefs::IsExtensionGreylisted(extension_id,
+                                              ExtensionPrefs::Get(profile_))) {
+    return false;
+  }
+
+  auto* setting = GetSettingsForId(extension_id);
+  if (setting == nullptr ||
+      setting->installation_mode != ManagedInstallationMode::kForced) {
+    return false;
+  }
+
+  return GetHigherManagementAuthorityTrustworthiness(profile_) <
+         policy::ManagementAuthorityTrustworthiness::TRUSTED;
+#else
+  return false;
+#endif
+}
+
 bool ExtensionManagement::IsForceInstalledInLowTrustEnvironment(
     const Extension& extension) {
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
@@ -623,6 +675,15 @@ ExtensionIdSet ExtensionManagement::GetForcePinnedList() const {
 bool ExtensionManagement::IsFileUrlNavigationAllowed(const ExtensionId& id) {
   auto* setting = GetSettingsForId(id);
   return setting && setting->file_url_navigation_allowed;
+}
+
+extensions::ManagedToolbarPinMode ExtensionManagement::GetToolbarPinMode(
+    const ExtensionId& extension_id) {
+  auto* setting = GetSettingsForId(extension_id);
+  if (setting) {
+    return setting->toolbar_pin;
+  }
+  return extensions::ManagedToolbarPinMode::kDefaultUnpinned;
 }
 
 bool ExtensionManagement::CheckMinimumVersion(const Extension* extension,

@@ -496,6 +496,12 @@ enum class TipsNotificationType;
 // otherwise returns object representing execution result.
 + (JavaScriptExecutionResult*)executeJavaScript:(NSString*)javaScript;
 
+// Same as -executeJavaScript but executes the script in the isolated world
+// instead of the page content world. This allows interacting with the gcrweb
+// objects that are injected there.
++ (JavaScriptExecutionResult*)executeJavaScriptInIsolatedWorld:
+    (NSString*)javaScript;
+
 // Returns the user agent that should be used for the mobile version.
 + (NSString*)mobileUserAgentString;
 
@@ -523,9 +529,6 @@ enum class TipsNotificationType;
 // Returns YES if kTestFeature is enabled.
 + (BOOL)isTestFeatureEnabled;
 
-// Returns YES if DWA feature is enabled.
-+ (BOOL)isDWAEnabled [[nodiscard]];
-
 // Returns YES if DemographicMetricsReporting feature is enabled.
 + (BOOL)isDemographicMetricsReportingEnabled [[nodiscard]];
 
@@ -550,14 +553,14 @@ enum class TipsNotificationType;
 // Returns whether the UseLensToSearchForImage feature is enabled.
 + (BOOL)isUseLensToSearchForImageEnabled;
 
-// Returns whether Tab Group Sync is enabled.
-+ (BOOL)isTabGroupSyncEnabled;
-
 // Returns whether the current layout is showing the bottom omnibox.
 + (BOOL)isCurrentLayoutBottomOmnibox;
 
 // Returns whether the Enhanced Safe Browsing Infobar Promo feature is enabled.
 + (BOOL)isEnhancedSafeBrowsingInfobarEnabled;
+
+// Returns the interface orientation of the scene.
++ (UIInterfaceOrientation)interfaceOrientation;
 
 #pragma mark - ContentSettings
 
@@ -633,6 +636,9 @@ enum class TipsNotificationType;
 
 // Sets the value of a integer user pref in the original profile.
 + (void)setIntegerValue:(int)value forUserPref:(NSString*)prefName;
+
+// Sets the value of a double user pref in the original profile.
++ (void)setDoubleValue:(double)value forUserPref:(NSString*)prefName;
 
 // Returns true if the LocalState Preference is currently using its default
 // value, and has not been set by any higher-priority source (even with the same

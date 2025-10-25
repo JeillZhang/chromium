@@ -6,8 +6,10 @@
 
 #import <stdint.h>
 
+#import <algorithm>
 #import <memory>
 
+#import "base/containers/span.h"
 #import "ios/chrome/browser/memory/model/memory_metrics.h"
 #import "ios/chrome/browser/shared/ui/util/uikit_ui_util.h"
 #import "ios/chrome/common/ui/util/device_util.h"
@@ -41,7 +43,7 @@ const CGFloat kPadding = 10;
   UITextField* _continuousMemoryWarningField;
 
   // A place to store the artificial memory bloat.
-  std::unique_ptr<uint8_t> _bloat;
+  std::unique_ptr<uint8_t[]> _bloat;
 
   // Distance the view was pushed up to accommodate the keyboard.
   CGFloat _keyboardOffset;
@@ -432,7 +434,9 @@ const CGFloat kPadding = 10;
   const uint64_t kNumberOfBytes = static_cast<uint64_t>(kBloatSizeBytes);
   _bloat.reset(kNumberOfBytes ? new uint8_t[kNumberOfBytes] : nullptr);
   if (_bloat) {
-    memset(_bloat.get(), -1, kNumberOfBytes);  // Occupy memory.
+    // SAFETY: _bloat is a buffer of exactly kNumberOfBytes uint8_t.
+    std::ranges::fill(UNSAFE_BUFFERS(base::span(_bloat.get(), kNumberOfBytes),
+                                     uint8_t{0xff}));
   } else {
     if (kNumberOfBytes) {
       [self alert:@"Could not allocate memory."];

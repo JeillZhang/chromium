@@ -103,7 +103,6 @@ const CGFloat kSymbolSize = 15;
 - (void)viewDidLoad {
   [super viewDidLoad];
   self.view.backgroundColor = [UIColor colorNamed:kBackgroundColor];
-  self.styler.cellBackgroundColor = [UIColor colorNamed:kBackgroundColor];
   self.tableView.sectionHeaderHeight = 0;
   [self.tableView
       setSeparatorInset:UIEdgeInsetsMake(0, kTableViewHorizontalSpacing, 0, 0)];
@@ -144,8 +143,12 @@ const CGFloat kSymbolSize = 15;
 
 - (void)viewDidLayoutSubviews {
   [super viewDidLayoutSubviews];
-  self.tableView.scrollEnabled =
-      self.tableView.contentSize.height > self.view.frame.size.height;
+  CGFloat tableViewScrollableHeight =
+      self.tableView.contentSize.height +
+      self.tableView.adjustedContentInset.top +
+      self.tableView.adjustedContentInset.bottom;
+  self.tableView.bounces =
+      tableViewScrollableHeight > self.view.frame.size.height;
 }
 
 #pragma mark - TableViewModel
@@ -220,6 +223,7 @@ const CGFloat kSymbolSize = 15;
         cellForRowAtIndexPath:(NSIndexPath*)indexPath {
   UITableViewCell* cell = [super tableView:tableView
                      cellForRowAtIndexPath:indexPath];
+  cell.backgroundColor = [UIColor colorNamed:kBackgroundColor];
   ItemType itemType = static_cast<ItemType>(
       [self.tableViewModel itemTypeForIndexPath:indexPath]);
 

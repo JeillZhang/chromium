@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef PARTITION_ALLOC_THREAD_CACHE_H_
 #define PARTITION_ALLOC_THREAD_CACHE_H_
 
@@ -79,14 +84,6 @@ extern PA_COMPONENT_EXPORT(
 
 }  // namespace internal
 
-constexpr internal::base::TimeDelta kMinPurgeInterval =
-    internal::base::Seconds(1);
-constexpr internal::base::TimeDelta kMaxPurgeInterval =
-    internal::base::Minutes(1);
-constexpr internal::base::TimeDelta kDefaultPurgeInterval =
-    2 * kMinPurgeInterval;
-constexpr size_t kMinCachedMemoryForPurgingBytes = 500 * 1024;
-
 // Global registry of all ThreadCache instances.
 //
 // This class cannot allocate in the (Un)registerThreadCache() functions, as
@@ -133,32 +130,20 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) ThreadCacheRegistry {
   void SetThreadCacheMultiplier(float multiplier);
   void SetLargestActiveBucketIndex(uint16_t largest_active_bucket_index);
 
-  // Controls the thread cache purging configuration.
-  void SetPurgingConfiguration(
-      const internal::base::TimeDelta min_purge_interval,
-      const internal::base::TimeDelta max_purge_interval,
-      const internal::base::TimeDelta default_purge_interval,
-      size_t min_cached_memory_for_purging_bytes);
-  internal::base::TimeDelta min_purge_interval() const {
-    return min_purge_interval_;
-  }
-  internal::base::TimeDelta max_purge_interval() const {
-    return max_purge_interval_;
-  }
-  internal::base::TimeDelta default_purge_interval() const {
-    return default_purge_interval_;
-  }
-  size_t min_cached_memory_for_purging_bytes() const {
-    return min_cached_memory_for_purging_bytes_;
-  }
-  bool is_purging_configured() const { return is_purging_configured_; }
-
   static internal::Lock& GetLock() { return Instance().lock_; }
   // Purges all thread caches *now*. This is completely thread-unsafe, and
   // should only be called in a post-fork() handler.
   void ForcePurgeAllThreadAfterForkUnsafe();
 
   void ResetForTesting();
+
+  static constexpr internal::base::TimeDelta kMinPurgeInterval =
+      internal::base::Seconds(1);
+  static constexpr internal::base::TimeDelta kMaxPurgeInterval =
+      internal::base::Minutes(1);
+  static constexpr internal::base::TimeDelta kDefaultPurgeInterval =
+      2 * kMinPurgeInterval;
+  static constexpr size_t kMinCachedMemoryForPurgingBytes = 500 * 1024;
 
  private:
   friend class tools::ThreadCacheInspector;
@@ -168,12 +153,7 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) ThreadCacheRegistry {
   internal::Lock lock_;
   ThreadCache* list_head_ PA_GUARDED_BY(GetLock()) = nullptr;
   bool periodic_purge_is_initialized_ = false;
-  internal::base::TimeDelta min_purge_interval_;
-  internal::base::TimeDelta max_purge_interval_;
-  internal::base::TimeDelta default_purge_interval_;
-  size_t min_cached_memory_for_purging_bytes_ = 0u;
   internal::base::TimeDelta periodic_purge_next_interval_;
-  bool is_purging_configured_ = false;
 
   uint16_t largest_active_bucket_index_ =
       BucketIndexLookup::GetIndexForNeutralBuckets(
@@ -269,6 +249,8 @@ class PA_COMPONENT_EXPORT(PARTITION_ALLOC) ThreadCache {
         internal::PartitionTlsGet(internal::g_thread_cache_key));
 #endif
   }
+
+  static ThreadCache* EnsureAndGet();
 
   static bool IsValid(ThreadCache* tcache) {
     // Do not MTE-untag, as it'd mess up the sentinel value.

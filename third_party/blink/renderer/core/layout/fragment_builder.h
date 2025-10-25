@@ -5,8 +5,10 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_FRAGMENT_BUILDER_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_LAYOUT_FRAGMENT_BUILDER_H_
 
-#include "base/memory/scoped_refptr.h"
+#include "third_party/blink/renderer/core/animation/animation_trigger.h"
 #include "third_party/blink/renderer/core/core_export.h"
+#include "third_party/blink/renderer/core/dom/named_animation_trigger_map.h"
+#include "third_party/blink/renderer/core/layout/anchor_evaluator_impl.h"
 #include "third_party/blink/renderer/core/layout/block_node.h"
 #include "third_party/blink/renderer/core/layout/break_appeal.h"
 #include "third_party/blink/renderer/core/layout/break_token.h"
@@ -67,6 +69,9 @@ class CORE_EXPORT FragmentBuilder {
     return writing_direction_.GetWritingMode();
   }
   TextDirection Direction() const { return writing_direction_.Direction(); }
+
+  PhysicalAnchorQuery::SetOptions AnchorQuerySetOptionsForChild(
+      const PhysicalFragment&) const;
 
   // Return true if this is a builder for the root fragment.
   bool IsRoot() const;
@@ -155,6 +160,10 @@ class CORE_EXPORT FragmentBuilder {
     would_be_last_line_if_not_for_ellipsis_ = true;
   }
 
+  void SetLineClampAfterLayoutObject(const LayoutObject* layout_object) {
+    line_clamp_after_layout_object_ = layout_object;
+  }
+
   bool IsBlockEndTrimmableLine() const { return is_block_end_trimmable_line_; }
   void SetIsBlockEndTrimmableLine() { is_block_end_trimmable_line_ = true; }
 
@@ -194,6 +203,13 @@ class CORE_EXPORT FragmentBuilder {
   // propagated to the |child| from its descendants.
   void PropagateChildAnchors(const PhysicalFragment& child,
                              const LogicalOffset& child_offset);
+  static void PropagateChildAnchors(const PhysicalFragment& child,
+                                    const LogicalOffset& child_offset,
+                                    const LayoutObject& container_object,
+                                    WritingDirectionMode,
+                                    LogicalSize container_logical_size,
+                                    PhysicalAnchorQuery::SetOptions options,
+                                    PhysicalAnchorQuery** out_anchor_query);
 
   const PhysicalAnchorQuery* AnchorQuery() const { return anchor_query_; }
 
@@ -533,7 +549,6 @@ class CORE_EXPORT FragmentBuilder {
 
   GCedHeapVector<Member<LayoutBoxModelObject>>& EnsureStickyDescendants();
   GCedHeapVector<Member<Element>>& EnsureSnapAreas();
-  PhysicalAnchorQuery& EnsureAnchorQuery();
 
   void PropagateFromLayoutResultAndFragment(
       const LayoutResult&,
@@ -567,6 +582,10 @@ class CORE_EXPORT FragmentBuilder {
   // Propagate data that was held back until the final size was known.
   void PropagateSizeDependentData();
 
+  void PropagateNamedTriggers(const PhysicalFragment& child);
+  void CreateNamedTriggersForSelf();
+  GCedNamedAnimationTriggerMap& EnsureNamedTriggers();
+
   LayoutInputNode node_;
   const ConstraintSpace& space_;
   const ComputedStyle* style_;
@@ -584,6 +603,9 @@ class CORE_EXPORT FragmentBuilder {
 
   GCedHeapVector<Member<LayoutBoxModelObject>>* sticky_descendants_ = nullptr;
   GCedHeapVector<Member<Element>>* snap_areas_ = nullptr;
+  // Animation triggers belonging to the element to which this fragment belongs,
+  // or an element in its subtree.
+  GCedNamedAnimationTriggerMap* named_triggers_ = nullptr;
   // [1] https://drafts.csswg.org/css-scroll-snap-2/#scroll-initial-target
   const LayoutObject* scroll_start_target_ = nullptr;
   PhysicalAnchorQuery* anchor_query_ = nullptr;
@@ -592,6 +614,7 @@ class CORE_EXPORT FragmentBuilder {
   MarginStrut end_margin_strut_;
   ExclusionSpace exclusion_space_;
   std::optional<int> lines_until_clamp_;
+  const LayoutObject* line_clamp_after_layout_object_ = nullptr;
 
   ChildrenVector children_;
 

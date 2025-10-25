@@ -2,19 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/omnibox/common/omnibox_features.h"
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
+#include "chrome/browser/ui/omnibox/omnibox_view.h"
 
 #include <stddef.h>
 #include <stdio.h>
 
 #include <array>
 #include <memory>
+#include <optional>
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
@@ -38,6 +36,8 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
+#include "chrome/browser/ui/omnibox/omnibox_controller.h"
+#include "chrome/browser/ui/omnibox/omnibox_edit_model.h"
 #include "chrome/browser/ui/omnibox/omnibox_tab_helper.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
@@ -54,11 +54,9 @@
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/history_quick_provider.h"
-#include "components/omnibox/browser/omnibox_controller.h"
-#include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_selection.h"
-#include "components/omnibox/browser/omnibox_view.h"
 #include "components/omnibox/browser/test_location_bar_model.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/policy_constants.h"
@@ -176,7 +174,10 @@ const int kCtrlOrCmdMask = ui::EF_CONTROL_DOWN;
 
 class OmniboxViewTest : public InProcessBrowserTest {
  public:
-  OmniboxViewTest() = default;
+  OmniboxViewTest() {
+    scoped_feature_list_.InitAndDisableFeature(
+        omnibox::kAiModeOmniboxEntryPoint);
+  }
 
   OmniboxViewTest(const OmniboxViewTest&) = delete;
   OmniboxViewTest& operator=(const OmniboxViewTest&) = delete;
@@ -243,7 +244,7 @@ class OmniboxViewTest : public InProcessBrowserTest {
   }
 
   void SendKeySequence(const ui::KeyboardCode* keys) {
-    for (; *keys != ui::VKEY_UNKNOWN; ++keys) {
+    for (; *keys != ui::VKEY_UNKNOWN; UNSAFE_TODO(++keys)) {
       ASSERT_NO_FATAL_FAILURE(SendKey(*keys, 0));
     }
   }
@@ -425,6 +426,7 @@ class OmniboxViewTest : public InProcessBrowserTest {
   }
 
  private:
+  base::test::ScopedFeatureList scoped_feature_list_;
   testing::NiceMock<policy::MockConfigurationPolicyProvider> policy_provider_;
   base::CallbackListSubscription create_services_subscription_;
   std::unique_ptr<IdentityTestEnvironmentProfileAdaptor>
@@ -812,14 +814,13 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
   EXPECT_EQ(url::kAboutBlankURL16, old_text);
   EXPECT_TRUE(omnibox_view->IsSelectAll());
 
-  size_t start, end;
-  omnibox_view->GetSelectionBounds(&start, &end);
+  gfx::Range selection = omnibox_view->GetSelectionBounds();
 #if defined(TOOLKIT_VIEWS)
   // Views textfields select-all in reverse to show the leading text.
-  std::swap(start, end);
+  selection = {selection.end(), selection.start()};
 #endif
-  EXPECT_EQ(0U, start);
-  EXPECT_EQ(old_text.size(), end);
+  EXPECT_EQ(0U, selection.start());
+  EXPECT_EQ(old_text.size(), selection.end());
 
   // Move the cursor to the end.
 #if BUILDFLAG(IS_MAC)
@@ -831,9 +832,9 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
   EXPECT_FALSE(omnibox_view->IsSelectAll());
 
   // Make sure the cursor is placed correctly.
-  omnibox_view->GetSelectionBounds(&start, &end);
-  EXPECT_EQ(old_text.size(), start);
-  EXPECT_EQ(old_text.size(), end);
+  selection = omnibox_view->GetSelectionBounds();
+  EXPECT_EQ(old_text.size(), selection.start());
+  EXPECT_EQ(old_text.size(), selection.end());
 
   // Insert one character at the end.
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_A, 0));
@@ -845,20 +846,20 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
 
   omnibox_view->SelectAll(true);
   EXPECT_TRUE(omnibox_view->IsSelectAll());
-  omnibox_view->GetSelectionBounds(&start, &end);
+  selection = omnibox_view->GetSelectionBounds();
 #if defined(TOOLKIT_VIEWS)
   // Views textfields select-all in reverse to show the leading text.
-  std::swap(start, end);
+  selection = {selection.end(), selection.start()};
 #endif
-  EXPECT_EQ(0U, start);
-  EXPECT_EQ(old_text.size(), end);
+  EXPECT_EQ(0U, selection.start());
+  EXPECT_EQ(old_text.size(), selection.end());
 
   // Delete the content
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_DELETE, 0));
   EXPECT_FALSE(omnibox_view->IsSelectAll());
-  omnibox_view->GetSelectionBounds(&start, &end);
-  EXPECT_EQ(0U, start);
-  EXPECT_EQ(0U, end);
+  selection = omnibox_view->GetSelectionBounds();
+  EXPECT_EQ(0U, selection.start());
+  EXPECT_EQ(0U, selection.end());
   EXPECT_TRUE(omnibox_view->GetText().empty());
 
   // Add a small amount of text to move the cursor past offset 0.
@@ -870,9 +871,9 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
   omnibox_view->RevertAll();
   EXPECT_FALSE(omnibox_view->IsSelectAll());
   EXPECT_EQ(old_text, omnibox_view->GetText());
-  omnibox_view->GetSelectionBounds(&start, &end);
-  EXPECT_EQ(3U, start);
-  EXPECT_EQ(3U, end);
+  selection = omnibox_view->GetSelectionBounds();
+  EXPECT_EQ(3U, selection.start());
+  EXPECT_EQ(3U, selection.end());
 
   // Check that reverting clamps the cursor to the bounds of the new text.
   // Move the cursor to the end.
@@ -887,9 +888,9 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, BasicTextOperations) {
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_A, 0));
   omnibox_view->RevertAll();
   // Cursor should be no further than original text.
-  omnibox_view->GetSelectionBounds(&start, &end);
-  EXPECT_EQ(11U, start);
-  EXPECT_EQ(11U, end);
+  selection = omnibox_view->GetSelectionBounds();
+  EXPECT_EQ(11U, selection.start());
+  EXPECT_EQ(11U, selection.end());
 }
 
 // Make sure the cursor position doesn't get set past the last character of
@@ -1257,10 +1258,9 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, UndoRedo) {
   EXPECT_TRUE(omnibox_view->IsSelectAll());
 
   // The text should be selected.
-  size_t start, end;
-  omnibox_view->GetSelectionBounds(&start, &end);
-  EXPECT_EQ(old_text.size(), start);
-  EXPECT_EQ(0U, end);
+  gfx::Range selection = omnibox_view->GetSelectionBounds();
+  EXPECT_EQ(old_text.size(), selection.start());
+  EXPECT_EQ(0U, selection.end());
 
   // Delete three characters; "about:bl" should not trigger inline autocomplete.
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_END, 0));
@@ -1326,9 +1326,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DoesNotUpdateAutocompleteOnBlur) {
   ASSERT_NO_FATAL_FAILURE(SendKeySequence(kInlineAutocompleteTextKeys));
   ASSERT_NO_FATAL_FAILURE(WaitForAutocompleteControllerDone());
   ASSERT_TRUE(omnibox_view->model()->PopupIsOpen());
-  size_t start, end;
-  omnibox_view->GetSelectionBounds(&start, &end);
-  EXPECT_TRUE(start != end);
+  gfx::Range selection = omnibox_view->GetSelectionBounds();
+  EXPECT_FALSE(selection.is_empty());
   std::u16string old_autocomplete_text =
       omnibox_view->controller()->autocomplete_controller()->input_.text();
 
@@ -1435,12 +1434,7 @@ namespace {
 
 // Returns the number of characters currently selected in |omnibox_view|.
 size_t GetSelectionSize(OmniboxView* omnibox_view) {
-  size_t start, end;
-  omnibox_view->GetSelectionBounds(&start, &end);
-  if (end >= start) {
-    return end - start;
-  }
-  return start - end;
+  return omnibox_view->GetSelectionBounds().length();
 }
 
 }  // namespace
@@ -1509,20 +1503,42 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, DISABLED_SelectAllStaysAfterUpdate) {
   EXPECT_EQ(1u, GetSelectionSize(omnibox_view));
 }
 
-base::Value CreateSiteSearchPolicyValue(bool featured) {
-  base::Value::List policy_value;
-  policy_value.Append(
-      base::Value::Dict()
-          .Set(policy::SiteSearchPolicyHandler::kShortcut,
-               kSiteSearchPolicyKeyword)
-          .Set(policy::SiteSearchPolicyHandler::kName, kSiteSearchPolicyName)
-          .Set(policy::SiteSearchPolicyHandler::kUrl, kSiteSearchPolicyURL)
-          .Set(policy::SiteSearchPolicyHandler::kFeatured, featured));
-  return base::Value(std::move(policy_value));
-}
+class SiteSearchPolicyOmniboxViewTest
+    : public OmniboxViewTest,
+      public ::testing::WithParamInterface<std::optional<bool>> {
+ public:
+  SiteSearchPolicyOmniboxViewTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        omnibox::kEnableSiteSearchAllowUserOverridePolicy);
+  }
+  ~SiteSearchPolicyOmniboxViewTest() override = default;
+
+  base::Value CreateSiteSearchPolicyValue(bool featured) {
+    base::Value::Dict policy_dict =
+        base::Value::Dict()
+            .Set(policy::SiteSearchPolicyHandler::kShortcut,
+                 kSiteSearchPolicyKeyword)
+            .Set(policy::SiteSearchPolicyHandler::kName, kSiteSearchPolicyName)
+            .Set(policy::SiteSearchPolicyHandler::kUrl, kSiteSearchPolicyURL)
+            .Set(policy::SiteSearchPolicyHandler::kFeatured, featured);
+    if (is_allow_user_override().has_value()) {
+      policy_dict.Set(policy::SiteSearchPolicyHandler::kAllowUserOverride,
+                      is_allow_user_override().value());
+    }
+    base::Value::List policy_value;
+    policy_value.Append(std::move(policy_dict));
+    return base::Value(std::move(policy_value));
+  }
+
+  std::optional<bool> is_allow_user_override() const { return GetParam(); }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
 
 // Verifies that keyword search works when `SiteSearchSettings` policy is set.
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, NonFeaturedPolicyKeyword) {
+IN_PROC_BROWSER_TEST_P(SiteSearchPolicyOmniboxViewTest,
+                       NonFeaturedPolicyKeyword) {
   policy::PolicyMap policies;
   policies.Set(policy::key::kSiteSearchSettings, policy::POLICY_LEVEL_MANDATORY,
                policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
@@ -1541,6 +1557,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, NonFeaturedPolicyKeyword) {
   EXPECT_EQ(turl->short_name(), kSiteSearchPolicyName);
   EXPECT_EQ(turl->url(), kSiteSearchPolicyURL);
   EXPECT_FALSE(turl->featured_by_policy());
+  EXPECT_EQ(turl->enforced_by_policy(),
+            !is_allow_user_override().value_or(false));
 
   // Trigger keyword hint mode.
   ASSERT_NO_FATAL_FAILURE(SendKeySequence(kSiteSearchPolicyKeywordKeys));
@@ -1567,7 +1585,7 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, NonFeaturedPolicyKeyword) {
 
 // Verifies that keyword search works when `SiteSearchSettings` policy defines
 // a featured search engine.
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeyword) {
+IN_PROC_BROWSER_TEST_P(SiteSearchPolicyOmniboxViewTest, FeaturedPolicyKeyword) {
   policy::PolicyMap policies;
   policies.Set(policy::key::kSiteSearchSettings, policy::POLICY_LEVEL_MANDATORY,
                policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
@@ -1586,6 +1604,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeyword) {
   EXPECT_EQ(turl->short_name(), kSiteSearchPolicyName);
   EXPECT_EQ(turl->url(), kSiteSearchPolicyURL);
   EXPECT_TRUE(turl->featured_by_policy());
+  EXPECT_EQ(turl->enforced_by_policy(),
+            !is_allow_user_override().value_or(false));
 
   // Type the keyword.
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_2, ui::EF_SHIFT_DOWN));
@@ -1614,7 +1634,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeyword) {
 
 // Verifies that featured search engine is shown with starter pack on "@" state
 // and that the underlying search works.
-IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeywordArrowDown) {
+IN_PROC_BROWSER_TEST_P(SiteSearchPolicyOmniboxViewTest,
+                       FeaturedPolicyKeywordArrowDown) {
   policy::PolicyMap policies;
   policies.Set(policy::key::kSiteSearchSettings, policy::POLICY_LEVEL_MANDATORY,
                policy::POLICY_SCOPE_USER, policy::POLICY_SOURCE_CLOUD,
@@ -1633,6 +1654,8 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeywordArrowDown) {
   EXPECT_EQ(turl->short_name(), kSiteSearchPolicyName);
   EXPECT_EQ(turl->url(), kSiteSearchPolicyURL);
   EXPECT_TRUE(turl->featured_by_policy());
+  EXPECT_EQ(turl->enforced_by_policy(),
+            !is_allow_user_override().value_or(false));
 
   // Trigger keyword mode.
   ASSERT_NO_FATAL_FAILURE(SendKey(ui::VKEY_2, ui::EF_SHIFT_DOWN));
@@ -1653,6 +1676,10 @@ IN_PROC_BROWSER_TEST_F(OmniboxViewTest, FeaturedPolicyKeywordArrowDown) {
                 ->destination_url.spec(),
             kSiteSearchPolicyTextURL);
 }
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         SiteSearchPolicyOmniboxViewTest,
+                         ::testing::Values(std::nullopt, true, false));
 
 class SearchAggregatorPolicyOmniboxViewTest : public OmniboxViewTest {
  public:

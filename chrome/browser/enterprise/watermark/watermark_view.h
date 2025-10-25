@@ -8,6 +8,7 @@
 #include "components/enterprise/watermarking/watermark.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/views/view.h"
+
 namespace gfx {
 class Canvas;
 class RenderText;
@@ -23,7 +24,6 @@ class WatermarkView : public views::View {
 
  public:
   WatermarkView();
-  explicit WatermarkView(std::string text);
   ~WatermarkView() override;
 
   // Set this to a translucent value for testing. Useful for visualizing the
@@ -32,7 +32,11 @@ class WatermarkView : public views::View {
 
   // Convenience function to draw a simple, text-based watermark. `text` must be
   // UTF-8 encoded.
-  void SetString(const std::string& text);
+  // `font_size` must be a positive integer.
+  void SetString(const std::string& text,
+                 SkColor fill_color,
+                 SkColor outline_color,
+                 int font_size);
 
   // Alternative to SetString. Allows watermark to be set to any drawing
   // represented by a cc::PaintRecord instance.
@@ -43,7 +47,31 @@ class WatermarkView : public views::View {
 
   bool has_text_for_testing() const { return !watermark_block_.record.empty(); }
 
+  // Wrapper of `SchedulePaint()`, virtual for testing.
+  virtual void InvalidateView();
+
  private:
+  // Returns true if the values have been updated.
+  void MaybeUpdateWatermarkBlock(const std::string& watermark_text,
+                                 SkColor fill_color,
+                                 SkColor outline_color,
+                                 int font_size);
+
+  // Unconditionally update the `watermark_block_` attribute.
+  void UpdateWatermarkBlock(const std::string& watermark_text,
+                            SkColor fill_color,
+                            SkColor outline_color,
+                            int font_size);
+
+  // Cached values of the watermark string and style to be rendered on the
+  // watermark view. This is to avoid invalidating the view and triggering
+  // redundant paints when the watermark is unchanged. The initial values are
+  // arbitrary sensible defaults.
+  std::string watermark_text_ = "";
+  SkColor fill_color_ = SK_ColorTRANSPARENT;
+  SkColor outline_color_ = SK_ColorTRANSPARENT;
+  int font_size_ = 10;
+
   // Background color of the whole `WatermarkView`. This is normally
   // transparent, but can be an arbitrary color for testing with the
   // "watermark_app" target.

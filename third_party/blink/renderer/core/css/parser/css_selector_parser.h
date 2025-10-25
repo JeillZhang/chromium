@@ -232,9 +232,10 @@ class CORE_EXPORT CSSSelectorParser {
                                    bool has_element_name,
                                    const AtomicString& element_name,
                                    wtf_size_t start_index_of_compound_selector);
-  void SplitCompoundAtImplicitShadowCrossingCombinator(
+  void SplitCompoundAtImplicitCombinator(
       base::span<CSSSelector> compound_selector);
   void RecordUsageAndDeprecations(base::span<CSSSelector>,
+                                  CSSNestingType,
                                   bool* has_visited_style = nullptr);
   static bool ContainsUnknownWebkitPseudoElements(
       base::span<CSSSelector> selectors);
@@ -251,8 +252,8 @@ class CORE_EXPORT CSSSelectorParser {
 
   bool failed_parsing_ = false;
   bool disallow_pseudo_elements_ = false;
-  // If we're inside a pseudo class that only accepts compound selectors,
-  // for example :host, inner :is()/:where() pseudo classes are also only
+  // If we're inside a pseudo-class that only accepts compound selectors,
+  // for example :host, inner :is()/:where() pseudo-classes are also only
   // allowed to contain compound selectors.
   bool inside_compound_pseudo_ = false;
   // When parsing a compound which includes a pseudo-element, the simple

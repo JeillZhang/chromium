@@ -237,8 +237,6 @@ class CORE_EXPORT WebFrameWidgetImpl
   void RequestDecode(const cc::DrawImage&,
                      base::OnceCallback<void(bool)>,
                      bool speculative) override;
-  bool SpeculativeDecodeRequestInFlight() const override;
-  void RequestBeginMainFrameNotExpected(bool request) final;
   int GetLayerTreeId() final;
   const cc::LayerTreeSettings* GetLayerTreeSettings() final;
   void UpdateBrowserControlsState(
@@ -440,7 +438,7 @@ class CORE_EXPORT WebFrameWidgetImpl
   bool HasFocus() override;
   void SetFocus(bool focus) override;
   void FlushInputProcessedCallback() override;
-  void CancelCompositionForPepper() override;
+  void CancelComposition() override;
   void ApplyVisualProperties(
       const VisualProperties& visual_properties) override;
   bool PinchGestureActiveInMainFrame() override;
@@ -564,6 +562,10 @@ class CORE_EXPORT WebFrameWidgetImpl
 
   void SetShouldThrottleFrameRate(bool flag);
 
+  void RequestMainFrameOnCompositorAnimation(
+      cc::PropertyChangeForcesCommitCriteria
+          property_change_forces_commit_criteria);
+
   // Pause all rendering (main and compositor thread) in the compositor.
   [[nodiscard]] std::unique_ptr<cc::ScopedPauseRendering> PauseRendering();
 
@@ -592,6 +594,8 @@ class CORE_EXPORT WebFrameWidgetImpl
   // when hiding. The bottom controls scroll immediately and never translate the
   // content (only clip it).
   void SetBrowserControlsParams(cc::BrowserControlsParams params);
+
+  void SetLoadProgress(float);
 
   void SetMaxSafeAreaInsets(const gfx::InsetsF& max_safe_area_insets);
 
@@ -675,7 +679,9 @@ class CORE_EXPORT WebFrameWidgetImpl
 
   void SetScreenMetricsEmulationParameters(
       bool enabled,
-      const blink::DeviceEmulationParams& params);
+      const blink::DeviceEmulationParams& params,
+      const mojom::blink::DeviceEmulationCacheBehavior& cache_behavior =
+          mojom::blink::DeviceEmulationCacheBehavior::kClearCache);
   void SetScreenInfoAndSize(const display::ScreenInfos& screen_infos,
                             const gfx::Size& widget_size_in_dips,
                             const gfx::Size& visible_viewport_size_in_dips);
@@ -726,9 +732,6 @@ class CORE_EXPORT WebFrameWidgetImpl
   // compositor submits a frame.
   void PropagateHistorySequenceNumberToCompositor();
 
-  // Ask compositor to create the shared memory for smoothness ukm region.
-  base::ReadOnlySharedMemoryRegion CreateSharedMemoryForSmoothnessUkm();
-
   // Ask compositor to create the shared memory for dropped frames ukm region.
   base::ReadOnlySharedMemoryRegion CreateSharedMemoryForDroppedFramesUkm();
 #if BUILDFLAG(IS_ANDROID)
@@ -755,6 +758,8 @@ class CORE_EXPORT WebFrameWidgetImpl
 
   void OnDevToolsSessionConnectionChanged(bool attached);
 
+  void OnFirstContentfulPaint(const base::TimeTicks& first_paint_time) override;
+
  protected:
   // WidgetBaseClient overrides:
   void ScheduleAnimation(bool urgent) override;
@@ -778,6 +783,7 @@ class CORE_EXPORT WebFrameWidgetImpl
  private:
   friend class WebViewImpl;
   friend class ReportTimeSwapPromise;
+  friend class WebFrameWidgetScrollContainerHitTest;
 
   void NotifySwapAndPresentationTime(PromiseCallbacks callbacks);
 
@@ -797,7 +803,6 @@ class CORE_EXPORT WebFrameWidgetImpl
       override;
   void BeginUpdateLayers() override;
   void EndUpdateLayers() override;
-  void DidCommitAndDrawCompositorFrame() override;
   void DidObserveFirstScrollDelay(
       base::TimeDelta first_scroll_delay,
       base::TimeTicks first_scroll_timestamp) override;
@@ -869,7 +874,9 @@ class CORE_EXPORT WebFrameWidgetImpl
   void UpdateRenderThrottlingStatusForSubFrame(bool is_throttled,
                                                bool subtree_throttled,
                                                bool display_locked) override;
-  void EnableDeviceEmulation(const DeviceEmulationParams& parameters) override;
+  void EnableDeviceEmulation(
+      const DeviceEmulationParams& parameters,
+      const mojom::blink::DeviceEmulationCacheBehavior cache_behavior) override;
   void DisableDeviceEmulation() override;
   // Sets the inert bit on an out-of-process iframe, causing it to ignore
   // input.
@@ -961,13 +968,6 @@ class CORE_EXPORT WebFrameWidgetImpl
       base::FunctionRef<void(RemoteFrame*)> callback);
 
   void SendOverscrollEventFromImplSide(const gfx::Vector2dF& overscroll_delta,
-                                       cc::ElementId scroll_latched_element_id);
-  // TODO(crbug.com/372627916): This function is not used when
-  // MultipleImplOnlyScrollAnimations is enabled. It should be considered
-  // deprecated and should be deleted when the MultipleImplOnlyScrollAnimations
-  // code path is the only existing code path.
-  void SendEndOfScrollEventsDeprecated(bool affects_outer_viewport,
-                                       bool affects_inner_viewport,
                                        cc::ElementId scroll_latched_element_id);
   void SendEndOfScrollEvents(const cc::CompositorCommitData& commit_data);
   void SendScrollSnapChangingEventIfNeeded(

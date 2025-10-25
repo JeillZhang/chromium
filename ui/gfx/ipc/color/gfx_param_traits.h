@@ -5,7 +5,7 @@
 #ifndef UI_GFX_IPC_COLOR_GFX_PARAM_TRAITS_H_
 #define UI_GFX_IPC_COLOR_GFX_PARAM_TRAITS_H_
 
-#include "ipc/ipc_param_traits.h"
+#include "ipc/param_traits.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/ipc/color/gfx_ipc_color_export.h"
 #include "ui/gfx/ipc/color/gfx_param_traits_macros.h"
@@ -24,7 +24,6 @@ struct GFX_IPC_COLOR_EXPORT ParamTraits<gfx::ColorSpace> {
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
                    param_type* r);
-  static void Log(const param_type& p, std::string* l);
 };
 
 template <>
@@ -34,7 +33,6 @@ struct GFX_IPC_COLOR_EXPORT ParamTraits<gfx::DisplayColorSpaces> {
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,
                    param_type* r);
-  static void Log(const param_type& p, std::string* l);
 };
 
 }  // namespace IPC

@@ -59,13 +59,13 @@ size_t GetHeaderSize(size_t key_length);
 
 // Given the size of a file holding a stream in the simple backend and the key
 // to an entry, returns the number of bytes in the stream.
-NET_EXPORT_PRIVATE int32_t GetDataSizeFromFileSize(size_t key_length,
+NET_EXPORT_PRIVATE int64_t GetDataSizeFromFileSize(size_t key_length,
                                                    int64_t file_size);
 
 // Given the size of a stream in the simple backend and the key to an entry,
 // returns the number of bytes in the file.
 NET_EXPORT_PRIVATE int64_t GetFileSizeFromDataSize(size_t key_length,
-                                                   int32_t data_size);
+                                                   int64_t data_size);
 
 // Given the stream index, returns the number of the file the stream is stored
 // in.
@@ -78,9 +78,12 @@ NET_EXPORT_PRIVATE int GetFileIndexFromStreamIndex(int stream_index);
 NET_EXPORT_PRIVATE bool SimpleCacheDeleteFile(const base::FilePath& path);
 
 // Prefer span form for new code.
-uint32_t Crc32(base::span<const uint8_t> data);
+NET_EXPORT_PRIVATE uint32_t Crc32(base::span<const uint8_t> data);
 uint32_t Crc32(const char* data, int length);
 
+// Prefer span form for new code.
+NET_EXPORT_PRIVATE uint32_t IncrementalCrc32(uint32_t previous_crc,
+                                             base::span<const uint8_t> data);
 uint32_t IncrementalCrc32(uint32_t previous_crc, const char* data, int length);
 
 }  // namespace disk_cache::simple_util

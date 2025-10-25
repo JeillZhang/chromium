@@ -25,18 +25,37 @@
 
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 
+#include "base/strings/stringprintf.h"
 #include "services/metrics/public/cpp/ukm_builders.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/platform/platform.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_element_hit_test_region.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_canvas_hit_test_rect.h"
 #include "third_party/blink/renderer/core/animation_frame/worker_animation_frame_provider.h"
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_context_creation_attributes_core.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_image_source.h"
+#include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
+#include "third_party/blink/renderer/core/layout/layout_box.h"
+#include "third_party/blink/renderer/core/layout/layout_object.h"
+#include "third_party/blink/renderer/core/paint/cull_rect_updater.h"
+#include "third_party/blink/renderer/core/paint/paint_layer.h"
+#include "third_party/blink/renderer/core/paint/paint_layer_painter.h"
 #include "third_party/blink/renderer/core/workers/worker_global_scope.h"
-#include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+#include "third_party/blink/renderer/platform/graphics/paint/paint_canvas.h"
+#include "third_party/blink/renderer/platform/graphics/paint/paint_record_builder.h"
+#include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
+#include "third_party/blink/renderer/platform/wtf/text/string_builder.h"
 
 namespace blink {
+namespace {
+
+// A default size used for canvas memory allocation when canvas size is greater
+// than 2^20.
+constexpr int kMaximumCanvasSize = 2 << 20;
+
+}  // namespace
 
 CanvasRenderingContext::CanvasRenderingContext(
     CanvasRenderingContextHost* host,
@@ -58,6 +77,24 @@ CanvasRenderingContext::CanvasRenderingContext(
   CHECK(host_);
 }
 
+intptr_t CanvasRenderingContext::AllocatedBufferSize() const {
+  if (!Host() || isContextLost()) {
+    return 0;
+  }
+  int buffer_count = AllocatedBufferCountPerPixel();
+
+  // NOTE: All formats used by canvas are either 8-bit or 16-bit.
+  const int bytes_per_pixel = GetSharedImageFormat().BitsPerPixel() / 8;
+
+  // Recomputation of externally memory usage computation is carried out
+  // in all cases.
+  base::CheckedNumeric<intptr_t> checked_usage = buffer_count * bytes_per_pixel;
+  gfx::Size canvas_size = DrawingBufferSize();
+  checked_usage *= std::min(kMaximumCanvasSize, canvas_size.width());
+  checked_usage *= std::min(kMaximumCanvasSize, canvas_size.height());
+  return checked_usage.ValueOrDefault(std::numeric_limits<intptr_t>::max());
+}
+
 void CanvasRenderingContext::Dispose() {
   RenderTaskEnded();
 
@@ -71,6 +108,224 @@ void CanvasRenderingContext::Dispose() {
     host->DetachContext();
     host_ = nullptr;
   }
+}
+
+// static
+CanvasRenderingContext*
+CanvasRenderingContext::GetEnclosingContextForDrawElement(
+    Element* element,
+    const String& func_name,
+    ExceptionState& exception_state) {
+  auto build_error = [&func_name](const char* format) {
+    StringBuilder builder;
+    builder.AppendFormat(format, func_name.Utf8().c_str());
+    return builder.ToString();
+  };
+
+  HTMLCanvasElement* canvas = nullptr;
+  for (Node* ancestor = element->parentNode(); ancestor && !canvas;
+       ancestor = ancestor->parentNode()) {
+    canvas = DynamicTo<HTMLCanvasElement>(ancestor);
+    if (!RuntimeEnabledFeatures::CanvasDrawElementInSubtreeEnabled()) {
+      break;
+    }
+  }
+  if (!canvas) {
+    exception_state.ThrowTypeError(build_error(
+        RuntimeEnabledFeatures::CanvasDrawElementInSubtreeEnabled()
+            ? ("Only immediate children of the <canvas> element can be "
+               "passed to %s.")
+            : ("Only descendants of the <canvas> element can be passed "
+               "to %s.")));
+
+    return nullptr;
+  }
+  CanvasRenderingContext* context = canvas->RenderingContext();
+  if (!context) {
+    exception_state.ThrowTypeError(
+        build_error("%s: containing canvas does not have a rendering "
+                    "context."));
+    return nullptr;
+  }
+  if (!context->IsDrawElementImageEligible(element, func_name,
+                                           exception_state)) {
+    return nullptr;
+  }
+  return context;
+}
+
+bool CanvasRenderingContext::IsDrawElementImageEligible(
+    Element* element,
+    const String& func_name,
+    ExceptionState& exception_state) {
+  if (!Host() || Host()->IsOffscreenCanvas()) {
+    return false;
+  }
+
+  HTMLCanvasElement* canvas_element = static_cast<HTMLCanvasElement*>(Host());
+  if (!canvas_element || !canvas_element->GetDocument().View()) {
+    return false;
+  }
+
+  auto build_error = [&func_name](const char* format) {
+    StringBuilder builder;
+    builder.AppendFormat(format, func_name.Utf8().c_str());
+    return builder.ToString();
+  };
+
+  if (!RuntimeEnabledFeatures::CanvasDrawElementInSubtreeEnabled()) {
+    if (element->parentElement() != canvas_element) {
+      exception_state.ThrowTypeError(
+          build_error("Only immediate children of the <canvas> element can be "
+                      "passed to %s."));
+      return false;
+    }
+  } else {
+    if (!element->IsDescendantOf(canvas_element)) {
+      exception_state.ThrowTypeError(build_error(
+          "Only descendants of the <canvas> element can be passed to %s."));
+      return false;
+    }
+    // TODO(pdr): Update these checks to point to the updated spec. These are
+    // currently copied from element capture, which has similar paint reqs:
+    // https://screen-share.github.io/element-capture/#elements-eligible-for-restriction
+    auto* object = element->GetLayoutObject();
+    if (!object || !object->IsStackingContext() || !object->CreatesGroup() ||
+        !object->IsBox() ||
+        To<LayoutBox>(object)->PhysicalFragmentCount() > 1) {
+      exception_state.ThrowTypeError(
+          build_error("Only elements with certain requirements (stacking "
+                      "context, etc) can be passed to %s."));
+      return false;
+    }
+  }
+
+  if (!canvas_element->layoutSubtree()) {
+    exception_state.ThrowTypeError(build_error(
+        "<canvas> elements without layoutsubtree do not support %s."));
+    return false;
+  }
+
+  if (!element->GetLayoutObject()) {
+    exception_state.ThrowTypeError(build_error(
+        "The canvas and element used with %s must have been laid "
+        "out. Detached canvases are not supported, nor canvas or children that "
+        "are `display: none`."));
+    return false;
+  }
+
+  return true;
+}
+
+std::optional<cc::PaintRecord> CanvasRenderingContext::GetElementPaintRecord(
+    Element* element,
+    const String& func_name,
+    ExceptionState& exception_state) {
+  element->GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint(
+      DocumentUpdateReason::kCanvasDrawElementImage);
+  if (!IsDrawElementImageEligible(element, func_name, exception_state)) {
+    return std::nullopt;
+  }
+
+  PaintRecordBuilder builder;
+  LayoutBox* layout_box = element->GetLayoutBox();
+  // All drawn elements should have their own stacking contexts.
+  CHECK(layout_box->HasLayer());
+  CHECK(layout_box->IsStacked());
+  PaintLayer* layer = layout_box->EnclosingLayer();
+
+  auto box_rect =
+      gfx::Rect(ToCeiledSize(layer->GetLayoutBox()->StitchedSize()));
+  // TODO(https://issues.chromium.org/379143301): Figure out the actual painted
+  // rect of the element plus its descendants, and use that instead of the
+  // box's size.
+  OverriddenCullRectScope cull_rect_scope(*layer, CullRect(box_rect),
+                                          /*disable_expansion*/ true);
+
+  PaintLayerPainter paint_layer_painter = PaintLayerPainter(*layer);
+  paint_layer_painter.Paint(
+      builder.Context(),
+      PaintFlag::kPrivacyPreserving | PaintFlag::kOmitCompositingInfo);
+
+  // Use the drawn element's local property tree state to start drawing, but
+  // then modify this to include effects and clips between the drawn element
+  // and the canvas element. This will exclude transforms above the local
+  // border box state (e.g., css transform is ignored), but will include effects
+  // (e.g., css filter is not ignored).
+  PropertyTreeState property_tree_state = layer->GetLayoutBox()
+                                              ->FirstFragment()
+                                              .LocalBorderBoxProperties()
+                                              .Unalias();
+  HTMLCanvasElement* canvas_element = static_cast<HTMLCanvasElement*>(Host());
+  const auto& canvas_fragment = canvas_element->GetLayoutBox()->FirstFragment();
+  property_tree_state.SetEffect(canvas_fragment.ContentsEffect().Unalias());
+  property_tree_state.SetClip(canvas_fragment.ContentsClip().Unalias());
+
+  cc::PaintRecord paint_record = builder.EndRecording(property_tree_state);
+  return paint_record;
+}
+
+scoped_refptr<StaticBitmapImage> CanvasRenderingContext::GetElementImage(
+    Element* element,
+    const String& func_name,
+    ExceptionState& exception_state) {
+  std::optional<cc::PaintRecord> paint_record =
+      GetElementPaintRecord(element, func_name, exception_state);
+  if (!paint_record) {
+    return nullptr;
+  }
+
+  SkSurfaceProps surface_props;
+  auto box_rect =
+      gfx::Rect(ToCeiledSize(element->GetLayoutBox()->StitchedSize()));
+  sk_sp<SkSurface> surface = SkSurfaces::Raster(
+      SkImageInfo::MakeN32Premul(box_rect.width(), box_rect.height()),
+      &surface_props);
+  if (!surface) {
+    return nullptr;
+  }
+
+  SkiaPaintCanvas skia_paint_canvas(surface->getCanvas());
+  skia_paint_canvas.drawPicture(paint_record.value());
+
+  return UnacceleratedStaticBitmapImage::Create(surface->makeImageSnapshot());
+}
+
+bool CanvasRenderingContext::ConvertHitTestRegionsToHTMLCanvasRegions(
+    const HeapVector<Member<CanvasElementHitTestRegion>>& hit_test_regions,
+    VectorOf<HTMLCanvasElement::ElementHitTestRegion>& result,
+    const String& func_name,
+    ExceptionState& exception_state) {
+  for (const auto& region : hit_test_regions) {
+    if (!IsDrawElementImageEligible(region->element(), func_name,
+                                    exception_state)) {
+      return false;
+    }
+
+    double width = [&]() -> double {
+      if (region->rect()->hasWidth()) {
+        return *region->rect()->width();
+      }
+      gfx::RectF bounds =
+          region->element()->GetBoundingClientRectNoLifecycleUpdate();
+      return bounds.width();
+    }();
+
+    double height = [&]() -> double {
+      if (region->rect()->hasHeight()) {
+        return *region->rect()->height();
+      }
+      gfx::RectF bounds =
+          region->element()->GetBoundingClientRectNoLifecycleUpdate();
+      return bounds.height();
+    }();
+
+    result.push_back(
+        MakeGarbageCollected<HTMLCanvasElement::ElementHitTestRegion>(
+            region->element(), gfx::RectF(region->rect()->x(),
+                                          region->rect()->y(), width, height)));
+  }
+  return true;
 }
 
 void CanvasRenderingContext::DidDraw(
@@ -93,25 +348,13 @@ void CanvasRenderingContext::DidDraw(
   Thread::Current()->AddTaskObserver(this);
 }
 
-scoped_refptr<StaticBitmapImage>
-CanvasRenderingContext::PaintRenderingResultsToSnapshot(
-    SourceDrawingBuffer source_buffer,
-    FlushReason reason) {
-  CanvasResourceProvider* provider =
-      PaintRenderingResultsToCanvas(source_buffer);
-
-  return provider ? provider->Snapshot(reason) : nullptr;
-}
-
 void CanvasRenderingContext::DidProcessTask(
     const base::PendingTask& /* pending_task */) {
   RenderTaskEnded();
 
   // The end of a script task that drew content to the canvas is the point
   // at which the current frame may be considered complete.
-  if (CanvasRenderingContextHost* host = Host()) [[likely]] {
-    host->PreFinalizeFrame();
-  }
+  PreFinalizeFrame();
   FlushReason reason = did_print_in_current_task_
                            ? FlushReason::kCanvasPushFrameWhilePrinting
                            : FlushReason::kCanvasPushFrame;
@@ -246,6 +489,16 @@ CanvasRenderingContext::GetCanvasPerformanceMonitor() {
   DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<CanvasPerformanceMonitor>,
                                   monitor, ());
   return *monitor;
+}
+
+CanvasRenderingContext::ElementHitTestRegion::ElementHitTestRegion(
+    Element* element,
+    const gfx::RectF& rect)
+    : element_(element), rect_(rect) {}
+
+void CanvasRenderingContext::ElementHitTestRegion::Trace(
+    Visitor* visitor) const {
+  visitor->Trace(element_);
 }
 
 }  // namespace blink

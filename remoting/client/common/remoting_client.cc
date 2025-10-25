@@ -14,12 +14,16 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notimplemented.h"
 #include "base/task/sequenced_task_runner.h"
+#include "base/task/single_thread_task_runner.h"
+#include "base/task/thread_pool.h"
 #include "base/time/time.h"
 #include "components/webrtc/thread_wrapper.h"
 #include "remoting/base/directory_service_client.h"
 #include "remoting/base/oauth_token_info.h"
 #include "remoting/base/passthrough_oauth_token_getter.h"
+#include "remoting/client/common/client_status_observer.h"
 #include "remoting/client/common/frame_consumer_wrapper.h"
 #include "remoting/client/common/logging.h"
 #include "remoting/proto/control.pb.h"
@@ -56,9 +60,11 @@ constexpr std::int32_t kMinBitrateBps = 10485760;
 RemotingClient::RemotingClient(
     base::OnceClosure quit_closure,
     protocol::FrameConsumer* frame_consumer,
+    base::WeakPtr<protocol::AudioStub> audio_stream_consumer,
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory)
     : quit_closure_(std::move(quit_closure)),
       frame_consumer_(frame_consumer),
+      audio_stream_consumer_(std::move(audio_stream_consumer)),
       url_loader_factory_(url_loader_factory) {
   CHECK(frame_consumer_);
 }
@@ -67,6 +73,7 @@ RemotingClient::~RemotingClient() {
   if (signal_strategy_) {
     signal_strategy_->RemoveListener(this);
   }
+  observers_.Notify(&ClientStatusObserver::OnClientDestroyed);
 }
 
 void RemotingClient::StartSession(std::string_view support_access_code,
@@ -146,8 +153,10 @@ void RemotingClient::StartConnection() {
 
   CLIENT_LOG << "Creating session manager...";
   auto protocol_config = protocol::CandidateSessionConfig::CreateDefault();
-  protocol_config->DisableAudioChannel();
   protocol_config->set_webrtc_supported(true);
+  if (!audio_stream_consumer_) {
+    protocol_config->DisableAudioChannel();
+  }
   session_manager_ =
       std::make_unique<protocol::JingleSessionManager>(signal_strategy_.get());
   session_manager_->set_protocol_config(std::move(protocol_config));
@@ -176,6 +185,14 @@ void RemotingClient::StartConnection() {
   connection_->set_client_stub(this);
   connection_->set_clipboard_stub(this);
   connection_->set_video_renderer(video_renderer_.get());
+  if (audio_stream_consumer_) {
+    connection_->InitializeAudio(
+        /*audio_decode_task_runner=*/base::ThreadPool::
+            CreateSingleThreadTaskRunner(
+                {base::TaskPriority::HIGHEST},
+                base::SingleThreadTaskRunnerThreadMode::DEDICATED),
+        audio_stream_consumer_);
+  }
   connection_->Connect(std::move(session), transport_context, this);
   protocol::NetworkSettings network_settings{
       protocol::NetworkSettings::NAT_TRAVERSAL_FULL};
@@ -198,6 +215,14 @@ void RemotingClient::StopSession() {
         base::Seconds(2));
   }
   return;
+}
+
+void RemotingClient::AddObserver(ClientStatusObserver* observer) {
+  observers_.AddObserver(observer);
+}
+
+void RemotingClient::RemoveObserver(ClientStatusObserver* observer) {
+  observers_.RemoveObserver(observer);
 }
 
 base::WeakPtr<RemotingClient> RemotingClient::GetWeakPtr() {
@@ -243,6 +268,11 @@ void RemotingClient::SetCursorShape(
   NOTIMPLEMENTED();
 }
 
+void RemotingClient::SetHostCursorPosition(
+    const protocol::HostCursorPosition& position) {
+  NOTIMPLEMENTED();
+}
+
 void RemotingClient::SetKeyboardLayout(const protocol::KeyboardLayout& layout) {
   NOTIMPLEMENTED();
 }
@@ -256,9 +286,13 @@ void RemotingClient::OnConnectionState(protocol::ConnectionToHost::State state,
     protocol::PeerConnectionParameters peer_connection_params;
     peer_connection_params.set_preferred_min_bitrate_bps(kMinBitrateBps);
     connection_->host_stub()->ControlPeerConnection(peer_connection_params);
-  } else if (state == protocol::ConnectionToHost::State::CLOSED ||
-             state == protocol::ConnectionToHost::State::FAILED) {
+    observers_.Notify(&ClientStatusObserver::OnConnected);
+  } else if (state == protocol::ConnectionToHost::State::CLOSED) {
     StopSession();
+    observers_.Notify(&ClientStatusObserver::OnDisconnected);
+  } else if (state == protocol::ConnectionToHost::State::FAILED) {
+    StopSession();
+    observers_.Notify(&ClientStatusObserver::OnConnectionFailed);
   }
 }
 

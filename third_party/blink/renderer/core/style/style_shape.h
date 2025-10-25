@@ -5,11 +5,11 @@
 #ifndef THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_STYLE_SHAPE_H_
 #define THIRD_PARTY_BLINK_RENDERER_CORE_STYLE_STYLE_SHAPE_H_
 
+#include <array>
 #include <cstddef>
 #include <optional>
 #include <variant>
 
-#include "base/memory/scoped_refptr.h"
 #include "third_party/blink/renderer/core/style/basic_shapes.h"
 #include "third_party/blink/renderer/core/svg/svg_path_data.h"
 #include "third_party/blink/renderer/platform/geometry/length_point.h"

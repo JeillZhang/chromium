@@ -66,9 +66,9 @@
 #include "chromecast/media/cma/backend/cma_backend_factory_impl.h"
 #include "chromecast/media/common/media_pipeline_backend_manager.h"
 #include "chromecast/media/common/media_resource_tracker.h"
-#include "chromecast/media/service/cast_renderer.h"
 #include "chromecast/media/service/mojom/video_geometry_setter.mojom.h"
 #include "chromecast/public/media/media_pipeline_backend.h"
+#include "components/os_crypt/async/browser/os_crypt_async.h"
 #include "components/prefs/pref_service.h"
 #include "components/url_rewrite/browser/url_request_rewrite_rules_manager.h"
 #include "components/url_rewrite/common/url_loader_throttle.h"
@@ -88,6 +88,7 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
+#include "ipc/constants.mojom.h"
 #include "media/audio/audio_thread_impl.h"
 #include "media/base/media_switches.h"
 #include "media/gpu/buildflags.h"
@@ -114,7 +115,7 @@
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/device_info.h"
 #include "chromecast/media/audio/cast_audio_manager_android.h"  // nogncheck
 #include "components/crash/core/app/crashpad.h"
 #include "media/audio/android/audio_manager_android.h"
@@ -150,8 +151,13 @@ CastContentBrowserClient::CastContentBrowserClient(
               base::OnTaskRunnerDeleter(nullptr))),
 #endif  // BUILDFLAG(ENABLE_CAST_RENDERER)
       cast_browser_main_parts_(nullptr),
+      os_crypt_async_(std::make_unique<os_crypt_async::OSCryptAsync>(
+          std::vector<
+              std::pair<os_crypt_async::OSCryptAsync::Precedence,
+                        std::unique_ptr<os_crypt_async::KeyProvider>>>{})),
       cast_network_contexts_(
-          std::make_unique<CastNetworkContexts>(GetCorsExemptHeadersList())),
+          std::make_unique<CastNetworkContexts>(GetCorsExemptHeadersList(),
+                                                os_crypt_async_.get())),
       cast_feature_list_creator_(cast_feature_list_creator) {
   std::vector<const base::Feature*> extra_enable_features = {
       &::media::kInternalMediaSession,
@@ -168,7 +174,7 @@ CastContentBrowserClient::CastContentBrowserClient(
   extra_enable_features.push_back(
       &::media::kUseTaskRunnerForMojoAudioDecoderService);
 
-  if (base::android::BuildInfo::GetInstance()->is_tv()) {
+  if (base::android::device_info::is_tv()) {
     // Use the software decoder provided by MediaCodec instead of the built in
     // software decoder. This can improve av sync quality.
     extra_enable_features.push_back(&::media::kAllowMediaCodecSoftwareDecoder);
@@ -202,7 +208,6 @@ std::unique_ptr<CastService> CastContentBrowserClient::CreateCastService(
     CastSystemMemoryPressureEvaluatorAdjuster*
         cast_system_memory_pressure_evaluator_adjuster,
     PrefService* pref_service,
-    media::VideoPlaneController* video_plane_controller,
     CastWindowManager* window_manager,
     CastWebService* web_service,
     DisplaySettingsManager* display_settings_manager) {
@@ -377,7 +382,7 @@ bool CastContentBrowserClient::IsHandledURL(const GURL& url) {
       url::kDataScheme,         url::kFileSystemScheme,
   };
 
-  const std::string& scheme = url.scheme();
+  const std::string& scheme = url.GetScheme();
   for (size_t i = 0; i < std::size(kProtocolList); ++i) {
     if (scheme == kProtocolList[i]) {
       return true;
@@ -448,7 +453,7 @@ void CastContentBrowserClient::AppendExtraCommandLineSwitches(
     };
     command_line->CopySwitchesFrom(*browser_command_line, kForwardSwitches);
 
-    auto display = display::Screen::GetScreen()->GetPrimaryDisplay();
+    auto display = display::Screen::Get()->GetPrimaryDisplay();
     gfx::Size res = display.GetSizeInPixel();
     if (display.rotation() == display::Display::ROTATE_90 ||
         display.rotation() == display::Display::ROTATE_270) {
@@ -619,7 +624,7 @@ void CastContentBrowserClient::SelectClientCertificateOnIOThread(
     return;
   } else {
     LOG(ERROR) << "Invalid host for client certificate request: "
-               << requesting_url.host()
+               << requesting_url.GetHost()
                << " with render_process_id: " << render_process_id
                << " and render_frame_id: " << render_frame_id;
   }
@@ -813,7 +818,7 @@ void CastContentBrowserClient::RegisterNonNetworkSubresourceURLLoaderFactories(
     int render_frame_id,
     const std::optional<url::Origin>& request_initiator_origin,
     NonNetworkURLLoaderFactoryMap* factories) {
-  if (render_frame_id == MSG_ROUTING_NONE) {
+  if (render_frame_id == IPC::mojom::kRoutingIdNone) {
     LOG(ERROR) << "Service worker not supported.";
     return;
   }
@@ -876,26 +881,6 @@ void CastContentBrowserClient::CreateGeneralAudienceBrowsingService() {
       std::make_unique<GeneralAudienceBrowsingService>(
           browser_main_parts()->connector(),
           cast_network_contexts_->GetSystemSharedURLLoaderFactory());
-}
-
-void CastContentBrowserClient::BindMediaRenderer(
-    mojo::PendingReceiver<::media::mojom::Renderer> receiver) {
-  auto media_task_runner = GetMediaTaskRunner();
-  if (!media_task_runner->BelongsToCurrentThread()) {
-    media_task_runner->PostTask(
-        FROM_HERE, base::BindOnce(&CastContentBrowserClient::BindMediaRenderer,
-                                  base::Unretained(this), std::move(receiver)));
-    return;
-  }
-
-  ::media::MojoRendererService::Create(
-      nullptr /* mojo_cdm_service_context */,
-      std::make_unique<media::CastRenderer>(
-          GetCmaBackendFactory(), std::move(media_task_runner),
-          GetVideoModeSwitcher(), GetVideoResolutionPolicy(),
-          base::UnguessableToken::Create(), nullptr /* frame_interfaces */,
-          true /* is_buffering_enabled */),
-      std::move(receiver));
 }
 
 }  // namespace shell

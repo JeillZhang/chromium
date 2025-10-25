@@ -25,7 +25,8 @@
 #include "headless/test/headless_browser_test.h"
 #include "headless/test/headless_browser_test_utils.h"
 #include "headless/test/headless_devtooled_browsertest.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
+#include "net/test/embedded_test_server/embedded_test_server.h"
+#include "net/test/embedded_test_server/register_basic_auth_handler.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/chrome_debug_urls.h"
@@ -203,9 +204,12 @@ class HeadlessDevToolsNetworkBlockedUrlTest
     SendCommandSync(devtools_client_, "Page.enable");
 
     base::Value::List urls;
-    urls.Append("dom_tree_test.css");
+    base::Value::Dict url_pattern;
+    url_pattern.Set("urlPattern", "*://*:*/hello.html");
+    url_pattern.Set("block", true);
+    urls.Append(std::move(url_pattern));
     devtools_client_.SendCommand("Network.setBlockedURLs",
-                                 Param("urls", std::move(urls)));
+                                 Param("urlPatterns", std::move(urls)));
 
     devtools_client_.SendCommand(
         "Page.navigate",
@@ -215,7 +219,7 @@ class HeadlessDevToolsNetworkBlockedUrlTest
 
   std::string GetUrlPath(const std::string& url) const {
     GURL gurl(url);
-    return gurl.path();
+    return gurl.GetPath();
   }
 
   void OnRequestWillBeSent(const base::Value::Dict& params) {
@@ -236,13 +240,15 @@ class HeadlessDevToolsNetworkBlockedUrlTest
   }
 
   void OnLoadEventFired(const base::Value::Dict&) {
-    EXPECT_THAT(
-        requests_to_be_sent_,
-        testing::UnorderedElementsAre("/dom_tree_test.html",
-                                      "/dom_tree_test.css", "/iframe.html"));
+    EXPECT_THAT(requests_to_be_sent_,
+                testing::UnorderedElementsAre(
+                    "/dom_tree_test.html", "/dom_tree_test.css", "/iframe.html",
+                    "/Ahem.ttf", "/hello.html"));
     EXPECT_THAT(responses_received_,
-                ElementsAre("/dom_tree_test.html", "/iframe.html"));
-    EXPECT_THAT(failures_, ElementsAre("/dom_tree_test.css"));
+                testing::UnorderedElementsAre("/dom_tree_test.html",
+                                              "/dom_tree_test.css",
+                                              "/iframe.html", "/Ahem.ttf"));
+    EXPECT_THAT(failures_, ElementsAre("/hello.html"));
 
     FinishAsynchronousTest();
   }
@@ -620,22 +626,22 @@ class BlockedByClient_NetworkObserver_Test
 
 HEADLESS_DEVTOOLED_TEST_F(BlockedByClient_NetworkObserver_Test);
 
+// This class simulates sending GETs to a proxy server by using a standard
+// EmbeddedTestServer as the proxy server, and giving it a a proxy auth handler.
+// While there is no actual proxy, the EmbeddedTestServer's file handler handles
+// HTTP-proxy-style GETs directly, no actual proxy needed.
 class DevtoolsInterceptionWithAuthProxyTest
     : public HeadlessDevTooledBrowserTest {
  public:
-  DevtoolsInterceptionWithAuthProxyTest()
-      : proxy_server_(net::SpawnedTestServer::TYPE_BASIC_AUTH_PROXY,
-                      base::FilePath(FILE_PATH_LITERAL("headless/test/data"))) {
-  }
+  DevtoolsInterceptionWithAuthProxyTest() = default;
 
   void SetUp() override {
-    ASSERT_TRUE(proxy_server_.Start());
+    RegisterProxyBasicAuthHandler(*embedded_test_server(), "user", "pass");
+    ASSERT_TRUE(embedded_test_server()->Start());
     HeadlessDevTooledBrowserTest::SetUp();
   }
 
   void RunDevTooledTest() override {
-    ASSERT_TRUE(embedded_test_server()->Start());
-
     devtools_client_.AddEventHandler(
         "Network.requestIntercepted",
         base::BindRepeating(
@@ -658,10 +664,13 @@ class DevtoolsInterceptionWithAuthProxyTest
 
     SendCommandSync(devtools_client_, "Page.enable");
 
+    // Hostname used here doesn't actually matter, since the proxy handles the
+    // requests itself without sending them to a server.
     devtools_client_.SendCommand(
         "Page.navigate",
-        Param("url",
-              embedded_test_server()->GetURL("/dom_tree_test.html").spec()));
+        Param("url", embedded_test_server()
+                         ->GetURL("host.test", "/dom_tree_test.html")
+                         .spec()));
   }
 
   void OnRequestIntercepted(const base::Value::Dict& params) {
@@ -674,13 +683,13 @@ class DevtoolsInterceptionWithAuthProxyTest
 
       base::Value::Dict auth_challenge_response;
       auth_challenge_response.Set("response", "ProvideCredentials");
-      auth_challenge_response.Set("username", "foo");
-      auth_challenge_response.Set("password", "bar");
+      auth_challenge_response.Set("username", "user");
+      auth_challenge_response.Set("password", "pass");
       continue_intercept_params.Set("authChallengeResponse",
                                     std::move(auth_challenge_response));
     } else {
       GURL url(DictString(params, "params.request.url"));
-      files_loaded_.insert(url.path());
+      files_loaded_.insert(url.GetPath());
     }
 
     devtools_client_.SendCommand("Network.continueInterceptedRequest",
@@ -690,8 +699,9 @@ class DevtoolsInterceptionWithAuthProxyTest
   void OnLoadEventFired(const base::Value::Dict&) {
     EXPECT_TRUE(auth_challenge_seen_);
     EXPECT_THAT(files_loaded_,
-                ElementsAre("/Ahem.ttf", "/dom_tree_test.css",
-                            "/dom_tree_test.html", "/iframe.html"));
+                testing::UnorderedElementsAre("/Ahem.ttf", "/dom_tree_test.css",
+                                              "/dom_tree_test.html",
+                                              "/iframe.html", "/hello.html"));
 
     FinishAsynchronousTest();
   }
@@ -700,26 +710,18 @@ class DevtoolsInterceptionWithAuthProxyTest
       HeadlessBrowserContext::Builder& builder) override {
     std::unique_ptr<net::ProxyConfig> proxy_config(new net::ProxyConfig);
     proxy_config->proxy_rules().ParseFromString(
-        proxy_server_.host_port_pair().ToString());
+        embedded_test_server()->host_port_pair().ToString());
     // TODO(crbug.com/40600992): Don't rely on proxying localhost.
     proxy_config->proxy_rules().bypass_rules.AddRulesToSubtractImplicit();
     builder.SetProxyConfig(std::move(proxy_config));
   }
 
  private:
-  net::SpawnedTestServer proxy_server_;
   bool auth_challenge_seen_ = false;
   std::set<std::string> files_loaded_;
 };
 
-#if BUILDFLAG(IS_FUCHSIA)
-// TODO(crbug.com/40697469): Reenable on Fuchsia when fixed.
-// NOTE: This macro expands to:
-//   DevtoolsInterceptionWithAuthProxyTest.RunAsyncTest
-DISABLED_HEADLESS_DEVTOOLED_TEST_F(DevtoolsInterceptionWithAuthProxyTest);
-#else
 HEADLESS_DEVTOOLED_TEST_F(DevtoolsInterceptionWithAuthProxyTest);
-#endif
 
 class NavigatorLanguages : public HeadlessDevTooledBrowserTest {
  public:

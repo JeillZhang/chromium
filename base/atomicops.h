@@ -63,9 +63,7 @@ typedef int32_t Atomic32;
 #ifdef ARCH_CPU_64_BITS
 // We need to be able to go between Atomic64 and AtomicWord implicitly.  This
 // means Atomic64 and AtomicWord should be the same type on 64-bit.
-#if defined(__ILP32__) || BUILDFLAG(IS_NACL)
-// NaCl's intptr_t is not actually 64-bits on 64-bit!
-// http://code.google.com/p/nativeclient/issues/detail?id=1162
+#if defined(__ILP32__)
 typedef int64_t Atomic64;
 #else
 typedef intptr_t Atomic64;
@@ -141,7 +139,7 @@ Atomic64 Acquire_Load(volatile const Atomic64* ptr);
 // Copies non-overlapping spans of the same size. Writes are done using C++
 // atomics with `std::memory_order_relaxed`.
 //
-// This is an analogue of `WTF::AtomicWriteMemcpy` and it should be used
+// This is an analogue of `blink::AtomicWriteMemcpy` and it should be used
 // for copying data into buffers that are accessible from another
 // thread while the copy is being done. The buffer will appear inconsistent,
 // but it won't trigger C++ UB and won't upset TSAN. The end of copy needs to

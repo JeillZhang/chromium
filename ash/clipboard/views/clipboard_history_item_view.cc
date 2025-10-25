@@ -39,7 +39,6 @@
 #include "ui/views/layout/box_layout_view.h"
 #include "ui/views/layout/fill_layout.h"
 #include "ui/views/layout/layout_types.h"
-#include "ui/views/metadata/view_factory_internal.h"
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_targeter_delegate.h"
 #include "ui/views/view_utils.h"
@@ -82,7 +81,8 @@ ClipboardHistoryItemView::ContentsView::~ContentsView() = default;
 
 void ClipboardHistoryItemView::ContentsView::OnViewVisibilityChanged(
     views::View* observed_view,
-    views::View* starting_view) {
+    views::View* starting_view,
+    bool visible) {
   is_delete_button_visible_ = observed_view->GetVisible();
   SetClipPath(GetClipPath());
 }

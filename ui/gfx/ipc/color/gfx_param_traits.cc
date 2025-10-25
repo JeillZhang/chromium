@@ -4,8 +4,8 @@
 
 #include "ui/gfx/ipc/color/gfx_param_traits.h"
 
-#include "ipc/ipc_message_utils.h"
 #include "ipc/param_traits_macros.h"
+#include "ipc/param_traits_utils.h"
 #include "ui/gfx/color_space.h"
 #include "ui/gfx/display_color_spaces.h"
 #include "ui/gfx/ipc/buffer_types/gfx_ipc_export.h"
@@ -41,11 +41,6 @@ bool ParamTraits<gfx::ColorSpace>::Read(const base::Pickle* m,
   return true;
 }
 
-void ParamTraits<gfx::ColorSpace>::Log(const gfx::ColorSpace& p,
-                                       std::string* l) {
-  l->append("<gfx::ColorSpace>");
-}
-
 void ParamTraits<gfx::DisplayColorSpaces>::Write(
     base::Pickle* m,
     const gfx::DisplayColorSpaces& p) {
@@ -69,11 +64,6 @@ bool ParamTraits<gfx::DisplayColorSpaces>::Read(const base::Pickle* m,
   return true;
 }
 
-void ParamTraits<gfx::DisplayColorSpaces>::Log(const gfx::DisplayColorSpaces& p,
-                                               std::string* l) {
-  l->append("<gfx::DisplayColorSpaces>");
-}
-
 }  // namespace IPC
 
 // Generate param traits write methods.
@@ -85,13 +75,6 @@ namespace IPC {
 
 // Generate param traits read methods.
 #include "ipc/param_traits_read_macros.h"
-namespace IPC {
-#undef UI_GFX_IPC_COLOR_GFX_PARAM_TRAITS_MACROS_H_
-#include "ui/gfx/ipc/color/gfx_param_traits_macros.h"
-}  // namespace IPC
-
-// Generate param traits log methods.
-#include "ipc/param_traits_log_macros.h"
 namespace IPC {
 #undef UI_GFX_IPC_COLOR_GFX_PARAM_TRAITS_MACROS_H_
 #include "ui/gfx/ipc/color/gfx_param_traits_macros.h"

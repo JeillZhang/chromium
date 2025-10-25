@@ -4,8 +4,10 @@
 
 #include "chrome/browser/ash/guest_os/guest_os_registry_service.h"
 
+#include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/app_list/app_list_config.h"
@@ -62,6 +64,15 @@ namespace guest_os {
 
 namespace {
 
+// Returns the current locale and fallbacks for it (in this order).
+std::vector<std::string> GetFallbackLocales() {
+  std::vector<std::string> locales = l10n_util::GetParentLocales(
+      l10n_util::NormalizeLocale(g_browser_process->GetApplicationLocale()));
+  // We use an empty locale as fallback.
+  locales.push_back(std::string());
+  return locales;
+}
+
 void Launch(vm_tools::apps::VmType vm_type,
             std::string app_id,
             Profile* profile,
@@ -103,7 +114,7 @@ bool AppHandlesProtocol(const GuestOsRegistryService::Registration& app,
       !borealis::IsExternalURLAllowed(url)) {
     return false;
   }
-  return base::Contains(app.MimeTypes(), "x-scheme-handler/" + url.scheme());
+  return base::Contains(app.MimeTypes(), "x-scheme-handler/" + url.GetScheme());
 }
 
 // This prefix is used when generating the crostini app list id.
@@ -500,16 +511,8 @@ std::string GuestOsRegistryService::Registration::GetLocalizedString(
     return std::string();
   }
 
-  std::string current_locale =
-      l10n_util::NormalizeLocale(g_browser_process->GetApplicationLocale());
-  std::vector<std::string> locales;
-  l10n_util::GetParentLocales(current_locale, &locales);
-  // We use an empty locale as fallback.
-  locales.push_back(std::string());
-
-  for (const std::string& locale : locales) {
-    const std::string* value = dict->FindString(locale);
-    if (value) {
+  for (const std::string& locale : GetFallbackLocales()) {
+    if (const std::string* value = dict->FindString(locale)) {
       return *value;
     }
   }
@@ -526,16 +529,8 @@ std::set<std::string> GuestOsRegistryService::Registration::GetLocalizedList(
     return {};
   }
 
-  std::string current_locale =
-      l10n_util::NormalizeLocale(g_browser_process->GetApplicationLocale());
-  std::vector<std::string> locales;
-  l10n_util::GetParentLocales(current_locale, &locales);
-  // We use an empty locale as fallback.
-  locales.push_back(std::string());
-
-  for (const std::string& locale : locales) {
-    const base::Value::List* list = dict->FindList(locale);
-    if (list) {
+  for (const std::string& locale : GetFallbackLocales()) {
+    if (const base::Value::List* list = dict->FindList(locale)) {
       return ListToStringSet(list);
     }
   }

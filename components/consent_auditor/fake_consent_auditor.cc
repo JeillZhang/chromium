@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/consent_auditor/fake_consent_auditor.h"
+
 #include <string>
 #include <utility>
 
+#include "base/notimplemented.h"
 #include "components/consent_auditor/consent_auditor.h"
-#include "components/consent_auditor/fake_consent_auditor.h"
 #include "components/sync/protocol/user_consent_specifics.pb.h"
 #include "components/sync/protocol/user_consent_types.pb.h"
 
@@ -43,24 +45,6 @@ void FakeConsentAuditor::RecordSyncConsent(
   RecordGaiaConsent(gaia_id, Feature::CHROME_SYNC, description_grd_ids,
                     consent.confirmation_grd_id(),
                     ConvertConsentStatus(consent.status()));
-}
-
-void FakeConsentAuditor::RecordAssistantActivityControlConsent(
-    const GaiaId& gaia_id,
-    const sync_pb::UserConsentTypes::AssistantActivityControlConsent& consent) {
-  gaia_id_ = gaia_id;
-  sync_pb::UserConsentSpecifics consent_specifics;
-  *consent_specifics.mutable_assistant_activity_control_consent() = consent;
-  recorded_consents_.push_back(std::move(consent_specifics));
-}
-
-void FakeConsentAuditor::RecordAccountPasswordsConsent(
-    const GaiaId& gaia_id,
-    const sync_pb::UserConsentTypes::AccountPasswordsConsent& consent) {
-  gaia_id_ = gaia_id;
-  sync_pb::UserConsentSpecifics consent_specifics;
-  *consent_specifics.mutable_account_passwords_consent() = consent;
-  recorded_consents_.push_back(std::move(consent_specifics));
 }
 
 void FakeConsentAuditor::RecordGaiaConsent(

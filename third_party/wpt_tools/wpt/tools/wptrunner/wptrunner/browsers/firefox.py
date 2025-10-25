@@ -164,6 +164,15 @@ def executor_kwargs(logger, test_type, test_environment, run_info_data,
         capabilities["pageLoadStrategy"] = "eager"
     if test_type in ("reftest", "print-reftest"):
         executor_kwargs["reftest_internal"] = kwargs["reftest_internal"]
+        cache_screenshots = True
+        if run_info_data["os"] == "android":
+            try:
+                major_version = int(run_info_data["version"].split(".", 1)[0])
+            except ValueError:
+                pass
+            else:
+                cache_screenshots = major_version < 14
+        executor_kwargs["cache_screenshots"] = cache_screenshots
     if test_type == "wdspec":
         options = {"args": []}
         if kwargs["binary"]:
@@ -229,9 +238,11 @@ def run_info_extras(logger, default_prefs=None, **kwargs):
           "sessionHistoryInParent": (not kwargs.get("disable_fission") or
                                      not bool_pref("fission.disableSessionHistoryInParent")),
           "swgl": bool_pref("gfx.webrender.software"),
+          "useDrawSnapshot": bool_pref("reftest.use-draw-snapshot"),
           "privateBrowsing": bool_pref("browser.privatebrowsing.autostart"),
           "remoteAsyncEvents": bool_pref("remote.events.async.wheel.enabled"),
           "incOriginInit": os.environ.get("MOZ_ENABLE_INC_ORIGIN_INIT") == "1",
+          "navigationApi": bool_pref("dom.navigation.webidl.enabled"),
           }
     rv.update(run_info_browser_version(**kwargs))
 
@@ -256,15 +267,18 @@ def update_properties():
     return ([
         "os",
         "debug",
+        "display",
         "fission",
+        "isolated_process",
         "processor",
         "swgl",
+        "useDrawSnapshot",
         "asan",
         "tsan",
         "remoteAsyncEvents",
         "sessionHistoryInParent",
         "subsuite"], {
-        "os": ["version"],
+        "os": ["version", "os_version"],
         "processor": ["bits"]})
 
 
@@ -765,6 +779,9 @@ class ProfileCreator:
             profile.set_preferences({
                 "geo.provider.network.url": "https://web-platform.test:8444/webdriver/tests/support/http_handlers/geolocation_override.py"
             })
+        else:
+            # Except for wdspec dispatch wheel scroll as widget event by default.
+            profile.set_preferences({"remote.events.async.wheel.enabled": True})
 
         if self.debug_test:
             profile.set_preferences({"devtools.console.stdout.content": True})
@@ -889,7 +906,8 @@ class FirefoxBrowser(Browser):
                           "lsan_max_stack_depth": test.lsan_max_stack_depth,
                           "mozleak_allowed": self.leak_check and test.mozleak_allowed,
                           "mozleak_thresholds": self.leak_check and test.mozleak_threshold,
-                          "special_powers": self.specialpowers_path and test.url_base == "/_mozilla/"}
+                          "special_powers": self.specialpowers_path and test.url_base == "/_mozilla/",
+                          "testdriver": True if test.test_type == "testharness" else getattr(test, "testdriver", False)}
         return self._settings
 
     def start(self, group_metadata=None, **kwargs):
@@ -919,7 +937,8 @@ class FirefoxBrowser(Browser):
         return ExecutorBrowser, {"marionette_port": self.instance.marionette_port,
                                  "extensions": extensions,
                                  "supports_devtools": True,
-                                 "supports_window_resize": True}
+                                 "supports_window_resize": True,
+                                 "testdriver": self._settings["testdriver"]}
 
     def check_crash(self, process, test):
         return log_gecko_crashes(self.logger,
@@ -1049,7 +1068,8 @@ class FirefoxWdSpecBrowser(WebDriverBrowser):
                 "lsan_allowed": test.lsan_allowed,
                 "lsan_max_stack_depth": test.lsan_max_stack_depth,
                 "mozleak_allowed": self.leak_check and test.mozleak_allowed,
-                "mozleak_thresholds": self.leak_check and test.mozleak_threshold}
+                "mozleak_thresholds": self.leak_check and test.mozleak_threshold,
+                "testdriver": False}
 
     @property
     def port(self):

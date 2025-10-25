@@ -81,6 +81,7 @@ public interface TabWindowManager {
      * @param profileProviderSupplier The provider of the Profiles used in the selector.
      * @param tabCreatorManager An instance of {@link TabCreatorManager}.
      * @param nextTabPolicySupplier An instance of {@link NextTabPolicySupplier}.
+     * @param multiInstanceManager An instance of {@link MultiInstanceManager}.
      * @param mismatchedIndicesHandler An instance of {@link MismatchedIndicesHandler}.
      * @param windowId The suggested id of the window that the selector should correspond to. Not
      *     guaranteed to be the index of the {@link TabModelSelector} returned.
@@ -93,6 +94,7 @@ public interface TabWindowManager {
             OneshotSupplier<ProfileProvider> profileProviderSupplier,
             TabCreatorManager tabCreatorManager,
             NextTabPolicySupplier nextTabPolicySupplier,
+            MultiInstanceManager multiInstanceManager,
             MismatchedIndicesHandler mismatchedIndicesHandler,
             @WindowId int windowId);
 
@@ -155,6 +157,15 @@ public interface TabWindowManager {
     @Nullable Tab getTabById(@TabId int tabId, @WindowId int windowId);
 
     /**
+     * Similar to {@link #getTabById(int)} but returns a {@link TabWindowInfo}. Does not check the
+     * non-window sources for the tab.
+     *
+     * @param tabId The id of the tab to look for.
+     * @return The tab and related parents, null if it cannot be found.
+     */
+    @Nullable TabWindowInfo getTabWindowInfoById(@TabId int tabId);
+
+    /**
      * @param windowId The ID of the window that holds the tab group.
      * @param tabGroupId The tab group ID of the tab group.
      * @param isIncognito Whether the grouped tabs are incognito tabs.
@@ -171,6 +182,15 @@ public interface TabWindowManager {
      */
     @Nullable TabModelSelector getTabModelSelectorById(@WindowId int windowId);
 
+    /**
+     * Finds the Window ID associated with a {@link TabModelSelector}. If it is not associated with
+     * a window, then {@link #INVALID_WINDOW_ID} is returned.
+     *
+     * @param selector The {@link TabModelSelector} to check.
+     */
+    @WindowId
+    int getWindowIdForSelector(TabModelSelector selector);
+
     /** Gets a Collection of all TabModelSelectors. */
     Collection<TabModelSelector> getAllTabModelSelectors();
 
@@ -181,7 +201,7 @@ public interface TabWindowManager {
     boolean canTabThumbnailBeDeleted(@TabId int tabId);
 
     /** Sets the given archived {@link TabModelSelector} singleton instance. */
-    void setArchivedTabModelSelector(TabModelSelector archivedTabModelSelector);
+    void setArchivedTabModelSelector(@Nullable TabModelSelector archivedTabModelSelector);
 
     /**
      * Starts to initialize tab models for all windows with data. Some may be headless.

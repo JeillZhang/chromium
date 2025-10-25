@@ -12,6 +12,7 @@
 #include "third_party/blink/public/mojom/loader/request_context_frame_type.mojom-blink.h"
 #include "third_party/blink/public/platform/web_content_settings_client.h"
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
+#include "third_party/blink/renderer/core/frame/connection_allowlist.h"
 #include "third_party/blink/renderer/core/frame/integrity_policy.h"
 #include "third_party/blink/renderer/core/frame/settings.h"
 #include "third_party/blink/renderer/core/frame/web_feature.h"
@@ -31,6 +32,7 @@
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/scheme_registry.h"
 #include "third_party/blink/renderer/platform/weborigin/security_policy.h"
+#include "third_party/blink/renderer/platform/wtf/text/strcat.h"
 
 namespace blink {
 
@@ -99,16 +101,16 @@ void BaseFetchContext::PrintAccessDeniedMessage(const KURL& url) const {
   }
 
   String message;
+  StringView prefix("Unsafe attempt to load URL ");
   if (Url().IsNull()) {
-    message = "Unsafe attempt to load URL " + url.ElidedString() + '.';
-  } else if (url.IsLocalFile() || Url().IsLocalFile()) {
-    message = "Unsafe attempt to load URL " + url.ElidedString() +
-              " from frame with URL " + Url().ElidedString() +
-              ". 'file:' URLs are treated as unique security origins.\n";
+    message = StrCat({prefix, url.ElidedString(), "."});
   } else {
-    message = "Unsafe attempt to load URL " + url.ElidedString() +
-              " from frame with URL " + Url().ElidedString() +
-              ". Domains, protocols and ports must match.\n";
+    message =
+        StrCat({prefix, url.ElidedString(), " from frame with URL ",
+                Url().ElidedString(),
+                url.IsLocalFile() || Url().IsLocalFile()
+                    ? ". 'file:' URLs are treated as unique security origins.\n"
+                    : ". Domains, protocols and ports must match.\n"});
   }
 
   console_logger_->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
@@ -217,7 +219,7 @@ BaseFetchContext::CanRequestInternal(
       console_logger_->AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
           mojom::ConsoleMessageSource::kJavaScript,
           mojom::ConsoleMessageLevel::kError,
-          "Not allowed to load local resource: " + url.GetString()));
+          StrCat({"Not allowed to load local resource: ", url.GetString()})));
     }
     RESOURCE_LOADING_DVLOG(1) << "ResourceFetcher::requestResource URL was not "
                                  "allowed by SecurityOrigin::CanDisplay";
@@ -323,6 +325,12 @@ BaseFetchContext::CanRequestInternal(
 
   if (url.PotentiallyDanglingMarkup() && url.ProtocolIsInHTTPFamily()) {
     CountDeprecation(WebFeature::kCanRequestURLHTTPContainingNewline);
+    return ResourceRequestBlockedReason::kOther;
+  }
+
+  if (ShouldBlockRequestViaConnectionAllowlist(GetExecutionContext(), url)) {
+    // TODO(447954811): Define a distinct blocked reason if we maintain this
+    // approach after discussion.
     return ResourceRequestBlockedReason::kOther;
   }
 

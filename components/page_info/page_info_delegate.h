@@ -25,6 +25,7 @@ enum class PermissionType;
 namespace permissions {
 class ObjectPermissionContextBase;
 class PermissionDecisionAutoBlocker;
+class PermissionActionsHistory;
 }  // namespace permissions
 
 namespace safe_browsing {
@@ -76,7 +77,7 @@ class PageInfoDelegate {
   // Creates an infobars::ContentInfoBarManager and an InfoBarDelegate using it,
   // if possible. Returns true if an InfoBarDelegate was created, false
   // otherwise.
-  virtual bool CreateInfoBarDelegate() = 0;
+  virtual bool CreateInfoBarDelegate(content::ReloadType reload_type) = 0;
 
   virtual std::unique_ptr<content_settings::CookieControlsController>
   CreateCookieControlsController() = 0;
@@ -103,6 +104,9 @@ class PageInfoDelegate {
 
   virtual permissions::PermissionDecisionAutoBlocker*
   GetPermissionDecisionAutoblocker() = 0;
+
+  virtual permissions::PermissionActionsHistory*
+  GetPermissionActionsHistory() = 0;
 
   // Service for managing SSL error page bypasses. Used to revoke bypass
   // decisions by users.

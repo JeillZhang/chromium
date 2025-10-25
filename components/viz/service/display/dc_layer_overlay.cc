@@ -570,6 +570,9 @@ void FromDrawQuad(const DisplayResourceProvider* resource_provider,
         quad->shared_quad_state->clip_rect.value_or(gfx::Rect()));
   }
 
+  dc_layer.requires_overlay =
+      OverlayCandidate::RequiresOverlay(quad_to_promote);
+
   dc_layer.color_space = resource_provider->GetColorSpace(quad->resource_id);
   dc_layer.hdr_metadata = resource_provider->GetHDRMetadata(quad->resource_id);
 
@@ -578,6 +581,14 @@ void FromDrawQuad(const DisplayResourceProvider* resource_provider,
       is_possible_full_screen_letterboxing;
   if (quad->is_video_frame) {
     processed_yuv_overlay_count++;
+  }
+
+  if (dc_layer.requires_overlay) {
+    dc_layer.priority_hint = gfx::OverlayPriorityHint::kHardwareProtection;
+  } else if (quad->is_video_frame) {
+    dc_layer.priority_hint = gfx::OverlayPriorityHint::kVideo;
+  } else {
+    dc_layer.priority_hint = gfx::OverlayPriorityHint::kRegular;
   }
 }
 
@@ -1234,6 +1245,12 @@ void DCLayerOverlayProcessor::UpdateDCLayerOverlays(
     // underlays in its render pass, not relative to the total number of
     // underlays across all render passes.
     dc_layer.plane_z_order = -1 - overlay_data.promoted_overlays.size();
+    // Give this underlay video an explicitly opaque background. This avoids
+    // letting users see through the video hole punch if a video swap chain
+    // contains transparent pixels. This can happen with MF surfaces where we
+    // have a valid MF surface handle, but the surface is not yet ready.
+    dc_layer.color =
+        dc_layer.color ? dc_layer.color->makeOpaque() : SkColors::kBlack;
     ProcessForUnderlay(render_pass, it, quad_rect_in_target_space,
                        previous_frame_state, global_overlay_state, overlay_data,
                        current_frame_state);

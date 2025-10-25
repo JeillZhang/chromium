@@ -43,7 +43,7 @@ namespace {
 //  * The character immediately following the text fragment is a space.
 //  * The trailing space was elided (not included in the next fragment)
 //  * The trailing space is associated with the same layout object.
-bool IncludeTrailingWhitespace(const WTF::String& text,
+bool IncludeTrailingWhitespace(const String& text,
                                wtf_size_t offset,
                                const FragmentItem& item,
                                const AXBlockFlowData::Line& line) {
@@ -55,7 +55,7 @@ bool IncludeTrailingWhitespace(const WTF::String& text,
     return false;
   }
 
-  if (text[offset] != WTF::unicode::kSpaceCharacter) {
+  if (text[offset] != uchar::kSpace) {
     return false;
   }
 
@@ -109,7 +109,7 @@ LayoutText* AXBlockFlowData::GetFirstLetterPseudoLayoutText(
   return nullptr;
 }
 
-WTF::String AXBlockFlowData::GetText(wtf_size_t item_index) const {
+String AXBlockFlowData::GetText(wtf_size_t item_index) const {
   Position position = GetPosition(item_index);
   const PhysicalBoxFragment* box_fragment =
       BoxFragment(position.fragmentainer_index);
@@ -119,7 +119,7 @@ WTF::String AXBlockFlowData::GetText(wtf_size_t item_index) const {
     return item.GeneratedText().ToString();
   }
   if (item.Type() != FragmentItem::kText) {
-    return WTF::String();
+    return String();
   }
   wtf_size_t start_offset = item.TextOffset().start;
   wtf_size_t end_offset = item.TextOffset().end;
@@ -142,8 +142,8 @@ WTF::String AXBlockFlowData::GetText(wtf_size_t item_index) const {
     // prepend its text here.
     // TODO(accessibility): investigate and implement the correct solution for
     // this, as this is not serializing always the correct style info.
-    return WTF::StrCat({first_letter->TransformedText().SimplifyWhiteSpace(),
-                        StringView(full_text, start_offset, length)});
+    return StrCat({first_letter->TransformedText().SimplifyWhiteSpace(),
+                   StringView(full_text, start_offset, length)});
   }
 
   return StringView(full_text, start_offset, length).ToString();
@@ -391,7 +391,7 @@ bool AXBlockFlowIterator::Next() {
   return false;
 }
 
-const WTF::String& AXBlockFlowIterator::GetText() {
+const String& AXBlockFlowIterator::GetText() {
   DCHECK(current_index_) << "Must call Next to set initial iterator position "
                             "before calling GetText";
 
@@ -404,7 +404,7 @@ const WTF::String& AXBlockFlowIterator::GetText() {
 }
 
 // static
-WTF::String AXBlockFlowIterator::GetTextForTesting(
+String AXBlockFlowIterator::GetTextForTesting(
     AXBlockFlowIterator::MapKey map_key) {
   const FragmentItems* items = map_key.first;
   wtf_size_t index = map_key.second;

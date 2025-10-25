@@ -10,6 +10,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
+#include "base/sequence_checker.h"
 #include "build/build_config.h"
 #include "components/services/storage/public/mojom/cache_storage_control.mojom.h"
 #include "content/common/content_export.h"
@@ -106,6 +107,17 @@ class CONTENT_EXPORT CodeCacheHostImpl : public blink::mojom::CodeCacheHost {
   };
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(CodeCacheHostImplTest,
+                           PersistentCacheWriteAndReadFullIsolationSetup);
+  FRIEND_TEST_ALL_PREFIXES(CodeCacheHostImplTest,
+                           PersistentCacheNoCachingWhenNoProperIsolation);
+  FRIEND_TEST_ALL_PREFIXES(
+      CodeCacheHostImplTest,
+      PersistentCacheLockedAndUnlockedProcessesShareNoData);
+
+  bool IsPersistentCacheForCodeCacheEnabled(
+      blink::mojom::CodeCacheType cache_type);
+
   // blink::mojom::CodeCacheHost implementation.
   void DidGenerateCacheableMetadata(blink::mojom::CodeCacheType cache_type,
                                     const GURL& url,

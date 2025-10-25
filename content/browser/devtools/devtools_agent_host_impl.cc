@@ -143,6 +143,7 @@ const char DevToolsAgentHost::kTypeOther[] = "other";
 const char DevToolsAgentHost::kTypeAuctionWorklet[] = "auction_worklet";
 const char DevToolsAgentHost::kTypeAssistiveTechnology[] =
     "assistive_technology";
+const char DevToolsAgentHost::kTypeBrowserUI[] = "browser_ui";
 int DevToolsAgentHostImpl::s_force_creation_count_ = 0;
 
 // static
@@ -386,6 +387,10 @@ std::string DevToolsAgentHostImpl::GetOpenerFrameId() {
   return std::string();
 }
 
+std::string DevToolsAgentHostImpl::GetParentFrameId() {
+  return std::string();
+}
+
 bool DevToolsAgentHostImpl::CanAccessOpener() {
   return false;
 }
@@ -425,12 +430,18 @@ DevToolsSession::Mode DevToolsAgentHostImpl::GetSessionMode() {
 }
 
 bool DevToolsAgentHostImpl::Inspect() {
-  DevToolsManager* manager = DevToolsManager::GetInstance();
-  if (manager->delegate()) {
-    manager->delegate()->Inspect(this);
+  if (auto* delegate = DevToolsManager::GetInstance()->delegate()) {
+    delegate->Inspect(this);
     return true;
   }
   return false;
+}
+
+scoped_refptr<DevToolsAgentHost> DevToolsAgentHostImpl::OpenDevTools() {
+  if (auto* delegate = DevToolsManager::GetInstance()->delegate()) {
+    return delegate->OpenDevTools(this);
+  }
+  return nullptr;
 }
 
 void DevToolsAgentHostImpl::ForceDetachAllSessions() {

@@ -32,6 +32,7 @@
 #include "google_apis/gaia/gaia_id.h"
 #include "services/device/public/cpp/test/fake_hid_manager.h"
 #include "services/device/public/cpp/test/hid_test_util.h"
+#include "services/device/public/cpp/test/scoped_usb_device_manager_overrider.h"
 #include "services/device/public/cpp/test/test_report_descriptors.h"
 #include "services/device/public/mojom/hid.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -1062,8 +1063,9 @@ class ChromeHidDelegateServiceWorkerTestBase
   }
 
  private:
-  ScopedTestingLocalState testing_local_state_{
-      TestingBrowserProcess::GetGlobal()};
+  // EmbeddedWorkerInstanceTestHarness initializes the full device service.
+  // Override the UsbDeviceManager to prevent access to real devices.
+  device::ScopedUsbDeviceManagerOverrider usb_device_manager_overrider_;
 };
 
 class ChromeHidDelegateServiceWorkerTest

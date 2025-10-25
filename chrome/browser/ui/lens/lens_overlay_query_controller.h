@@ -5,30 +5,29 @@
 #ifndef CHROME_BROWSER_UI_LENS_LENS_OVERLAY_QUERY_CONTROLLER_H_
 #define CHROME_BROWSER_UI_LENS_LENS_OVERLAY_QUERY_CONTROLLER_H_
 
+#include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "base/containers/span.h"
 #include "base/functional/callback.h"
+#include "base/memory/raw_ptr.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
 #include "chrome/browser/lens/core/mojom/lens.mojom.h"
 #include "chrome/browser/lens/core/mojom/overlay_object.mojom.h"
 #include "chrome/browser/lens/core/mojom/text.mojom.h"
 #include "chrome/browser/ui/lens/lens_overlay_gen204_controller.h"
-#include "chrome/browser/ui/lens/lens_overlay_request_id_generator.h"
-#include "chrome/browser/ui/lens/lens_overlay_url_builder.h"
-#include "chrome/browser/ui/lens/ref_counted_lens_overlay_client_logs.h"
 #include "components/endpoint_fetcher/endpoint_fetcher.h"
 #include "components/lens/lens_overlay_invocation_source.h"
 #include "components/lens/lens_overlay_mime_type.h"
+#include "components/lens/lens_overlay_request_id_generator.h"
 #include "components/lens/proto/server/lens_overlay_response.pb.h"
+#include "components/lens/ref_counted_lens_overlay_client_logs.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "third_party/lens_server_proto/lens_overlay_client_context.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_cluster_info.pb.h"
-#include "third_party/lens_server_proto/lens_overlay_image_crop.pb.h"
-#include "third_party/lens_server_proto/lens_overlay_image_data.pb.h"
-#include "third_party/lens_server_proto/lens_overlay_interaction_request_metadata.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_selection_type.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_server.pb.h"
 #include "third_party/lens_server_proto/lens_overlay_service_deps.pb.h"
@@ -46,6 +45,11 @@ class VariationsClient;
 }  // namespace variations
 
 namespace lens {
+
+class ImageCrop;
+class ImageData;
+class LensComposeboxController;
+struct ImageCropAndBitmap;
 
 // Data struct representing content data to be sent to the Lens server.
 struct PageContent {
@@ -75,7 +79,7 @@ using LensOverlaySuggestInputsCallback =
     base::RepeatingCallback<void(lens::proto::LensOverlaySuggestInputs)>;
 // Callback type alias for the thumbnail image creation.
 using LensOverlayThumbnailCreatedCallback =
-    base::RepeatingCallback<void(const std::string&)>;
+    base::RepeatingCallback<void(const std::string&, const SkBitmap&)>;
 // Callback type alias for the OAuth headers created.
 using OAuthHeadersCreatedCallback =
     base::OnceCallback<void(std::vector<std::string>)>;
@@ -201,7 +205,17 @@ class LensOverlayQueryController {
     return page_content_endpoint_fetcher_.get() != nullptr;
   }
 
+  // Returns whether the query controller is off.
+  bool IsOff() {
+    return query_controller_state_ == QueryControllerState::kOff;
+  }
+
   uint64_t gen204_id() const { return gen204_id_; }
+
+  // Returns the search session id for the current query flow.
+  std::string search_session_id() const {
+    return cluster_info_->search_session_id();
+  }
 
   // Testing method to reset the cluster info state.
   void ResetRequestClusterInfoStateForTesting();
@@ -222,6 +236,14 @@ class LensOverlayQueryController {
   lens::proto::LensOverlaySuggestInputs suggest_inputs_for_testing() {
     return suggest_inputs_;
   }
+
+  size_t total_chunk_progress_for_testing() { return total_chunk_progress_; }
+
+  size_t total_chunk_upload_size_for_testing() {
+    return total_chunk_upload_size_;
+  }
+
+  friend class lens::LensComposeboxController;
 
  protected:
   // Returns the EndpointFetcher to use with the given params. Protected to
@@ -261,6 +283,13 @@ class LensOverlayQueryController {
   virtual void SendSemanticEventGen204IfEnabled(
       lens::mojom::SemanticEvent event,
       std::optional<lens::LensOverlayRequestId> request_id);
+
+  // Updates the request id based on the given update mode and returns the
+  // request id proto. Also updates the suggest signals with the new request id
+  // and runs the suggest inputs callback.
+  std::unique_ptr<lens::LensOverlayRequestId> GetNextRequestId(
+      lens::RequestIdUpdateMode update_mode,
+      lens::LensOverlayRequestId::MediaType media_type);
 
   // Updates the suggest inputs with the feature params and latest cluster info
   // response, then runs the callback. The request id in the suggest inputs will
@@ -339,12 +368,6 @@ class LensOverlayQueryController {
     // can be used to run some logic once the request has been sent.
     std::optional<base::OnceClosure> request_sent_callback_;
   };
-
-  // Updates the request id based on the given update mode and returns the
-  // request id proto. Also updates the suggest signals with the new request id
-  // and runs the suggest inputs callback.
-  std::unique_ptr<lens::LensOverlayRequestId> GetNextRequestId(
-      RequestIdUpdateMode update_mode);
 
   // Makes a LensOverlayServerClusterInfoRequest to get the cluster info. Will
   // continue to the FullImageRequest once a response is received.
@@ -426,6 +449,11 @@ class LensOverlayQueryController {
   void PrepareAndFetchUploadChunkRequestsPart2(
       std::vector<std::string> headers);
 
+  // Retries the upload chunks with the given ids.
+  void RetryUploadChunkRequests(
+      const google::protobuf::RepeatedField<int64_t>& chunk_ids,
+      std::vector<std::string> headers);
+
   // Performs the chunk upload request with the given index.
   void FetchUploadChunkRequest(size_t chunk_request_index);
 
@@ -435,7 +463,6 @@ class LensOverlayQueryController {
   void UploadChunkResponseHandler(
       lens::LensOverlayRequestId request_id,
       size_t total_chunks,
-      bool is_last,
       std::unique_ptr<endpoint_fetcher::EndpointResponse> response);
 
   // Creates the PageContentRequest that is sent to the server and performs the
@@ -459,12 +486,23 @@ class LensOverlayQueryController {
       lens::LensOverlayRequestId request_id,
       std::unique_ptr<endpoint_fetcher::EndpointResponse> response);
 
+  // Retry the page content upload if necessary. Returns whether or not the
+  // page content upload was retried.
+  bool MaybeRetryPageContentUpload(
+      std::unique_ptr<endpoint_fetcher::EndpointResponse> response);
+
   // Sends a page content upload latency Gen204 ping if enabled.
   void MaybeSendPageContentUploadLatencyGen204(
       lens::LensOverlayRequestId request_id);
 
   // Handles the prgress of the page content upload request.
   void PageContentUploadProgressHandler(uint64_t position, uint64_t total);
+
+  // Handles the progress of chunk upload requests by calculating the total
+  // progress across all chunks.
+  void UploadChunkProgressHandler(size_t chunk_request_index,
+                                  uint64_t position,
+                                  uint64_t total);
 
   // Marks that the page content upload is no longer in progress and sends the
   // pending contextual query.
@@ -493,7 +531,8 @@ class LensOverlayQueryController {
       std::optional<std::string> object_id,
       lens::LensOverlaySelectionType selection_type,
       std::map<std::string, std::string> additional_search_query_params,
-      std::optional<SkBitmap> region_bytes);
+      std::optional<SkBitmap> region_bytes,
+      lens::LensOverlayRequestId::MediaType media_type);
 
   // Creates the interaction request that is sent to the server and tries to
   // perform the interaction request. If not all asynchronous flows have
@@ -505,7 +544,7 @@ class LensOverlayQueryController {
       std::optional<std::string> query_text,
       std::optional<std::string> object_id,
       scoped_refptr<lens::RefCountedLensOverlayClientLogs> ref_counted_logs,
-      std::optional<lens::ImageCrop> image_crop);
+      std::optional<lens::ImageCropAndBitmap> image_crop_and_bitmap);
 
   // Creates the OAuth headers that get attached to the interaction request to
   // authenticate the user. After, tries to perform the interaction request. If
@@ -607,6 +646,7 @@ class LensOverlayQueryController {
   // Gets the visual search interaction log data param as a base64url
   // encoded string.
   std::string GetEncodedVisualSearchInteractionLogData(
+      const std::optional<std::string>& selected_text,
       lens::LensOverlaySelectionType selection_type);
 
   // Creates the metadata for an interaction request using the latest
@@ -715,7 +755,7 @@ class LensOverlayQueryController {
   LensOverlayUrlResponseCallback url_callback_;
 
   // The last received cluster info.
-  std::optional<lens::LensOverlayClusterInfo> cluster_info_ = std::nullopt;
+  std::optional<lens::LensOverlayClusterInfo> cluster_info_;
 
   // The callback for issuing a pending interaction request. Will be used to
   // send the interaction request after the cluster info is available and the
@@ -821,6 +861,14 @@ class LensOverlayQueryController {
   // to verify that the responses received correspond to the latest upload.
   int upload_chunk_sequence_id;
 
+  // A copy of the page content request being sent, in case it needs to be
+  // resent.
+  lens::LensOverlayServerRequest pending_page_content_request_;
+
+  // Number of times to retry after receiving a missing chunks error. If this
+  // happens when the value is zero, proceed without attempting to resend.
+  size_t remaining_chunk_retries;
+
   // The current suggest inputs. The fields in this proto are updated
   // whenever new data is available (i.e. after an objects or interaction
   // response is received) and the overlay controller notified via the
@@ -855,6 +903,22 @@ class LensOverlayQueryController {
 
   // Whether or not a page content upload request is in progress.
   bool page_content_request_in_progress_ = false;
+
+  // Whether or not the upload is being chunked.
+  bool chunk_upload_in_progress_ = false;
+
+  // True if a page content upload is being retried due to missing chunk errors.
+  bool retrying_page_content_upload_ = false;
+
+  // Stores the last reported upload progress position for each chunk, indexed
+  // by chunk id.
+  std::vector<size_t> chunk_progress;
+
+  // The sum of the last reported upload progress position of each chunk.
+  size_t total_chunk_progress_ = 0;
+
+  // Total size of data being uploaded during a chunk upload.
+  size_t total_chunk_upload_size_ = 0;
 
   // Callback for a pending contextual query that is waiting for the page
   // content request to finish uploading.

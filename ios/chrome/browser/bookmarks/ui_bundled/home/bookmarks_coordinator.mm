@@ -4,11 +4,11 @@
 
 #import "ios/chrome/browser/bookmarks/ui_bundled/home/bookmarks_coordinator.h"
 
-#import <MaterialComponents/MaterialSnackbar.h>
 #import <stdint.h>
 
 #import "base/apple/foundation_util.h"
 #import "base/check_op.h"
+#import "base/functional/callback_helpers.h"
 #import "base/metrics/user_metrics.h"
 #import "base/metrics/user_metrics_action.h"
 #import "base/notreached.h"
@@ -17,27 +17,29 @@
 #import "base/time/time.h"
 #import "components/bookmarks/browser/bookmark_model.h"
 #import "components/bookmarks/browser/bookmark_utils.h"
+#import "components/send_tab_to_self/features.h"
 #import "components/signin/public/identity_manager/account_info.h"
 #import "components/sync/service/sync_service.h"
 #import "components/sync/service/sync_service_utils.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin_promo/signin_promo_types.h"
+#import "ios/chrome/browser/bookmarks/editor/coordinator/bookmarks_editor_coordinator.h"
+#import "ios/chrome/browser/bookmarks/editor/coordinator/bookmarks_editor_coordinator_delegate.h"
+#import "ios/chrome/browser/bookmarks/folder_chooser/coordinator/bookmarks_folder_chooser_coordinator.h"
+#import "ios/chrome/browser/bookmarks/folder_chooser/coordinator/bookmarks_folder_chooser_coordinator_delegate.h"
+#import "ios/chrome/browser/bookmarks/folder_editor/coordinator/bookmarks_folder_editor_coordinator.h"
+#import "ios/chrome/browser/bookmarks/folder_editor/coordinator/bookmarks_folder_editor_coordinator_delegate.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_model_factory.h"
 #import "ios/chrome/browser/bookmarks/model/bookmarks_utils.h"
 #import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_mediator.h"
 #import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_navigation_controller.h"
 #import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_path_cache.h"
 #import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_utils_ios.h"
-#import "ios/chrome/browser/bookmarks/ui_bundled/editor/bookmarks_editor_coordinator.h"
-#import "ios/chrome/browser/bookmarks/ui_bundled/editor/bookmarks_editor_coordinator_delegate.h"
-#import "ios/chrome/browser/bookmarks/ui_bundled/folder_chooser/bookmarks_folder_chooser_coordinator.h"
-#import "ios/chrome/browser/bookmarks/ui_bundled/folder_chooser/bookmarks_folder_chooser_coordinator_delegate.h"
-#import "ios/chrome/browser/bookmarks/ui_bundled/folder_editor/bookmarks_folder_editor_coordinator.h"
-#import "ios/chrome/browser/bookmarks/ui_bundled/folder_editor/bookmarks_folder_editor_coordinator_delegate.h"
 #import "ios/chrome/browser/bookmarks/ui_bundled/home/bookmarks_coordinator_delegate.h"
 #import "ios/chrome/browser/bookmarks/ui_bundled/home/bookmarks_home_view_controller.h"
 #import "ios/chrome/browser/default_browser/model/default_browser_interest_signals.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
 #import "ios/chrome/browser/metrics/model/new_tab_page_uma.h"
+#import "ios/chrome/browser/reminder_notifications/coordinator/reminder_notifications_coordinator.h"
 #import "ios/chrome/browser/shared/model/browser/browser.h"
 #import "ios/chrome/browser/shared/model/profile/profile_ios.h"
 #import "ios/chrome/browser/shared/model/url/chrome_url_constants.h"
@@ -134,6 +136,10 @@ enum class PresentedState {
   base::WeakPtr<ProfileIOS> _profile;
 
   base::WeakPtr<bookmarks::BookmarkModel> _bookmarkModel;
+
+  // Coordinator to display the "Set a reminder" UI for the user's selected
+  // bookmark.
+  ReminderNotificationsCoordinator* _reminderNotificationsCoordinator;
 }
 
 @synthesize applicationCommandsHandler = _applicationCommandsHandler;
@@ -169,6 +175,10 @@ enum class PresentedState {
 - (void)stop {
   [_mediator disconnect];
   _mediator = nil;
+  // TODO(crbug.com/431224365): Create ReminderNotificationsCoordinatorDelegate
+  // for more complete coordinator lifecycle management.
+  [_reminderNotificationsCoordinator stop];
+  _reminderNotificationsCoordinator = nil;
   switch (self.currentPresentedState) {
     case PresentedState::BOOKMARK_BROWSER:
       [self bookmarkBrowserDismissed];
@@ -353,44 +363,35 @@ enum class PresentedState {
         feature_engagement::TrackerFactory::GetForProfile(
             _currentBrowserState.get()));
   }
-  // If trying to open urls with tab mode changed, we need to postpone openUrls
-  // until the dismissal of Bookmarks is done.  This is to prevent the race
-  // condition between the dismissal of bookmarks and switch of BVC.
-  const BOOL openUrlsAfterDismissal =
-      !urlsToOpen.empty() &&
-      ((!!inIncognito) != _currentBrowserState->IsOffTheRecord());
 
-  // A copy of the urls vector for the completion block.
-  std::vector<GURL> urlsToOpenAfterDismissal;
-  if (openUrlsAfterDismissal) {
-    // open urls in the completion block after dismissal.
-    urlsToOpenAfterDismissal = urlsToOpen;
-  } else if (!urlsToOpen.empty()) {
-    // open urls now.
-    [self openUrls:urlsToOpen inIncognito:inIncognito newTab:newTab];
-  }
-
-  __weak __typeof(self) weakSelf = self;
-  ProceduralBlock completion = ^{
-    if (!openUrlsAfterDismissal) {
-      return;
-    }
-    [weakSelf openUrls:urlsToOpenAfterDismissal
-           inIncognito:inIncognito
-                newTab:newTab];
-  };
+  // First the bookmark view should be dismissed to have the animation, and
+  // the URLs should be opened.
+  // Otherwise, opening directly the URLs would automatically dismiss the
+  // bookmark view without animation.
+  ProceduralBlock dismissCompletion = base::CallbackToBlock(base::BindOnce(
+      [](__weak __typeof(self) weakSelf, std::vector<GURL> urls_to_open,
+         BOOL in_incognito, BOOL new_tab) {
+        [weakSelf openUrls:urls_to_open
+               inIncognito:in_incognito
+                    newTab:new_tab];
+      },
+      self, urlsToOpen, inIncognito, newTab));
 
   if (self.baseViewController.presentedViewController) {
     [self.baseViewController dismissViewControllerAnimated:animated
-                                                completion:completion];
+                                                completion:dismissCompletion];
   } else {
-    completion();
+    // TODO(crbug.com/428694164): This should probably not be possible.
+    // This case should probably be changed in to:
+    // CHECK(self.baseViewController.presentedViewController);
+    dismissCompletion();
   }
+  [self bookmarkBrowserDismissed];
 }
 
 - (void)bookmarkBrowserDismissed {
-  DCHECK_EQ(PresentedState::BOOKMARK_BROWSER, self.currentPresentedState)
-      << [self description];
+  CHECK_EQ(PresentedState::BOOKMARK_BROWSER, self.currentPresentedState,
+           base::NotFatalUntil::M144);
   DCHECK(self.bookmarkNavigationController) << [self description];
   for (UIViewController* controller in self.bookmarkNavigationController
            .viewControllers) {
@@ -431,9 +432,7 @@ enum class PresentedState {
 
 - (void)dismissSnackbar {
   // Dismiss any bookmark related snackbar this controller could have presented.
-  [MDCSnackbarManager.defaultManager
-      dismissAndCallCompletionBlocksWithCategory:
-          bookmark_utils_ios::kBookmarksSnackbarCategory];
+  [self.snackbarCommandsHandler dismissAllSnackbars];
 }
 
 - (BOOL)canDismiss {
@@ -584,6 +583,20 @@ enum class PresentedState {
   }  // end for
 }
 
+- (void)bookmarkHomeViewController:(BookmarksHomeViewController*)controller
+    wantsToShowSetTabReminderUIForNode:(const bookmarks::BookmarkNode*)node {
+  CHECK(
+      send_tab_to_self::IsSendTabIOSPushNotificationsEnabledWithTabReminders());
+  CHECK(node && node->is_url());
+  CHECK(self.bookmarkNavigationController);
+
+  _reminderNotificationsCoordinator = [[ReminderNotificationsCoordinator alloc]
+      initWithBaseViewController:self.bookmarkNavigationController
+                         browser:self.browser];
+
+  [_reminderNotificationsCoordinator start];
+}
+
 #pragma mark - BookmarksCommands
 
 - (void)addBookmarkForWebState:(web::WebState*)webState {
@@ -723,14 +736,15 @@ enum class PresentedState {
 }
 
 - (void)openURLInCurrentTab:(const GURL&)url {
-  WebStateList* webStateList = self.browser->GetWebStateList();
+  Browser* browser = self.browser;
+  WebStateList* webStateList = browser->GetWebStateList();
   if (url.SchemeIs(url::kJavaScriptScheme) && webStateList) {  // bookmarklet
-    LoadJavaScriptURL(url, _profile.get(), webStateList->GetActiveWebState());
+    LoadJavaScriptURL(url, browser, webStateList->GetActiveWebState());
     return;
   }
   UrlLoadParams params = UrlLoadParams::InCurrentTab(url);
   params.web_params.transition_type = ui::PAGE_TRANSITION_AUTO_BOOKMARK;
-  UrlLoadingBrowserAgent::FromBrowser(self.browser)->Load(params);
+  UrlLoadingBrowserAgent::FromBrowser(browser)->Load(params);
 }
 
 - (void)openURLInNewTab:(const GURL&)url

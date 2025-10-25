@@ -9,6 +9,7 @@
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "components/autofill/core/browser/data_model/payments/bnpl_issuer.h"
 #include "components/autofill/core/browser/metrics/payments/bnpl_metrics.h"
+#include "components/autofill/core/browser/payments/bnpl_util.h"
 #include "components/autofill/core/browser/payments/constants.h"
 #include "components/autofill/core/browser/test_utils/autofill_test_utils.h"
 #include "components/autofill/core/browser/ui/payments/select_bnpl_issuer_dialog_controller_impl.h"
@@ -283,6 +284,29 @@ IN_PROC_BROWSER_TEST_F(SelectBnplIssuerDialogInteractiveUiTest,
       "Autofill.Bnpl.SelectionDialogResult",
       SelectBnplIssuerDialogResult::kCancelButtonClicked,
       /*expected_bucket_count=*/1);
+}
+
+IN_PROC_BROWSER_TEST_F(SelectBnplIssuerDialogInteractiveUiTest,
+                       AccessibleWindowTitleIsSet) {
+  const std::u16string expected_title =
+      u"Choose a pay later provider. Google Pay logo";
+
+  RunTestSequence(
+      InvokeUiAndWaitForShow(
+          {GetTestBnplIssuerContext(IssuerId::kBnplAffirm,
+                                    BnplIssuerEligibilityForPage::kIsEligible),
+           GetTestBnplIssuerContext(
+               IssuerId::kBnplZip,
+               BnplIssuerEligibilityForPage::
+                   kNotEligibleIssuerDoesNotSupportMerchant)}),
+      InSameContext(WithView(
+          views::DialogClientView::kTopViewId,
+          [expected_title](views::View* view) {
+            views::Widget* widget = view->GetWidget();
+            ASSERT_NE(widget, nullptr);
+            EXPECT_EQ(widget->widget_delegate()->GetAccessibleWindowTitle(),
+                      expected_title);
+          })));
 }
 
 }  // namespace autofill::payments

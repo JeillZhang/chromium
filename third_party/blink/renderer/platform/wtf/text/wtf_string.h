@@ -42,7 +42,7 @@
 #include "third_party/blink/renderer/platform/wtf/wtf_size_t.h"
 #include "third_party/perfetto/include/perfetto/tracing/traced_value_forward.h"
 
-namespace WTF {
+namespace blink {
 
 class CodePointIterator;
 
@@ -172,12 +172,6 @@ class WTF_EXPORT String {
       return nullptr;
     DCHECK(!impl_->Is8Bit());
     return impl_->Characters16();
-  }
-
-  ALWAYS_INLINE const void* Bytes() const {
-    if (!impl_)
-      return nullptr;
-    return impl_->Bytes();
   }
 
   bool Is8Bit() const { return impl_->Is8Bit(); }
@@ -588,8 +582,8 @@ class WTF_EXPORT String {
 #undef DISPATCH_CASE_OP
 
 inline bool operator==(const String& a, const String& b) {
-  // We don't use equalStringView here since we want the isAtomic() fast path
-  // inside WTF::equal.
+  // We don't use EqualStringView here since we want the IsAtomic() fast path
+  // inside blink::Equal.
   return Equal(a.Impl(), b.Impl());
 }
 inline bool operator==(const String& a, const char* b) {
@@ -597,16 +591,6 @@ inline bool operator==(const String& a, const char* b) {
 }
 inline bool operator==(const char* a, const String& b) {
   return b == a;
-}
-
-inline bool operator!=(const String& a, const String& b) {
-  return !(a == b);
-}
-inline bool operator!=(const String& a, const char* b) {
-  return !(a == b);
-}
-inline bool operator!=(const char* a, const String& b) {
-  return !(a == b);
 }
 
 inline bool EqualIgnoringNullity(const String& a, const String& b) {
@@ -677,12 +661,6 @@ void String::AppendTo(BufferType& result,
   impl_->AppendTo(result, position, length);
 }
 
-template <typename T>
-struct HashTraits;
-// Defined in string_hash.h.
-template <>
-struct HashTraits<String>;
-
 // Shared global empty string.
 WTF_EXPORT extern const String& g_empty_string;
 WTF_EXPORT extern const String& g_empty_string16_bit;
@@ -722,16 +700,15 @@ inline StringView::StringView(const String& string LIFETIME_BOUND,
 inline StringView::StringView(const String& string LIFETIME_BOUND)
     : StringView(string.Impl()) {}
 
-}  // namespace WTF
+template <typename T>
+struct HashTraits;
+// Defined in string_hash.h.
+template <>
+struct HashTraits<String>;
+
+}  // namespace blink
 
 WTF_ALLOW_MOVE_AND_INIT_WITH_MEM_FUNCTIONS(String)
-
-using WTF::Equal;
-using WTF::Find;
-using WTF::g_empty_string;
-using WTF::g_empty_string16_bit;
-using WTF::String;
-using WTF::Utf8ConversionMode;
 
 #include "third_party/blink/renderer/platform/wtf/text/string_operators.h"
 #endif  // THIRD_PARTY_BLINK_RENDERER_PLATFORM_WTF_TEXT_WTF_STRING_H_

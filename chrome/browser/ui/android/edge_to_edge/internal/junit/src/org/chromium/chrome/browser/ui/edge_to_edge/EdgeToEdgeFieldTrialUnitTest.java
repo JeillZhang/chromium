@@ -19,12 +19,11 @@ import org.chromium.chrome.browser.flags.ChromeFeatureList;
 
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(shadows = ShadowBuild.class)
-@EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_BOTTOM_CHIN)
 public class EdgeToEdgeFieldTrialUnitTest {
 
     @Before
     public void setup() {
-        EdgeToEdgeFieldTrial.clearInstanceForTesting();
+        EdgeToEdgeFieldTrialImpl.clearInstanceForTesting();
     }
 
     // No provided override, the fieldtrial will use the default.
@@ -33,7 +32,8 @@ public class EdgeToEdgeFieldTrialUnitTest {
     public void noOverrides_meetMinVersion() {
         assertTrue(
                 "Default manufacturer has min version override as 30.",
-                EdgeToEdgeFieldTrial.getBottomChinOverrides().isEnabledForManufacturerVersion());
+                EdgeToEdgeFieldTrialImpl.getBottomChinOverrides()
+                        .isEnabledForManufacturerVersion());
     }
 
     @Test
@@ -41,7 +41,8 @@ public class EdgeToEdgeFieldTrialUnitTest {
     public void noOverrides_notMeetMinVersion() {
         assertFalse(
                 "Default manufacturer has min version override as 30.",
-                EdgeToEdgeFieldTrial.getBottomChinOverrides().isEnabledForManufacturerVersion());
+                EdgeToEdgeFieldTrialImpl.getBottomChinOverrides()
+                        .isEnabledForManufacturerVersion());
     }
 
     @Test
@@ -49,7 +50,7 @@ public class EdgeToEdgeFieldTrialUnitTest {
     public void overrides_notMeetMinVersion() {
         ChromeFeatureList.sEdgeToEdgeBottomChinOemList.setForTesting("foo,bar");
         ChromeFeatureList.sEdgeToEdgeBottomChinOemMinVersions.setForTesting("31,32");
-        var instance = EdgeToEdgeFieldTrial.getBottomChinOverrides();
+        var instance = EdgeToEdgeFieldTrialImpl.getBottomChinOverrides();
         assertTrue(
                 "Default have no min version override.",
                 instance.isEnabledForManufacturerVersion());
@@ -76,7 +77,7 @@ public class EdgeToEdgeFieldTrialUnitTest {
     public void overrides_someMeetMinVersion() {
         ChromeFeatureList.sEdgeToEdgeBottomChinOemList.setForTesting("foo,bar");
         ChromeFeatureList.sEdgeToEdgeBottomChinOemMinVersions.setForTesting("31,32");
-        var instance = EdgeToEdgeFieldTrial.getBottomChinOverrides();
+        var instance = EdgeToEdgeFieldTrialImpl.getBottomChinOverrides();
         assertTrue(
                 "Default have no min version override.",
                 instance.isEnabledForManufacturerVersion());
@@ -103,7 +104,7 @@ public class EdgeToEdgeFieldTrialUnitTest {
     public void overrides_meetMinVersion() {
         ChromeFeatureList.sEdgeToEdgeBottomChinOemList.setForTesting("foo,bar");
         ChromeFeatureList.sEdgeToEdgeBottomChinOemMinVersions.setForTesting("31,32");
-        var instance = EdgeToEdgeFieldTrial.getBottomChinOverrides();
+        var instance = EdgeToEdgeFieldTrialImpl.getBottomChinOverrides();
         assertTrue(
                 "Default have no min version override.",
                 instance.isEnabledForManufacturerVersion());
@@ -131,7 +132,7 @@ public class EdgeToEdgeFieldTrialUnitTest {
     public void override_e2eEverywhere() {
         ChromeFeatureList.sEdgeToEdgeEverywhereOemList.setForTesting("foo,bar");
         ChromeFeatureList.sEdgeToEdgeEverywhereOemMinVersions.setForTesting("31,32");
-        var instance = EdgeToEdgeFieldTrial.getEverywhereOverrides();
+        var instance = EdgeToEdgeFieldTrialImpl.getEverywhereOverrides();
         assertTrue(
                 "Default have no min version override.",
                 instance.isEnabledForManufacturerVersion());
@@ -156,8 +157,8 @@ public class EdgeToEdgeFieldTrialUnitTest {
 
         ChromeFeatureList.sEdgeToEdgeEverywhereOemList.setForTesting("foo");
         ChromeFeatureList.sEdgeToEdgeEverywhereOemMinVersions.setForTesting("30");
-        var bottomChinOverride = EdgeToEdgeFieldTrial.getBottomChinOverrides();
-        var everywhereOverrides = EdgeToEdgeFieldTrial.getEverywhereOverrides();
+        var bottomChinOverride = EdgeToEdgeFieldTrialImpl.getBottomChinOverrides();
+        var everywhereOverrides = EdgeToEdgeFieldTrialImpl.getEverywhereOverrides();
         assertTrue(
                 "Default have no min version override for bottom chin. Use 30.",
                 bottomChinOverride.isEnabledForManufacturerVersion());
@@ -178,35 +179,35 @@ public class EdgeToEdgeFieldTrialUnitTest {
     }
 
     @Test
-    @Config(sdk = 28)
     public void testInvalidInputs_unevenLength() {
         ChromeFeatureList.sEdgeToEdgeBottomChinOemList.setForTesting("foobar");
         ChromeFeatureList.sEdgeToEdgeBottomChinOemMinVersions.setForTesting("1,2");
         ShadowBuild.setManufacturer("foobar");
         assertFalse(
                 "Invalid override is ignored.",
-                EdgeToEdgeFieldTrial.getBottomChinOverrides().isEnabledForManufacturerVersion());
+                EdgeToEdgeFieldTrialImpl.getBottomChinOverrides()
+                        .isEnabledForManufacturerVersion());
     }
 
     @Test
-    @Config(sdk = 28)
     public void testInvalidInputs_unevenLength_2() {
         ChromeFeatureList.sEdgeToEdgeBottomChinOemList.setForTesting("foo,bar");
         ChromeFeatureList.sEdgeToEdgeBottomChinOemMinVersions.setForTesting("1");
         ShadowBuild.setManufacturer("foo");
         assertFalse(
                 "Invalid override is ignored.",
-                EdgeToEdgeFieldTrial.getBottomChinOverrides().isEnabledForManufacturerVersion());
+                EdgeToEdgeFieldTrialImpl.getBottomChinOverrides()
+                        .isEnabledForManufacturerVersion());
     }
 
     @Test
-    @Config(sdk = 28)
     public void testInvalidInputs_versionInvalid() {
         ChromeFeatureList.sEdgeToEdgeBottomChinOemList.setForTesting("foo,bar");
         ChromeFeatureList.sEdgeToEdgeBottomChinOemMinVersions.setForTesting("1,a");
         ShadowBuild.setManufacturer("foo");
         assertFalse(
                 "Invalid override is ignored.",
-                EdgeToEdgeFieldTrial.getBottomChinOverrides().isEnabledForManufacturerVersion());
+                EdgeToEdgeFieldTrialImpl.getBottomChinOverrides()
+                        .isEnabledForManufacturerVersion());
     }
 }

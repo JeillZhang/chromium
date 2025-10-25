@@ -74,6 +74,7 @@ enum GroupId {
   GROUP_MULTIMODAL = 10006;
   GROUP_CONTEXTUAL_SEARCH = 10007;
   GROUP_CONTEXTUAL_SEARCH_ACTION = 10008;
+  GROUP_SEARCH_TOOLBELT = 10009;
   GROUP_POLARIS_RESERVED_MAX = 19999;
 
   // Mobile-specific auxiliary suggestions.
@@ -95,6 +96,7 @@ enum GroupId {
   // suggestions with MIA.
   GROUP_MIA_RECOMMENDATIONS = 45000;
   GROUP_PERSONALIZED_ZERO_SUGGEST_WITH_MIA = 45001;
+  GROUP_AI_MODE_ZERO_SUGGEST_CANNED = 45002;
 
   // Cross platform suggestions with vanilla visual representation (i.e.
   // vertical, primary column, and no header), but useful for sorting.

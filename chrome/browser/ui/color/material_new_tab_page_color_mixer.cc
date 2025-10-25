@@ -39,6 +39,70 @@ void AddMaterialNewTabPageColorMixer(ui::ColorProvider* provider,
       ui::kColorSysStateHoverOnSubtle};
   mixer[kColorNewTabPageButtonForeground] = {ui::kColorSysOnTonalContainer};
 
+  mixer[kColorNewTabPageComposeboxBackground] = {SK_ColorWHITE};
+  mixer[kColorNewTabPageComposeboxFont] = {
+      dark_mode ? SkColorSetRGB(0xE6, 0xE8, 0xF0)
+                : SkColorSetRGB(0x0A, 0x0A, 0x0A)};
+  mixer[kColorNewTabPageComposeboxFontLight] = {
+      SkColorSetRGB(0x1F, 0x1F, 0x1F)};
+  mixer[kColorNewTabPageComposeboxCancelButton] = {
+      dark_mode ? SkColorSetRGB(0xAD, 0xAF, 0xB8)
+                : SkColorSetRGB(0x0A, 0x0A, 0x0A)};
+  mixer[kColorNewTabPageComposeboxCancelButtonLight] = {ui::kColorRefNeutral30};
+  mixer[kColorNewTabPageComposeboxErrorScrimBackground] = {
+      dark_mode ? ui::SetAlpha({ui::kColorRefNeutral0}, 0xE6)
+                : ui::SetAlpha({SkColorSetRGB(0xFF, 0xFF, 0xFF)}, 0xE6)};
+  mixer[kColorNewTabPageComposeboxErrorScrimButtonBackground] = {
+      ui::kColorSysPrimary};
+  mixer[kColorNewTabPageComposeboxErrorScrimButtonBackgroundHover] = {
+      ui::kColorSysStateHoverOnProminent};
+  mixer[kColorNewTabPageComposeboxErrorScrimButtonText] = {
+      ui::kColorSysOnPrimary};
+  mixer[kColorNewTabPageComposeboxErrorScrimForeground] = {
+      ui::kColorSysInverseSurface};
+  mixer[kColorNewTabPageComposeboxHover] = {
+      dark_mode ? SkColorSetRGB(0x25, 0x26, 0x2E)
+                : SkColorSetRGB(0xE9, 0xEB, 0xF0)};
+  mixer[kColorNewTabPageComposeboxInputIcon] = {ui::kColorRefNeutral30};
+  mixer[kColorNewTabPageComposeboxLensButton] = {
+      dark_mode ? SkColorSetRGB(0xAD, 0xAF, 0xB8)
+                : SkColorSetRGB(0x0A, 0x0A, 0x0A)};
+  mixer[kColorNewTabPageComposeboxOutlineHcm] = {
+      dark_mode ? SkColorSetRGB(0xFF, 0xFF, 0xFF)
+                : SkColorSetRGB(0x00, 0x00, 0x00)};
+  mixer[kColorNewTabPageComposeboxRecentTabChipOutline] = {
+      ui::kColorSysTonalOutline};
+  mixer[kColorNewTabPageComposeboxScrimBackground] = {ui::kColorSysBase};
+  mixer[kColorNewTabPageComposeboxSubmitButton] = {
+      SkColorSetRGB(0x0B, 0x50, 0xD0)};
+  mixer[kColorNewTabPageComposeboxSuggestionActivity] = {
+      ui::kColorSysOnSurfaceSubtle};
+  mixer[kColorNewTabPageComposeboxTypeAhead] = {
+      ui::SetAlpha({ui::kColorRefNeutral10}, 0x60)};
+  mixer[kColorNewTabPageComposeboxTypeAheadChip] = {
+      ui::SetAlpha({ui::kColorRefNeutral10}, 0x1E)};
+  mixer[kColorNewTabPageComposeboxUploadButton] = {ui::kColorRefNeutral10};
+  mixer[kColorNewTabPageComposeboxUploadButtonDisabled] = {
+      dark_mode ? SkColorSetRGB(0x56, 0x59, 0x5E)
+                : SkColorSetRGB(0xAD, 0xAF, 0xB8)};
+  mixer[kColorNewTabPageComposeboxFileChipBackground] = {
+      SkColorSetRGB(0xF3, 0xF6, 0xFC)};
+  mixer[kColorNewTabPageComposeboxFileChipFaviconBackground] = {
+      SkColorSetRGB(0xEA, 0xF0, 0xF9)};
+  mixer[kColorNewTabPageComposeboxFileChipText] = {
+      SkColorSetRGB(0x1F, 0x1F, 0x1F)};
+  mixer[kColorNewTabPageComposeboxPdfChipIcon] = {
+      dark_mode ? SkColorSetRGB(0xAD, 0xAF, 0xB8)
+                : SkColorSetRGB(0x56, 0x59, 0x5E)};
+  mixer[kColorNewTabPageComposeboxFileImageOverlay] = {
+      SkColorSetARGB(0x99, 0x00, 0x00, 0x00)};
+  mixer[kColorNewTabPageComposeboxFileCarouselDivider] = {
+      SkColorSetRGB(0xD3, 0xE3, 0xFD)};
+  mixer[kColorNewTabPageComposeboxContextEntrypointTextDisabled] = {
+      SkColorSetARGB(0x60, 0x1F, 0x1F, 0x1F)};
+  mixer[kColorNewTabPageComposeboxContextEntrypointHoverBackground] = {
+      SkColorSetARGB(0x0F, 0x1F, 0x1F, 0x1F)};
+
   mixer[kColorNewTabPageControlBackgroundHovered] = {
       ui::kColorSysStateHoverOnSubtle};
   mixer[kColorNewTabPageFocusRing] = {ui::kColorSysStateFocusRing};
@@ -72,6 +136,38 @@ void AddMaterialNewTabPageColorMixer(ui::ColorProvider* provider,
   mixer[kColorNewTabPageModuleCalendarAttachmentScrollbarThumb] = {
       ui::kColorSysTonalOutline};
   mixer[kColorNewTabPageModuleCalendarDividerColor] = {ui::kColorSysDivider};
+
+  // Tab group colors.
+  mixer[kColorNewTabPageModuleTabGroupsGrey] = {kColorTabGroupBookmarkBarGrey};
+  mixer[kColorNewTabPageModuleTabGroupsBlue] = {kColorTabGroupBookmarkBarBlue};
+  mixer[kColorNewTabPageModuleTabGroupsRed] = {kColorTabGroupBookmarkBarRed};
+  mixer[kColorNewTabPageModuleTabGroupsYellow] = {
+      kColorTabGroupBookmarkBarYellow};
+  mixer[kColorNewTabPageModuleTabGroupsGreen] = {
+      kColorTabGroupBookmarkBarGreen};
+  mixer[kColorNewTabPageModuleTabGroupsPink] = {kColorTabGroupBookmarkBarPink};
+  mixer[kColorNewTabPageModuleTabGroupsPurple] = {
+      kColorTabGroupBookmarkBarPurple};
+  mixer[kColorNewTabPageModuleTabGroupsCyan] = {kColorTabGroupBookmarkBarCyan};
+  mixer[kColorNewTabPageModuleTabGroupsOrange] = {
+      kColorTabGroupBookmarkBarOrange};
+
+  mixer[kColorNewTabPageModuleTabGroupsDotGrey] = {
+      kColorTabGroupTabStripFrameActiveGrey};
+  mixer[kColorNewTabPageModuleTabGroupsDotBlue] = {
+      kColorTabGroupTabStripFrameActiveBlue};
+  mixer[kColorNewTabPageModuleTabGroupsDotRed] = {
+      kColorTabGroupTabStripFrameActiveRed};
+  mixer[kColorNewTabPageModuleTabGroupsDotYellow] = {
+      kColorTabGroupTabStripFrameActiveYellow};
+  mixer[kColorNewTabPageModuleTabGroupsDotGreen] = {
+      kColorTabGroupTabStripFrameActiveGreen};
+  mixer[kColorNewTabPageModuleTabGroupsDotPink] = {
+      kColorTabGroupTabStripFrameActivePink};
+  mixer[kColorNewTabPageModuleTabGroupsDotPurple] = {
+      kColorTabGroupTabStripFrameActivePurple};
+  mixer[kColorNewTabPageModuleTabGroupsDotOrange] = {
+      kColorTabGroupTabStripFrameActiveOrange};
 
   mixer[kColorNewTabPagePromoBackground] = {ui::kColorSysBase};
   mixer[kColorNewTabPagePrimaryForeground] = {ui::kColorSysOnSurface};

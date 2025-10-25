@@ -50,6 +50,9 @@ void RegisterBrowserPrefs(PrefRegistrySimple* registry) {
 #if BUILDFLAG(IS_WIN) && BUILDFLAG(GOOGLE_CHROME_BRANDING)
   registry->RegisterIntegerPref(
       installer_downloader::prefs::kInstallerDownloaderInfobarShowCount, 0);
+  registry->RegisterTimePref(
+      installer_downloader::prefs::kInstallerDownloaderInfobarLastShowTime,
+      base::Time());
   registry->RegisterBooleanPref(
       installer_downloader::prefs::kInstallerDownloaderPreventFutureDisplay,
       false);
@@ -79,6 +82,8 @@ void RegisterBrowserPrefs(PrefRegistrySimple* registry) {
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
   registry->RegisterTimePref(prefs::kPdfInfoBarLastShown, base::Time());
   registry->RegisterIntegerPref(prefs::kPdfInfoBarTimesShown, 0);
+  registry->RegisterTimePref(prefs::kPinInfoBarLastShown, base::Time());
+  registry->RegisterIntegerPref(prefs::kPinInfoBarTimesShown, 0);
 #endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC)
 #if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
   registry->RegisterStringPref(prefs::kEnterpriseCustomLabelForBrowser,
@@ -87,6 +92,10 @@ void RegisterBrowserPrefs(PrefRegistrySimple* registry) {
                                std::string());
   registry->RegisterBooleanPref(prefs::kNTPFooterManagementNoticeEnabled, true);
 #endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+#if !BUILDFLAG(IS_ANDROID)
+  registry->RegisterIntegerPref(prefs::kSplitViewDragAndDropNudgeShownCount, 0);
+  registry->RegisterIntegerPref(prefs::kSplitViewDragAndDropNudgeUsedCount, 0);
+#endif  // !BUILDFLAG(IS_ANDROID)
 }
 
 void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
@@ -97,9 +106,15 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF;
 #endif
 
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+  registry->RegisterIntegerPref(prefs::kSessionRestoreInfoBarTimesShown, 0);
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN)
+
   registry->RegisterBooleanPref(prefs::kHomePageIsNewTabPage, true,
                                 pref_registration_flags);
   registry->RegisterBooleanPref(prefs::kShowHomeButton, false,
+                                pref_registration_flags);
+  registry->RegisterBooleanPref(prefs::kSplitViewDragAndDropEnabled, true,
                                 pref_registration_flags);
 
   registry->RegisterBooleanPref(prefs::kShowForwardButton, true,
@@ -127,6 +142,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterStringPref(prefs::kWebRTCIPHandlingPolicy,
                                blink::kWebRTCIPHandlingDefault);
   registry->RegisterListPref(prefs::kWebRTCIPHandlingUrl, base::Value::List());
+  registry->RegisterBooleanPref(prefs::kWebRTCPostQuantumKeyAgreement, false);
   registry->RegisterStringPref(prefs::kWebRTCUDPPortRange, std::string());
   registry->RegisterBooleanPref(prefs::kWebRtcEventLogCollectionAllowed, false);
   registry->RegisterListPref(prefs::kWebRtcLocalIpsAllowedUrls);
@@ -176,9 +192,9 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterListPref(prefs::kTabCaptureAllowedByOrigins);
   registry->RegisterListPref(prefs::kSameOriginTabCaptureAllowedByOrigins);
 
-#if !BUILDFLAG(IS_ANDROID)
   registry->RegisterBooleanPref(prefs::kCaretBrowsingEnabled, false);
   registry->RegisterBooleanPref(prefs::kShowCaretBrowsingDialog, true);
+#if !BUILDFLAG(IS_ANDROID)
   registry->RegisterBooleanPref(prefs::kNTPFooterExtensionAttributionEnabled,
                                 true);
 #endif

@@ -10,7 +10,8 @@
 #include <vector>
 
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/views/frame/browser_non_client_frame_view.h"
+#include "chrome/browser/ui/tabs/tab_enums.h"
+#include "chrome/browser/ui/views/frame/browser_frame_view.h"
 #include "chrome/browser/ui/views/tabs/tab_strip_types.h"
 #include "components/tab_groups/tab_group_id.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -151,7 +152,7 @@ class TabStripController {
                                  bool drop_before) = 0;
 
   // Creates the new tab.
-  virtual void CreateNewTab() = 0;
+  virtual void CreateNewTab(NewTabTypes context) = 0;
 
   // Creates a new tab, and loads `location` in the tab. If `location` is a
   // valid URL, then simply loads the URL, otherwise this can open a
@@ -225,8 +226,6 @@ class TabStripController {
   // Returns whether tab strokes can ever be drawn. If true, strokes will only
   // be drawn if necessary.
   virtual bool CanDrawStrokes() const = 0;
-
-  virtual bool IsFrameButtonsRightAligned() const = 0;
 
   // Returns the color of the browser frame for the given window activation
   // state.

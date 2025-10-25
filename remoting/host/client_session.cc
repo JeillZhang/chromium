@@ -120,7 +120,7 @@ ClientSession::ClientSession(
       desktop_environment_factory_(desktop_environment_factory),
       desktop_environment_options_(desktop_environment_options),
       remote_input_filter_(&input_tracker_),
-      fractional_input_filter_(&remote_input_filter_),
+      fractional_input_filter_(&remote_input_filter_, &coordinate_converter_),
       mouse_clamping_filter_(&fractional_input_filter_),
       observing_input_filter_(&mouse_clamping_filter_),
       desktop_and_cursor_composer_notifier_(&observing_input_filter_, this),
@@ -415,6 +415,7 @@ void ClientSession::SelectDesktopDisplay(
   LOG(INFO) << "SelectDesktopDisplay "
             << "'" << select_display.id() << "'";
 
+#if BUILDFLAG(IS_CHROMEOS)
   if (HasCapability(capabilities_, protocol::kMultiStreamCapability)) {
     // TODO(lambroslambrou): Close the connection with a protocol error,
     // once we are sure the client will not send this request after
@@ -489,9 +490,14 @@ void ClientSession::SelectDesktopDisplay(
   if (oldGeo != nullptr && newGeo != nullptr) {
     if (oldGeo->width == newGeo->width && oldGeo->height == newGeo->height) {
       UpdateMouseClampingFilterOffset();
-      UpdateFractionalFilterFallback();
+      UpdateCoordinateConverterFallback();
     }
   }
+#else
+  // On non-ChromeOS platforms, multi-stream is forced and this protocol
+  // request is no longer meaningful.
+  LOG(WARNING) << "Ignoring deprecated SelectDesktopDisplayRequest.";
+#endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
 void ClientSession::ControlPeerConnection(
@@ -599,6 +605,13 @@ void ClientSession::OnConnectionAuthenticated(
   if (effective_policies_.curtain_required.has_value()) {
     options.set_enable_curtaining(*effective_policies_.curtain_required);
   }
+  // `allow_webauthn_forwarding` should not override the existing value for
+  // `enable_remote_webauthn` if it was not enabled for this connection mode.
+  if (options.enable_remote_webauthn() &&
+      effective_policies_.allow_webauthn_forwarding.has_value()) {
+    options.set_enable_remote_webauthn(
+        *effective_policies_.allow_webauthn_forwarding);
+  }
   // Create the desktop environment.
   // Note: The handlers for various other events use the created desktop
   // environment. Since those events may occur before the desktop environment
@@ -624,12 +637,7 @@ void ClientSession::CreateMediaStreams() {
     return;
   }
 
-  // Create a VideoStream to pump frames from the capturer to the client.
   DCHECK(video_streams_.empty());
-
-  auto video_stream = connection_->StartVideoStream(
-      webrtc::kFullDesktopScreenId,
-      desktop_environment_->CreateVideoCapturer(webrtc::kFullDesktopScreenId));
 
   // Create an AudioStream to pump audio from the capturer to the client.
   std::unique_ptr<protocol::AudioSource> audio_capturer =
@@ -637,6 +645,12 @@ void ClientSession::CreateMediaStreams() {
   if (audio_capturer) {
     audio_stream_ = connection_->StartAudioStream(std::move(audio_capturer));
   }
+
+#if BUILDFLAG(IS_CHROMEOS)
+  // Create the single video stream (non multi-stream mode) for ChromeOS.
+  auto video_stream = connection_->StartVideoStream(
+      webrtc::kFullDesktopScreenId,
+      desktop_environment_->CreateVideoCapturer(webrtc::kFullDesktopScreenId));
 
   video_stream->SetObserver(this);
 
@@ -654,6 +668,11 @@ void ClientSession::CreateMediaStreams() {
   // If multi-stream is enabled, this entry will get removed when the new
   // video-streams are created.
   video_streams_[webrtc::kInvalidScreenId] = std::move(video_stream);
+#else
+  // On non-ChromeOS platforms, create the per-monitor streams immediately,
+  // avoiding any transition from single-stream to multi-stream.
+  CreatePerMonitorVideoStreams();
+#endif  // BUILDFLAG(IS_CHROMEOS)
 }
 
 void ClientSession::CreatePerMonitorVideoStreams() {
@@ -661,7 +680,7 @@ void ClientSession::CreatePerMonitorVideoStreams() {
 
   // Undo any previously-set fallback. When there are multiple streams, all
   // fractional coordinates must specify a screen_id.
-  fractional_input_filter_.set_fallback_geometry({});
+  coordinate_converter_.set_fallback_geometry({});
 
   // Create new streams for any monitors that don't already have streams.
   for (int i = 0; i < desktop_display_info_.NumDisplays(); i++) {
@@ -674,8 +693,13 @@ void ClientSession::CreatePerMonitorVideoStreams() {
 
     HOST_LOG << "Creating video stream for id " << id;
 
-    auto video_stream = connection_->StartVideoStream(
-        id, desktop_environment_->CreateVideoCapturer(id));
+    auto video_capturer = desktop_environment_->CreateVideoCapturer(id);
+    if (!video_capturer) {
+      LOG(WARNING) << "Cannot create video capturer for id " << id;
+      continue;
+    }
+    auto video_stream =
+        connection_->StartVideoStream(id, std::move(video_capturer));
 
     // SetObserver(this) is not called on the new video-stream, because
     // per-monitor resizing should be handled by OnDesktopDisplayChanged()
@@ -746,6 +770,8 @@ void ClientSession::OnConnectionChannelsConnected() {
       connection_->client_stub());
   mouse_shape_pump_->SetMouseCursorMonitorCallback(this);
   mouse_shape_pump_->SetCursorCaptureInterval(base::Hertz(target_framerate_));
+  mouse_shape_pump_->SetSendCursorPositionToClient(
+      send_cursor_position_to_client_);
 
   // Create KeyboardLayoutMonitor to send keyboard layout.
   // Unretained is sound because callback will never be called after
@@ -903,6 +929,11 @@ void ClientSession::SetComposeEnabled(bool enabled) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   for (const auto& [_, video_stream] : video_streams_) {
     video_stream->SetComposeEnabled(enabled);
+  }
+  send_cursor_position_to_client_ = enabled;
+  if (mouse_shape_pump_) {
+    mouse_shape_pump_->SetSendCursorPositionToClient(
+        send_cursor_position_to_client_);
   }
 }
 
@@ -1142,7 +1173,7 @@ void ClientSession::OnVideoSizeChanged(protocol::VideoStream* video_stream,
   webrtc_capture_size_ = size;
 
   SetMouseClampingFilter(size);
-  UpdateFractionalFilterFallback();
+  UpdateCoordinateConverterFallback();
 
   // Record default DPI in case a display reports 0 for DPI.
   default_x_dpi_ = dpi.x();
@@ -1188,8 +1219,15 @@ void ClientSession::OnDesktopDisplayChanged(
 
   LOG(INFO) << "ClientSession::OnDesktopDisplayChanged";
 
+  // On ChromeOS (It2Me) hosts, multi-stream depends on the client advertising
+  // the capability. On other platforms, multi-stream is enabled immediately
+  // on connection.
   bool multiStreamEnabled =
+#if BUILDFLAG(IS_CHROMEOS)
       HasCapability(capabilities_, protocol::kMultiStreamCapability);
+#else
+      true;
+#endif  // if BUILDFLAG(IS_CHROMEOS)
 
   // Scan display list to calculate the full desktop size.
   int min_x = 0;
@@ -1198,14 +1236,27 @@ void ClientSession::OnDesktopDisplayChanged(
   int max_y = 0;
   int dpi_x = 0;
   int dpi_y = 0;
-  LOG(INFO) << "  Scanning display info... (dips)";
+  std::string_view dips_or_physical_pixels;
+  switch (displays->pixel_type()) {
+    case protocol::VideoLayout::PixelType::VideoLayout_PixelType_LOGICAL:
+      dips_or_physical_pixels = "DIPs";
+      break;
+    case protocol::VideoLayout::PixelType::VideoLayout_PixelType_PHYSICAL:
+      dips_or_physical_pixels = "Physical pixels";
+      break;
+    default:
+      dips_or_physical_pixels = "Unknown pixel type";
+  }
+  LOG(INFO) << "  Scanning display info... (" << dips_or_physical_pixels << ")";
   for (int display_id = 0; display_id < displays->video_track_size();
        display_id++) {
     protocol::VideoTrackLayout track = displays->video_track(display_id);
     LOG(INFO) << "   #" << display_id << " : " << track.position_x() << ","
               << track.position_y() << " " << track.width() << "x"
               << track.height() << " [" << track.x_dpi() << "," << track.y_dpi()
-              << "], screen_id=" << track.screen_id();
+              << "], screen_id=" << track.screen_id() << ", primary="
+              << (displays->has_primary_screen_id() &&
+                  track.screen_id() == displays->primary_screen_id());
     if (dpi_x == 0) {
       dpi_x = track.x_dpi();
     }
@@ -1229,7 +1280,7 @@ void ClientSession::OnDesktopDisplayChanged(
     dpi_y = default_y_dpi_;
   }
 
-  // Calc desktop scaled geometry (in DIPs)
+  // Calc desktop scaled geometry
   // See comment in OnVideoSizeChanged() for details.
   const webrtc::DesktopSize size(max_x - min_x, max_y - min_y);
 
@@ -1262,6 +1313,9 @@ void ClientSession::OnDesktopDisplayChanged(
 
   // Generate and send VideoLayout message.
   protocol::VideoLayout layout;
+  if (displays->has_pixel_type()) {
+    layout.set_pixel_type(displays->pixel_type());
+  }
   layout.set_supports_full_desktop_capture(can_capture_full_desktop_);
   if (displays->has_primary_screen_id()) {
     layout.set_primary_screen_id(displays->primary_screen_id());
@@ -1284,10 +1338,10 @@ void ClientSession::OnDesktopDisplayChanged(
       multiStreamEnabled ? 1 : webrtc_capture_size_.HeightAsDips());
   video_track->set_x_dpi(dpi_x);
   video_track->set_y_dpi(dpi_y);
-  LOG(INFO) << "  Webrtc capture size (DIPS) = 0,0 "
-            << default_webrtc_desktop_size_;
+  LOG(INFO) << "  Webrtc capture size (" << dips_or_physical_pixels
+            << ") = 0,0 " << default_webrtc_desktop_size_;
 
-  // Add raw geometry for entire desktop (in DIPs).
+  // Add raw geometry for entire desktop.
   video_track = layout.add_video_track();
   video_track->set_position_x(0);
   video_track->set_position_y(0);
@@ -1295,8 +1349,9 @@ void ClientSession::OnDesktopDisplayChanged(
   video_track->set_height(size.height());
   video_track->set_x_dpi(dpi_x);
   video_track->set_y_dpi(dpi_y);
-  LOG(INFO) << "  Full Desktop (DIPS) = 0,0 " << size.width() << "x"
-            << size.height() << " [" << dpi_x << "," << dpi_y << "]";
+  LOG(INFO) << "  Full Desktop (" << dips_or_physical_pixels << ") = 0,0 "
+            << size.width() << "x" << size.height() << " [" << dpi_x << ","
+            << dpi_y << "]";
 
   // Add a VideoTrackLayout entry for each separate display.
   desktop_display_info_.Reset();
@@ -1315,7 +1370,10 @@ void ClientSession::OnDesktopDisplayChanged(
     LOG(INFO) << "  Display " << display_id << " = " << display.position_x()
               << "," << display.position_y() << " " << display.width() << "x"
               << display.height() << " [" << display.x_dpi() << ","
-              << display.y_dpi() << "], screen_id=" << display.screen_id();
+              << display.y_dpi() << "], screen_id=" << display.screen_id()
+              << ", primary="
+              << (displays->has_primary_screen_id() &&
+                  display.screen_id() == displays->primary_screen_id());
   }
 
   // Set the display index, if this is the first message being processed or if
@@ -1331,9 +1389,10 @@ void ClientSession::OnDesktopDisplayChanged(
     }
   }
 
-  // We need to update the input filters whenever the displays change.
-  fractional_input_filter_.set_video_layout(*displays);
-  UpdateFractionalFilterFallback();
+  // We need to update the coordinate converter and input filters whenever the
+  // displays change.
+  coordinate_converter_.set_video_layout(*displays);
+  UpdateCoordinateConverterFallback();
   DisplaySize display_size =
       DisplaySize::FromPixels(size.width(), size.height(), default_x_dpi_);
   SetMouseClampingFilter(display_size);
@@ -1508,7 +1567,7 @@ void ClientSession::OnActiveDisplayChanged(webrtc::ScreenId display) {
   connection_->client_stub()->SetActiveDisplay(active_display);
 }
 
-void ClientSession::UpdateFractionalFilterFallback() {
+void ClientSession::UpdateCoordinateConverterFallback() {
   if (!IsValidDisplayIndex(selected_display_index_)) {
     return;
   }
@@ -1546,7 +1605,7 @@ void ClientSession::UpdateFractionalFilterFallback() {
   // implemented in DesktopDisplayInfo::CalcDisplayOffset().
   webrtc::DesktopVector offset =
       desktop_display_info_.CalcDisplayOffset(selected_display_index_);
-  fractional_input_filter_.set_fallback_geometry(
+  coordinate_converter_.set_fallback_geometry(
       webrtc::DesktopRect::MakeOriginSize(offset, new_size));
 }
 

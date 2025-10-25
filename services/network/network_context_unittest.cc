@@ -43,6 +43,7 @@
 #include "base/test/gtest_util.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/mock_entropy_provider.h"
+#include "base/test/run_until.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/task_environment.h"
@@ -94,6 +95,7 @@
 #include "net/cookies/cookie_store_test_callbacks.h"
 #include "net/cookies/cookie_util.h"
 #include "net/cookies/site_for_cookies.h"
+#include "services/network/devtools_durable_msg_collector.h"
 #include "services/network/public/cpp/permissions_policy/permissions_policy.h"
 #include "services/network/public/mojom/permissions_policy/permissions_policy_feature.mojom-shared.h"
 
@@ -144,7 +146,6 @@
 #include "net/test/embedded_test_server/embedded_test_server_connection_listener.h"
 #include "net/test/gtest_util.h"
 #include "net/test/scoped_mutually_exclusive_feature_list.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
 #include "net/test/test_data_directory.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/referrer_policy.h"
@@ -206,7 +207,7 @@
 #endif  // BUILDFLAG(IS_P2P_ENABLED)
 
 #if BUILDFLAG(IS_ANDROID)
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #endif  // BUILDFLAG(IS_ANDROID)
 
 namespace network {
@@ -879,8 +880,8 @@ TEST_F(NetworkContextTest, EnableBrotli) {
 // NetworkContext properly targets that network.
 TEST_F(NetworkContextTest, NetworkBoundNetworkContext) {
 #if BUILDFLAG(IS_ANDROID)
-  if (base::android::BuildInfo::GetInstance()->sdk_int() <
-      base::android::SDK_VERSION_MARSHMALLOW) {
+  if (base::android::android_info::sdk_int() <
+      base::android::android_info::SDK_VERSION_MARSHMALLOW) {
     GTEST_SKIP()
         << "bound_network is supported starting from Android Marshmallow";
   }
@@ -919,8 +920,8 @@ TEST_F(NetworkContextTest, NetworkBoundNetworkContext) {
 // correctly target that network.
 TEST_F(NetworkContextTest, NetworkBoundURLLoaderFactory) {
 #if BUILDFLAG(IS_ANDROID)
-  if (base::android::BuildInfo::GetInstance()->sdk_int() <
-      base::android::SDK_VERSION_MARSHMALLOW) {
+  if (base::android::android_info::sdk_int() <
+      base::android::android_info::SDK_VERSION_MARSHMALLOW) {
     GTEST_SKIP()
         << "bound_network is supported starting from Android Marshmallow";
   }
@@ -1627,63 +1628,29 @@ TEST_F(NetworkContextTest, DiskCache) {
             GetBackendType(backend));
 }
 
-class DiskCacheSizeTest : public NetworkContextTest {
- public:
-  DiskCacheSizeTest() = default;
-  ~DiskCacheSizeTest() override = default;
+TEST_F(NetworkContextTest, DiskCacheSize) {
+  base::HistogramTester histogram_tester;
 
-  int64_t VerifyDiskCacheSize(int scale = 100) {
-    base::test::ScopedFeatureList scoped_feature_list;
-    if (scale != 100) {
-      std::map<std::string, std::string> field_trial_params;
-      field_trial_params["percent_relative_size"] = base::NumberToString(scale);
-      scoped_feature_list.InitAndEnableFeatureWithParameters(
-          disk_cache::kChangeDiskCacheSizeExperiment, field_trial_params);
-    }
+  mojom::NetworkContextParamsPtr context_params =
+      CreateNetworkContextParamsForTesting();
+  context_params->file_paths = mojom::NetworkContextFilePaths::New();
+  context_params->http_cache_enabled = true;
 
-    base::HistogramTester histogram_tester;
+  base::ScopedTempDir temp_dir;
+  EXPECT_TRUE(temp_dir.CreateUniqueTempDir());
+  context_params->file_paths->http_cache_directory = temp_dir.GetPath();
 
-    mojom::NetworkContextParamsPtr context_params =
-        CreateNetworkContextParamsForTesting();
-    context_params->file_paths = mojom::NetworkContextFilePaths::New();
-    context_params->http_cache_enabled = true;
+  std::unique_ptr<NetworkContext> network_context =
+      CreateContextWithParams(std::move(context_params));
 
-    base::ScopedTempDir temp_dir;
-    EXPECT_TRUE(temp_dir.CreateUniqueTempDir());
-    context_params->file_paths->http_cache_directory = temp_dir.GetPath();
+  disk_cache::Backend* backend = WaitForCacheBackend(*network_context);
+  EXPECT_TRUE(backend);
+  EXPECT_EQ(net::DISK_CACHE, backend->GetCacheType());
 
-    std::unique_ptr<NetworkContext> network_context =
-        CreateContextWithParams(std::move(context_params));
-
-    disk_cache::Backend* backend = WaitForCacheBackend(*network_context);
-    EXPECT_TRUE(backend);
-    EXPECT_EQ(net::DISK_CACHE, backend->GetCacheType());
-
-    int64_t max_file_size = backend->MaxFileSize();
-    histogram_tester.ExpectTotalCount("HttpCache.MaxFileSizeOnInit", 1);
-    histogram_tester.ExpectUniqueSample("HttpCache.MaxFileSizeOnInit",
-                                        max_file_size / 1024, 1);
-
-    return max_file_size;
-  }
-};
-
-TEST_F(DiskCacheSizeTest, DiskCacheSize) {
-  int64_t max_file_size = VerifyDiskCacheSize();
-
-  int64_t max_file_size_scaled = VerifyDiskCacheSize(200);
-
-#if BUILDFLAG(IS_WIN)
-  // In most cases, the scaled size will be 2x the non-scaled size. However,
-  // this is dependent on available disk space and we cannot guarantee that it
-  // will remain constant between 2 calls to VerifyDiskCacheSize(), so we only
-  // check that the scaled size is larger than the non-scaled size.
-  EXPECT_GE(max_file_size_scaled, max_file_size);
-#else
-  // On non-Windows, a 400% scaling factor is applied by default. Therefore,
-  // applying a 200% scaling factor results in a smaller size than the default.
-  EXPECT_LE(max_file_size_scaled, max_file_size);
-#endif
+  int64_t max_file_size = backend->MaxFileSize();
+  histogram_tester.ExpectTotalCount("HttpCache.MaxFileSizeOnInit", 1);
+  histogram_tester.ExpectUniqueSample("HttpCache.MaxFileSizeOnInit",
+                                      max_file_size / 1024, 1);
 }
 
 // This makes sure that network_session_configurator::ChooseCacheType is
@@ -2319,13 +2286,22 @@ TEST_F(NetworkContextTest, ClearHttpCache) {
 
     result.ReleaseEntry()->Close();
   }
-  EXPECT_EQ(entry_urls.size(), static_cast<size_t>(backend->GetEntryCount()));
+  {
+    net::TestInt32CompletionCallback entry_count_cb;
+    EXPECT_EQ(entry_urls.size(),
+              static_cast<size_t>(entry_count_cb.GetResult(
+                  backend->GetEntryCount(entry_count_cb.callback()))));
+  }
   base::RunLoop run_loop;
   network_context->ClearHttpCache(base::Time(), base::Time(),
                                   nullptr /* filter */,
                                   base::BindOnce(run_loop.QuitClosure()));
   run_loop.Run();
-  EXPECT_EQ(0U, static_cast<size_t>(backend->GetEntryCount()));
+  {
+    net::TestInt32CompletionCallback entry_count_cb;
+    EXPECT_EQ(0, entry_count_cb.GetResult(
+                     backend->GetEntryCount(entry_count_cb.callback())));
+  }
 }
 
 // Checks that when multiple calls are made to clear the HTTP cache, all
@@ -2416,7 +2392,8 @@ TEST_F(NetworkContextTest, NotifyExternalCacheHit) {
       EXPECT_EQ(entry->GetLastUsed(), kNow1);
 
       clock.SetNow(kNow2);
-      network_context->NotifyExternalCacheHit(url, url.scheme(), isolation_key,
+      network_context->NotifyExternalCacheHit(url, url.GetScheme(),
+                                              isolation_key,
                                               /*include_credentials=*/true);
 
       EXPECT_EQ(entry->GetLastUsed(), kNow2);
@@ -2851,67 +2828,6 @@ TEST_F(NetworkContextTest, ClearEmptyHttpAuthCache) {
   run_loop.Run();
 
   EXPECT_EQ(0u, cache->GetEntriesSizeForTesting());
-}
-
-std::optional<net::AuthCredentials> GetAuthCredentials(
-    NetworkContext* network_context,
-    const GURL& origin,
-    const net::NetworkAnonymizationKey& network_anonymization_key) {
-  base::RunLoop run_loop;
-  std::optional<net::AuthCredentials> result;
-  network_context->LookupServerBasicAuthCredentials(
-      origin, network_anonymization_key,
-      base::BindLambdaForTesting(
-          [&](const std::optional<net::AuthCredentials>& credentials) {
-            result = credentials;
-            run_loop.Quit();
-          }));
-  run_loop.Run();
-  return result;
-}
-
-TEST_F(NetworkContextTest, LookupServerBasicAuthCredentials) {
-  GURL origin("http://foo.test");
-  GURL origin2("http://bar.test");
-  GURL origin3("http://baz.test");
-  const auto network_anonymization_key1 =
-      net::NetworkAnonymizationKey::CreateSameSite(
-          net::SchemefulSite(url::Origin::Create(origin)));
-  const auto network_anonymization_key2 =
-      net::NetworkAnonymizationKey::CreateSameSite(
-          net::SchemefulSite(url::Origin::Create(origin2)));
-  std::unique_ptr<NetworkContext> network_context =
-      CreateContextWithParams(CreateNetworkContextParamsForTesting());
-  network_context->SetSplitAuthCacheByNetworkAnonymizationKey(true);
-  net::HttpAuthCache* cache = network_context->url_request_context()
-                                  ->http_transaction_factory()
-                                  ->GetSession()
-                                  ->http_auth_cache();
-
-  std::u16string user = u"user";
-  std::u16string password = u"pass";
-  cache->Add(url::SchemeHostPort(origin), net::HttpAuth::AUTH_SERVER, "Realm",
-             net::HttpAuth::AUTH_SCHEME_BASIC, network_anonymization_key1,
-             "basic realm=Realm", net::AuthCredentials(user, password), "/");
-  cache->Add(url::SchemeHostPort(origin2), net::HttpAuth::AUTH_PROXY, "Realm",
-             net::HttpAuth::AUTH_SCHEME_BASIC, network_anonymization_key1,
-             "basic realm=Realm", net::AuthCredentials(user, password), "/");
-
-  std::optional<net::AuthCredentials> result = GetAuthCredentials(
-      network_context.get(), origin, network_anonymization_key1);
-  ASSERT_TRUE(result.has_value());
-  EXPECT_EQ(user, result->username());
-  EXPECT_EQ(password, result->password());
-
-  // Nothing should be returned when using a different NIK.
-  EXPECT_FALSE(GetAuthCredentials(network_context.get(), origin,
-                                  network_anonymization_key2)
-                   .has_value());
-
-  // Proxy credentials should not be returned
-  result = GetAuthCredentials(network_context.get(), origin2,
-                              network_anonymization_key1);
-  EXPECT_FALSE(result.has_value());
 }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -3398,9 +3314,9 @@ bool SetCookieHelper(NetworkContext* network_context,
   bool result = false;
   cookie_manager->SetCanonicalCookie(
       *net::CanonicalCookie::CreateUnsafeCookieForTesting(
-          key, value, url.host(), "/", base::Time(), base::Time(), base::Time(),
-          base::Time(), true, false, net::CookieSameSite::NO_RESTRICTION,
-          net::COOKIE_PRIORITY_LOW),
+          key, value, url.GetHost(), "/", base::Time(), base::Time(),
+          base::Time(), base::Time(), true, false,
+          net::CookieSameSite::NO_RESTRICTION, net::COOKIE_PRIORITY_LOW),
       url, net::CookieOptions::MakeAllInclusive(),
       base::BindOnce(&SetCookieCallback, &run_loop, &result));
   run_loop.Run();
@@ -3954,7 +3870,7 @@ TEST_F(NetworkContextTest, CreateRestrictedUDPSocket) {
         net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS),
         /*params=*/nullptr, server_socket.BindNewPipeAndPassReceiver(),
         socket_listener_receiver.BindNewPipeAndPassRemote(),
-        create_future.GetCallback());
+        /*allow_multicast=*/false, create_future.GetCallback());
     ASSERT_EQ(create_future.Get<0>(), net::OK);
     server_addr = *create_future.Get<1>();
   }
@@ -3974,7 +3890,7 @@ TEST_F(NetworkContextTest, CreateRestrictedUDPSocket) {
         net::MutableNetworkTrafficAnnotationTag(TRAFFIC_ANNOTATION_FOR_TESTS),
         /*params=*/nullptr, client_socket.BindNewPipeAndPassReceiver(),
         client_listener_receiver.BindNewPipeAndPassRemote(),
-        create_future.GetCallback());
+        /*allow_multicast=*/false, create_future.GetCallback());
     ASSERT_EQ(create_future.Get<0>(), net::OK);
     client_addr = *create_future.Get<1>();
   }
@@ -4228,11 +4144,11 @@ class TestResolveHostClient : public ResolveHostClientBase {
 
   void CloseReceiver() { receiver_.reset(); }
 
-  void OnComplete(int error,
-                  const net::ResolveErrorInfo& resolve_error_info,
-                  const std::optional<net::AddressList>& addresses,
-                  const std::optional<net::HostResolverEndpointResults>&
-                      endpoint_results_with_metadata) override {
+  void OnComplete(
+      int error,
+      const net::ResolveErrorInfo& resolve_error_info,
+      const net::AddressList& addresses,
+      const net::HostResolverEndpointResults& alternative_endpoints) override {
     DCHECK(!complete_);
 
     complete_ = true;
@@ -4254,7 +4170,7 @@ class TestResolveHostClient : public ResolveHostClientBase {
     return result_error_;
   }
 
-  const std::optional<net::AddressList>& result_addresses() const {
+  const net::AddressList& result_addresses() const {
     DCHECK(complete_);
     return result_addresses_;
   }
@@ -4265,7 +4181,7 @@ class TestResolveHostClient : public ResolveHostClientBase {
   bool complete_;
   int top_level_result_error_;
   int result_error_;
-  std::optional<net::AddressList> result_addresses_;
+  net::AddressList result_addresses_;
   const raw_ptr<base::RunLoop> run_loop_;
 };
 
@@ -4300,7 +4216,7 @@ TEST_F(NetworkContextResolveHostTest, Sync) {
   EXPECT_EQ(net::OK, response_client.top_level_result_error());
   EXPECT_EQ(net::OK, response_client.result_error());
   EXPECT_THAT(
-      response_client.result_addresses().value().endpoints(),
+      response_client.result_addresses().endpoints(),
       testing::UnorderedElementsAre(CreateExpectedEndPoint("1.2.3.4", 160)));
   EXPECT_EQ(0u,
             network_context->GetNumOutstandingResolveHostRequestsForTesting());
@@ -4339,7 +4255,7 @@ TEST_F(NetworkContextResolveHostTest, Async) {
   EXPECT_EQ(net::OK, response_client.top_level_result_error());
   EXPECT_EQ(net::OK, response_client.result_error());
   EXPECT_THAT(
-      response_client.result_addresses().value().endpoints(),
+      response_client.result_addresses().endpoints(),
       testing::UnorderedElementsAre(CreateExpectedEndPoint("1.2.3.4", 160)));
   EXPECT_TRUE(control_handle_closed);
   EXPECT_EQ(0u,
@@ -4374,7 +4290,7 @@ TEST_F(NetworkContextResolveHostTest, FailureSync) {
   EXPECT_EQ(net::ERR_NAME_NOT_RESOLVED,
             response_client.top_level_result_error());
   EXPECT_EQ(net::ERR_DNS_TIMED_OUT, response_client.result_error());
-  EXPECT_FALSE(response_client.result_addresses());
+  EXPECT_THAT(response_client.result_addresses(), testing::IsEmpty());
   EXPECT_EQ(0u,
             network_context->GetNumOutstandingResolveHostRequestsForTesting());
 }
@@ -4412,7 +4328,7 @@ TEST_F(NetworkContextResolveHostTest, FailureAsync) {
   EXPECT_EQ(net::ERR_NAME_NOT_RESOLVED,
             response_client.top_level_result_error());
   EXPECT_EQ(net::ERR_DNS_TIMED_OUT, response_client.result_error());
-  EXPECT_FALSE(response_client.result_addresses());
+  EXPECT_THAT(response_client.result_addresses(), testing::IsEmpty());
   EXPECT_TRUE(control_handle_closed);
   EXPECT_EQ(0u,
             network_context->GetNumOutstandingResolveHostRequestsForTesting());
@@ -4450,7 +4366,7 @@ TEST_F(NetworkContextResolveHostTest, NetworkAnonymizationKey) {
 
   EXPECT_EQ(net::OK, response_client.result_error());
   EXPECT_THAT(
-      response_client.result_addresses().value().endpoints(),
+      response_client.result_addresses().endpoints(),
       testing::UnorderedElementsAre(CreateExpectedEndPoint("1.2.3.4", 160)));
   EXPECT_EQ(0u,
             network_context->GetNumOutstandingResolveHostRequestsForTesting());
@@ -4464,7 +4380,7 @@ TEST_F(NetworkContextResolveHostTest,
        SchemeHostPortRevokeNetworkWithoutNetworkAnonymizationKey) {
   const GURL url = GURL("https://sync.test");
   auto resolver = std::make_unique<net::MockHostResolver>();
-  resolver->rules()->AddRule(url.host(), "1.2.3.4");
+  resolver->rules()->AddRule(url.GetHost(), "1.2.3.4");
   resolver->set_synchronous_mode(true);
   network_service_->set_host_resolver_factory_for_testing(
       std::make_unique<HostResolverFactory>(std::move(resolver)));
@@ -4494,7 +4410,7 @@ TEST_F(NetworkContextResolveHostTest,
   // should succeed.
   network_context->ResolveHost(
       network::mojom::HostResolverHost::NewSchemeHostPort(
-          url::SchemeHostPort(url::kHttpScheme, url.host(), 160)),
+          url::SchemeHostPort(url::kHttpScheme, url.GetHost(), 160)),
       net::NetworkAnonymizationKey(), std::move(optional_parameters),
       std::move(pending_response_client));
   run_loop.Run();
@@ -4502,7 +4418,7 @@ TEST_F(NetworkContextResolveHostTest,
   EXPECT_EQ(net::OK, response_client.top_level_result_error());
   EXPECT_EQ(net::OK, response_client.result_error());
   EXPECT_THAT(
-      response_client.result_addresses().value().endpoints(),
+      response_client.result_addresses().endpoints(),
       testing::UnorderedElementsAre(CreateExpectedEndPoint("1.2.3.4", 160)));
   EXPECT_EQ(0u,
             network_context->GetNumOutstandingResolveHostRequestsForTesting());
@@ -4514,7 +4430,7 @@ TEST_F(NetworkContextResolveHostTest,
        SchemeHostPortRevokeNetworkWithNetworkAnonymizationKey) {
   const GURL url = GURL("https://sync.test");
   auto resolver = std::make_unique<net::MockHostResolver>();
-  resolver->rules()->AddRule(url.host(), "1.2.3.4");
+  resolver->rules()->AddRule(url.GetHost(), "1.2.3.4");
   resolver->set_synchronous_mode(true);
   network_service_->set_host_resolver_factory_for_testing(
       std::make_unique<HostResolverFactory>(std::move(resolver)));
@@ -4549,7 +4465,7 @@ TEST_F(NetworkContextResolveHostTest,
   // should be disabled.
   network_context->ResolveHost(
       network::mojom::HostResolverHost::NewSchemeHostPort(
-          url::SchemeHostPort(url::kHttpScheme, url.host(), 160)),
+          url::SchemeHostPort(url::kHttpScheme, url.GetHost(), 160)),
       network_anonymization_key, std::move(optional_parameters),
       std::move(pending_response_client));
   run_loop.RunUntilIdle();
@@ -4606,7 +4522,7 @@ TEST_F(NetworkContextResolveHostTest,
   EXPECT_EQ(net::OK, response_client.top_level_result_error());
   EXPECT_EQ(net::OK, response_client.result_error());
   EXPECT_THAT(
-      response_client.result_addresses().value().endpoints(),
+      response_client.result_addresses().endpoints(),
       testing::UnorderedElementsAre(CreateExpectedEndPoint("1.2.3.4", 160)));
   EXPECT_EQ(0u,
             network_context->GetNumOutstandingResolveHostRequestsForTesting());
@@ -4685,7 +4601,7 @@ TEST_F(NetworkContextResolveHostTest, NoControlHandle) {
 
   EXPECT_EQ(net::OK, response_client.result_error());
   EXPECT_THAT(
-      response_client.result_addresses().value().endpoints(),
+      response_client.result_addresses().endpoints(),
       testing::UnorderedElementsAre(CreateExpectedEndPoint("127.0.0.1", 80),
                                     CreateExpectedEndPoint("::1", 80)));
   EXPECT_EQ(0u,
@@ -4717,7 +4633,7 @@ TEST_F(NetworkContextResolveHostTest, CloseControlHandle) {
 
   EXPECT_EQ(net::OK, response_client.result_error());
   EXPECT_THAT(
-      response_client.result_addresses().value().endpoints(),
+      response_client.result_addresses().endpoints(),
       testing::UnorderedElementsAre(CreateExpectedEndPoint("127.0.0.1", 160),
                                     CreateExpectedEndPoint("::1", 160)));
   EXPECT_EQ(0u,
@@ -4762,7 +4678,7 @@ TEST_F(NetworkContextResolveHostTest, Cancellation) {
   // On cancellation, should receive an ERR_FAILED result, and the internal
   // resolver request should have been cancelled.
   EXPECT_EQ(net::ERR_ABORTED, response_client.result_error());
-  EXPECT_FALSE(response_client.result_addresses());
+  EXPECT_THAT(response_client.result_addresses(), testing::IsEmpty());
   EXPECT_EQ(1, state->num_cancellations());
   EXPECT_TRUE(control_handle_closed);
   EXPECT_EQ(0u,
@@ -4807,7 +4723,7 @@ TEST_F(NetworkContextResolveHostTest, DestroyContext) {
   // On context destruction, should receive an ERR_FAILED result, and the
   // internal resolver request should have been cancelled.
   EXPECT_EQ(net::ERR_FAILED, response_client.result_error());
-  EXPECT_FALSE(response_client.result_addresses());
+  EXPECT_THAT(response_client.result_addresses(), testing::IsEmpty());
   EXPECT_EQ(1, state->num_cancellations());
   EXPECT_TRUE(control_handle_closed);
 }
@@ -4939,7 +4855,7 @@ TEST_F(NetworkContextCreateHostResolverTest, Basic) {
 
   EXPECT_EQ(net::OK, response_client.result_error());
   EXPECT_THAT(
-      response_client.result_addresses().value().endpoints(),
+      response_client.result_addresses().endpoints(),
       testing::UnorderedElementsAre(CreateExpectedEndPoint("127.0.0.1", 80),
                                     CreateExpectedEndPoint("::1", 80)));
   EXPECT_EQ(0u,
@@ -4988,7 +4904,7 @@ TEST_F(NetworkContextCreateHostResolverTest, CloseResolver) {
   // On resolver destruction, should receive an ERR_FAILED result, and the
   // internal resolver request should have been cancelled.
   EXPECT_EQ(net::ERR_FAILED, response_client.result_error());
-  EXPECT_FALSE(response_client.result_addresses());
+  EXPECT_THAT(response_client.result_addresses(), testing::IsEmpty());
   EXPECT_EQ(1, state->num_cancellations());
   EXPECT_TRUE(control_handle_closed);
 }
@@ -5044,7 +4960,7 @@ TEST_F(NetworkContextCreateHostResolverTest, CloseContext) {
   // On context destruction, should receive an ERR_FAILED result, and the
   // internal resolver request should have been cancelled.
   EXPECT_EQ(net::ERR_FAILED, response_client.result_error());
-  EXPECT_FALSE(response_client.result_addresses());
+  EXPECT_THAT(response_client.result_addresses(), testing::IsEmpty());
   EXPECT_EQ(1, state->num_cancellations());
   EXPECT_TRUE(control_handle_closed);
   EXPECT_TRUE(resolver_closed);
@@ -5125,7 +5041,7 @@ TEST_F(NetworkContextCreateHostResolverTest, WithConfigOverrides) {
   run_loop.Run();
 
   EXPECT_EQ(net::OK, response_client.result_error());
-  EXPECT_THAT(response_client.result_addresses().value().endpoints(),
+  EXPECT_THAT(response_client.result_addresses().endpoints(),
               ElementsAre(CreateExpectedEndPoint(kResult, 80)));
 }
 #endif  // BUILDFLAG(IS_IOS)
@@ -5179,10 +5095,10 @@ TEST_F(NetworkContextActivateDohProbesTest, NotPrimaryContext) {
 TEST_F(NetworkContextTest,
        NetworkContextUpdatesIpProtectionCoreTrackingProtectionExceptions) {
   const std::string url = "http://foo.com";
-  base::test::ScopedFeatureList scoped_feature_list_;
-  scoped_feature_list_.InitWithFeaturesAndParameters(
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeaturesAndParameters(
       {{net::features::kEnableIpProtectionProxy,
-        {{"IpPrivacyAlwaysCreateCore", "true"}}},
+        {{net::features::kIpPrivacyAlwaysCreateCore.name, "true"}}},
        {network::features::kMaskedDomainList, {}}},
       {});
 
@@ -5218,6 +5134,151 @@ TEST_F(NetworkContextTest,
     EXPECT_FALSE(
         network_context->ip_protection_core()->HasTrackingProtectionException(
             GURL(url)));
+  }
+}
+
+TEST_F(NetworkContextTest, IpProtectionCoreIPProxyStatusMdlNotPopulated) {
+  const std::string url = "http://foo.com";
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeaturesAndParameters(
+      {{net::features::kEnableIpProtectionProxy,
+        {{net::features::kIpPrivacyAlwaysCreateCore.name, "true"},
+         {net::features::kIpPrivacyEnableIppPanelInDevTools.name, "true"}}},
+       {network::features::kMaskedDomainList, {}}},
+      {});
+
+  std::unique_ptr<NetworkContext> network_context =
+      CreateContextWithParams(CreateNetworkContextParamsForTesting());
+
+  content_settings::RuleMetaData metadata;
+  metadata.SetExpirationAndLifetime(base::Time(), base::TimeDelta());
+
+  // Verify with a TRACKING_PROTECTION exception.
+  {
+    network_context->SetTrackingProtectionContentSetting(
+        {ContentSettingPatternSource(ContentSettingsPattern::Wildcard(),
+                                     ContentSettingsPattern::FromString(url),
+                                     base::Value(CONTENT_SETTING_ALLOW),
+                                     content_settings::ProviderType::kNone,
+                                     /*incognito=*/true, metadata.Clone())});
+    base::test::TestFuture<ip_protection::IpProxyStatus> future;
+    network_context->GetIpProxyStatus(future.GetCallback());
+    ip_protection::IpProxyStatus received_status = future.Get();
+
+    EXPECT_EQ(received_status,
+              ip_protection::IpProxyStatus::kMaskedDomainListNotPopulated);
+    // Verify that the MaskedDomainList is unpopulated.
+    EXPECT_FALSE(network_context->ip_protection_core()->IsMdlPopulated());
+  }
+}
+
+TEST_F(NetworkContextTest, IpProtectionCoreIPProxyStatusIPProxyFlagNotEnabled) {
+  const std::string url = "http://foo.com";
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeaturesAndParameters(
+      {{network::features::kMaskedDomainList, {}}},
+      {{net::features::kEnableIpProtectionProxy}});
+
+  std::unique_ptr<NetworkContext> network_context =
+      CreateContextWithParams(CreateNetworkContextParamsForTesting());
+
+  content_settings::RuleMetaData metadata;
+  metadata.SetExpirationAndLifetime(base::Time(), base::TimeDelta());
+
+  // Verify with a TRACKING_PROTECTION exception.
+  {
+    network_context->SetTrackingProtectionContentSetting(
+        {ContentSettingPatternSource(ContentSettingsPattern::Wildcard(),
+                                     ContentSettingsPattern::FromString(url),
+                                     base::Value(CONTENT_SETTING_ALLOW),
+                                     content_settings::ProviderType::kNone,
+                                     /*incognito=*/true, metadata.Clone())});
+    base::test::TestFuture<ip_protection::IpProxyStatus> future;
+    network_context->GetIpProxyStatus(future.GetCallback());
+    ip_protection::IpProxyStatus received_status = future.Get();
+
+    EXPECT_EQ(received_status,
+              ip_protection::IpProxyStatus::kFeatureNotEnabled);
+    // Verify that the IpProtectionProxy feature is disabled.
+    EXPECT_FALSE(
+        base::FeatureList::IsEnabled(net::features::kEnableIpProtectionProxy));
+  }
+}
+
+TEST_F(NetworkContextTest, IpProtectionCoreIPProxyStatusMdlNotEnabled) {
+  const std::string url = "http://foo.com";
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeaturesAndParameters(
+      {{net::features::kEnableIpProtectionProxy,
+        {{net::features::kIpPrivacyAlwaysCreateCore.name, "true"},
+         {net::features::kIpPrivacyEnableIppPanelInDevTools.name, "true"}}}},
+      {{network::features::kMaskedDomainList}});
+
+  std::unique_ptr<NetworkContext> network_context =
+      CreateContextWithParams(CreateNetworkContextParamsForTesting());
+
+  content_settings::RuleMetaData metadata;
+  metadata.SetExpirationAndLifetime(base::Time(), base::TimeDelta());
+
+  // Verify with a TRACKING_PROTECTION exception.
+  {
+    network_context->SetTrackingProtectionContentSetting(
+        {ContentSettingPatternSource(ContentSettingsPattern::Wildcard(),
+                                     ContentSettingsPattern::FromString(url),
+                                     base::Value(CONTENT_SETTING_ALLOW),
+                                     content_settings::ProviderType::kNone,
+                                     /*incognito=*/true, metadata.Clone())});
+    base::RunLoop run_loop;
+
+    base::test::TestFuture<ip_protection::IpProxyStatus> future;
+    network_context->GetIpProxyStatus(future.GetCallback());
+    ip_protection::IpProxyStatus received_status = future.Get();
+
+    EXPECT_EQ(received_status,
+              ip_protection::IpProxyStatus::kMaskedDomainListNotEnabled);
+    // Verify that the MaskedDomainList feature is disabled.
+    EXPECT_FALSE(base::FeatureList::IsEnabled(features::kMaskedDomainList));
+  }
+}
+
+TEST_F(NetworkContextTest, SetBypassIpProtectionProxyBypassesWhenEnabled) {
+  // Enable IP Protection and the Masked Domain List to ensure
+  // ip_protection_core() is created.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeaturesAndParameters(
+      {{net::features::kEnableIpProtectionProxy,
+        {{net::features::kIpPrivacyAlwaysCreateCore.name, "true"},
+         {net::features::kIpPrivacyEnableIppPanelInDevTools.name, "true"}}},
+       {network::features::kMaskedDomainList, {}}},
+      {});
+  std::unique_ptr<NetworkContext> network_context =
+      CreateContextWithParams(CreateNetworkContextParamsForTesting());
+
+  // Set the bypass and verify the status is kBypassedByDevTools.
+  {
+    network_context->SetBypassIpProtectionProxy(true);
+
+    base::test::TestFuture<ip_protection::IpProxyStatus> future;
+    network_context->GetIpProxyStatus(future.GetCallback());
+    ip_protection::IpProxyStatus received_status = future.Get();
+
+    EXPECT_EQ(received_status,
+              ip_protection::IpProxyStatus::kBypassedByDevTools);
+  }
+
+  // Unset the bypass and verify the status is kMaskedDomainListNotPopulated.
+  {
+    network_context->SetBypassIpProtectionProxy(false);
+
+    base::test::TestFuture<ip_protection::IpProxyStatus> future;
+    network_context->GetIpProxyStatus(future.GetCallback());
+    ip_protection::IpProxyStatus received_status = future.Get();
+    // In reality, the expected return should be kOk when MaskedDomainList is
+    // populated.
+    // TODO(crbug.com/440167934): include a case where the MaskedDomainList is
+    // populated, replace kMaskedDomainListNotPopulated with kOk.
+    EXPECT_EQ(received_status,
+              ip_protection::IpProxyStatus::kMaskedDomainListNotPopulated);
   }
 }
 
@@ -5706,7 +5767,7 @@ TEST_F(NetworkContextTest, PreconnectHSTS) {
 
     const base::Time expiry = base::Time::Now() + base::Seconds(1000);
     network_context->url_request_context()->transport_security_state()->AddHSTS(
-        server_http_url.host(), expiry, false);
+        server_http_url.GetHost(), expiry, false);
     network_context->PreconnectSockets(
         1, server_http_url, network::mojom::CredentialsMode::kOmit,
         network_anonymization_key,
@@ -6186,7 +6247,6 @@ TEST_F(NetworkContextTest, QueryHSTS) {
 TEST_F(NetworkContextTest, GetHSTSState) {
   const char kTestDomain[] = "example.com";
   const base::Time expiry = base::Time::Now() + base::Seconds(1000);
-  const GURL report_uri = GURL("https://example.com/foo/bar");
 
   std::unique_ptr<NetworkContext> network_context =
       CreateContextWithParams(CreateNetworkContextParamsForTesting());
@@ -7527,8 +7587,8 @@ class NetworkContextMockHostTest : public NetworkContextTest {
                           const std::string& relative_url) {
     GURL server_base_url = server.base_url();
     GURL base_url =
-        GURL(base::StrCat({server_base_url.scheme(), "://", kMockHost, ":",
-                           server_base_url.port()}));
+        GURL(base::StrCat({server_base_url.GetScheme(), "://", kMockHost, ":",
+                           server_base_url.GetPort()}));
     EXPECT_TRUE(base_url.is_valid()) << base_url.possibly_invalid_spec();
     return base_url.Resolve(relative_url);
   }
@@ -8477,12 +8537,82 @@ TEST_P(NetworkContextSplitCacheTest,
   disk_cache::ScopedEntryPtr resource_entry(resource_result.ReleaseEntry());
 
   clock.SetNow(kNow2);
-  network_context->NotifyExternalCacheHit(kUrl, kUrl.scheme(),
+  network_context->NotifyExternalCacheHit(kUrl, kUrl.GetScheme(),
                                           kNetworkIsolationKey,
                                           /*include_credentials=*/true);
 
   EXPECT_EQ(navigation_entry->GetLastUsed(), kNow1);
   EXPECT_EQ(resource_entry->GetLastUsed(), kNow2);
+}
+
+TEST_F(NetworkContextTest, AddHttpAuthCacheEntryWithNetworkAnonymizationKey) {
+  mojom::NetworkContextParamsPtr context_params =
+      CreateNetworkContextParamsForTesting();
+  context_params->split_auth_cache_by_network_anonymization_key = true;
+  std::unique_ptr<NetworkContext> network_context =
+      CreateContextWithParams(std::move(context_params));
+  net::HttpAuthCache* cache = network_context->url_request_context()
+                                  ->http_transaction_factory()
+                                  ->GetSession()
+                                  ->http_auth_cache();
+  ASSERT_TRUE(cache);
+  // If this isn't true, the rest of this test is pretty meaningless.
+  ASSERT_TRUE(cache->key_server_entries_by_network_anonymization_key());
+
+  // Add an AUTH_SERVER cache entry.
+  url::Origin origin = url::Origin::Create(GURL("http://example.test/"));
+  auto site = net::SchemefulSite(origin);
+  url::SchemeHostPort scheme_host_port =
+      origin.GetTupleOrPrecursorTupleIfOpaque();
+  net::NetworkIsolationKey network_isolation_key(site, site);
+  auto network_anonymization_key =
+      net::NetworkAnonymizationKey::CreateSameSite(site);
+  net::AuthChallengeInfo challenge;
+  challenge.is_proxy = false;
+  challenge.challenger = scheme_host_port;
+  challenge.scheme = "basic";
+  challenge.realm = "testrealm";
+  const char16_t kUsername[] = u"test_user";
+  const char16_t kPassword[] = u"test_pass";
+  ASSERT_FALSE(cache->Lookup(scheme_host_port, net::HttpAuth::AUTH_SERVER,
+                             challenge.realm, net::HttpAuth::AUTH_SCHEME_BASIC,
+                             network_anonymization_key));
+  base::RunLoop run_loop;
+  network_context->AddAuthCacheEntry(challenge, network_anonymization_key,
+                                     net::AuthCredentials(kUsername, kPassword),
+                                     run_loop.QuitClosure());
+  run_loop.Run();
+  net::HttpAuthCache::Entry* entry = cache->Lookup(
+      scheme_host_port, net::HttpAuth::AUTH_SERVER, challenge.realm,
+      net::HttpAuth::AUTH_SCHEME_BASIC, network_anonymization_key);
+  ASSERT_TRUE(entry);
+  EXPECT_EQ(scheme_host_port, entry->scheme_host_port());
+  EXPECT_EQ(challenge.realm, entry->realm());
+  EXPECT_EQ(net::HttpAuth::StringToScheme(challenge.scheme), entry->scheme());
+  EXPECT_EQ(kUsername, entry->credentials().username());
+  EXPECT_EQ(kPassword, entry->credentials().password());
+  // Entry should only be accessible when using the correct
+  // NetworkAnonymizationKey.
+  EXPECT_FALSE(cache->Lookup(scheme_host_port, net::HttpAuth::AUTH_SERVER,
+                             challenge.realm, net::HttpAuth::AUTH_SCHEME_BASIC,
+                             net::NetworkAnonymizationKey()));
+}
+
+TEST_F(NetworkContextTest,
+       AddHttpAuthCacheEntryWithNetworkAnonymizationKeySettingDisabled) {
+  mojom::NetworkContextParamsPtr context_params =
+      CreateNetworkContextParamsForTesting();
+  context_params->split_auth_cache_by_network_anonymization_key = false;
+  std::unique_ptr<NetworkContext> network_context =
+      CreateContextWithParams(std::move(context_params));
+  net::HttpAuthCache* cache = network_context->url_request_context()
+                                  ->http_transaction_factory()
+                                  ->GetSession()
+                                  ->http_auth_cache();
+  ASSERT_TRUE(cache);
+  // Since the split_auth_cache_by_network_anonymization_key is being set to
+  // false expect this to also be false.
+  ASSERT_FALSE(cache->key_server_entries_by_network_anonymization_key());
 }
 
 TEST_F(NetworkContextTest, EnableTrustTokensForFledge) {
@@ -10432,7 +10562,8 @@ class StorageAccessHeaderNetworkContextTest : public NetworkContextTest {
 
   std::unique_ptr<net::test_server::HttpResponse> HandleRetryRequest(
       const net::test_server::HttpRequest& request) {
-    if (!base::StartsWith(request.GetURL().path(), kStorageAccessRetryPath)) {
+    if (!base::StartsWith(request.GetURL().GetPath(),
+                          kStorageAccessRetryPath)) {
       return nullptr;
     }
     auto http_response =
@@ -10458,7 +10589,7 @@ class StorageAccessHeaderNetworkContextTest : public NetworkContextTest {
       case ResponseKind::kRedirect: {
         http_response->set_code(net::HTTP_TEMPORARY_REDIRECT);
         std::string dest =
-            base::UnescapeBinaryURLComponent(request.GetURL().query_piece());
+            base::UnescapeBinaryURLComponent(request.GetURL().query());
         http_response->AddCustomHeader("Location", dest);
         break;
       }
@@ -10573,7 +10704,7 @@ class StorageAccessHeaderNetworkContextTest : public NetworkContextTest {
  private:
   std::unique_ptr<net::test_server::HttpResponse> HandleRedirectLoadRequest(
       const net::test_server::HttpRequest& request) {
-    if (!base::StartsWith(request.GetURL().path(),
+    if (!base::StartsWith(request.GetURL().GetPath(),
                           kStorageAccessRedirectLoadPath)) {
       return nullptr;
     }
@@ -11802,6 +11933,84 @@ TEST_P(StorageAccessHeaderNetworkContextParameterizedTest, RetryAfterInactive) {
         net::cookie_util::SecFetchStorageAccessOutcome::kValueNone,
         /*expected_count=*/1);
   }
+}
+
+TEST_F(NetworkContextTest, EnableDurableMessageCollector) {
+  std::unique_ptr<NetworkContext> network_context =
+      CreateContextWithParams(CreateNetworkContextParamsForTesting());
+  const base::UnguessableToken kThrottlingProfileId =
+      base::UnguessableToken::Create();
+
+  EXPECT_EQ(
+      0u,
+      network_context->num_devtools_durable_message_collectors_for_testing());
+
+  // Add a collector.
+  mojo::Remote<mojom::DurableMessageCollector> collector;
+  network_context->EnableDurableMessageCollector(
+      kThrottlingProfileId, collector.BindNewPipeAndPassReceiver());
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return network_context
+               ->num_devtools_durable_message_collectors_for_testing() == 1;
+  }));
+
+  EXPECT_EQ(
+      1u,
+      network_context->num_devtools_durable_message_collectors_for_testing());
+
+  // Configure the same collector again.
+  mojo::Remote<mojom::DurableMessageCollector> collector2;
+  network_context->EnableDurableMessageCollector(
+      kThrottlingProfileId, collector2.BindNewPipeAndPassReceiver());
+  collector2.FlushForTesting();
+
+  EXPECT_EQ(
+      1u,
+      network_context->num_devtools_durable_message_collectors_for_testing());
+
+  // Disconnect the mojo remote.
+  collector.reset();
+  collector2.reset();
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return network_context
+               ->num_devtools_durable_message_collectors_for_testing() == 0;
+  }));
+
+  EXPECT_EQ(
+      0u,
+      network_context->num_devtools_durable_message_collectors_for_testing());
+}
+
+TEST_F(NetworkContextTest, AddQuicHints) {
+  std::unique_ptr<NetworkContext> network_context =
+      CreateContextWithParams(CreateNetworkContextParamsForTesting());
+
+  url::SchemeHostPort google("https", "www.google.com", 443);
+  url::SchemeHostPort example("https", "www.example.com", 443);
+  std::vector<url::SchemeHostPort> origins = {google, example};
+
+  net::NetworkAnonymizationKey key = net::NetworkAnonymizationKey();
+  network_context->AddQuicHints(origins, key);
+
+  net::AlternativeServiceInfoVector google_infos =
+      network_context->url_request_context()
+          ->http_server_properties()
+          ->GetAlternativeServiceInfos(google, key);
+  EXPECT_EQ(1u, google_infos.size());
+
+  EXPECT_EQ(443, google_infos[0].GetHostPortPair().port());
+  EXPECT_EQ("www.google.com", google_infos[0].GetHostPortPair().host());
+  EXPECT_EQ(net::NextProto::kProtoQUIC, google_infos[0].protocol());
+
+  net::AlternativeServiceInfoVector example_infos =
+      network_context->url_request_context()
+          ->http_server_properties()
+          ->GetAlternativeServiceInfos(example, key);
+  EXPECT_EQ(1u, example_infos.size());
+
+  EXPECT_EQ(443, example_infos[0].GetHostPortPair().port());
+  EXPECT_EQ("www.example.com", example_infos[0].GetHostPortPair().host());
+  EXPECT_EQ(net::NextProto::kProtoQUIC, example_infos[0].protocol());
 }
 
 }  // namespace

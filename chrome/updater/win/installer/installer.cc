@@ -18,6 +18,7 @@
 
 #include <optional>
 #include <string>
+#include <typeinfo>
 
 #include "base/check.h"
 #include "base/command_line.h"
@@ -412,14 +413,19 @@ ProcessExitResult HandleRunDeElevated(const base::CommandLine& command_line) {
   CHECK(com_initializer.Succeeded());
 
   // De-elevate the metainstaller.
-  const base::Process process = base::win::RunDeElevated([&] {
-    base::CommandLine de_elevate_command_line = command_line;
-    de_elevate_command_line.AppendSwitch(kCmdLineExpectDeElevated);
-    return de_elevate_command_line;
-  }());
+  ASSIGN_OR_RETURN(
+      const base::Process process, base::win::RunDeElevated([&] {
+        base::CommandLine de_elevate_command_line = command_line;
+        de_elevate_command_line.AppendSwitch(kCmdLineExpectDeElevated);
+        return de_elevate_command_line;
+      }()),
+      [](DWORD error_code) {
+        return ProcessExitResult(FAILED_TO_DE_ELEVATE_METAINSTALLER,
+                                 HRESULT_FROM_WIN32(error_code));
+      });
 
   int result = 0;
-  return process.IsValid() && process.WaitForExit(&result)
+  return process.WaitForExit(&result)
              ? ProcessExitResult(UPDATER_EXIT_CODE, result)
              : ProcessExitResult(FAILED_TO_DE_ELEVATE_METAINSTALLER,
                                  HRESULTFromLastError());
@@ -618,9 +624,7 @@ int WMain(HMODULE module) {
                      ui::GetInstallerDisplayName(bundle_name, lang).c_str(),
                      MB_OK | MB_ICONERROR | MB_SETFOREGROUND, 0);
     }
-    if (usage_stats_enable) {
-      SendPing(result.exit_code, result.windows_error);
-    }
+    SendPing(result.exit_code, result.windows_error);
   }
   base::ThreadPoolInstance::Get()->Shutdown();
   return wmain_exit_code;

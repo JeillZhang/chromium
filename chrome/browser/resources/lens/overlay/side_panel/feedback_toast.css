@@ -8,10 +8,8 @@
  * #css_wrapper_metadata_end */
 
 #closeFeedbackToastButton {
-  margin-block-end: 8px;
-  margin-block-start: 8px;
-  margin-inline-end: 2px;
-  margin-inline-start: 2px;
+  margin-block: 8px;
+  margin-inline: 6px;
 }
 
 #feedbackButtonContainer {
@@ -37,6 +35,14 @@
   right: 0;
   width: 336px;
   white-space: nowrap;
+}
+
+:host([updated-feedback-enabled]) #feedbackToast {
+  bottom: 95px;
+  max-width: calc(100% - 60px);
+  min-width: 312px;
+  width: 100%;
+  z-index: 3;
 }
 
 :host([dark-mode]) #feedbackToast {

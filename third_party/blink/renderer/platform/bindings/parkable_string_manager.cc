@@ -51,7 +51,11 @@ bool CompressionEnabled() {
 
 class OnPurgeMemoryListener : public GarbageCollected<OnPurgeMemoryListener>,
                               public MemoryPressureListener {
-  void OnPurgeMemory() override {
+  void OnMemoryPressure(
+      base::MemoryPressureLevel memory_pressure_level) override {
+    if (memory_pressure_level != base::MEMORY_PRESSURE_LEVEL_CRITICAL) {
+      return;
+    }
     if (!CompressionEnabled()) {
       return;
     }
@@ -61,7 +65,7 @@ class OnPurgeMemoryListener : public GarbageCollected<OnPurgeMemoryListener>,
 
 Vector<ParkableStringImpl*> EnumerateStrings(
     const ParkableStringManager::StringMap& strings) {
-  WTF::Vector<ParkableStringImpl*> all_strings;
+  Vector<ParkableStringImpl*> all_strings;
   all_strings.reserve(strings.size());
 
   for (const auto& kv : strings)
@@ -154,8 +158,7 @@ bool ParkableStringManager::OnMemoryDump(
   dump->AddScalar("on_disk_free_chunks", "bytes",
                   data_allocator().free_chunks_size());
 
-  pmd->AddSuballocation(dump->guid(),
-                        WTF::Partitions::kAllocatedObjectPoolName);
+  pmd->AddSuballocation(dump->guid(), Partitions::kAllocatedObjectPoolName);
   return true;
 }
 

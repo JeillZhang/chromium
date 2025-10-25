@@ -69,7 +69,7 @@
       Track prices with Chrome
     </message>
     <message name="IDS_OMNIBOX_TRACK_PRICE_DIALOG_DESCRIPTION_FIRST_RUN" desc="The description text for the dialog that is shown at the first time a user tracks the product displayed on the current web page. It describes what will happen when price tracking is initiated, and tells users which bookmarks folder this page will be saved.">
-      You’ll get email alerts if the price drops on any site. This page will be saved to <ph name="LAST_BOOKMARKS_FOLDER">$1<ex>Other Bookmarks</ex></ph>.
+      You’ll get email alerts if the price drops on any site. This page will be saved to the bookmark folder <ph name="LAST_BOOKMARKS_FOLDER">$1<ex>Other Bookmarks</ex></ph>.
     </message>
     <message name="IDS_OMNIBOX_TRACK_PRICE_DIALOG_CANCEL_BUTTON" desc="The button text for the dialog that is shown at the first time a user tracks the product displayed on the current web page. User can click this button to dismiss this dialog.">
       Cancel
@@ -444,12 +444,6 @@
   </message>
   <message name="IDS_INSIGHTS_RICH_IPH_TEXT" desc="The text displayed in the price insights rich IPH.">
     See price history and more to help you shop smarter.
-  </message>
-  <message name="IDS_INSIGHTS_ICON_PRICE_HIGH_EXPANDED_TEXT" desc="The expanded text for the price insights icon when price is high, indicating that the user should track the page.">
-    Track this item
-  </message>
-  <message name="IDS_INSIGHTS_ICON_EXPANDED_TEXT_PRICE_HISTORY" desc="The expanded text for the price insights icon in the location bar, indicating to see the price history.">
-    See Price History
   </message>
   <message name="IDS_PRICE_INSIGHTS_ACCESSIBILITY" desc="Accessibility string for the price insights entry point when the confidence is low.">
     Price Insights

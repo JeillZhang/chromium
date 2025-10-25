@@ -6,8 +6,14 @@
 
 #include <sstream>
 
+#include "base/feature_list.h"
+#include "base/functional/bind.h"
+#include "base/strings/strcat.h"
+#include "base/task/sequenced_task_runner.h"
 #include "chrome/common/actor.mojom.h"
 #include "chrome/common/actor/action_result.h"
+#include "chrome/common/chrome_features.h"
+#include "chrome/renderer/actor/tool_base.h"
 #include "content/public/renderer/render_frame.h"
 #include "third_party/blink/public/common/input/web_coalesced_input_event.h"
 #include "third_party/blink/public/web/web_element.h"
@@ -20,10 +26,6 @@
 #include "ui/gfx/geometry/rect.h"
 #include "ui/latency/latency_info.h"
 
-namespace {
-constexpr base::TimeDelta kClickDelay = base::Milliseconds(50);
-}
-
 namespace actor {
 
 using ::blink::WebCoalescedInputEvent;
@@ -32,6 +34,7 @@ using ::blink::WebInputEvent;
 using ::blink::WebInputEventResult;
 using ::blink::WebMouseEvent;
 using ::blink::WebNode;
+using ::blink::WebWidget;
 
 std::optional<gfx::PointF> InteractionPointFromWebNode(
     const blink::WebNode& node) {
@@ -40,25 +43,36 @@ std::optional<gfx::PointF> InteractionPointFromWebNode(
     return std::nullopt;
   }
 
-  gfx::Rect rect = element.VisibleBoundsInWidget();
-  if (rect.IsEmpty()) {
+  gfx::Rect visible_rect = element.VisibleBoundsInWidget();
+  if (visible_rect.IsEmpty()) {
     return std::nullopt;
   }
 
-  return gfx::PointF(rect.CenterPoint());
+  std::vector<gfx::Rect> rects = element.ClientRectsInWidget();
+  for (auto rect : rects) {
+    rect.InclusiveIntersect(visible_rect);
+    if (!rect.IsEmpty()) {
+      return gfx::PointF(rect.CenterPoint());
+    }
+  }
+  return std::nullopt;
 }
 
-blink::WebNode GetNodeFromId(const content::RenderFrame& frame,
+blink::WebNode GetNodeFromId(const content::RenderFrame& local_root_frame,
                              int32_t node_id) {
-  const blink::WebLocalFrame* web_frame = frame.GetWebFrame();
+  const blink::WebLocalFrame* web_frame = local_root_frame.GetWebFrame();
   if (!web_frame) {
     return blink::WebNode();
   }
 
+  // The passed in frame must be a local root.
+  CHECK_EQ(web_frame, web_frame->LocalRoot());
+
   blink::WebNode node = blink::WebNode::FromDomNodeId(node_id);
-  // Make sure the node we're getting belongs to the document inside this
+  // Make sure the node we're getting belongs to a frame under the local root
   // frame.
-  if (node.IsNull() || node.GetDocument() != web_frame->GetDocument()) {
+  if (node.IsNull() || !node.GetDocument() || !node.GetDocument().GetFrame() ||
+      node.GetDocument().GetFrame()->LocalRoot() != web_frame) {
     return blink::WebNode();
   }
   return node;
@@ -72,10 +86,17 @@ bool IsNodeFocused(const content::RenderFrame& frame,
   return element == currently_focused;
 }
 
+bool IsPointWithinViewport(const gfx::Point& point,
+                           const content::RenderFrame& frame) {
+  CHECK(frame.GetWebFrame());
+  CHECK_EQ(frame.GetWebFrame(), frame.GetWebFrame()->LocalRoot());
+  gfx::Rect viewport(frame.GetWebFrame()->FrameWidget()->VisibleViewportSize());
+  return viewport.Contains(point);
+}
+
 bool IsPointWithinViewport(const gfx::PointF& point,
                            const content::RenderFrame& frame) {
-  gfx::Rect viewport(frame.GetWebFrame()->FrameWidget()->VisibleViewportSize());
-  return viewport.Contains(gfx::ToFlooredPoint(point));
+  return IsPointWithinViewport(gfx::ToFlooredPoint(point), frame);
 }
 
 std::string ToDebugString(const mojom::ToolTargetPtr& target) {
@@ -85,9 +106,9 @@ std::string ToDebugString(const mojom::ToolTargetPtr& target) {
 
   std::stringstream ss;
   ss << "target(";
-  if (target->is_coordinate()) {
-    ss << "XY=" << target->get_coordinate().x() << ","
-       << target->get_coordinate().y();
+  if (target->is_coordinate_dip()) {
+    ss << "XY[DIP]=" << target->get_coordinate_dip().x() << ","
+       << target->get_coordinate_dip().y();
   } else {
     ss << "ID=" << target->get_dom_node_id();
   }
@@ -95,15 +116,48 @@ std::string ToDebugString(const mojom::ToolTargetPtr& target) {
   return ss.str();
 }
 
-mojom::ActionResultPtr CreateAndDispatchClick(WebMouseEvent::Button button,
-                                              int count,
-                                              const gfx::PointF& click_point,
-                                              WebFrameWidget* widget) {
+bool IsNodeWithinViewport(const blink::WebNode& node) {
+  blink::WebElement element = node.DynamicTo<blink::WebElement>();
+  if (element.IsNull()) {
+    return false;
+  }
+
+  gfx::Rect rect = element.VisibleBoundsInWidget();
+  return !rect.IsEmpty();
+}
+
+void CreateAndDispatchClick(
+    WebMouseEvent::Button button,
+    int count,
+    const ResolvedTarget& target,
+    base::WeakPtr<ToolBase> tool,
+    base::OnceCallback<void(mojom::ActionResultPtr)> on_complete) {
+  if (!tool) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(on_complete),
+                       MakeResult(mojom::ActionResultCode::kExecutorDestroyed,
+                                  /*requires_page_stabilization=*/true,
+                                  "Tool destroyed before click.")));
+    return;
+  }
+
+  WebWidget* widget = target.GetWidget(*tool);
+  if (!widget) {
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(on_complete),
+                       MakeResult(mojom::ActionResultCode::kFrameWentAway,
+                                  /*requires_page_stabilization=*/true,
+                                  "No widget when dispatching mouse down")));
+    return;
+  }
+
   WebMouseEvent mouse_down(WebInputEvent::Type::kMouseDown,
                            WebInputEvent::kNoModifiers, ui::EventTimeForNow());
   mouse_down.button = button;
   mouse_down.click_count = count;
-  mouse_down.SetPositionInWidget(click_point);
+  mouse_down.SetPositionInWidget(target.widget_point);
   // TODO(crbug.com/402082828): Find a way to set screen position.
   //   const gfx::Rect offset =
   //     render_frame_host_->GetRenderWidgetHost()->GetView()->GetViewBounds();
@@ -115,23 +169,70 @@ mojom::ActionResultPtr CreateAndDispatchClick(WebMouseEvent::Button button,
       WebCoalescedInputEvent(mouse_down, ui::LatencyInfo()));
 
   if (result == WebInputEventResult::kHandledSuppressed) {
-    return MakeResult(mojom::ActionResultCode::kClickSuppressed);
+    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
+        FROM_HERE,
+        base::BindOnce(std::move(on_complete),
+                       MakeResult(mojom::ActionResultCode::kClickSuppressed,
+                                  /*requires_page_stabilization=*/false)));
+    return;
   }
 
   mouse_up.SetType(WebInputEvent::Type::kMouseUp);
-  mouse_up.SetTimeStamp(mouse_down.TimeStamp() + kClickDelay);
 
-  // TODO(crbug.com/402082828): Delay the mouse up to simulate natural click
-  // after ToolExecutor lifetime update.
+  const base::TimeDelta delay = features::kGlicActorClickDelay.Get();
 
-  result = widget->HandleInputEvent(
-      WebCoalescedInputEvent(std::move(mouse_up), ui::LatencyInfo()));
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](blink::WebMouseEvent mouse_up, ResolvedTarget target,
+             base::WeakPtr<ToolBase> tool,
+             base::OnceCallback<void(mojom::ActionResultPtr)> on_complete) {
+            if (!tool) {
+              std::move(on_complete)
+                  .Run(MakeResult(mojom::ActionResultCode::kExecutorDestroyed,
+                                  /*requires_page_stabilization=*/true,
+                                  "Tool destroyed before mouse up."));
+              return;
+            }
+            WebWidget* widget = target.GetWidget(*tool);
+            if (!widget) {
+              std::move(on_complete)
+                  .Run(MakeResult(mojom::ActionResultCode::kFrameWentAway,
+                                  /*requires_page_stabilization=*/false,
+                                  "No widget when dispatching mouse up"));
+              return;
+            }
 
-  if (result == WebInputEventResult::kHandledSuppressed) {
-    return MakeResult(mojom::ActionResultCode::kClickSuppressed);
+            mouse_up.SetTimeStamp(ui::EventTimeForNow());
+            WebInputEventResult result = widget->HandleInputEvent(
+                WebCoalescedInputEvent(std::move(mouse_up), ui::LatencyInfo()));
+            if (result == WebInputEventResult::kHandledSuppressed) {
+              std::move(on_complete)
+                  .Run(MakeResult(mojom::ActionResultCode::kClickSuppressed,
+                                  /*requires_page_stabilization=*/true));
+              return;
+            }
+            std::move(on_complete).Run(MakeOkResult());
+          },
+          std::move(mouse_up), target, std::move(tool), std::move(on_complete)),
+      delay);
+}
+
+std::string NodeToDebugSring(const blink::WebNode& node) {
+  if (node.IsTextNode()) {
+    // Truncate it to 100 characters, enough for debugging.
+    return base::StrCat({"text=", node.NodeValue().Substring(0u, 100u).Utf8()});
   }
-
-  return MakeOkResult();
+  if (node.IsElementNode()) {
+    const blink::WebElement element = node.DynamicTo<blink::WebElement>();
+    return base::StrCat({element.TagName().Utf8(),
+                         " id=", element.GetIdAttribute().Utf8(),
+                         " class=", element.GetAttribute("class").Utf8()});
+  }
+  if (node.IsDocumentNode()) {
+    return "document";
+  }
+  return "";
 }
 
 }  // namespace actor

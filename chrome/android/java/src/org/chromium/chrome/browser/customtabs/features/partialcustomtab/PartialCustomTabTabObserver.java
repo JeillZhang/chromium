@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.customtabs.features.partialcustomtab;
 
+
 import org.chromium.base.Callback;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -36,17 +37,14 @@ public class PartialCustomTabTabObserver extends EmptyTabObserver {
         if (mImmWrapper == null) {
             mImmWrapper =
                     new PartialCustomTabInputMethodWrapper(
-                            tab.getContext(), tab.getWindowAndroid(), mShowSoftInputCallback);
+                            tab.getContext(),
+                            tab.getWindowAndroidChecked(),
+                            mShowSoftInputCallback);
         }
         if (mCurrentTab != tab) {
             updateImmWrapper(tab);
             mCurrentTab = tab;
         }
-    }
-
-    @Override
-    public void onWebContentsSwapped(Tab tab, boolean didStartLoad, boolean didFinishLoad) {
-        updateImmWrapper(tab);
     }
 
     // Suppress NullAway since |mImmWrapper| might be null, but it's unclear what to do in this case

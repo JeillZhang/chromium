@@ -37,13 +37,16 @@
 #include "base/functional/callback_helpers.h"
 #include "base/location.h"
 #include "base/metrics/histogram.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
+#include "base/notimplemented.h"
 #include "base/numerics/checked_math.h"
 #include "base/numerics/clamped_math.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/typed_macros.h"
 #include "build/build_config.h"
+#include "cc/layers/texture_layer.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "services/metrics/public/cpp/ukm_source_id.h"
 #include "third_party/blink/public/common/features.h"
@@ -93,6 +96,7 @@
 #include "third_party/blink/renderer/core/inspector/console_message.h"
 #include "third_party/blink/renderer/core/layout/hit_test_canvas_result.h"
 #include "third_party/blink/renderer/core/layout/layout_html_canvas.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/loader/render_blocking_resource_manager.h"
 #include "third_party/blink/renderer/core/page/chrome_client.h"
@@ -103,9 +107,8 @@
 #include "third_party/blink/renderer/core/probe/core_probes.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/fonts/plain_text_painter.h"
-#include "third_party/blink/renderer/platform/graphics/canvas_hibernation_handler.h"
+#include "third_party/blink/renderer/platform/graphics/canvas_resource.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_dispatcher.h"
-#include "third_party/blink/renderer/platform/graphics/canvas_resource_host.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_context_rate_limiter.h"
 #include "third_party/blink/renderer/platform/graphics/gpu/shared_gpu_context.h"
@@ -123,6 +126,7 @@
 #include "third_party/blink/renderer/platform/instrumentation/use_counter.h"
 #include "third_party/blink/renderer/platform/privacy_budget/identifiability_digest_helpers.h"
 #include "third_party/blink/renderer/platform/runtime_enabled_features.h"
+#include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "ui/base/resource/resource_scale_factor.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/skia_conversions.h"
@@ -143,7 +147,6 @@ constexpr unsigned kDisableAccelerationThreshold = 100;
 constexpr unsigned kDisableAccelerationPercent = 95;
 
 BASE_FEATURE(kOneCopyCanvasCapture,
-             "OneCopyCanvasCapture",
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_WIN)
              base::FEATURE_ENABLED_BY_DEFAULT
 #else
@@ -153,7 +156,6 @@ BASE_FEATURE(kOneCopyCanvasCapture,
 
 // Kill switch for not requesting continuous begin frame for low latency canvas.
 BASE_FEATURE(kLowLatencyCanvasNoBeginFrameKillSwitch,
-             "LowLatencyCanvasNoBeginFrameKillSwitch",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 // These values come from the WhatWG spec.
@@ -165,10 +167,6 @@ constexpr int kDefaultCanvasHeight = 150;
 // misinterpreted as a user-input value
 constexpr int kUndefinedQualityValue = -1.0;
 constexpr int kMinimumAccelerated2dCanvasSize = 128 * 129;
-
-// A default size used for canvas memory allocation when canvas size is greater
-// than 2^20.
-constexpr uint32_t kMaximumCanvasSize = 2 << 20;
 
 // Tracks whether canvases should start out with acceleration disabled.
 class DisabledAccelerationCounterSupplement final
@@ -327,10 +325,8 @@ HTMLCanvasElement::HTMLCanvasElement(Document& document)
           CanvasRenderingContextHost::HostType::kCanvasHost,
           gfx::Size(kDefaultCanvasWidth, kDefaultCanvasHeight)),
       context_creation_was_blocked_(false),
-      ignore_reset_(false),
       origin_clean_(true),
-      surface_layer_bridge_(nullptr),
-      externally_allocated_memory_(0) {
+      surface_layer_bridge_(nullptr) {
   UseCounter::Count(document, WebFeature::kHTMLCanvasElement);
   // Create supplements now, as they may be needed at a
   // time when garbage collected objects can not be created.
@@ -345,12 +341,7 @@ HTMLCanvasElement::HTMLCanvasElement(Document& document)
   SetHasCustomStyleCallbacks();
 }
 
-HTMLCanvasElement::~HTMLCanvasElement() {
-  if (externally_allocated_memory_ > 0) {
-    external_memory_accounter_.Decrease(v8::Isolate::GetCurrent(),
-                                        externally_allocated_memory_);
-  }
-}
+HTMLCanvasElement::~HTMLCanvasElement() = default;
 
 bool HTMLCanvasElement::PrepareTransferableResource(
     viz::TransferableResource* out_resource,
@@ -366,35 +357,18 @@ bool HTMLCanvasElement::PrepareTransferableResource(
     rate_limiter_->Reset();
   }
 
-  // If hibernating but not hidden, we want to wake up from hibernation.
-  if (IsHibernating() && !IsPageVisible()) {
-    return false;
-  }
-
-  if (!IsCanvas2DResourceValid()) {
-    return false;
-  }
-
   // The beforeprint event listener is sometimes scheduled in the same task
   // as BeginFrame, which means that this code may sometimes be called between
   // the event listener and its associated FinalizeFrame call. So in order to
   // preserve the display list for printing, FlushRecording needs to know
   // whether any printing occurred in the current task.
   FlushReason reason = FlushReason::kCanvasPushFrame;
-  if (PrintedInCurrentTask() || IsPrinting()) {
+  if (RenderingContext()->did_print_in_current_task() || IsPrinting()) {
     reason = FlushReason::kCanvasPushFrameWhilePrinting;
-  }
-  FlushRecording(reason);
-
-  // If the context is lost, we don't know if we should be producing GPU or
-  // software frames, until we get a new context, since the compositor will
-  // be trying to get a new context and may change modes.
-  if (!GetOrCreateCanvasResourceProviderForCanvas2D()) {
-    return false;
   }
 
   scoped_refptr<CanvasResource> frame =
-      GetResourceProviderForCanvas2D()->ProduceCanvasResource(reason);
+      RenderingContext()->PaintRenderingResultsToResource(kBackBuffer, reason);
   if (!frame || !frame->IsValid()) {
     return false;
   }
@@ -416,30 +390,10 @@ bool HTMLCanvasElement::PrepareTransferableResource(
   // here.
   out_resource->hdr_metadata = hdr_metadata_;
   // Note: frame is kept alive via a reference kept in out_release_callback.
-  *out_release_callback = base::BindOnce(
+  *out_release_callback = blink::BindOnce(
       ReleaseCanvasResource, std::move(release_callback), std::move(frame));
 
   return true;
-}
-
-bool HTMLCanvasElement::IsCanvas2DResourceValid() {
-  // This should be called only for 2D contexts.
-  CHECK(IsRenderingContext2D());
-
-  if (IsHibernating()) {
-    return true;
-  }
-
-  if (IsContextLost()) {
-    return false;
-  }
-
-  if (GetResourceProviderForCanvas2D() &&
-      !GetResourceProviderForCanvas2D()->IsValid()) {
-    return false;
-  }
-
-  return !!GetOrCreateCanvasResourceProviderForCanvas2D();
 }
 
 void HTMLCanvasElement::Dispose() {
@@ -450,15 +404,13 @@ void HTMLCanvasElement::Dispose() {
 
   // We need to drop frame dispatcher, to prevent mojo calls from completing.
   frame_dispatcher_ = nullptr;
-  DiscardResourceProvider();
+  DiscardResources();
 
   if (context_) {
     if (context_->Host())
       context_->DetachHost();
     context_ = nullptr;
   }
-
-  hibernation_handler_ = nullptr;
 
   if (surface_layer_bridge_) {
     // Observer has to be cleared out at this point. Otherwise the
@@ -478,9 +430,14 @@ void HTMLCanvasElement::ColorSchemeMayHaveChanged() {
 
 void HTMLCanvasElement::ParseAttribute(
     const AttributeModificationParams& params) {
-  if (params.name == html_names::kWidthAttr ||
-      params.name == html_names::kHeightAttr) {
-    Reset();
+  // Detect assignments to width/height and kick off any needed processing
+  // *unless* the assignment is happening from within SetSize(), in which case
+  // the OnWidthOrHeightAssigned() call will be made from SetSize() after both
+  // attributes are assigned.
+  if ((params.name == html_names::kWidthAttr ||
+       params.name == html_names::kHeightAttr) &&
+      !within_set_size_) {
+    OnWidthOrHeightAssigned();
   }
   HTMLElement::ParseAttribute(params);
 }
@@ -509,7 +466,7 @@ LayoutObject* HTMLCanvasElement::CreateLayoutObject(
 
 Node::InsertionNotificationRequest HTMLCanvasElement::InsertedInto(
     ContainerNode& node) {
-  SetIsInCanvasSubtree(true);
+  SetIsCanvasOrInCanvasSubtree(true);
   ColorSchemeMayHaveChanged();
   return HTMLElement::InsertedInto(node);
 }
@@ -562,11 +519,11 @@ bool HTMLCanvasElement::layoutSubtree() const {
 void HTMLCanvasElement::SetSize(gfx::Size new_size) {
   if (new_size == Size())
     return;
-  ignore_reset_ = true;
+  within_set_size_ = true;
   SetIntegralAttribute(html_names::kWidthAttr, new_size.width());
   SetIntegralAttribute(html_names::kHeightAttr, new_size.height());
-  ignore_reset_ = false;
-  Reset();
+  OnWidthOrHeightAssigned();
+  within_set_size_ = false;
 }
 
 HTMLCanvasElement::ContextFactoryVector&
@@ -619,26 +576,14 @@ void HTMLCanvasElement::IdentifiabilityReportWithDigest(
 }
 
 CanvasRenderingContext* HTMLCanvasElement::GetCanvasRenderingContext(
+    ExecutionContext* execution_context,
     const String& type,
     const CanvasContextCreationAttributesCore& attributes) {
   auto* old_contents_cc_layer = ContentsCcLayer();
-  auto* result = GetCanvasRenderingContextInternal(type, attributes);
+  auto* result =
+      GetCanvasRenderingContextInternal(execution_context, type, attributes);
 
   Document& doc = GetDocument();
-  if (IsRenderingContext2D()) {
-    UseCounter::CountWebDXFeature(doc, WebDXFeature::kCanvas2D);
-  }
-  if (attributes.alpha) {
-    UseCounter::CountWebDXFeature(doc, WebDXFeature::kCanvas2DAlpha);
-  }
-  if (attributes.desynchronized) {
-    UseCounter::CountWebDXFeature(doc, WebDXFeature::kCanvas2DDesynchronized);
-  }
-  if (attributes.will_read_frequently ==
-      CanvasContextCreationAttributesCore::WillReadFrequently::kTrue) {
-    UseCounter::CountWebDXFeature(doc,
-                                  WebDXFeature::kCanvas2DWillreadfrequently);
-  }
   if (IdentifiabilityStudySettings::Get()->ShouldSampleType(
           IdentifiableSurface::Type::kCanvasRenderingContext)) {
     IdentifiabilityMetricBuilder(doc.UkmSourceID())
@@ -648,9 +593,6 @@ CanvasRenderingContext* HTMLCanvasElement::GetCanvasRenderingContext(
              !!result)
         .Record(doc.UkmRecorder());
   }
-
-  if (attributes.color_space != PredefinedColorSpace::kSRGB)
-    UseCounter::Count(doc, WebFeature::kCanvasUseColorSpace);
 
   if (ContentsCcLayer() != old_contents_cc_layer)
     SetNeedsCompositingUpdate();
@@ -663,6 +605,7 @@ bool HTMLCanvasElement::IsPageVisible() const {
 }
 
 CanvasRenderingContext* HTMLCanvasElement::GetCanvasRenderingContextInternal(
+    ExecutionContext* execution_context,
     const String& type,
     const CanvasContextCreationAttributesCore& attributes) {
   CanvasRenderingContext::CanvasRenderingAPI rendering_api =
@@ -702,7 +645,7 @@ CanvasRenderingContext* HTMLCanvasElement::GetCanvasRenderingContextInternal(
         CanvasContextCreationAttributesCore::PowerPreference::kLowPower;
   }
 
-  context_ = factory->Create(this, recomputed_attributes);
+  context_ = factory->Create(execution_context, this, recomputed_attributes);
   if (!context_)
     return nullptr;
 
@@ -834,42 +777,21 @@ void HTMLCanvasElement::InitializeLayerWithCSSProperties(cc::Layer* layer) {
   layer->SetDynamicRangeLimit(dynamic_range_limit_);
 }
 
-void HTMLCanvasElement::PreFinalizeFrame() {
+void HTMLCanvasElement::PostFinalizeFrame(FlushReason reason) {
   RecordCanvasSizeToUMA();
 
-  // Low-latency 2d canvases produce their frames after the resource gets single
-  // buffered.
-  // TODO(crbug.com/40280152): Analyze whether this call is redundant (i.e.,
-  // whether the CRP is guaranteed to always be present).
-  if (IsRenderingContext2D() && LowLatencyEnabled() && !dirty_rect_.IsEmpty()) {
-    GetOrCreateCanvasResourceProviderForCanvas2D();
-  }
-}
-
-void HTMLCanvasElement::PostFinalizeFrame(FlushReason reason) {
   if (IsWebGL()) {
     context_->ClearMarkedCanvasDirty();
-    if (LowLatencyEnabled()) {
-      if (scoped_refptr<CanvasResource> canvas_resource =
-              context_->PaintRenderingResultsToResource(!dirty_rect_.IsEmpty(),
-                                                        !!frame_dispatcher_,
-                                                        kBackBuffer, reason)) {
-        const gfx::Rect src_rect(Size());
-        dirty_rect_.Intersect(src_rect);
-        const gfx::Rect int_dirty = dirty_rect_;
-        const SkIRect damage_rect =
-            SkIRect::MakeXYWH(int_dirty.x(), int_dirty.y(), int_dirty.width(),
-                              int_dirty.height());
-        frame_dispatcher_->DispatchFrame(std::move(canvas_resource),
-                                         damage_rect, IsOpaque());
-      }
-      dirty_rect_ = gfx::Rect();
-    }
-  } else if (IsRenderingContext2D() && LowLatencyEnabled() &&
-             frame_dispatcher_ && !dirty_rect_.IsEmpty() &&
-             GetOrCreateCanvasResourceProviderForCanvas2D()) {
+  }
+
+  // Note: LowLatencyEnabled() could be true for any context type as it just
+  // checks whether the `desynchronized` attribute is set on the context, but
+  // only WebGL and Canvas2D have specific flows for low latency (for other
+  // context types, setting the attribute is a no-op).
+  if (LowLatencyEnabled() && (IsWebGL() || IsRenderingContext2D()) &&
+      frame_dispatcher_ && !dirty_rect_.IsEmpty()) {
     if (scoped_refptr<CanvasResource> canvas_resource =
-            ResourceProvider()->ProduceCanvasResource(reason)) {
+            context_->PaintRenderingResultsToResource(kBackBuffer, reason)) {
       const gfx::Rect src_rect(Size());
       dirty_rect_.Intersect(src_rect);
       const gfx::Rect int_dirty = dirty_rect_;
@@ -877,8 +799,8 @@ void HTMLCanvasElement::PostFinalizeFrame(FlushReason reason) {
           int_dirty.x(), int_dirty.y(), int_dirty.width(), int_dirty.height());
       frame_dispatcher_->DispatchFrame(std::move(canvas_resource), damage_rect,
                                        IsOpaque());
+      dirty_rect_ = gfx::Rect();
     }
-    dirty_rect_ = gfx::Rect();
   }
 
   // If the canvas is visible, notifying listeners is taken care of in
@@ -899,19 +821,10 @@ void HTMLCanvasElement::PostFinalizeFrame(FlushReason reason) {
   }
 }
 
-void HTMLCanvasElement::DisableAccelerationForCanvas2D() {
+void HTMLCanvasElement::OnAccelerationDisabled() {
   CHECK(IsRenderingContext2D());
   DisabledAccelerationCounterSupplement::From(GetDocument())
       .IncrementDisabledCount();
-  // Create and configure an unaccelerated CanvasResourceProvider.
-  SetPreferred2DRasterMode(RasterModeHint::kPreferCPU);
-
-  ReplaceExistingResourceProviderForCanvas2D();
-
-  // We must force a paint invalidation on the canvas even if it's
-  // content did not change because it layer was destroyed.
-  DidDraw();
-  SetNeedsCompositingUpdate();
 }
 
 void HTMLCanvasElement::SetNeedsCompositingUpdate() {
@@ -955,7 +868,7 @@ void HTMLCanvasElement::DoDeferredPaintInvalidation() {
     if (dirty_rect_.IsEmpty())
       return;
 
-    if (cc_layer_ && IsComposited()) {
+    if (cc_layer_ && context_->IsComposited()) {
       cc_layer_->SetNeedsDisplayRect(gfx::ToEnclosingRect(invalidation_rect));
     }
   }
@@ -976,10 +889,7 @@ void HTMLCanvasElement::DoDeferredPaintInvalidation() {
   dirty_rect_ = gfx::Rect();
 }
 
-void HTMLCanvasElement::Reset() {
-  if (ignore_reset_)
-    return;
-
+void HTMLCanvasElement::OnWidthOrHeightAssigned() {
   dirty_rect_ = gfx::Rect();
 
   unsigned w = 0;
@@ -1005,17 +915,30 @@ void HTMLCanvasElement::Reset() {
   gfx::Size old_size = Size();
   gfx::Size new_size(w, h);
 
-  // If the size of an existing buffer matches, we can reuse that buffer.
-  // This optimization is only done for 2D canvases for now.
-  if (IsRenderingContext2D() && GetResourceProviderForCanvas2D() != nullptr &&
-      old_size == new_size) {
+  // For Canvas2D, reuse any existing backing buffer rather than dropping and
+  // recreating it. Doing this optimization for WebGL and WebGPU would require
+  // investigation to make sure that it's spec-compliant (including adding any
+  // operations as necessary to get it compliant).
+  if (IsRenderingContext2D() && old_size == new_size) {
     return;
   }
 
-  SetSurfaceSize(new_size);
+  size_ = new_size;
+  if (RenderingContext()) {
+    RenderingContext()->SizeChanged();
+  }
+
+  DiscardResources();
+  if (IsRenderingContext2D() && context_->isContextLost()) {
+    context_->RestoreFromInvalidSizeIfNeeded();
+  }
+  if (frame_dispatcher_) {
+    frame_dispatcher_->Reshape(Size());
+  }
 
   if ((IsWebGL() && old_size != Size()) || IsWebGPU()) {
     context_->Reshape(width(), height());
+    UpdateMemoryUsage();
   }
 
   if (LayoutObject* layout_object = GetLayoutObject()) {
@@ -1226,14 +1149,12 @@ void HTMLCanvasElement::PaintInternal(GraphicsContext& context,
   // Note: Test coverage for this is assured by manual (non-automated)
   // web test printing/manual/canvas2d-vector-text.html
   // That test should be run manually against CLs that touch this code.
-  if (IsPrinting() && IsRenderingContext2D() &&
-      GetResourceProviderForCanvas2D()) {
-    auto* provider = GetResourceProviderForCanvas2D();
-    FlushRecording(FlushReason::kPrinting);
+  if (IsPrinting() && IsRenderingContext2D()) {
+    RenderingContext()->FlushCanvas(FlushReason::kPrinting);
     // `FlushRecording` might be a no-op if a flush already happened before.
-    // Fortunately, the last flush recording was kept by the provider.
+    // Fortunately, the last flush recording was kept by the context.
     const std::optional<cc::PaintRecord>& last_recording =
-        provider->LastRecording();
+        RenderingContext()->GetLastRecordingForCanvas2D();
     if (last_recording.has_value() &&
         filter_quality_ != cc::PaintFlags::FilterQuality::kNone) {
       context.Canvas()->save();
@@ -1245,30 +1166,13 @@ void HTMLCanvasElement::PaintInternal(GraphicsContext& context,
       UMA_HISTOGRAM_BOOLEAN("Blink.Canvas.2DPrintingAsVector", true);
       return;
     }
-    UMA_HISTOGRAM_ENUMERATION("Blink.Canvas.VectorPrintFallbackReason",
-                              provider->printing_fallback_reason());
     UMA_HISTOGRAM_BOOLEAN("Blink.Canvas.2DPrintingAsVector", false);
   }
 
   // Grab a snapshot.
-  scoped_refptr<StaticBitmapImage> snapshot;
-
-  // For canvas 2D, get the snapshot from the context if there is a valid
-  // resource provider to ensure that the recording is properly flushed (note
-  // that the fact that the canvas has a valid resource provider means that it
-  // is not possible for the canvas to be in hibernation at this point as the
-  // canvas' resource provider is dropped when going into hibernation and
-  // hibernation is ended if the canvas' resource provider is recreated). For
-  // all contexts other than canvas 2D, get a snapshot directly from the
-  // context.
-  if (IsRenderingContext2D()) {
-    if (GetResourceProviderForCanvas2D()) {
-      snapshot = context_->GetImage(FlushReason::kPaint);
-    }
-  } else {
-    snapshot = context_->PaintRenderingResultsToSnapshot(kFrontBuffer,
-                                                         FlushReason::kPaint);
-  }
+  scoped_refptr<StaticBitmapImage> snapshot =
+      context_->PaintRenderingResultsToSnapshot(kFrontBuffer,
+                                                FlushReason::kPaint);
 
   if (snapshot) {
     SkBlendMode composite_operator =
@@ -1305,17 +1209,6 @@ bool HTMLCanvasElement::IsPrinting() const {
 
 UkmParameters HTMLCanvasElement::GetUkmParameters() {
   return {GetDocument().UkmRecorder(), GetDocument().UkmSourceID()};
-}
-
-void HTMLCanvasElement::SetSurfaceSize(gfx::Size size) {
-  CanvasResourceHost::SetSize(size);
-  did_fail_to_create_resource_provider_ = false;
-  DiscardResourceProvider();
-  if (IsRenderingContext2D() && context_->isContextLost()) {
-    context_->RestoreFromInvalidSizeIfNeeded();
-  }
-  if (frame_dispatcher_)
-    frame_dispatcher_->Reshape(Size());
 }
 
 const AtomicString HTMLCanvasElement::ImageSourceURL() const {
@@ -1374,7 +1267,7 @@ String HTMLCanvasElement::ToDataURLInternal(const String& mime_type,
     bool noised = false;
     if (readback_type == ReadbackType::kWebExposed) {
       noised = CanvasInterventionsHelper::MaybeNoiseSnapshot(
-          context_, GetExecutionContext(), image_bitmap);
+          GetExecutionContext(), image_bitmap);
     }
     std::unique_ptr<ImageDataBuffer> data_buffer =
         ImageDataBuffer::Create(image_bitmap);
@@ -1428,6 +1321,12 @@ String HTMLCanvasElement::ToDataURLInternal(const String& mime_type,
 String HTMLCanvasElement::toDataURL(const String& mime_type,
                                     const ScriptValue& quality_argument,
                                     ExceptionState& exception_state) const {
+  if (RuntimeEnabledFeatures::BlockCanvasReadbackEnabled(
+          GetExecutionContext())) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kNotAllowedError,
+                                      String(kBlockCanvasReadbackErrorMessage));
+    return String();
+  }
   if (ContextHasOpenLayers(context_)) {
     exception_state.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
@@ -1454,6 +1353,12 @@ void HTMLCanvasElement::toBlob(V8BlobCallback* callback,
                                const String& mime_type,
                                const ScriptValue& quality_argument,
                                ExceptionState& exception_state) {
+  if (RuntimeEnabledFeatures::BlockCanvasReadbackEnabled(
+          GetExecutionContext())) {
+    exception_state.ThrowDOMException(DOMExceptionCode::kNotAllowedError,
+                                      String(kBlockCanvasReadbackErrorMessage));
+    return;
+  }
   if (!OriginClean()) {
     exception_state.ThrowSecurityError("Tainted canvases may not be exported.");
     return;
@@ -1474,8 +1379,8 @@ void HTMLCanvasElement::toBlob(V8BlobCallback* callback,
     GetDocument()
         .GetTaskRunner(TaskType::kCanvasBlobSerialization)
         ->PostTask(FROM_HERE,
-                   WTF::BindOnce(&V8BlobCallback::InvokeAndReportException,
-                                 WrapPersistent(callback), nullptr, nullptr));
+                   BindOnce(&V8BlobCallback::InvokeAndReportException,
+                            WrapPersistent(callback), nullptr, nullptr));
     return;
   }
 
@@ -1497,8 +1402,8 @@ void HTMLCanvasElement::toBlob(V8BlobCallback* callback,
   if (image_bitmap) {
     auto intervention_type =
         CanvasInterventionsHelper::CanvasInterventionType::kNone;
-    if (CanvasInterventionsHelper::MaybeNoiseSnapshot(
-            context_, GetExecutionContext(), image_bitmap)) {
+    if (CanvasInterventionsHelper::MaybeNoiseSnapshot(GetExecutionContext(),
+                                                      image_bitmap)) {
       intervention_type =
           CanvasInterventionsHelper::CanvasInterventionType::kNoise;
     }
@@ -1521,8 +1426,8 @@ void HTMLCanvasElement::toBlob(V8BlobCallback* callback,
     GetDocument()
         .GetTaskRunner(TaskType::kCanvasBlobSerialization)
         ->PostTask(FROM_HERE,
-                   WTF::BindOnce(&V8BlobCallback::InvokeAndReportException,
-                                 WrapPersistent(callback), nullptr, nullptr));
+                   BindOnce(&V8BlobCallback::InvokeAndReportException,
+                            WrapPersistent(callback), nullptr, nullptr));
   }
 }
 
@@ -1655,7 +1560,7 @@ bool HTMLCanvasElement::ShouldAccelerate() const {
 }
 
 bool HTMLCanvasElement::CanStartSelection() const {
-  if (RuntimeEnabledFeatures::AvoidSelectionChangeOnCanvasClickEnabled()) {
+  if (GetHitTestRegions().empty()) {
     return false;
   }
   return HTMLElement::CanStartSelection();
@@ -1691,10 +1596,6 @@ void HTMLCanvasElement::Trace(Visitor* visitor) const {
   CanvasRenderingContextHost::Trace(visitor);
   HTMLElement::Trace(visitor);
   CanvasRenderingContextHost::Trace(visitor);
-}
-
-CanvasHibernationHandler* HTMLCanvasElement::GetHibernationHandler() const {
-  return hibernation_handler_.get();
 }
 
 void HTMLCanvasElement::UpdatePreferred2DRasterMode() {
@@ -1741,10 +1642,8 @@ void HTMLCanvasElement::SetIsDisplayed(bool displayed) {
 
 cc::TextureLayer* HTMLCanvasElement::GetOrCreateCcLayerForCanvas2DIfNeeded() {
   CHECK(IsRenderingContext2D());
+  CHECK(context_->IsComposited());
 
-  if (!IsComposited()) {
-    return nullptr;
-  }
   if (!cc_layer_) [[unlikely]] {
     cc_layer_ = cc::TextureLayer::Create(this);
     InitializeLayerWithCSSProperties(cc_layer_.get());
@@ -1769,28 +1668,9 @@ void HTMLCanvasElement::SetNeedsPushProperties() {
   }
 }
 
-void HTMLCanvasElement::SetResourceProviderForTesting(
-    std::unique_ptr<CanvasResourceProvider> provider,
-    const gfx::Size& size) {
-  DiscardResourceProvider();
-  SetIntegralAttribute(html_names::kWidthAttr, size.width());
-  SetIntegralAttribute(html_names::kHeightAttr, size.height());
-  CanvasResourceHost::SetSize(size);
-  hibernation_handler_ = std::make_unique<CanvasHibernationHandler>(*this);
-  ReplaceResourceProvider(std::move(provider));
-}
-
-void HTMLCanvasElement::DiscardResourceProvider() {
-  if (IsHibernating()) {
-    // Ensure consistency of metrics reporting across the change from the
-    // previous code flow.
-    CanvasHibernationHandler::ReportHibernationEvent(
-        CanvasHibernationHandler::HibernationEvent::
-            kHibernationEndedWithTeardown);
-    GetHibernationHandler()->Clear();
-  }
+void HTMLCanvasElement::DiscardResources() {
   ResetLayer();
-  CanvasResourceHost::DiscardResourceProvider();
+  UpdateMemoryUsage();
   dirty_rect_ = gfx::Rect();
 }
 
@@ -1899,33 +1779,15 @@ void HTMLCanvasElement::RemovedFrom(ContainerNode& insertion_point) {
   ColorSchemeMayHaveChanged();
 }
 
-void HTMLCanvasElement::WillDrawImageInCanvas2D(CanvasImageSource* source) {
-  CHECK(IsRenderingContext2D());
-
-  // If the source is GPU-accelerated, and the canvas is not, but could be...
-  if (source->IsAccelerated() && ShouldAccelerate() &&
-      GetRasterMode() == RasterMode::kCPU) {
-    // Recreate the canvas in GPU raster mode, and update its contents.
-    if (RecreateCanvasInGPURasterModeForCanvas2D()) {
-      SetNeedsCompositingUpdate();
+void HTMLCanvasElement::ChildrenChanged(const ChildrenChange& change) {
+  HTMLElement::ChildrenChanged(change);
+  if (hasChildren()) {
+    UseCounter::Count(GetDocument(), WebFeature::kCanvasFallbackContent);
+    if (firstElementChild()) {
+      UseCounter::Count(GetDocument(),
+                        WebFeature::kCanvasFallbackElementContent);
     }
   }
-}
-
-bool HTMLCanvasElement::EnableAccelerationForCanvas2D() {
-  CHECK(IsRenderingContext2D());
-  return GetRasterMode() != RasterMode::kCPU ||
-         RecreateCanvasInGPURasterModeForCanvas2D();
-}
-
-bool HTMLCanvasElement::RecreateCanvasInGPURasterModeForCanvas2D() {
-  CHECK(IsRenderingContext2D());
-  if (!SharedGpuContext::AllowSoftwareToAcceleratedCanvasUpgrade()) {
-    return false;
-  }
-  SetPreferred2DRasterMode(RasterModeHint::kPreferGPU);
-  ReplaceExistingResourceProviderForCanvas2D();
-  return true;
 }
 
 scoped_refptr<Image> HTMLCanvasElement::GetSourceImageForCanvas(
@@ -2114,232 +1976,9 @@ UniqueFontSelector* HTMLCanvasElement::GetFontSelector() {
     return unique_font_selector;
   }
   auto* unique_font_selector = MakeGarbageCollected<UniqueFontSelector>(
-      GetDocument().GetStyleEngine().GetFontSelector(),
-      RuntimeEnabledFeatures::CanvasTextNgEnabled(
-          GetDocument().GetExecutionContext()));
+      GetDocument().GetStyleEngine().GetFontSelector());
   unique_font_selector_ = unique_font_selector;
   return unique_font_selector;
-}
-
-void HTMLCanvasElement::UpdateMemoryUsage() {
-  int non_gpu_buffer_count = 0;
-  int gpu_buffer_count = 0;
-
-  if (!IsRenderingContext2D() && !IsWebGL())
-    return;
-  if (context_ && context_->DrawsViaGpu()) {
-    // The number of internal GPU buffers vary between one (stable
-    // non-displayed state) and three (triple-buffered animations).
-    // Adding 2 is a pessimistic but relevant estimate.
-    // Note: These buffers might be allocated in GPU memory.
-    gpu_buffer_count += 2;
-  }
-
-  // NOTE: One of the callsites of this method is DiscardResourceProvider(), at
-  // which point the context is not necessarily present (e.g., if
-  // DiscardResourceProvider() is called due to an initial setSize() call on the
-  // canvas).
-  if (context_) {
-    non_gpu_buffer_count += context_->AllocatedBufferCountPerPixel();
-  }
-
-  // NOTE: All formats used by canvas are either 8-bit or 16-bit.
-  const int bytes_per_pixel = GetRenderingContextFormat().BitsPerPixel() / 8;
-
-  intptr_t gpu_memory_usage = 0;
-  uint32_t canvas_width = std::min(kMaximumCanvasSize, width());
-  uint32_t canvas_height = std::min(kMaximumCanvasSize, height());
-
-  if (gpu_buffer_count) {
-    // Switch from cpu mode to gpu mode
-    base::CheckedNumeric<intptr_t> checked_usage =
-        gpu_buffer_count * bytes_per_pixel;
-    checked_usage *= canvas_width;
-    checked_usage *= canvas_height;
-    gpu_memory_usage =
-        checked_usage.ValueOrDefault(std::numeric_limits<intptr_t>::max());
-  }
-
-  // Recomputation of externally memory usage computation is carried out
-  // in all cases.
-  base::CheckedNumeric<intptr_t> checked_usage =
-      non_gpu_buffer_count * bytes_per_pixel;
-  checked_usage *= canvas_width;
-  checked_usage *= canvas_height;
-  checked_usage += gpu_memory_usage;
-  intptr_t externally_allocated_memory =
-      checked_usage.ValueOrDefault(std::numeric_limits<intptr_t>::max());
-  // Subtracting two intptr_t that are known to be positive will never
-  // underflow.
-  intptr_t delta_bytes =
-      externally_allocated_memory - externally_allocated_memory_;
-
-  // TODO(junov): We assume that it is impossible to be inside a FastAPICall
-  // from a host interface other than the rendering context.  This assumption
-  // may need to be revisited in the future depending on how the usage of
-  // [NoAllocDirectCall] evolves.
-  if (delta_bytes) {
-    // Here we check "IsAllocationAllowed", but it is actually garbage
-    // collection that is not allowed, and allocations can trigger GC.
-    // AdjustAmountOfExternalAllocatedMemory is not an allocation but it
-    // can trigger GC, So we use "IsAllocationAllowed" as a proxy for
-    // "is GC allowed". When garbage collection is already in progress,
-    // allocations are not allowed, but calling
-    // AdjustAmountOfExternalAllocatedMemory is safe, hence the
-    // 'diposing_' condition in the DCHECK below.
-    DCHECK(ThreadState::Current()->IsAllocationAllowed() || disposing_);
-    external_memory_accounter_.Update(v8::Isolate::GetCurrent(), delta_bytes);
-    externally_allocated_memory_ = externally_allocated_memory;
-  }
-}
-
-size_t HTMLCanvasElement::GetMemoryUsage() const {
-  return base::saturated_cast<size_t>(externally_allocated_memory_);
-}
-
-void HTMLCanvasElement::ReplaceExistingResourceProviderForCanvas2D() {
-  CHECK(IsRenderingContext2D());
-  CanvasResourceProvider* old_provider = GetResourceProviderForCanvas2D();
-  if (old_provider == nullptr) {
-    return;
-  }
-
-  scoped_refptr<StaticBitmapImage> image =
-      context_->GetImage(FlushReason::kReplaceLayerBridge);
-  // image can be null if allocation failed in which case we should just
-  // abort the provider switch to retain the old provider, which is still
-  // functional.
-  if (!image) {
-    return;
-  }
-  std::unique_ptr<MemoryManagedPaintRecorder> recorder =
-      old_provider->ReleaseRecorder();
-  ResetLayer();
-  ReplaceResourceProvider(nullptr);
-
-  // Bail out if the context is lost.
-  if (context_->isContextLost() && !context_->IsContextBeingRestored()) {
-    return;
-  }
-
-  // Bail out if it's not possible to create a new provider.
-  CanvasResourceProvider* new_provider =
-      RecreateCanvasResourceProviderForCanvas2D(
-          CHECK_DEREF(hibernation_handler_.get()));
-  if (!new_provider) {
-    return;
-  }
-
-  new_provider->RestoreBackBuffer(image->PaintImageForCurrentFrame());
-  new_provider->SetRecorder(std::move(recorder));
-
-  UpdateMemoryUsage();
-}
-
-CanvasResourceProvider*
-HTMLCanvasElement::GetOrCreateCanvasResourceProviderForCanvas2D() {
-  CHECK(IsRenderingContext2D());
-  CanvasResourceProvider* resource_provider = GetResourceProviderForCanvas2D();
-  if (context_->isContextLost() && !context_->IsContextBeingRestored()) {
-    DCHECK(!resource_provider);
-    return nullptr;
-  }
-
-  if (resource_provider) {
-    if (!resource_provider->IsValid()) {
-      // The canvas context is not lost but the provider is invalid. This
-      // happens if the GPU process dies in the middle of a render task. The
-      // canvas is notified of GPU context losses via the
-      // `NotifyGpuContextLost` callback and restoration happens in
-      // `TryRestoreContextEvent`. Both callbacks are executed in their own
-      // separate task. If the GPU context goes invalid in the middle of a
-      // render task, the canvas won't immediately know about it and canvas
-      // APIs will continue using the provider that is now invalid. We can
-      // early return here, trying to re-create the provider right away would
-      // just fail. We need to let `TryRestoreContextEvent` wait for the GPU
-      // process to up again.
-      return nullptr;
-    }
-    return resource_provider;
-  }
-
-  if (did_fail_to_create_resource_provider_) {
-    return nullptr;
-  }
-
-  if (!IsValidImageSize()) {
-    did_fail_to_create_resource_provider_ = true;
-    if (!Size().IsEmpty() && context_) {
-      context_->LoseContext(CanvasRenderingContext::kInvalidCanvasSize);
-    }
-    return nullptr;
-  }
-
-  UpdatePreferred2DRasterMode();
-
-  if (!hibernation_handler_) {
-    hibernation_handler_ = std::make_unique<CanvasHibernationHandler>(*this);
-  }
-
-  resource_provider = RecreateCanvasResourceProviderForCanvas2D(
-      CHECK_DEREF(hibernation_handler_.get()));
-
-  UpdateMemoryUsage();
-
-  if (context_) {
-    SetNeedsCompositingUpdate();
-  }
-
-  return resource_provider;
-}
-
-CanvasResourceProvider*
-HTMLCanvasElement::RecreateCanvasResourceProviderForCanvas2D(
-    CanvasHibernationHandler& hibernation_handler) {
-  CHECK(IsRenderingContext2D());
-
-  // We call
-  // CanvasRenderingContextHost::GetOrCreateCanvasResourceProviderForCanvas2D()
-  // directly here to prevent a circular callstack.
-  CanvasResourceProvider* resource_provider = CanvasRenderingContextHost::
-      GetOrCreateCanvasResourceProviderForCanvas2D();
-  if (!resource_provider || !resource_provider->IsValid()) {
-    return nullptr;
-  }
-
-  if (!hibernation_handler.IsHibernating()) {
-    return resource_provider;
-  }
-
-  if (resource_provider->IsAccelerated()) {
-    CanvasHibernationHandler::ReportHibernationEvent(
-        CanvasHibernationHandler::HibernationEvent::kHibernationEndedNormally);
-  } else {
-    if (!IsPageVisible()) {
-      CanvasHibernationHandler::ReportHibernationEvent(
-          CanvasHibernationHandler::HibernationEvent::
-              kHibernationEndedWithSwitchToBackgroundRendering);
-    } else {
-      CanvasHibernationHandler::ReportHibernationEvent(
-          CanvasHibernationHandler::HibernationEvent::
-              kHibernationEndedWithFallbackToSW);
-    }
-  }
-
-  PaintImageBuilder builder = PaintImageBuilder::WithDefault();
-  builder.set_image(hibernation_handler.GetImage(),
-                    PaintImage::GetNextContentId());
-  builder.set_id(PaintImage::GetNextId());
-  resource_provider->RestoreBackBuffer(builder.TakePaintImage());
-  resource_provider->SetRecorder(hibernation_handler.ReleaseRecorder());
-  // The hibernation image is no longer valid, clear it.
-  hibernation_handler.Clear();
-  DCHECK(!hibernation_handler.IsHibernating());
-
-  // shouldBeDirectComposited() may have changed.
-  SetNeedsCompositingUpdate();
-
-  return resource_provider;
 }
 
 scoped_refptr<StaticBitmapImage> HTMLCanvasElement::GetTransparentImage() {
@@ -2368,12 +2007,6 @@ RespectImageOrientationEnum HTMLCanvasElement::RespectImageOrientation() const {
   return LayoutObject::GetImageOrientation(GetLayoutObject());
 }
 
-// Temporary plumbing
-bool HTMLCanvasElement::IsHibernating() const {
-  CanvasHibernationHandler* hibernation_handler = GetHibernationHandler();
-  return hibernation_handler && hibernation_handler->IsHibernating();
-}
-
 void HTMLCanvasElement::SetTransferToGPUTextureWasInvoked() {
   TransferToGPUTextureInvokedSupplement::From(GetDocument())
       .SetTransferToGPUTextureWasInvoked();
@@ -2382,19 +2015,6 @@ void HTMLCanvasElement::SetTransferToGPUTextureWasInvoked() {
 bool HTMLCanvasElement::TransferToGPUTextureWasInvoked() {
   return TransferToGPUTextureInvokedSupplement::From(GetDocument())
       .TransferToGPUTextureWasInvoked();
-}
-
-bool HTMLCanvasElement::IsAccelerated() const {
-  return GetRasterMode() == RasterMode::kGPU;
-}
-
-HTMLCanvasElement::ElementHitTestRegion::ElementHitTestRegion(
-    Element* element,
-    const gfx::RectF& rect)
-    : element_(element), rect_(rect) {}
-
-void HTMLCanvasElement::ElementHitTestRegion::Trace(Visitor* visitor) const {
-  visitor->Trace(element_);
 }
 
 }  // namespace blink

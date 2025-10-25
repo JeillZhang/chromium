@@ -4,8 +4,11 @@
 
 package org.chromium.chrome.browser.toolbar;
 
+import static org.chromium.build.NullUtil.assertNonNull;
+import static org.chromium.build.NullUtil.assumeNonNull;
 import static org.chromium.chrome.browser.preferences.ChromePreferenceKeys.ADAPTIVE_TOOLBAR_CUSTOMIZATION_SETTINGS;
 
+import android.app.Activity;
 import android.content.ComponentCallbacks;
 import android.content.Context;
 import android.content.res.ColorStateList;
@@ -24,14 +27,12 @@ import android.view.View.OnClickListener;
 import android.view.View.OnLayoutChangeListener;
 import android.view.View.OnLongClickListener;
 import android.view.ViewGroup;
-import android.view.ViewGroup.LayoutParams;
 import android.view.ViewStub;
 
 import androidx.activity.BackEventCompat;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.coordinatorlayout.widget.CoordinatorLayout;
 
 import org.chromium.base.Callback;
 import org.chromium.base.CallbackController;
@@ -46,12 +47,13 @@ import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.supplier.OneshotSupplier;
 import org.chromium.base.supplier.OneshotSupplierImpl;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.build.annotations.MonotonicNonNull;
+import org.chromium.build.annotations.NullMarked;
+import org.chromium.build.annotations.Nullable;
 import org.chromium.cc.input.BrowserControlsState;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.IntentHandler;
-import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.back_press.BackPressManager;
 import org.chromium.chrome.browser.back_press.BackPressMetrics;
 import org.chromium.chrome.browser.back_press.BackPressMetrics.NavigationDirection;
@@ -60,17 +62,23 @@ import org.chromium.chrome.browser.bookmarks.BookmarkModel;
 import org.chromium.chrome.browser.bookmarks.BookmarkModelObserver;
 import org.chromium.chrome.browser.bookmarks.TabBookmarker;
 import org.chromium.chrome.browser.browser_controls.BottomControlsStacker;
+import org.chromium.chrome.browser.browser_controls.BottomControlsStacker.LayerType;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsSizer;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
+import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider.ControlsPosition;
 import org.chromium.chrome.browser.browser_controls.BrowserStateBrowserControlsVisibilityDelegate;
+import org.chromium.chrome.browser.browser_controls.TopControlLayer;
+import org.chromium.chrome.browser.browser_controls.TopControlsStacker;
+import org.chromium.chrome.browser.browser_controls.TopControlsStacker.TopControlType;
+import org.chromium.chrome.browser.browser_controls.TopControlsStacker.TopControlVisibility;
 import org.chromium.chrome.browser.compositor.CompositorViewHolder;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanelManager.OverlayPanelManagerObserver;
+import org.chromium.chrome.browser.compositor.layouts.Layout;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManagerImpl;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutHelperManager;
 import org.chromium.chrome.browser.customtabs.features.toolbar.CustomTabToolbar;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabManager;
 import org.chromium.chrome.browser.dom_distiller.DomDistillerTabUtils;
-import org.chromium.chrome.browser.download.DownloadUtils;
 import org.chromium.chrome.browser.ephemeraltab.EphemeralTabCoordinator;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.findinpage.FindToolbarManager;
@@ -85,6 +93,7 @@ import org.chromium.chrome.browser.gesturenav.TabOnBackGestureHandler;
 import org.chromium.chrome.browser.history.HistoryManagerUtils;
 import org.chromium.chrome.browser.homepage.HomepageManager;
 import org.chromium.chrome.browser.homepage.HomepagePolicyManager;
+import org.chromium.chrome.browser.keyboard_accessory.ManualFillingComponent;
 import org.chromium.chrome.browser.keyboard_accessory.ManualFillingComponentSupplier;
 import org.chromium.chrome.browser.layouts.LayoutStateProvider;
 import org.chromium.chrome.browser.layouts.LayoutType;
@@ -93,8 +102,11 @@ import org.chromium.chrome.browser.merchant_viewer.MerchantTrustSignalsCoordinat
 import org.chromium.chrome.browser.metrics.UmaActivityObserver;
 import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
 import org.chromium.chrome.browser.ntp.IncognitoNewTabPage;
+import org.chromium.chrome.browser.ntp.IncognitoNtpOmniboxAutofocusManager;
+import org.chromium.chrome.browser.ntp.IncognitoNtpUtils;
 import org.chromium.chrome.browser.ntp.NewTabPage;
 import org.chromium.chrome.browser.ntp.NewTabPageUma;
+import org.chromium.chrome.browser.ntp_customization.edge_to_edge.TopInsetCoordinator;
 import org.chromium.chrome.browser.offlinepages.OfflinePageTabData;
 import org.chromium.chrome.browser.omaha.UpdateMenuItemHelper;
 import org.chromium.chrome.browser.omnibox.BackKeyBehaviorDelegate;
@@ -120,6 +132,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.Tab.LoadUrlResult;
 import org.chromium.chrome.browser.tab.TabArchiveSettings;
 import org.chromium.chrome.browser.tab.TabBrowserControlsConstraintsHelper;
+import org.chromium.chrome.browser.tab.TabFavicon;
 import org.chromium.chrome.browser.tab.TabObscuringHandler;
 import org.chromium.chrome.browser.tab.TabSelectionType;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
@@ -131,7 +144,6 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tasks.tab_management.TabGroupUi;
 import org.chromium.chrome.browser.tasks.tab_management.TabGroupUiOneshotSupplier;
 import org.chromium.chrome.browser.theme.BottomUiThemeColorProvider;
-import org.chromium.chrome.browser.theme.SurfaceColorUpdateUtils;
 import org.chromium.chrome.browser.theme.ThemeColorProvider;
 import org.chromium.chrome.browser.theme.ThemeColorProvider.ThemeColorObserver;
 import org.chromium.chrome.browser.theme.ThemeColorProvider.TintObserver;
@@ -141,7 +153,8 @@ import org.chromium.chrome.browser.toolbar.back_button.BackButtonCoordinator;
 import org.chromium.chrome.browser.toolbar.bottom.BottomControlsContentDelegate;
 import org.chromium.chrome.browser.toolbar.bottom.BottomControlsCoordinator;
 import org.chromium.chrome.browser.toolbar.bottom.ScrollingBottomViewResourceFrameLayout;
-import org.chromium.chrome.browser.toolbar.extensions.ExtensionToolbarManager;
+import org.chromium.chrome.browser.toolbar.extensions.ExtensionToolbarCoordinator;
+import org.chromium.chrome.browser.toolbar.forward_button.ForwardButtonCoordinator;
 import org.chromium.chrome.browser.toolbar.home_button.HomeButtonCoordinator;
 import org.chromium.chrome.browser.toolbar.home_page_button.HomePageButtonsCoordinator;
 import org.chromium.chrome.browser.toolbar.load_progress.LoadProgressCoordinator;
@@ -152,6 +165,7 @@ import org.chromium.chrome.browser.toolbar.optional_button.ButtonDataProvider;
 import org.chromium.chrome.browser.toolbar.top.ActionModeController;
 import org.chromium.chrome.browser.toolbar.top.ActionModeController.ActionBarDelegate;
 import org.chromium.chrome.browser.toolbar.top.NavigationPopup;
+import org.chromium.chrome.browser.toolbar.top.OptionalBrowsingModeButtonController;
 import org.chromium.chrome.browser.toolbar.top.TabSwitcherActionMenuCoordinator;
 import org.chromium.chrome.browser.toolbar.top.ToggleTabStackButton;
 import org.chromium.chrome.browser.toolbar.top.ToggleTabStackButtonCoordinator;
@@ -161,6 +175,7 @@ import org.chromium.chrome.browser.toolbar.top.ToolbarControlContainer;
 import org.chromium.chrome.browser.toolbar.top.ToolbarLayout;
 import org.chromium.chrome.browser.toolbar.top.ToolbarPhone;
 import org.chromium.chrome.browser.toolbar.top.ToolbarTablet;
+import org.chromium.chrome.browser.toolbar.top.ToolbarUtils.ToolbarComponentId;
 import org.chromium.chrome.browser.toolbar.top.TopToolbarCoordinator;
 import org.chromium.chrome.browser.toolbar.top.ViewShiftingActionBarDelegate;
 import org.chromium.chrome.browser.toolbar.top.tab_strip.TabStripTransitionCoordinator;
@@ -177,14 +192,14 @@ import org.chromium.chrome.browser.undo_tab_close_snackbar.UndoBarThrottle;
 import org.chromium.chrome.browser.user_education.UserEducationHelper;
 import org.chromium.chrome.browser.util.BrowserUiUtils;
 import org.chromium.chrome.browser.util.BrowserUiUtils.ModuleTypeOnStartAndNtp;
-import org.chromium.chrome.browser.util.ChromeAccessibilityUtil;
+import org.chromium.components.browser_ui.accessibility.PageZoomManager;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.desktop_windowing.DesktopWindowStateManager;
+import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.browser_ui.widget.ClipDrawableProgressBar.DrawingInfo;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler;
 import org.chromium.components.browser_ui.widget.gesture.BackPressHandler.BackPressResult;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
-import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.embedder_support.util.UrlUtilities;
 import org.chromium.components.feature_engagement.EventConstants;
 import org.chromium.components.feature_engagement.Tracker;
@@ -207,18 +222,21 @@ import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.display.DisplayUtil;
 import org.chromium.ui.modaldialog.ModalDialogManager;
+import org.chromium.ui.resources.Resource;
+import org.chromium.ui.resources.dynamics.DynamicResourceSnapshot;
 import org.chromium.ui.util.TokenHolder;
 import org.chromium.ui.widget.ChromeImageButton;
 import org.chromium.ui.widget.ViewRectProvider;
-import org.chromium.ui.xr.scenecore.XrSceneCoreUtils;
 import org.chromium.url.GURL;
 
 import java.util.List;
+import java.util.function.Supplier;
 
 /**
  * Contains logic for managing the toolbar visual component. This class manages the interactions
  * with the rest of the application to ensure the toolbar is always visually up to date.
  */
+@NullMarked
 public class ToolbarManager
         implements UrlFocusChangeListener,
                 ThemeColorObserver,
@@ -231,6 +249,7 @@ public class ToolbarManager
     private AppThemeColorProvider mAppThemeColorProvider;
     private final SettableThemeColorProvider mCustomTabThemeColorProvider;
     private final TopToolbarCoordinator mToolbar;
+    private final ToolbarLayout mToolbarLayout;
     private final ToolbarControlContainer mControlContainer;
     private final View mToolbarHairline;
     private final BrowserControlsStateProvider.Observer mBrowserControlsObserver;
@@ -240,7 +259,7 @@ public class ToolbarManager
     private final ObservableSupplierImpl<Boolean> mHomepageNonNtpSupplier =
             new ObservableSupplierImpl<>();
     private final ObservableSupplier<Boolean> mOmniboxFocusStateSupplier;
-    private final ObservableSupplierImpl<Boolean> mIsNtpShowingSupplier =
+    private final ObservableSupplierImpl<Boolean> mIsNtpWithFakeboxShowingSupplier =
             new ObservableSupplierImpl<>();
     private final ObservableSupplierImpl<Boolean> mFindInPageShowingSupplier =
             new ObservableSupplierImpl<>(false);
@@ -251,7 +270,9 @@ public class ToolbarManager
             new ObservableSupplierImpl<>();
     private final ObservableSupplierImpl<Boolean> mSuppressToolbarSceneLayerSupplier =
             new ObservableSupplierImpl<>(false);
-    private TabModelSelector mTabModelSelector;
+    private final ObservableSupplierImpl<Long> mCaptureResourceIdSupplier =
+            new ObservableSupplierImpl<>();
+    private @MonotonicNonNull TabModelSelector mTabModelSelector;
     private final Callback<TabModel> mCurrentTabModelObserver;
     private ObservableSupplier<TabModelSelector> mTabModelSelectorSupplier;
     private ActivityTabProvider.ActivityTabTabObserver mActivityTabTabObserver;
@@ -261,17 +282,18 @@ public class ToolbarManager
     private final ValueChangedCallback<BookmarkModel> mBookmarkModelSupplierObserver =
             new ValueChangedCallback<>(this::setBookmarkModel);
     private final ToolbarIphController mIphController;
-    private TemplateUrlService mTemplateUrlService;
-    private TemplateUrlServiceObserver mTemplateUrlObserver;
+    private @MonotonicNonNull TemplateUrlService mTemplateUrlService;
+    private @MonotonicNonNull TemplateUrlServiceObserver mTemplateUrlObserver;
     private LocationBar mLocationBar;
+    private final Supplier<LocationBar> mLocationBarSupplier = () -> mLocationBar;
     private FindToolbarManager mFindToolbarManager;
 
-    private LayoutManagerImpl mLayoutManager;
+    private @MonotonicNonNull LayoutManagerImpl mLayoutManager;
 
     private final BookmarkModelObserver mBookmarksObserver;
     private final FindToolbarObserver mFindToolbarObserver;
 
-    private LayoutStateProvider mLayoutStateProvider;
+    private @MonotonicNonNull LayoutStateProvider mLayoutStateProvider;
     private final LayoutStateProvider.LayoutStateObserver mLayoutStateObserver;
     private OneshotSupplier<LayoutStateProvider> mLayoutStateProviderSupplier;
     private CallbackController mCallbackController = new CallbackController();
@@ -285,6 +307,7 @@ public class ToolbarManager
     private final AppMenuDelegate mAppMenuDelegate;
     private final CompositorViewHolder mCompositorViewHolder;
     private final BottomControlsStacker mBottomControlsStacker;
+    private final TopControlsStacker mTopControlsStacker;
     private final BrowserControlsSizer mBrowserControlsSizer;
     private final FullscreenManager mFullscreenManager;
     private final ObservableSupplier<EdgeToEdgeController> mEdgeToEdgeControllerSupplier;
@@ -294,7 +317,7 @@ public class ToolbarManager
     private final ToolbarTabControllerImpl mToolbarTabController;
     private MenuButtonCoordinator mMenuButtonCoordinator;
     private MenuButtonCoordinator mOverviewModeMenuButtonCoordinator;
-    private HomepageManager.HomepageStateListener mHomepageStateListener;
+    private HomepageManager.@Nullable HomepageStateListener mHomepageStateListener;
     private final Supplier<ModalDialogManager> mModalDialogManagerSupplier;
     private final StatusBarColorController mStatusBarColorController;
     private final ActivityLifecycleDispatcher mActivityLifecycleDispatcher;
@@ -304,28 +327,30 @@ public class ToolbarManager
     private final TabCreatorManager mTabCreatorManager;
     private final TabObscuringHandler mTabObscuringHandler;
     private final Supplier<ShareDelegate> mShareDelegateSupplier;
-    private OnAttachStateChangeListener mAttachStateChangeListener;
-    private final BackPressHandler mBackPressHandler;
-    private final BackPressManager mBackPressManager;
+    private @MonotonicNonNull OnAttachStateChangeListener mAttachStateChangeListener;
+    private final @Nullable BackPressHandler mBackPressHandler;
+    private final @Nullable BackPressManager mBackPressManager;
     private final UserEducationHelper mUserEducationHelper;
     private final ToolbarLongPressMenuHandler mToolbarLongPressMenuHandler;
     private final OverrideUrlLoadingDelegateImpl mOverrideUrlLoadingDelegate;
+    private final ObservableSupplier<TopInsetCoordinator> mTopInsetCoordinatorSupplier;
+    private final ObservableSupplierImpl<@ControlsPosition Integer> mToolbarPositionSupplier;
 
-    private HomeButtonCoordinator mHomeButtonCoordinator;
-    private HomePageButtonsCoordinator mHomePageButtonsCoordinator;
-
-    private ToggleTabStackButtonCoordinator mTabSwitcherButtonCoordinator;
-    private @Nullable BackButtonCoordinator mBackButtonCoordinator;
-    private @Nullable ExtensionToolbarManager mExtensionToolbarManager;
+    private @MonotonicNonNull HomeButtonCoordinator mHomeButtonCoordinator;
+    private @MonotonicNonNull HomePageButtonsCoordinator mHomePageButtonsCoordinator;
+    private @MonotonicNonNull ToggleTabStackButtonCoordinator mTabSwitcherButtonCoordinator;
+    private @MonotonicNonNull BackButtonCoordinator mBackButtonCoordinator;
+    private @MonotonicNonNull ForwardButtonCoordinator mForwardButtonCoordinator;
+    private @Nullable ExtensionToolbarCoordinator mExtensionToolbarCoordinator;
 
     private final BrowserStateBrowserControlsVisibilityDelegate mControlsVisibilityDelegate;
     private int mFullscreenFocusToken = TokenHolder.INVALID_TOKEN;
     private int mFullscreenFindInPageToken = TokenHolder.INVALID_TOKEN;
 
     private boolean mInitializedWithNative;
-    private Runnable mOnInitializedRunnable;
-    private Runnable mMenuStateObserver;
-    private UpdateMenuItemHelper mUpdateMenuItemHelper;
+    private @Nullable Runnable mOnInitializedRunnable;
+    private @Nullable Runnable mMenuStateObserver;
+    private @MonotonicNonNull UpdateMenuItemHelper mUpdateMenuItemHelper;
 
     private boolean mShouldUpdateToolbarPrimaryColor = true;
     private int mCurrentThemeColor;
@@ -338,8 +363,8 @@ public class ToolbarManager
     private final OverlayPanelManagerObserver mOverlayPanelManagerObserver;
     private final ObservableSupplierImpl<Boolean> mOverlayPanelVisibilitySupplier =
             new ObservableSupplierImpl<>();
-    private ObservableSupplierImpl<Integer> mTabStripHeightSupplier;
-    private TabStripHeightObserver mTabStripHeightObserver;
+    private TabStripHeightSupplier mTabStripHeightSupplier;
+    private @Nullable TabStripHeightObserver mTabStripHeightObserver;
     private final @Nullable DesktopWindowStateManager mDesktopWindowStateManager;
     private final @Nullable MultiInstanceManager mMultiInstanceManager;
     private final OneshotSupplierImpl<TabStripTransitionDelegate>
@@ -356,6 +381,7 @@ public class ToolbarManager
     private boolean mIsDestroyed;
 
     private final boolean mIsCustomTab;
+    private final boolean mIsTablet;
 
     private final ObservableSupplier<ReadAloudController> mReadAloudControllerSupplier;
     private final Runnable mReadAloudReadabilityCallback = this::onReadAloudReadabilityUpdated;
@@ -370,30 +396,33 @@ public class ToolbarManager
     private final FormFieldFocusedSupplier mFormFieldFocusedSupplier =
             new FormFieldFocusedSupplier();
     private final View mProgressBarContainer;
-    private @Nullable ObservableSupplier<Integer> mBookmarkBarHeightSupplier;
+    private @Nullable Supplier<Integer> mBookmarkBarHeightSupplier;
     private boolean mInTabSwitcherTransition;
     private final boolean mIsNewTabPageCustomizationToolbarButtonEnabled;
 
-    private Tab mLastTab;
+    private @Nullable Tab mLastTab;
 
     private @Nullable StripLayoutHelperManager mStripLayoutHelperManager;
     private @Nullable MiniOriginBarController mMiniOriginBarController;
     private @Nullable ToolbarPositionController mToolbarPositionController;
     private @Nullable UndoBarThrottle mUndoBarThrottle;
+    private @Nullable IncognitoNtpOmniboxAutofocusManager mIncognitoNtpOmniboxAutofocusManager;
 
     private CustomTabCount mCustomTabCount;
-    private float mNtpSearchBoxScrollPercentage;
-    private OverscrollGlowCoordinator mOverscrollGlowCoordinator;
+    private int mIncognitoNtpViewIdForA11y = View.NO_ID;
+    private @Nullable OverscrollGlowCoordinator mOverscrollGlowCoordinator;
     private final NewTabPageDelegate mNtpDelegate;
-    private final ObservableSupplier<Profile> mProfileSupplier;
+    private final ObservableSupplier<@Nullable Profile> mProfileSupplier;
     private final Callback<Boolean> mOnXrSpaceModeChanged = this::onXrSpaceModeChanged;
-    private @Nullable ObservableSupplier<Boolean> mXrSpaceModeObservableSupplier;
+    private final @Nullable ObservableSupplier<Boolean> mXrSpaceModeObservableSupplier;
+    private final ObservableSupplierImpl<Float> mNtpSearchBoxTransitionPercentageSupplier =
+            new ObservableSupplierImpl<>(0f);
 
     private static class TabObscuringCallback implements Callback<Boolean> {
         private final TabObscuringHandler mTabObscuringHandler;
 
         /** A token held while the toolbar/omnibox is obscuring all visible tabs. */
-        private TabObscuringHandler.Token mTabObscuringToken;
+        private TabObscuringHandler.@Nullable Token mTabObscuringToken;
 
         public TabObscuringCallback(TabObscuringHandler handler) {
             mTabObscuringHandler = handler;
@@ -421,11 +450,11 @@ public class ToolbarManager
     }
 
     /** An {@link ObservableSupplier<Integer>} for the browser constraints of the current tab. */
-    private static class ConstraintsProxy extends ObservableSupplierImpl<Integer>
+    private static class ConstraintsProxy extends ObservableSupplierImpl<@Nullable Integer>
             implements Callback<Integer> {
-        private ObservableSupplier<Integer> mCurrentConstraintDelegate;
+        private @Nullable ObservableSupplier<Integer> mCurrentConstraintDelegate;
 
-        void onTabSwitched(Tab newTab) {
+        void onTabSwitched(@Nullable Tab newTab) {
             if (mCurrentConstraintDelegate != null) {
                 mCurrentConstraintDelegate.removeObserver(this);
                 mCurrentConstraintDelegate = null;
@@ -458,7 +487,7 @@ public class ToolbarManager
     }
 
     private class OnBackPressHandler implements BackPressHandler {
-        private TabOnBackGestureHandler mHandler;
+        private @Nullable TabOnBackGestureHandler mHandler;
         private boolean mIsGestureMode;
         private @BackGestureEventSwipeEdge int mInitialEdge;
         private boolean mIsInProgress;
@@ -534,7 +563,7 @@ public class ToolbarManager
         }
 
         @Override
-        public void handleOnBackProgressed(@NonNull BackEventCompat backEvent) {
+        public void handleOnBackProgressed(BackEventCompat backEvent) {
             if (mOverscrollGlowCoordinator != null && mOverscrollGlowCoordinator.isShowing()) {
                 mOverscrollGlowCoordinator.pullGlow(backEvent.getTouchX(), backEvent.getTouchY());
             }
@@ -560,7 +589,7 @@ public class ToolbarManager
         }
 
         @Override
-        public void handleOnBackStarted(@NonNull BackEventCompat backEvent) {
+        public void handleOnBackStarted(BackEventCompat backEvent) {
             if (mOverscrollGlowCoordinator != null && mOverscrollGlowCoordinator.isShowing()) {
                 mOverscrollGlowCoordinator.resetGlow();
             }
@@ -571,11 +600,10 @@ public class ToolbarManager
             // For 3-button mode, record metrics only when back is triggered by swiping.
             // See NavigationHandler.java.
             if (mIsGestureMode) {
+                WebContents webContents = mActivityTabProvider.get().getWebContents();
+                assumeNonNull(webContents);
                 BackPressMetrics.recordNavStatusOnGestureStart(
-                        mActivityTabProvider
-                                .get()
-                                .getWebContents()
-                                .hasUncommittedNavigationInPrimaryMainFrame(),
+                        webContents.hasUncommittedNavigationInPrimaryMainFrame(),
                         mActivity.getWindow());
             }
 
@@ -586,18 +614,21 @@ public class ToolbarManager
                 assert !(isInvalidSwipeWhenNavigatingForward()
                                 && isInvalidSwipeWhenNavigatingBack())
                         : "isInvalidSwipeWhenNavigatingForward and isInvalidSwipeWhenNavigatingBack"
-                              + " cannot be true at the same time.";
+                                + " cannot be true at the same time.";
                 // Do not proceed if: 1. swiping semantically forward with no forward history. 2.
                 // swiping semantically backward and canGoBack == false.
                 if (isInvalidSwipeWhenNavigatingForward() || isInvalidSwipeWhenNavigatingBack()) {
                     if (mOverscrollGlowCoordinator == null) {
+                        assumeNonNull(mLayoutManager);
+                        Layout activeLayout = mLayoutManager.getActiveLayout();
+                        assert activeLayout != null;
                         mOverscrollGlowCoordinator =
                                 new OverscrollGlowCoordinator(
                                         mWindowAndroid,
                                         mLayoutManager,
                                         mCompositorViewHolder.getCompositorView(),
                                         mCallbackController.makeCancelable(
-                                                mLayoutManager.getActiveLayout()::requestUpdate));
+                                                activeLayout::requestUpdate));
                     }
 
                     if (!mActivityTabProvider.get().isNativePage()) {
@@ -729,12 +760,16 @@ public class ToolbarManager
      * @param ephemeralTabCoordinatorSupplier Supplies the {@link EphemeralTabCoordinator}.
      * @param initializeWithIncognitoColors Whether the toolbar should be initialized with incognito
      * @param backPressManager The {@link BackPressManager} handling back press gesture.
-     * @param overviewColorSupplier Notifies when the overview color changes.
      * @param desktopWindowStateManager The {@link DesktopWindowStateManager} instance.
      * @param multiInstanceManager The {@link MultiInstanceManager} used to move tabs to new
      *     windows.
      * @param tabBookmarkerSupplier Supplier of {@link TabBookmarker} for bookmarking a given tab.
      * @param menuButtonVisibilityDelegate Delegate for handling the visibility of the menu button.
+     * @param topControlsStacker TopControlsStacker to manage the view's y-offset.
+     * @param topInsetCoordinatorSupplier Supplier of (@link TopInsetCoordinator}.
+     * @param xrSpaceModeObservableSupplier Supplies current XR space mode status. True for XR full
+     *     space mode, false otherwise.
+     * @param pageZoomManager The {@link PageZoomManager} used to manage the page zoom.
      */
     public ToolbarManager(
             AppCompatActivity activity,
@@ -753,12 +788,12 @@ public class ToolbarManager
             ScrimManager scrimManager,
             ToolbarActionModeCallback toolbarActionModeCallback,
             FindToolbarManager findToolbarManager,
-            ObservableSupplier<Profile> profileSupplier,
+            ObservableSupplier<@Nullable Profile> profileSupplier,
             ObservableSupplier<BookmarkModel> bookmarkModelSupplier,
             OneshotSupplier<LayoutStateProvider> layoutStateProviderSupplier,
             OneshotSupplier<AppMenuCoordinator> appMenuCoordinatorSupplier,
             boolean canShowUpdateBadge,
-            @NonNull ObservableSupplier<TabModelSelector> tabModelSelectorSupplier,
+            ObservableSupplier<TabModelSelector> tabModelSelectorSupplier,
             ObservableSupplier<Boolean> omniboxFocusStateSupplier,
             OneshotSupplier<Boolean> promoShownOneshotSupplier,
             WindowAndroid windowAndroid,
@@ -767,28 +802,30 @@ public class ToolbarManager
             StatusBarColorController statusBarColorController,
             AppMenuDelegate appMenuDelegate,
             ActivityLifecycleDispatcher activityLifecycleDispatcher,
-            @NonNull BottomSheetController bottomSheetController,
-            @NonNull DataSharingTabManager dataSharingTabManager,
-            @NonNull TabContentManager tabContentManager,
-            @NonNull TabCreatorManager tabCreatorManager,
-            @NonNull
-                    Supplier<MerchantTrustSignalsCoordinator>
-                            merchantTrustSignalsCoordinatorSupplier,
-            @NonNull OmniboxActionDelegate omniboxActionDelegate,
+            BottomSheetController bottomSheetController,
+            DataSharingTabManager dataSharingTabManager,
+            TabContentManager tabContentManager,
+            TabCreatorManager tabCreatorManager,
+            Supplier<MerchantTrustSignalsCoordinator> merchantTrustSignalsCoordinatorSupplier,
+            OmniboxActionDelegate omniboxActionDelegate,
             Supplier<EphemeralTabCoordinator> ephemeralTabCoordinatorSupplier,
             boolean initializeWithIncognitoColors,
             @Nullable BackPressManager backPressManager,
-            @Nullable ObservableSupplier<Integer> overviewColorSupplier,
             ObservableSupplier<ReadAloudController> readAloudControllerSupplier,
             @Nullable DesktopWindowStateManager desktopWindowStateManager,
             @Nullable MultiInstanceManager multiInstanceManager,
-            @NonNull ObservableSupplier<TabBookmarker> tabBookmarkerSupplier,
-            @Nullable MenuButtonCoordinator.VisibilityDelegate menuButtonVisibilityDelegate) {
+            ObservableSupplier<TabBookmarker> tabBookmarkerSupplier,
+            MenuButtonCoordinator.@Nullable VisibilityDelegate menuButtonVisibilityDelegate,
+            TopControlsStacker topControlsStacker,
+            ObservableSupplier<TopInsetCoordinator> topInsetCoordinatorSupplier,
+            @Nullable ObservableSupplier<Boolean> xrSpaceModeObservableSupplier,
+            PageZoomManager pageZoomManager) {
         TraceEvent.begin("ToolbarManager.ToolbarManager");
         mActivity = activity;
         mWindowAndroid = windowAndroid;
         mCompositorViewHolder = compositorViewHolder;
         mBottomControlsStacker = bottomControlsStacker;
+        mTopControlsStacker = topControlsStacker;
         mBrowserControlsSizer = controlsSizer;
         mFullscreenManager = fullscreenManager;
         mEdgeToEdgeControllerSupplier = edgeToEdgeControllerSupplier;
@@ -818,16 +855,20 @@ public class ToolbarManager
         mOverrideUrlLoadingDelegate = new OverrideUrlLoadingDelegateImpl();
         mMultiInstanceManager = multiInstanceManager;
         mTabBookmarkerSupplier = tabBookmarkerSupplier;
-        mCustomTabCount =
-                new CustomTabCount(
-                        tabModelSelectorSupplier.get().getCurrentModelTabCountSupplier());
+        mTopInsetCoordinatorSupplier = topInsetCoordinatorSupplier;
+        mIsTablet = DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity);
+        mCustomTabCount = new CustomTabCount(tabModelSelectorSupplier);
         mProfileSupplier = profileSupplier;
         mIsNewTabPageCustomizationToolbarButtonEnabled =
-                ChromeFeatureList.sNewTabPageCustomization.isEnabled()
+                !mIsTablet
+                        && ChromeFeatureList.sNewTabPageCustomization.isEnabled()
                         && ChromeFeatureList.sNewTabPageCustomizationToolbarButton.isEnabled();
 
-        ToolbarLayout toolbarLayout = mActivity.findViewById(R.id.toolbar);
-        mNtpDelegate = createNewTabPageDelegate(toolbarLayout);
+        mToolbarLayout = mActivity.findViewById(R.id.toolbar);
+        mToolbarPositionSupplier = new ObservableSupplierImpl<>(ControlsPosition.NONE);
+        mNtpDelegate = createNewTabPageDelegate();
+        mIsCustomTab = mToolbarLayout instanceof CustomTabToolbar;
+
         mLocationBarModel =
                 new LocationBarModel(
                         activity,
@@ -846,7 +887,9 @@ public class ToolbarManager
                                 TraceEvent.end("isOfflinePage");
                                 return ret;
                             }
-                        });
+                        },
+                        mToolbarPositionSupplier,
+                        /* matchTrustedCdnUrl= */ mIsCustomTab);
         mControlContainer = controlContainer;
         mToolbarHairline = mControlContainer.findViewById(R.id.toolbar_hairline);
 
@@ -880,13 +923,12 @@ public class ToolbarManager
         mTopUiThemeColorProvider = topUiThemeColorProvider;
         mTopUiThemeColorProvider.addThemeColorObserver(this);
 
-        final boolean isTablet = DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity);
         final boolean isDefaultDisplay = DisplayUtil.isContextInDefaultDisplay(mActivity);
         mAppThemeColorProvider =
                 new AppThemeColorProvider(
                         /* context= */ mActivity,
                         ToolbarFeatures.isTabStripWindowLayoutOptimizationEnabled(
-                                        isTablet, isDefaultDisplay)
+                                        mIsTablet, isDefaultDisplay)
                                 ? mActivityLifecycleDispatcher
                                 : null,
                         mDesktopWindowStateManager);
@@ -899,14 +941,9 @@ public class ToolbarManager
         mToolbarTabController =
                 new ToolbarTabControllerImpl(
                         mLocationBarModel::getTab,
-                        () -> {
-                            Profile profile = mProfileSupplier.get();
-                            return profile != null
-                                    ? TrackerFactory.getTrackerForProfile(profile)
-                                    : null;
-                        },
+                        () -> TrackerFactory.getTrackerForProfile(mProfileSupplier),
                         mBottomControlsCoordinatorSupplier,
-                        ToolbarManager::homepageUrl,
+                        this::homepageUrl,
                         this::updateButtonStatus,
                         mActivityTabProvider,
                         mTabCreatorManager,
@@ -926,15 +963,14 @@ public class ToolbarManager
         assert controlsVisibilityDelegate != null;
         mControlsVisibilityDelegate = controlsVisibilityDelegate;
         ThemeColorProvider browsingModeThemeColorProvider =
-                isTablet ? mAppThemeColorProvider : mTopUiThemeColorProvider;
+                mIsTablet ? mAppThemeColorProvider : mTopUiThemeColorProvider;
         ThemeColorProvider overviewModeThemeColorProvider = mAppThemeColorProvider;
 
         Runnable requestFocusRunnable = compositorViewHolder::requestFocus;
-        mIsCustomTab = toolbarLayout instanceof CustomTabToolbar;
         ThemeColorProvider menuButtonThemeColorProvider =
                 mIsCustomTab ? mCustomTabThemeColorProvider : browsingModeThemeColorProvider;
 
-        Supplier<MenuButtonState> menuButtonStateSupplier =
+        Supplier<@Nullable MenuButtonState> menuButtonStateSupplier =
                 () -> {
                     if (mUpdateMenuItemHelper == null) return null;
                     return mUpdateMenuItemHelper.getUiState().buttonState;
@@ -947,6 +983,7 @@ public class ToolbarManager
 
         mMenuButtonCoordinator =
                 new MenuButtonCoordinator(
+                        mActivity,
                         appMenuCoordinatorSupplier,
                         mControlsVisibilityDelegate,
                         mWindowAndroid,
@@ -955,16 +992,18 @@ public class ToolbarManager
                         canShowUpdateBadge,
                         isInOverviewModeSupplier,
                         menuButtonThemeColorProvider,
+                        mIncognitoStateProvider,
                         menuButtonStateSupplier,
                         onMenuButtonClicked,
                         R.id.menu_button_wrapper,
                         menuButtonVisibilityDelegate);
         if (canShowUpdateBadge) mMenuStateObserver = mMenuButtonCoordinator.getStateObserver();
 
-        // TODO(b/351005760): Investigate the feasibility of replacing
+        // TODO(crbug.com/351005760): Investigate the feasibility of replacing
         // mOverviewModeMenuButtonCoordinator with mMenuButtonCoordinator when Hub is enabled.
         mOverviewModeMenuButtonCoordinator =
                 new MenuButtonCoordinator(
+                        mActivity,
                         appMenuCoordinatorSupplier,
                         mControlsVisibilityDelegate,
                         mWindowAndroid,
@@ -973,6 +1012,7 @@ public class ToolbarManager
                         canShowUpdateBadge,
                         isInOverviewModeSupplier,
                         overviewModeThemeColorProvider,
+                        mIncognitoStateProvider,
                         menuButtonStateSupplier,
                         onMenuButtonClicked,
                         R.id.none,
@@ -996,12 +1036,14 @@ public class ToolbarManager
 
         NavigationPopup.HistoryDelegate historyDelegate =
                 (tab) -> {
-                    HistoryManagerUtils.showHistoryManager(
-                            tab.getWindowAndroid().getActivity().get(), tab, tab.getProfile());
+                    WindowAndroid windowAndroidFromTab = tab.getWindowAndroid();
+                    assumeNonNull(windowAndroidFromTab);
+                    Activity activityFromTab = windowAndroidFromTab.getActivity().get();
+                    assert activityFromTab != null;
+                    HistoryManagerUtils.showHistoryManager(activityFromTab, tab, tab.getProfile());
                 };
 
-        if (!mIsNewTabPageCustomizationToolbarButtonEnabled
-                || DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity)) {
+        if (!mIsNewTabPageCustomizationToolbarButtonEnabled) {
             View homeButton = controlContainer.findViewById(R.id.home_button);
             if (homeButton != null) {
                 mHomeButtonCoordinator =
@@ -1010,21 +1052,24 @@ public class ToolbarManager
                                 homeButton,
                                 this::onHomePageButtonClick,
                                 this::onHomeButtonMenuClick,
-                                HomepagePolicyManager::isHomepageLocationManaged);
+                                HomepagePolicyManager::isHomepageLocationManaged,
+                                browsingModeThemeColorProvider,
+                                mIncognitoStateProvider);
             }
         } else {
             View homePageButtonsContainer =
                     controlContainer.findViewById(R.id.home_page_buttons_layout);
-
-            mHomePageButtonsCoordinator =
-                    new HomePageButtonsCoordinator(
-                            mActivity,
-                            mProfileSupplier,
-                            homePageButtonsContainer,
-                            this::onHomeButtonMenuClick,
-                            HomepagePolicyManager::isHomepageLocationManaged,
-                            mBottomSheetController,
-                            this::onHomePageButtonClick);
+            if (homePageButtonsContainer != null) {
+                mHomePageButtonsCoordinator =
+                        new HomePageButtonsCoordinator(
+                                mActivity,
+                                profileSupplier,
+                                homePageButtonsContainer,
+                                this::onHomeButtonMenuClick,
+                                HomepagePolicyManager::isHomepageLocationManaged,
+                                mBottomSheetController,
+                                this::onHomePageButtonClick);
+            }
         }
 
         ChromeImageButton backButton = mControlContainer.findViewById(R.id.back_button);
@@ -1034,6 +1079,7 @@ public class ToolbarManager
                             backButton,
                             this::back,
                             browsingModeThemeColorProvider,
+                            mIncognitoStateProvider,
                             mActivityTabProvider,
                             mToolbarNavControlsEnabledSupplier,
                             /* onNavigationPopupShown= */ () -> {},
@@ -1041,15 +1087,47 @@ public class ToolbarManager
                             /* isWebApp= */ false);
         }
 
+        ChromeImageButton forwardButton = mControlContainer.findViewById(R.id.forward_button);
+        if (forwardButton != null) {
+            mForwardButtonCoordinator =
+                    new ForwardButtonCoordinator(
+                            mActivity,
+                            mLocationBarModel,
+                            mToolbarTabController,
+                            mLocationBarSupplier,
+                            mActivityLifecycleDispatcher,
+                            forwardButton,
+                            historyDelegate,
+                            browsingModeThemeColorProvider,
+                            mIncognitoStateProvider);
+        }
+
+        ViewStub extensionToolbarStub =
+                controlContainer.findViewById(R.id.extension_toolbar_container_stub);
+        if (extensionToolbarStub != null) {
+            // TODO(crbug.com/448691376): Change ExtensionToolbarCoordinator profileSupplier and
+            // tabProvider arguments to Supplier<@Nullable Profile> and Supplier<@Nullable Tab> and
+            // updated the rest of the code.
+            mExtensionToolbarCoordinator =
+                    ExtensionToolbarCoordinator.maybeCreate(
+                            mActivity,
+                            extensionToolbarStub,
+                            windowAndroid,
+                            (ObservableSupplier<Profile>) profileSupplier,
+                            (ObservableSupplier<Tab>) tabProvider,
+                            mTabCreatorManager.getTabCreator(false),
+                            browsingModeThemeColorProvider);
+        }
+
         mToolbarLongPressMenuHandler =
                 new ToolbarLongPressMenuHandler(
                         /* context= */ mActivity,
-                        mProfileSupplier,
+                        profileSupplier,
                         mIsCustomTab,
-                        mOmniboxFocusStateSupplier,
+                        this::shouldSuppressToolbarLongPress,
                         mActivityLifecycleDispatcher,
                         mWindowAndroid,
-                        () -> getUrlBarTextWithoutAutocomplete(),
+                        () -> mLocationBarModel.getUrlBarData().url,
                         () -> getUrlBarViewRectProvider());
         OnLongClickListener onLongClickListener =
                 mToolbarLongPressMenuHandler.getOnLongClickListener();
@@ -1057,8 +1135,10 @@ public class ToolbarManager
         ViewStub progressBarStub = mActivity.findViewById(R.id.progress_bar_stub);
         if (ChromeFeatureList.sAndroidProgressBarVisualUpdate.isEnabled()) {
             ViewGroup.LayoutParams progressBarParams = progressBarStub.getLayoutParams();
-            progressBarParams.height = mActivity.getResources().getDimensionPixelSize(
-                    R.dimen.toolbar_progress_bar_increased_height);
+            progressBarParams.height =
+                    mActivity
+                            .getResources()
+                            .getDimensionPixelSize(R.dimen.toolbar_progress_bar_increased_height);
             progressBarStub.setLayoutParams(progressBarParams);
         }
 
@@ -1071,15 +1151,19 @@ public class ToolbarManager
         mToolbar =
                 createTopToolbarCoordinator(
                         controlContainer,
-                        toolbarLayout,
                         buttonDataProviders,
                         browsingModeThemeColorProvider,
+                        mIncognitoStateProvider,
                         initializeWithIncognitoColors,
                         mConstraintsProxy,
                         onLongClickListener,
                         progressBar,
-                        historyDelegate);
-        mTabStripHeightSupplier = new ObservableSupplierImpl<>(mToolbar.getTabStripHeight());
+                        historyDelegate,
+                        topControlsStacker);
+        mTabStripHeightSupplier = new TabStripHeightSupplier(mToolbar.getTabStripHeight());
+        if (ChromeFeatureList.sTopControlsRefactor.isEnabled()) {
+            mTopControlsStacker.addControl(mTabStripHeightSupplier);
+        }
         mActionModeController =
                 new ActionModeController(
                         mActivity,
@@ -1090,7 +1174,7 @@ public class ToolbarManager
         tabObscuringHandler.addObserver(this);
 
         if (mIsCustomTab) {
-            CustomTabToolbar customTabToolbar = ((CustomTabToolbar) toolbarLayout);
+            CustomTabToolbar customTabToolbar = ((CustomTabToolbar) mToolbarLayout);
             mLocationBar =
                     customTabToolbar.createLocationBar(
                             mLocationBarModel,
@@ -1111,39 +1195,44 @@ public class ToolbarManager
                             mTabCreatorManager.getTabCreator(
                                     mIncognitoStateProvider.isIncognitoSelected()));
             OmniboxSuggestionsDropdownScrollListener scrollListener =
-                    toolbarLayout instanceof OmniboxSuggestionsDropdownScrollListener
-                            ? (OmniboxSuggestionsDropdownScrollListener) toolbarLayout
+                    mToolbarLayout instanceof OmniboxSuggestionsDropdownScrollListener
+                            ? (OmniboxSuggestionsDropdownScrollListener) mToolbarLayout
                             : null;
 
             Supplier<Integer> bottomWindowPaddingSupplier =
-                    () ->
-                            mEdgeToEdgeControllerSupplier.get() != null
-                                    ? mEdgeToEdgeControllerSupplier.get().getBottomInsetPx()
-                                    : 0;
+                    () -> {
+                        var edgeToEdgeController = mEdgeToEdgeControllerSupplier.get();
+                        return edgeToEdgeController != null
+                                ? edgeToEdgeController.getBottomInsetPx()
+                                : 0;
+                    };
 
+            // TODO(crbug.com/448691376): Change LocationBarCoordinator profileSupplier argument to
+            // Supplier<@Nullable Profile> and updated the rest of the code.
+            // TODO(crbug.com/448691376): Change LocationBarCoordinator modalDialogManagerSupplier
+            // argument to Supplier<ModalDialogManager> and updated the rest of the code.
             LocationBarCoordinator locationBarCoordinator =
                     new LocationBarCoordinator(
                             mActivity.findViewById(R.id.location_bar),
-                            toolbarLayout,
-                            mProfileSupplier,
+                            mToolbarLayout,
+                            (ObservableSupplier<Profile>) profileSupplier,
                             mLocationBarModel,
                             mActionModeController.getActionModeCallback(),
                             windowAndroid,
                             mActivityTabProvider,
-                            modalDialogManagerSupplier,
+                            (Supplier<@Nullable ModalDialogManager>) modalDialogManagerSupplier,
                             shareDelegateSupplier,
                             mIncognitoStateProvider,
                             activityLifecycleDispatcher,
                             mOverrideUrlLoadingDelegate,
                             new BackKeyBehaviorDelegate() {},
                             toolbarPageInfo::show,
-                            IntentHandler::bringTabToFront,
-                            DownloadUtils::isAllowedToDownloadPage,
+                            IntentHandler::bringTabGroupToFront,
                             NewTabPageUma::recordOmniboxNavigation,
-                            TabWindowManagerSingleton::getInstance,
-                            (url) ->
-                                    mBookmarkModelSupplier.hasValue()
-                                            && mBookmarkModelSupplier.get().isBookmarked(url),
+                            (url) -> {
+                                BookmarkModel bridge = mBookmarkModelSupplier.get();
+                                return bridge != null && bridge.isBookmarked(url);
+                            },
                             () ->
                                     mToolbar.getCurrentOptionalButtonVariant()
                                             == AdaptiveToolbarButtonVariant.VOICE,
@@ -1160,9 +1249,11 @@ public class ToolbarManager
                             mBrowserControlsSizer,
                             ToolbarPositionController.isToolbarPositionCustomizationEnabled(
                                     mActivity, mIsCustomTab),
-                            DownloadUtils::downloadOfflinePage);
-            toolbarLayout.setLocationBarCoordinator(locationBarCoordinator);
-            toolbarLayout.setBrowserControlsVisibilityDelegate(mControlsVisibilityDelegate);
+                            pageZoomManager,
+                            TabFavicon::getBitmap);
+            mToolbarLayout.setLocationBarCoordinator(locationBarCoordinator);
+            mToolbarLayout.setBrowserControlsVisibilityDelegate(mControlsVisibilityDelegate);
+            mToolbarLayout.setBrowserControlsStateProvider(mBrowserControlsSizer);
             mLocationBar = locationBarCoordinator;
         }
 
@@ -1187,18 +1278,22 @@ public class ToolbarManager
         mLocationBar.addOmniboxSuggestionsDropdownScrollListener(mStatusBarColorController);
 
         mProgressBarCoordinator =
-                new LoadProgressCoordinator(mActivityTabProvider, mToolbar.getProgressBar());
+                new LoadProgressCoordinator(
+                        mActivityTabProvider,
+                        mToolbar.getProgressBar(),
+                        topControlsStacker,
+                        mBrowserControlsSizer);
         mToolbar.setToolbarColorObserver(statusBarColorController);
 
         mActivityTabTabObserver =
                 new ActivityTabProvider.ActivityTabTabObserver(mActivityTabProvider) {
-                    private NavigationHandle mLastNavigation;
-                    private String mLastUrl;
-                    private String mCurrentUrl;
+                    private @Nullable NavigationHandle mLastNavigation;
+                    private @Nullable String mLastUrl;
+                    private @Nullable String mCurrentUrl;
                     private long mLastNavigationTimestamp;
 
                     @Override
-                    public void onObservingDifferentTab(Tab tab, boolean hint) {
+                    public void onObservingDifferentTab(@Nullable Tab tab, boolean hint) {
                         // ActivityTabProvider will null out the tab passed to
                         // onObservingDifferentTab when the tab is non-interactive (e.g. when
                         // entering the TabSwitcher).
@@ -1206,9 +1301,10 @@ public class ToolbarManager
                         // tab, but will update the URL.
                         onBackPressStateChanged();
                         onBackForwardTransitionAnimationChange();
+                        applyIncognitoNtpAccessibilityOrder(tab);
                         mBackGestureInProgress = false;
                         if (tab == null) {
-                            mLocationBarModel.notifyUrlChanged();
+                            mLocationBarModel.notifyUrlChanged(false);
                             return;
                         }
                         // Switching tabs.
@@ -1240,7 +1336,7 @@ public class ToolbarManager
 
                         assert tab == mLocationBarModel.getTab();
                         mLocationBarModel.notifySecurityStateChanged();
-                        mLocationBarModel.notifyUrlChanged();
+                        mLocationBarModel.notifyUrlChanged(false);
                     }
 
                     @Override
@@ -1297,20 +1393,11 @@ public class ToolbarManager
                         mLocationBarModel.notifyContentChanged();
                         checkIfNtpLoaded();
                         mToolbar.onTabContentViewChanged();
-                        maybeShowOrClearCursorInLocationBar();
+                        mLocationBar.maybeShowOrClearCursorInLocationBar();
                         // Paint preview status might have been changed. Update the omnibox chip.
                         mLocationBarModel.notifySecurityStateChanged();
                         onBackPressStateChanged();
-                    }
-
-                    @Override
-                    public void onWebContentsSwapped(
-                            Tab tab, boolean didStartLoad, boolean didFinishLoad) {
-                        onBackPressStateChanged();
-                        if (!didStartLoad) return;
-                        mLocationBarModel.notifyWebContentsSwapped();
-                        mLocationBarModel.notifyUrlChanged();
-                        mLocationBarModel.notifySecurityStateChanged();
+                        applyIncognitoNtpAccessibilityOrder(tab);
                     }
 
                     @Override
@@ -1351,6 +1438,8 @@ public class ToolbarManager
                             if (mLastUrl != null
                                     && mLastUrl.equals(newUrl)
                                     && !mLastUrl.equals(mCurrentUrl)) {
+                                assumeNonNull(mLastNavigation);
+
                                 // Backfalsing detected, emit metrics.
                                 // NavigationHandle#isBack or #isForward is true when the
                                 // navigation is caused by Tab#goBack or #goForward, such as
@@ -1412,6 +1501,9 @@ public class ToolbarManager
                         onBackPressStateChanged();
                         mLocationBarModel.notifyDidStartNavigation(
                                 navigationHandle.isSameDocument());
+                        if (mIsCustomTab) {
+                            ((CustomTabToolbar) mToolbarLayout).resetOptionalButtonState();
+                        }
                     }
 
                     @Override
@@ -1433,6 +1525,11 @@ public class ToolbarManager
                     public void didBackForwardTransitionAnimationChange(Tab tab) {
                         onBackForwardTransitionAnimationChange();
                     }
+
+                    @Override
+                    public void onContentViewScrollingStateChanged(boolean scrolling) {
+                        mToolbar.onContentViewScrollingStateChanged(scrolling);
+                    }
                 };
 
         mCurrentTabModelObserver =
@@ -1452,7 +1549,7 @@ public class ToolbarManager
 
         mBrowserControlsObserver =
                 new BrowserControlsStateProvider.Observer() {
-                    private OnLayoutChangeListener mLayoutChangeListener;
+                    private @Nullable OnLayoutChangeListener mLayoutChangeListener;
 
                     @Override
                     public void onControlsOffsetChanged(
@@ -1491,6 +1588,12 @@ public class ToolbarManager
                                     };
                             mControlContainer.addOnLayoutChangeListener(mLayoutChangeListener);
                         }
+                    }
+
+                    @Override
+                    public void onControlsPositionChanged(@ControlsPosition int controlsPosition) {
+                        Tab currentTab = mActivityTabProvider.get();
+                        applyIncognitoNtpAccessibilityOrder(currentTab);
                     }
                 };
         mBrowserControlsSizer.addObserver(mBrowserControlsObserver);
@@ -1572,9 +1675,9 @@ public class ToolbarManager
                             mToolbar.onTabSwitcherTransitionFinished();
                             updateButtonStatus();
 
-                            if (DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity)) {
+                            if (mIsTablet) {
                                 checkIfNtpLoaded();
-                                maybeShowOrClearCursorInLocationBar();
+                                mLocationBar.maybeShowOrClearCursorInLocationBar();
                             }
                         }
                     }
@@ -1593,22 +1696,22 @@ public class ToolbarManager
                     }
                 };
 
-        mToolbar.setIncognitoStateProvider(mIncognitoStateProvider, overviewColorSupplier);
-
         mFindToolbarManager = findToolbarManager;
         mFindToolbarManager.addObserver(mFindToolbarObserver);
 
-        Callback<Profile> profileObserver =
-                new Callback<>() {
+        Callback<@Nullable Profile> profileObserver =
+                new Callback<@Nullable Profile>() {
                     @Override
-                    public void onResult(Profile profile) {
+                    @SuppressWarnings("NullAway") // https://github.com/uber/NullAway/issues/1202
+                    public void onResult(@Nullable Profile profile) {
+                        assert profile != null;
                         mTemplateUrlService = TemplateUrlServiceFactory.getForProfile(profile);
                         mTemplateUrlService.runWhenLoaded(
                                 ToolbarManager.this::registerTemplateUrlObserver);
                         mProfileSupplier.removeObserver(this);
                     }
                 };
-        mProfileSupplier.addObserver(profileObserver);
+        profileSupplier.addObserver(profileObserver);
         mReadAloudControllerSupplier = readAloudControllerSupplier;
         mReadAloudControllerSupplier.addObserver(
                 readAloudController -> {
@@ -1641,49 +1744,47 @@ public class ToolbarManager
         mWindowAndroid.setProgressBarConfigProvider(mProgressBarConfigProvider);
         initializeToolbarPositionController();
 
-        ViewStub extensionToolbarStub =
-                controlContainer.findViewById(R.id.extension_toolbar_container_stub);
-        if (extensionToolbarStub != null) {
-            mExtensionToolbarManager =
-                    ExtensionToolbarManager.maybeCreate(
-                            mActivity,
-                            extensionToolbarStub,
-                            windowAndroid,
-                            profileSupplier,
-                            tabProvider,
-                            browsingModeThemeColorProvider);
-        }
-
-        var xrManager = XrSceneCoreUtils.getXrSceneCoreSessionManagerFromContext(mActivity);
-        if (xrManager != null) {
-            mXrSpaceModeObservableSupplier = xrManager.getXrSpaceModeObservableSupplier();
+        mXrSpaceModeObservableSupplier = xrSpaceModeObservableSupplier;
+        if (mXrSpaceModeObservableSupplier != null) {
             mXrSpaceModeObservableSupplier.addSyncObserver(mOnXrSpaceModeChanged);
         }
+
+        mControlContainer
+                .getToolbarResourceAdapter()
+                .addOnResourceReadyCallback(
+                        (Resource r) -> {
+                            // {@link DynamicResourceSnapshot} saves an id to return for
+                            // createNativeResource. Otherwise this might be creating a new native
+                            // resource, which we wouldn't want.
+                            assert r instanceof DynamicResourceSnapshot;
+                            mCaptureResourceIdSupplier.set(r.createNativeResource());
+                        });
 
         TraceEvent.end("ToolbarManager.ToolbarManager");
     }
 
+    private boolean shouldSuppressToolbarLongPress() {
+        return mOmniboxFocusStateSupplier.get()
+                || (mToolbarPositionController != null
+                        && mToolbarPositionController.doesPrefMismatchPosition());
+    }
+
     private void back(int metaState) {
         setUrlBarFocus(false, OmniboxFocusReason.UNFOCUS);
-        if (ChromeFeatureList.isEnabled(ChromeFeatureList.ANDROID_META_CLICK_HISTORY_NAVIGATION)) {
-            boolean hasControl = (metaState & KeyEvent.META_CTRL_ON) != 0;
-            boolean hasShift = (metaState & KeyEvent.META_SHIFT_ON) != 0;
-            if (hasControl && hasShift) {
-                // Holding ALT is allowed as well (reference desktop behavior).
-                final boolean isSuccess =
-                        mToolbarTabController.backInNewTab(/* foregroundNewTab= */ true);
-                if (isSuccess) RecordUserAction.record("MobileToolbarBackInNewForegroundTab");
-            } else if (hasControl) {
-                final boolean isSuccess =
-                        mToolbarTabController.backInNewTab(/* foregroundNewTab= */ false);
-                if (isSuccess) RecordUserAction.record("MobileToolbarBackInNewBackgroundTab");
-            } else if (hasShift) {
-                final boolean isSuccess = mToolbarTabController.backInNewWindow();
-                if (isSuccess) RecordUserAction.record("MobileToolbarBackInNewForegroundWindow");
-            } else {
-                final boolean isSuccess = mToolbarTabController.back();
-                if (isSuccess) RecordUserAction.record("MobileToolbarBack");
-            }
+        boolean hasControl = (metaState & KeyEvent.META_CTRL_ON) != 0;
+        boolean hasShift = (metaState & KeyEvent.META_SHIFT_ON) != 0;
+        if (hasControl && hasShift) {
+            // Holding ALT is allowed as well (reference desktop behavior).
+            final boolean isSuccess =
+                    mToolbarTabController.backInNewTab(/* foregroundNewTab= */ true);
+            if (isSuccess) RecordUserAction.record("MobileToolbarBackInNewForegroundTab");
+        } else if (hasControl) {
+            final boolean isSuccess =
+                    mToolbarTabController.backInNewTab(/* foregroundNewTab= */ false);
+            if (isSuccess) RecordUserAction.record("MobileToolbarBackInNewBackgroundTab");
+        } else if (hasShift) {
+            final boolean isSuccess = mToolbarTabController.backInNewWindow();
+            if (isSuccess) RecordUserAction.record("MobileToolbarBackInNewForegroundWindow");
         } else {
             final boolean isSuccess = mToolbarTabController.back();
             if (isSuccess) RecordUserAction.record("MobileToolbarBack");
@@ -1697,10 +1798,7 @@ public class ToolbarManager
         }
         setUrlBarFocus(false, OmniboxFocusReason.UNFOCUS);
         mToolbarTabController.openHomepage();
-        Tracker tracker =
-                mProfileSupplier.hasValue()
-                        ? TrackerFactory.getTrackerForProfile(mProfileSupplier.get())
-                        : null;
+        Tracker tracker = TrackerFactory.getTrackerForProfile(mProfileSupplier);
         boolean isPartnerHomepageEnabled =
                 PartnerBrowserCustomizations.getInstance().isHomepageProviderAvailableAndEnabled();
         if (tracker != null && isPartnerHomepageEnabled) {
@@ -1714,24 +1812,33 @@ public class ToolbarManager
             return;
         }
 
-        mIsNtpShowingSupplier.set(getNewTabPageForCurrentTab() != null);
+        mIsNtpWithFakeboxShowingSupplier.set(
+                getNewTabPageForCurrentTab() != null
+                        && getNewTabPageForCurrentTab().isLocationBarShownInNtp());
         mIsTabSwitcherFinishedShowingSupplier.set(
                 mLayoutStateProvider != null
                         ? mLayoutStateProvider.getActiveLayoutType() == LayoutType.TAB_SWITCHER
                         : false);
+        ObservableSupplier<ManualFillingComponent> manualFillingComponentSupplier =
+                ManualFillingComponentSupplier.from(mWindowAndroid);
+        assert manualFillingComponentSupplier != null;
         KeyboardAccessoryStateSupplier keyboardAccessoryStateSupplier =
                 new KeyboardAccessoryStateSupplier(
-                        ManualFillingComponentSupplier.from(mWindowAndroid),
-                        mControlContainer.getView());
+                        manualFillingComponentSupplier, mControlContainer.getView());
         ObservableSupplierImpl<Integer> controlContainerTranslationSupplier =
                 new ObservableSupplierImpl<>(0);
         ObservableSupplierImpl<Integer> controlContainerHeightSupplier =
-                new ObservableSupplierImpl<>(LayoutParams.WRAP_CONTENT);
+                new ObservableSupplierImpl<>(mControlContainer.getToolbarHeight());
+
+        mControlContainer.setOnHeightChangedListener(controlContainerHeightSupplier);
+
+        // TODO(crbug.com/448691376): Change ToolbarPositionController profileSupplier argument
+        // to Supplier<@Nullable Profile> and updated the rest of the code.
         mToolbarPositionController =
                 new ToolbarPositionController(
                         mBrowserControlsSizer,
                         ContextUtils.getAppSharedPreferences(),
-                        mIsNtpShowingSupplier,
+                        mIsNtpWithFakeboxShowingSupplier,
                         mIsTabSwitcherFinishedShowingSupplier,
                         mOmniboxFocusStateSupplier,
                         mFormFieldFocusedSupplier,
@@ -1739,13 +1846,19 @@ public class ToolbarManager
                         keyboardAccessoryStateSupplier,
                         mWindowAndroid.getKeyboardDelegate(),
                         mControlContainer,
+                        mToolbarLayout,
                         mBottomControlsStacker,
                         mBottomToolbarControlsOffsetSupplier,
                         mProgressBarContainer,
                         controlContainerTranslationSupplier,
                         controlContainerHeightSupplier,
+                        mTopInsetCoordinatorSupplier,
                         new Handler(Looper.getMainLooper()),
-                        mActivity);
+                        mActivity,
+                        mToolbarPositionSupplier,
+                        (ObservableSupplier<Profile>) mProfileSupplier,
+                        assertNonNull(mWindowAndroid.getInsetObserver())
+                                .getSupplierForKeyboardInset());
         if (ChromeFeatureList.sMiniOriginBar.isEnabled()) {
             mMiniOriginBarController =
                     new MiniOriginBarController(
@@ -1756,9 +1869,8 @@ public class ToolbarManager
                             mControlContainer,
                             mSuppressToolbarSceneLayerSupplier,
                             mBrowserControlsSizer,
-                            mWindowAndroid.getInsetObserver(),
+                            assertNonNull(mWindowAndroid.getInsetObserver()),
                             controlContainerTranslationSupplier,
-                            controlContainerHeightSupplier,
                             keyboardAccessoryStateSupplier.getIsSheetShowingSupplier(),
                             this::isUrlBarFocused);
         }
@@ -1801,26 +1913,28 @@ public class ToolbarManager
 
     private TopToolbarCoordinator createTopToolbarCoordinator(
             ToolbarControlContainer controlContainer,
-            ToolbarLayout toolbarLayout,
             List<ButtonDataProvider> buttonDataProviders,
             ThemeColorProvider browsingModeThemeColorProvider,
+            IncognitoStateProvider incognitoStateProvider,
             boolean initializeWithIncognitoColors,
-            ObservableSupplier<Integer> constraintsSupplier,
-            OnLongClickListener onLongClickListener,
+            ObservableSupplier<@Nullable Integer> constraintsSupplier,
+            @Nullable OnLongClickListener onLongClickListener,
             ToolbarProgressBar progressBar,
-            NavigationPopup.HistoryDelegate historyDelegate) {
+            NavigationPopup.HistoryDelegate historyDelegate,
+            TopControlsStacker topControlsStacker) {
         TopToolbarCoordinator toolbar =
                 new TopToolbarCoordinator(
                         controlContainer,
-                        toolbarLayout,
+                        mToolbarLayout,
                         mLocationBarModel,
                         mToolbarTabController,
                         mUserEducationHelper,
                         buttonDataProviders,
                         mLayoutStateProviderSupplier,
                         browsingModeThemeColorProvider,
+                        incognitoStateProvider,
                         mMenuButtonCoordinator,
-                        mMenuButtonCoordinator.getMenuButtonHelperSupplier(),
+                        assertNonNull(mMenuButtonCoordinator.getMenuButtonHelperSupplier()),
                         mTabSwitcherButtonCoordinator,
                         mCustomTabCount,
                         mHomepageEnabledSupplier,
@@ -1840,9 +1954,13 @@ public class ToolbarManager
                         mActivityTabProvider,
                         mToolbarNavControlsEnabledSupplier,
                         mBackButtonCoordinator,
+                        mForwardButtonCoordinator,
                         mIsNewTabPageCustomizationToolbarButtonEnabled
                                 ? mHomePageButtonsCoordinator
-                                : mHomeButtonCoordinator);
+                                : mHomeButtonCoordinator,
+                        mExtensionToolbarCoordinator,
+                        topControlsStacker,
+                        mBrowserControlsSizer);
 
         mHomepageStateListener =
                 () -> {
@@ -1869,9 +1987,54 @@ public class ToolbarManager
         }
     }
 
-    /** Returns the NTP toolbar transition percentage for the search box to cover the toolbar. */
-    public float getNtpTransitionPercentage() {
-        return mNtpSearchBoxScrollPercentage;
+    // TODO(crbug.com/430518884): Remove when the proper fix is implemented.
+    /**
+     * Sets accessibility order for incognito ntp.
+     *
+     * @param tab Chrome Tab.
+     */
+    private void applyIncognitoNtpAccessibilityOrder(@Nullable Tab tab) {
+        final boolean isIncognitoNtp =
+                tab != null
+                        && tab.isIncognitoBranded()
+                        && UrlUtilities.isNtpUrl(tab.getUrl())
+                        && tab.getView() != null;
+
+        if (isIncognitoNtp) {
+            assumeNonNull(tab);
+            View ntpView = tab.getView();
+            assumeNonNull(ntpView);
+            int ntpViewId = ntpView.getId();
+            @ControlsPosition int controlsPosition = mBrowserControlsSizer.getControlsPosition();
+
+            switch (controlsPosition) {
+                case ControlsPosition.TOP:
+                    mIncognitoNtpViewIdForA11y = View.NO_ID;
+                    mToolbar.setAccessibilityTraversalAfter(View.NO_ID);
+                    ntpView.setAccessibilityTraversalAfter(R.id.toolbar);
+                    break;
+                case ControlsPosition.BOTTOM:
+                    mIncognitoNtpViewIdForA11y = ntpViewId;
+                    ntpView.setAccessibilityTraversalAfter(View.NO_ID);
+                    mToolbar.setAccessibilityTraversalAfter(ntpViewId);
+                    break;
+                default:
+                    break;
+            }
+        } else {
+            // Not on Incognito NTP. If accessibility order was previously
+            // set with ntp view id, reset it.
+            if (mIncognitoNtpViewIdForA11y != View.NO_ID
+                    && mToolbar.getAccessibilityTraversalAfter() == mIncognitoNtpViewIdForA11y) {
+                mToolbar.setAccessibilityTraversalAfter(View.NO_ID);
+            }
+            mIncognitoNtpViewIdForA11y = View.NO_ID;
+        }
+    }
+
+    /** Returns a supplier that provides the NTP search box transition percentage. */
+    public ObservableSupplier<Float> getNtpSearchBoxTransitionPercentageSupplier() {
+        return mNtpSearchBoxTransitionPercentageSupplier;
     }
 
     /** Returns the {@link CustomTabCount} object to overwrite the tab count in the toolbar. */
@@ -1881,7 +2044,7 @@ public class ToolbarManager
 
     // Base abstract implementation of NewTabPageDelegate for phone/table toolbar layout.
     private abstract class ToolbarNtpDelegate implements NewTabPageDelegate {
-        protected NewTabPage mVisibleNtp;
+        protected @Nullable NewTabPage mVisibleNtp;
 
         @Override
         public boolean wasShowingNtp() {
@@ -1929,13 +2092,13 @@ public class ToolbarManager
             NewTabPage newVisibleNtp = getNewTabPageForCurrentTab();
             if (mVisibleNtp != null) {
                 mVisibleNtp.setSearchBoxScrollListener(null);
-                mNtpSearchBoxScrollPercentage = 0f;
+                mNtpSearchBoxTransitionPercentageSupplier.set(0f);
             }
             mVisibleNtp = newVisibleNtp;
             if (mVisibleNtp != null && shouldUpdateListener()) {
                 mVisibleNtp.setSearchBoxScrollListener(
                         (fraction) -> {
-                            mNtpSearchBoxScrollPercentage = fraction;
+                            mNtpSearchBoxTransitionPercentageSupplier.set(fraction);
                             scrollCallback.onResult(fraction);
                         });
             }
@@ -1970,15 +2133,16 @@ public class ToolbarManager
         }
     }
 
-    private NewTabPageDelegate createNewTabPageDelegate(ToolbarLayout toolbarLayout) {
-        if (toolbarLayout instanceof ToolbarPhone) {
+    private NewTabPageDelegate createNewTabPageDelegate() {
+        if (mToolbarLayout instanceof ToolbarPhone) {
             return new ToolbarNtpDelegate() {
                 @Override
                 protected boolean shouldUpdateListener() {
+                    assumeNonNull(mVisibleNtp);
                     return mVisibleNtp.isLocationBarShownInNtp();
                 }
             };
-        } else if (toolbarLayout instanceof ToolbarTablet) {
+        } else if (mToolbarLayout instanceof ToolbarTablet) {
             return new ToolbarNtpDelegate() {
                 @Override
                 public void setSearchBoxScrollListener(Callback<Float> scrollCallback) {
@@ -1995,17 +2159,21 @@ public class ToolbarManager
         return NewTabPageDelegate.EMPTY;
     }
 
-    private NewTabPage getNewTabPageForCurrentTab() {
+    private @Nullable NewTabPage getNewTabPageForCurrentTab() {
         if (mLocationBarModel.hasTab()) {
-            NativePage nativePage = mLocationBarModel.getTab().getNativePage();
+            Tab tab = mLocationBarModel.getTab();
+            assumeNonNull(tab);
+            NativePage nativePage = tab.getNativePage();
             if (nativePage instanceof NewTabPage) return (NewTabPage) nativePage;
         }
         return null;
     }
 
-    private IncognitoNewTabPage getIncognitoNewTabPageForCurrentTab() {
+    private @Nullable IncognitoNewTabPage getIncognitoNewTabPageForCurrentTab() {
         if (mLocationBarModel.hasTab()) {
-            NativePage nativePage = mLocationBarModel.getTab().getNativePage();
+            Tab tab = mLocationBarModel.getTab();
+            assumeNonNull(tab);
+            NativePage nativePage = tab.getNativePage();
             if (nativePage instanceof IncognitoNewTabPage incognitoNewTabPage) {
                 return incognitoNewTabPage;
             }
@@ -2042,6 +2210,9 @@ public class ToolbarManager
         View root = ((ViewStub) mActivity.findViewById(R.id.bottom_controls_stub)).inflate();
         assert mTabGroupUiOneshotSupplier == null;
         assert mUndoBarThrottle != null;
+        assert mLayoutManager != null;
+        assert mConstraintsProxy != null;
+        assert mTabModelSelector != null;
         ThemeColorProvider bottomUiThemeColorProvider =
                 new BottomUiThemeColorProvider(
                         mTopUiThemeColorProvider,
@@ -2128,11 +2299,11 @@ public class ToolbarManager
      * @param undoBarThrottle For suppressing the undo bar.
      */
     public void initializeWithNative(
-            @NonNull LayoutManagerImpl layoutManager,
+            LayoutManagerImpl layoutManager,
             @Nullable StripLayoutHelperManager stripLayoutHelperManager,
-            Runnable openGridTabSwitcherHandler,
-            OnClickListener bookmarkClickHandler,
-            OnClickListener customTabsBackClickHandler,
+            @Nullable Runnable openGridTabSwitcherHandler,
+            @Nullable OnClickListener bookmarkClickHandler,
+            @Nullable OnClickListener customTabsBackClickHandler,
             @Nullable ObservableSupplier<Integer> archivedTabCountSupplier,
             ObservableSupplier<TabModelDotInfo> tabModelNotificationDotSupplier,
             @Nullable UndoBarThrottle undoBarThrottle) {
@@ -2152,6 +2323,8 @@ public class ToolbarManager
         // Must be initialized before Toolbar attempts to use it.
         mLocationBarModel.initializeWithNative();
         if (mTabSwitcherButtonCoordinator != null) {
+            assert openGridTabSwitcherHandler != null;
+
             OnLongClickListener tabSwitcherLongClickListener =
                     TabSwitcherActionMenuCoordinator.createOnLongClickListener(
                             menuItemId -> mAppMenuDelegate.onOptionsItemSelected(menuItemId, null),
@@ -2182,6 +2355,28 @@ public class ToolbarManager
                                             progressBarContainerY - controlContainerY,
                                             0,
                                             mControlContainer.getHeight());
+
+                    if (ChromeFeatureList.sAndroidAnimatedProgressBarInBrowser.isEnabled()) {
+                        // TODO(peilinwang) update these calculations and move them to the stackers
+                        // when the progress bar gets decoupled from the toolbar and when top
+                        // stacker is complete.
+                        int toolbarPosition = mToolbarPositionSupplier.get();
+                        if (toolbarPosition == ControlsPosition.TOP) {
+                            yOffset =
+                                    mTopControlsStacker.getHeightFromLayerToTop(
+                                                    TopControlType.PROGRESS_BAR)
+                                            - mTopControlsStacker.getHeightFromLayerToTop(
+                                                    TopControlType.TOOLBAR);
+                        } else if (toolbarPosition == ControlsPosition.BOTTOM) {
+                            yOffset =
+                                    -(mBottomControlsStacker.getHeightFromLayerToBottom(
+                                                            LayerType.PROGRESS_BAR)
+                                                    - mBottomControlsStacker
+                                                            .getHeightFromLayerToBottom(
+                                                                    LayerType.BOTTOM_TOOLBAR))
+                                            - mProgressBarContainer.getHeight();
+                        }
+                    }
                     drawingInfo.progressBarRect.offset(0, yOffset);
                     drawingInfo.progressBarBackgroundRect.offset(0, yOffset);
                 };
@@ -2197,7 +2392,8 @@ public class ToolbarManager
                 mTopUiThemeColorProvider,
                 mBottomToolbarControlsOffsetSupplier,
                 mSuppressToolbarSceneLayerSupplier,
-                onProgressInfoUpdate);
+                onProgressInfoUpdate,
+                mCaptureResourceIdSupplier);
         mTabStripHeightSupplier.set(mToolbar.getTabStripHeight());
 
         mAttachStateChangeListener =
@@ -2244,9 +2440,14 @@ public class ToolbarManager
             mUpdateMenuItemHelper.registerObserver(mMenuStateObserver);
         }
 
-        if (mExtensionToolbarManager != null) {
-            mExtensionToolbarManager.initializeWithNative();
-        }
+        mIncognitoNtpOmniboxAutofocusManager =
+                IncognitoNtpOmniboxAutofocusManager.maybeCreate(
+                        mActivity,
+                        getOmniboxStub(),
+                        mLayoutManager,
+                        mTabModelSelector,
+                        IncognitoNtpUtils::getIncognitoNtpView,
+                        IncognitoNtpUtils::getIncognitoNtpContentMetrics);
 
         mInitializedWithNative = true;
         mTabModelSelector.getCurrentTabModelSupplier().addObserver(mCurrentTabModelObserver);
@@ -2255,8 +2456,10 @@ public class ToolbarManager
         mIncognitoStateProvider.setTabModelSelector(mTabModelSelector);
         mAppThemeColorProvider.setIncognitoStateProvider(mIncognitoStateProvider);
 
-        if (mBottomControlsCoordinatorSupplier.get() != null) {
-            mBottomControlsCoordinatorSupplier.get().initializeWithNative();
+        BottomControlsCoordinator bottomControlsCoordinator =
+                mBottomControlsCoordinatorSupplier.get();
+        if (bottomControlsCoordinator != null) {
+            bottomControlsCoordinator.initializeWithNative();
         }
 
         if (mOnInitializedRunnable != null) {
@@ -2271,6 +2474,7 @@ public class ToolbarManager
                 && !currentTab.getUrl().isEmpty()) {
             mControlContainer.setReadyForBitmapCapture(true);
         }
+
         TraceEvent.end("ToolbarManager.initializeWithNative");
     }
 
@@ -2324,9 +2528,24 @@ public class ToolbarManager
         mToolbar.updateCustomActionButton(index, drawable, description);
     }
 
+    /**
+     * Sets the delegate for the optional button.
+     *
+     * @param delegate The {@link OptionalBrowsingModeButtonController.Delegate}.
+     */
+    public void setOptionalButtonDelegate(OptionalBrowsingModeButtonController.Delegate delegate) {
+        mToolbar.setOptionalButtonDelegate(delegate);
+    }
+
     /** Call to tear down all of the toolbar dependencies. */
+    @SuppressWarnings("NullAway")
     public void destroy() {
         mIsDestroyed = true;
+
+        if (mIncognitoNtpOmniboxAutofocusManager != null) {
+            mIncognitoNtpOmniboxAutofocusManager.destroy();
+            mIncognitoNtpOmniboxAutofocusManager = null;
+        }
 
         var omnibox = mLocationBar.getOmniboxStub();
         if (omnibox != null) {
@@ -2376,8 +2595,10 @@ public class ToolbarManager
 
         HomepageManager.getInstance().removeListener(mHomepageStateListener);
 
-        if (mBottomControlsCoordinatorSupplier.get() != null) {
-            mBottomControlsCoordinatorSupplier.get().destroy();
+        BottomControlsCoordinator bottomControlsCoordinator =
+                mBottomControlsCoordinatorSupplier.get();
+        if (bottomControlsCoordinator != null) {
+            bottomControlsCoordinator.destroy();
             mBottomControlsCoordinatorSupplier = null;
         }
 
@@ -2394,6 +2615,7 @@ public class ToolbarManager
             mToolbar.removeTabStripHeightObserver(mTabStripHeightObserver);
             mTabStripHeightObserver = null;
         }
+        mTopControlsStacker.removeControl(mTabStripHeightSupplier);
         mTabStripHeightSupplier = null;
         mToolbar.destroy();
         mToolbarLongPressMenuHandler.destroy();
@@ -2441,6 +2663,10 @@ public class ToolbarManager
             mBackButtonCoordinator.destroy();
         }
 
+        if (mHomeButtonCoordinator != null) {
+            mHomeButtonCoordinator.destroy();
+        }
+
         if (mOverviewModeMenuButtonCoordinator != null) {
             mOverviewModeMenuButtonCoordinator.destroy();
             mOverviewModeMenuButtonCoordinator = null;
@@ -2453,9 +2679,9 @@ public class ToolbarManager
             mTabSwitcherButtonCoordinator = null;
         }
 
-        if (mExtensionToolbarManager != null) {
-            mExtensionToolbarManager.destroy();
-            mExtensionToolbarManager = null;
+        if (mExtensionToolbarCoordinator != null) {
+            mExtensionToolbarCoordinator.destroy();
+            mExtensionToolbarCoordinator = null;
         }
 
         if (mCallbackController != null) {
@@ -2510,20 +2736,20 @@ public class ToolbarManager
     }
 
     @VisibleForTesting
-    static String homepageUrl() {
-        GURL homepageGurl = HomepageManager.getInstance().getHomepageGurl();
-        if (homepageGurl.isEmpty()) {
-            return UrlConstants.NTP_URL;
-        } else {
-            return homepageGurl.getSpec();
-        }
+    String homepageUrl() {
+        Profile profile = mProfileSupplier.get();
+        boolean isIncognito = profile != null && profile.isOffTheRecord();
+        GURL homepageGurl = HomepageManager.getInstance().getHomepageGurl(isIncognito);
+        assert !homepageGurl.isEmpty();
+        return homepageGurl.getSpec();
     }
 
     private void registerTemplateUrlObserver() {
         assert mTemplateUrlObserver == null;
+        assert mTemplateUrlService != null;
         mTemplateUrlObserver =
                 new TemplateUrlServiceObserver() {
-                    private TemplateUrl mSearchEngine =
+                    private @Nullable TemplateUrl mSearchEngine =
                             mTemplateUrlService.getDefaultSearchEngineTemplateUrl();
 
                     @Override
@@ -2537,6 +2763,7 @@ public class ToolbarManager
 
                         mSearchEngine = searchEngine;
                         mToolbar.onDefaultSearchEngineChanged();
+                        checkIfNtpShowingWithNoPendingLoad();
                     }
                 };
         mTemplateUrlService.addObserver(mTemplateUrlObserver);
@@ -2601,7 +2828,7 @@ public class ToolbarManager
     }
 
     /** Return the TabStripTransitionCoordinator. */
-    public TabStripTransitionCoordinator getTabStripTransitionCoordinator() {
+    public @Nullable TabStripTransitionCoordinator getTabStripTransitionCoordinator() {
         return mToolbar.getTabStripTransitionCoordinator();
     }
 
@@ -2636,8 +2863,8 @@ public class ToolbarManager
 
     @Override
     public void onTintChanged(
-            ColorStateList tint,
-            ColorStateList activityFocusTint,
+            @Nullable ColorStateList tint,
+            @Nullable ColorStateList activityFocusTint,
             @BrandedColorScheme int brandedColorScheme) {
         updateBookmarkButtonStatus();
 
@@ -2695,10 +2922,10 @@ public class ToolbarManager
     }
 
     /**
-     * Sets the drawable that the close button shows, or hides it if {@code drawable} is
-     * {@code null}.
+     * Sets the drawable that the close button shows, or hides it if {@code drawable} is {@code
+     * null}.
      */
-    public void setCloseButtonDrawable(Drawable drawable) {
+    public void setCloseButtonDrawable(@Nullable Drawable drawable) {
         mToolbar.setCloseButtonImageResource(drawable);
     }
 
@@ -2760,6 +2987,21 @@ public class ToolbarManager
     }
 
     /**
+     * Sets a new anchor view for the progress bar, which is anchored to the bottom of a given view.
+     * By default the progress bar is anchored to the control_container, but when the Bookmark Bar
+     * is visible, it should be anchored below that.
+     *
+     * @param anchorId The ID of the new anchor view
+     */
+    public void setProgressBarAnchorView(int anchorId) {
+        // TODO(crbug.com/417238089): Position should be controlled by the TopControlsStacker.
+        CoordinatorLayout.LayoutParams params =
+                (CoordinatorLayout.LayoutParams) mProgressBarContainer.getLayoutParams();
+        params.setAnchorId(anchorId);
+        mProgressBarContainer.setLayoutParams(params);
+    }
+
+    /**
      * Same as {@code #setUrlBarFocus(boolean, @OmniboxFocusReason int)}, with the additional option
      * to set URL bar text.
      *
@@ -2768,7 +3010,7 @@ public class ToolbarManager
      * @param text The URL bar text. {@code null} if no text is to be set.
      */
     public void setUrlBarFocusAndText(
-            boolean focused, @OmniboxFocusReason int reason, String text) {
+            boolean focused, @OmniboxFocusReason int reason, @Nullable String text) {
         if (!mInitializedWithNative) return;
         if (mLocationBar.getOmniboxStub() == null) return;
         boolean wasFocused = mLocationBar.getOmniboxStub().isUrlBarFocused();
@@ -2846,7 +3088,6 @@ public class ToolbarManager
 
         mToolbar.updateButtonVisibility();
         onBackPressStateChanged();
-        mToolbar.updateForwardButtonVisibility(currentTab != null && currentTab.canGoForward());
         updateReloadState(tabCrashed);
         updateBookmarkButtonStatus();
         mMenuButtonCoordinator.setVisibility(true);
@@ -2873,10 +3114,11 @@ public class ToolbarManager
     }
 
     /** Triggered when the selected tab has changed. */
-    private void refreshSelectedTab(Tab tab) {
+    private void refreshSelectedTab(@Nullable Tab tab) {
         boolean wasIncognitoBranded = mLocationBarModel.isIncognitoBranded();
         Tab previousTab = mLocationBarModel.getTab();
 
+        assumeNonNull(mTabModelSelector);
         Profile profile =
                 tab != null ? tab.getProfile() : mTabModelSelector.getCurrentModel().getProfile();
         assert profile != null
@@ -2891,16 +3133,14 @@ public class ToolbarManager
         boolean isIncognitoBranded = profile.isIncognitoBranded();
         // This method is called prior to action mode destroy callback for incognito <-> normal
         // tab switch. Makes sure the action mode toolbar is hidden before selecting the new tab.
-        if (previousTab != null
-                && wasIncognitoBranded != isIncognitoBranded
-                && DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity)) {
+        if (previousTab != null && wasIncognitoBranded != isIncognitoBranded && mIsTablet) {
             mActionModeController.startHideAnimation();
         }
         // NOTE: Here we're not checking if isIncognitoBranded has changed because it's redundant
         // when we're already checking if tab has changed.
         if (previousTab != tab) {
             int defaultPrimaryColor =
-                    SurfaceColorUpdateUtils.getDefaultThemeColor(mActivity, isIncognitoBranded);
+                    ChromeColors.getDefaultThemeColor(mActivity, isIncognitoBranded);
             int primaryColor =
                     tab != null
                             ? mTopUiThemeColorProvider.calculateColor(tab, tab.getThemeColor())
@@ -2913,15 +3153,6 @@ public class ToolbarManager
             if (tab != null) {
                 mToolbar.onNavigatedToDifferentPage();
             }
-
-            // Ensure the URL bar loses focus if the tab it was interacting with is changed from
-            // underneath it.
-            setUrlBarFocus(false, OmniboxFocusReason.UNFOCUS);
-
-            // Place the cursor in the Omnibox if applicable.  We always clear the focus above to
-            // ensure the shield placed over the content is dismissed when switching tabs.  But if
-            // needed, we will refocus the omnibox and make the cursor visible here.
-            maybeShowOrClearCursorInLocationBar();
         }
 
         updateButtonStatus();
@@ -2957,9 +3188,12 @@ public class ToolbarManager
     private void checkIfNtpShowingWithNoPendingLoad() {
         boolean isNtpUrl = UrlUtilities.isNtpUrl(mLocationBarModel.getCurrentGurl());
         if (isNtpUrl && getNewTabPageForCurrentTab() != null) {
-            mIsNtpShowingSupplier.set(true);
+            assumeNonNull(mTemplateUrlService);
+            boolean searchEngineHasLogo = mTemplateUrlService.doesDefaultSearchEngineHaveLogo();
+            mIsNtpWithFakeboxShowingSupplier.set(
+                    NewTabPage.isInSingleUrlBarMode(mIsTablet, searchEngineHasLogo));
         } else {
-            mIsNtpShowingSupplier.set(false);
+            mIsNtpWithFakeboxShowingSupplier.set(false);
             maybeShowBottomToolbarIph();
         }
     }
@@ -2968,7 +3202,9 @@ public class ToolbarManager
         NewTabPage ntp = getNewTabPageForCurrentTab();
 
         if (ntp != null) {
-            ntp.setOmniboxStub(mLocationBar.getOmniboxStub());
+            OmniboxStub omniboxStub = mLocationBar.getOmniboxStub();
+            assert omniboxStub != null;
+            ntp.setOmniboxStub(omniboxStub);
             mLocationBarModel.notifyNtpStartedLoading();
         }
 
@@ -3003,8 +3239,10 @@ public class ToolbarManager
         }
 
         mAppThemeColorProvider.setLayoutStateProvider(mLayoutStateProvider);
-        if (mBottomControlsCoordinatorSupplier.get() != null) {
-            mBottomControlsCoordinatorSupplier.get().setLayoutStateProvider(mLayoutStateProvider);
+        BottomControlsCoordinator bottomControlsCoordinator =
+                mBottomControlsCoordinatorSupplier.get();
+        if (bottomControlsCoordinator != null) {
+            bottomControlsCoordinator.setLayoutStateProvider(mLayoutStateProvider);
         }
     }
 
@@ -3013,7 +3251,7 @@ public class ToolbarManager
 
         mLocationBarModel.notifySecurityStateChanged();
         if (updateUrl) {
-            mLocationBarModel.notifyUrlChanged();
+            mLocationBarModel.notifyUrlChanged(false);
             updateButtonStatus();
             checkIfNtpShowingWithNoPendingLoad();
         }
@@ -3036,43 +3274,8 @@ public class ToolbarManager
         return mOverviewModeMenuButtonCoordinator;
     }
 
-    /**
-     * Called whenever the NTP could have been entered or exited (e.g. tab content changed, tab
-     * navigated to from the tab strip/tab switcher, etc.). If the user is on a tablet and indeed
-     * entered or exited from the NTP, we will check the following cases:
-     *   1. If a11y is enabled, we will request a11y focus on the omnibox (e.g. for TalkBack) on the
-     * NTP.
-     *   2. If a keyboard is plugged in, we will show the URL bar cursor (without focus animations)
-     * on entering the NTP.
-     *   3. If a keyboard is plugged in, we will clear focus established in #2 above on exiting
-     * from the NTP.
-     */
-    private void maybeShowOrClearCursorInLocationBar() {
-        if (!DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity)) return;
-        Tab tab = mLocationBarModel.getTab();
-        if (tab == null) return;
-        NativePage nativePage = tab.getNativePage();
-        boolean onNtp = UrlUtilities.isNtpUrl(tab.getUrl());
-
-        if (ChromeAccessibilityUtil.get().isAccessibilityEnabled()
-                && nativePage instanceof NewTabPage) {
-            mLocationBar.requestUrlBarAccessibilityFocus();
-        }
-
-        // While a hardware keyboard is connected, loading the NTP should cause the URL bar to gain
-        // focus with a blinking cursor and without focus animations. Loading a non-NTP URL should
-        // clear such focus if it exists.
-        if (mActivity.getResources().getConfiguration().keyboard == Configuration.KEYBOARD_QWERTY) {
-            if (onNtp) {
-                mLocationBar.showUrlBarCursorWithoutFocusAnimations();
-            } else {
-                mLocationBar.clearUrlBarCursorWithoutFocusAnimations();
-            }
-        }
-    }
-
     private void maybeShowUrlBarCursorIfHardwareKeyboardAvailable() {
-        if (!DeviceFormFactor.isNonMultiDisplayContextOnTablet(mActivity)) return;
+        if (!mIsTablet) return;
         if (!UrlUtilities.isNtpUrl(mLocationBarModel.getCurrentGurl())) return;
 
         if (mActivity.getResources().getConfiguration().keyboard == Configuration.KEYBOARD_QWERTY) {
@@ -3111,6 +3314,7 @@ public class ToolbarManager
         Tab tab = mActivityTabProvider.get();
         final boolean nativeDrawsProgressBar =
                 tab != null
+                        && tab.getWebContents() != null
                         && tab.getWebContents().getCurrentBackForwardTransitionStage()
                                 == AnimationStage.INVOKE_ANIMATION_WITH_PROGRESS_BAR;
         mToolbar.setShowingProgressBarForBackForwardTransition(nativeDrawsProgressBar);
@@ -3140,10 +3344,19 @@ public class ToolbarManager
      * @return The {@link ToolbarLayout} that constitutes the toolbar.
      */
     public ToolbarLayout getToolbarLayoutForTesting() {
-        return mToolbar.getToolbarLayoutForTesting();
+        return mToolbarLayout;
     }
 
-    public HomeButtonCoordinator getHomeButtonCoordinatorForTesting() {
+    public boolean areAnyToolbarComponentsMissingForWidth(
+            @ToolbarComponentId int[] toolbarComponents) {
+        if (mToolbarLayout instanceof ToolbarTablet) {
+            return ((ToolbarTablet) mToolbarLayout)
+                    .areAnyToolbarComponentsMissingForWidth(toolbarComponents);
+        }
+        return false;
+    }
+
+    public @Nullable HomeButtonCoordinator getHomeButtonCoordinatorForTesting() {
         return mHomeButtonCoordinator;
     }
 
@@ -3162,13 +3375,14 @@ public class ToolbarManager
         return mBottomControlsCoordinatorSupplier.get();
     }
 
-    public ToggleTabStackButtonCoordinator getTabSwitcherButtonCoordinatorForTesting() {
+    public @Nullable ToggleTabStackButtonCoordinator getTabSwitcherButtonCoordinatorForTesting() {
         return mTabSwitcherButtonCoordinator;
     }
 
     private boolean isForward() {
         if (isRightEdgeGoesForwardGestureNavEnabled()) {
             // isForward() returns true when the user swipes from the right edge.
+            assumeNonNull(mBackPressHandler);
             OnBackPressHandler onBackPressHandler = (OnBackPressHandler) mBackPressHandler;
             boolean forward =
                     onBackPressHandler.getInitiatingEdge() == BackGestureEventSwipeEdge.RIGHT;
@@ -3187,13 +3401,14 @@ public class ToolbarManager
     }
 
     /**
-     * Sets the supplier which provides the current height of the bookmark bar.
+     * Sets a Supplier which provides the current height of the bookmark bar when read.
      *
-     * @param bookmarkBarHeightSupplier the supplier which provides the current height.
+     * @param bookmarkBarHeightSupplier the Supplier to fetch the current height.
      */
     public void setBookmarkBarHeightSupplier(
-            @Nullable ObservableSupplier<Integer> bookmarkBarHeightSupplier) {
+            @Nullable Supplier<Integer> bookmarkBarHeightSupplier) {
         mBookmarkBarHeightSupplier = bookmarkBarHeightSupplier;
+        mToolbar.setBookmarkBarHeightSupplier(mBookmarkBarHeightSupplier);
     }
 
     public static boolean isRightEdgeGoesForwardGestureNavEnabled() {
@@ -3220,10 +3435,74 @@ public class ToolbarManager
         return mToolbar.containsKeyboardFocus();
     }
 
+    /**
+     * Reorders the focused item, if there is one.
+     *
+     * @param toLeft Whether the focused item should be reordered to the left (note: this is still
+     *     left in RTL).
+     * @return Whether the item was reordered.
+     */
+    public boolean reorderKeyboardFocusedItem(boolean toLeft) {
+        if (mStripLayoutHelperManager == null) return false;
+        return mStripLayoutHelperManager.reorderKeyboardFocusedItem(toLeft);
+    }
+
+    /**
+     * Toggles multiselection on the keyboard focused tab.
+     *
+     * @return Whether a multiselect action was performed.
+     */
+    public boolean multiselectKeyboardFocusedItem() {
+        if (mStripLayoutHelperManager == null) return false;
+        return mStripLayoutHelperManager.multiselectKeyboardFocusedItem();
+    }
+
     public void onXrSpaceModeChanged(Boolean fullSpaceMode) {
         boolean isFsm = Boolean.TRUE.equals(fullSpaceMode);
         mSuppressToolbarSceneLayerSupplier.set(isFsm);
         setToolbarShadowVisibility(isFsm ? View.INVISIBLE : View.VISIBLE);
         getToolbar().getProgressBar().setVisibility(isFsm ? View.INVISIBLE : View.VISIBLE);
+    }
+
+    /**
+     * @return The {@link ExtensionToolbarCoordinator} that manages the extension toolbar UI. null
+     *     if extensions are not supported on this build.
+     */
+    public @Nullable ExtensionToolbarCoordinator getExtensionToolbarCoordinator() {
+        return mExtensionToolbarCoordinator;
+    }
+
+    // Top control layer representing tab strip. It can have different state than the current
+    // height store in the StripLayoutHelperManager, as this represents the target height it is
+    // going for during tab strip height transition.
+    private static class TabStripHeightSupplier extends ObservableSupplierImpl<Integer>
+            implements TopControlLayer {
+
+        public TabStripHeightSupplier(int tabStripHeight) {
+            super(tabStripHeight);
+        }
+
+        @Override
+        public @TopControlType int getTopControlType() {
+            return TopControlType.TABSTRIP;
+        }
+
+        @Override
+        public int getTopControlHeight() {
+            return get();
+        }
+
+        @Override
+        public int getTopControlVisibility() {
+            // The tab strip adds to the total height of the top controls regardless of whether or
+            // not it is "visible" to the user, i.e. we take its inherent height into account even
+            // when scrolled offscreen or obscured, except when hidden by height transition.
+            //
+            // TODO(crbug.com/417238089): Possibly add way to notify stacker of visibility changes.
+            boolean isTabStripVisibleAsLayer = get() > 0;
+            return isTabStripVisibleAsLayer
+                    ? TopControlVisibility.VISIBLE
+                    : TopControlVisibility.HIDDEN;
+        }
     }
 }

@@ -9,6 +9,7 @@
 #include "base/command_line.h"
 #include "base/i18n/icu_util.h"
 #include "base/message_loop/message_pump_type.h"
+#include "base/notimplemented.h"
 #include "base/run_loop.h"
 #include "base/task/single_thread_task_executor.h"
 #include "base/task/thread_pool/thread_pool_instance.h"
@@ -180,7 +181,7 @@ class DemoWindow : public ui::PlatformWindowDelegate {
   void OnWillDestroyAcceleratedWidget() override {}
   void OnAcceleratedWidgetDestroyed() override {}
   void OnActivationChanged(bool active) override {}
-  void OnMouseEnter() override {}
+  void OnCursorUpdate() override {}
   int64_t OnStateUpdate(const State& old, const State& latest) override {
     return -1;
   }
@@ -244,7 +245,8 @@ int main(int argc, char** argv) {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   const bool use_gpu = command_line->HasSwitch(switches::kVizDemoUseGPU);
   if (use_gpu) {
-    command_line->AppendSwitchASCII(switches::kUseGL, gl::kGLImplementationEGLName);
+    command_line->AppendSwitchASCII(switches::kUseGL,
+                                    gl::kGLImplementationANGLEName);
     base::WaitableEvent done(base::WaitableEvent::ResetPolicy::AUTOMATIC,
                              base::WaitableEvent::InitialState::NOT_SIGNALED);
     rendering_thread.task_runner()->PostTask(

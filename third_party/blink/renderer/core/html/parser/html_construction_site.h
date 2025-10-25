@@ -28,6 +28,7 @@
 #define THIRD_PARTY_BLINK_RENDERER_CORE_HTML_PARSER_HTML_CONSTRUCTION_SITE_H_
 
 #include "base/check_op.h"
+#include "third_party/blink/renderer/core/dom/container_node.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/parser_content_policy.h"
 #include "third_party/blink/renderer/core/html/parser/html_element_stack.h"
@@ -108,11 +109,14 @@ class HTMLConstructionSite final {
   HTMLConstructionSite(HTMLParserReentryPermit*,
                        Document&,
                        ParserContentPolicy,
-                       DocumentFragment*,
-                       Element*);
+                       ContainerNode*,
+                       Element*,
+                       CustomElementRegistry*);
   HTMLConstructionSite(const HTMLConstructionSite&) = delete;
   HTMLConstructionSite& operator=(const HTMLConstructionSite&) = delete;
   ~HTMLConstructionSite();
+
+  void SetPatchScope(ContainerNode* scope);
   void Trace(Visitor*) const;
 
   void Detach();
@@ -224,7 +228,8 @@ class HTMLConstructionSite final {
   static CustomElementDefinition* LookUpCustomElementDefinition(
       Document&,
       const QualifiedName&,
-      const AtomicString& is);
+      const AtomicString& is,
+      CustomElementRegistry* registry);
 
   class RedirectToFosterParentGuard {
     STACK_ALLOCATED();
@@ -292,6 +297,11 @@ class HTMLConstructionSite final {
   mutable HTMLFormattingElementList active_formatting_elements_;
 
   TaskQueue task_queue_;
+
+  // When using node.patchAll(), that node would be used to select
+  // the patch target rather than the tree scope where the patch template is
+  // found.
+  Member<ContainerNode> patch_scope_;
 
   class PendingText final {
     DISALLOW_NEW();
@@ -382,6 +392,10 @@ class HTMLConstructionSite final {
 
   // Whether duplicate attribute was reported.
   bool reported_duplicate_attribute_ = false;
+
+  // The custom element registry used to parse html and grab definition from
+  // when custom elements are encountered.
+  Member<CustomElementRegistry> custom_element_registry_;
 };
 
 }  // namespace blink

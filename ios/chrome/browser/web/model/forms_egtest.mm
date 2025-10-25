@@ -155,7 +155,7 @@ id<GREYMatcher> GoButtonMatcher() {
 
 // Matcher for the resend POST button in the repost warning dialog.
 id<GREYMatcher> ResendPostButtonMatcher() {
-  return chrome_test_util::ButtonWithAccessibilityLabelId(
+  return chrome_test_util::AlertItemWithAccessibilityLabelId(
       IDS_HTTP_POST_WARNING_RESEND);
 }
 
@@ -373,8 +373,14 @@ id<GREYMatcher> ResendPostButtonMatcher() {
 
     [ChromeEarlGrey
         waitForSufficientlyVisibleElementWithMatcher:ResendPostButtonMatcher()];
-    [[EarlGrey selectElementWithMatcher:ElementToDismissAlert(@"Cancel")]
-        performAction:grey_tap()];
+
+    if (@available(iOS 26, *)) {
+      [ChromeEarlGreyUI
+          dismissByTappingOnTheWindowOfPopover:ResendPostButtonMatcher()];
+    } else {
+      [[EarlGrey selectElementWithMatcher:ElementToDismissAlert(@"Cancel")]
+          performAction:grey_tap()];
+    }
   }
 
   [ChromeEarlGrey waitForPageToFinishLoading];
@@ -560,7 +566,7 @@ id<GREYMatcher> ResendPostButtonMatcher() {
     // Wait for the accessory icon to appear.
     [ChromeEarlGrey waitForKeyboardToAppear];
 
-    // TODO(crbug.com/40227513): Move this logic into EG.
+    // There's currently no EG API to tap 'go' on the keyboard.
     XCUIApplication* app = [[XCUIApplication alloc] init];
     [[[app keyboards] buttons][@"go"] tap];
   }

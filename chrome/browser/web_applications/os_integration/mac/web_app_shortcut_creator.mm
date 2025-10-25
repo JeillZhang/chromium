@@ -55,7 +55,8 @@
 #include "mojo/public/cpp/platform/platform_channel.h"
 #include "mojo/public/cpp/system/invitation.h"
 
-#if defined(COMPONENT_BUILD) || defined(ADDRESS_SANITIZER)
+#if defined(COMPONENT_BUILD) || defined(ADDRESS_SANITIZER) || \
+    defined(UNDEFINED_SANITIZER)
 #include <mach-o/loader.h>
 
 #include "base/base_paths.h"
@@ -87,9 +88,7 @@ OSStatus SecCodeSignerAddSignatureWithErrors(SecCodeSignerRef signer,
 
 namespace web_app {
 
-BASE_FEATURE(kWebAppMaskableIconsOnMac,
-             "WebAppMaskableIconsOnMac",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kWebAppMaskableIconsOnMac, base::FEATURE_ENABLED_BY_DEFAULT);
 
 class WebAppShortcutCopierSyncCallHelper {
   mojo::SyncCallRestrictions::ScopedAllowSyncCall scoped_allow_;
@@ -125,7 +124,45 @@ void RecordCreateShortcut(CreateShortcutResult result) {
   base::UmaHistogramEnumeration("Apps.CreateShortcuts.Mac.Result2", result);
 }
 
-#if defined(COMPONENT_BUILD) || defined(ADDRESS_SANITIZER)
+// Result of updating the app shortcut's signature.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class UpdateSignatureResult {
+  kSuccess = 0,
+  kFailToCreateStaticCodeObject = 1,
+  kFailToCreateCodeSigner = 2,
+  kFailToAddSignature = 3,
+  kFailToCopySigningInformation = 4,
+  kMaxValue = kFailToCopySigningInformation,
+};
+
+// Records the result of updating the app shortcut's signature to UMA.
+void RecordUpdateSignatureResult(UpdateSignatureResult result) {
+  base::UmaHistogramEnumeration(
+      "Apps.CreateShortcuts.Mac.UpdateSignatureResult", result);
+}
+
+// Result of copying the app shortcut.
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class CopyShortcutResult {
+  kSuccess = 0,
+  kFailToLaunchCopier = 1,
+  kFailToSendMojoInvitation = 2,
+  kFailToEstablishMojoConnection = 3,
+  kFailToCallCopyWebAppShortcut = 4,
+  kCopyShortcutFailed = 5,
+  kMaxValue = kCopyShortcutFailed,
+};
+
+// Records the result of copying the app shortcut to UMA.
+void RecordCopyShortcutResult(CopyShortcutResult result) {
+  base::UmaHistogramEnumeration("Apps.CreateShortcuts.Mac.CopyShortcutResult",
+                                result);
+}
+
+#if defined(COMPONENT_BUILD) || defined(ADDRESS_SANITIZER) || \
+    defined(UNDEFINED_SANITIZER)
 // Adds `new_rpath` to the paths the binary at `executable_path` will look at
 // when loading shared libraries. Assumes there is enough room in the headers of
 // the binary to fit the added path.
@@ -262,6 +299,7 @@ bool CopyStagingBundleToDestination(bool use_ad_hoc_signing_for_web_app_shims,
   base::Process copier_process = base::LaunchProcess(command_line, options);
   if (!copier_process.IsValid()) {
     LOG(ERROR) << "Failed to launch web_app_shortcut_copier.";
+    RecordCopyShortcutResult(CopyShortcutResult::kFailToLaunchCopier);
     return false;
   }
   channel.RemoteProcessLaunchAttempted();
@@ -270,6 +308,7 @@ bool CopyStagingBundleToDestination(bool use_ad_hoc_signing_for_web_app_shims,
       channel.TakeLocalEndpoint(), {}, copier_process.Handle());
   if (!pipe) {
     LOG(ERROR) << "Failed to send Mojo invitation to web_app_shortcut_copier.";
+    RecordCopyShortcutResult(CopyShortcutResult::kFailToSendMojoInvitation);
     return false;
   }
   mojo::PendingRemote<mojom::WebAppShortcutCopier> pending_remote(
@@ -277,6 +316,8 @@ bool CopyStagingBundleToDestination(bool use_ad_hoc_signing_for_web_app_shims,
   if (!pending_remote) {
     LOG(ERROR)
         << "Failed to establish Mojo connection with web_app_shortcut_copier.";
+    RecordCopyShortcutResult(
+        CopyShortcutResult::kFailToEstablishMojoConnection);
     return false;
   }
 
@@ -286,7 +327,13 @@ bool CopyStagingBundleToDestination(bool use_ad_hoc_signing_for_web_app_shims,
   if (!copier->CopyWebAppShortcut(staging_path, dst_app_path, &copy_result)) {
     LOG(ERROR)
         << "Failed to call CopyWebAppShortcut in web_app_shortcut_copier.";
+    RecordCopyShortcutResult(CopyShortcutResult::kFailToCallCopyWebAppShortcut);
     return false;
+  }
+  if (copy_result) {
+    RecordCopyShortcutResult(CopyShortcutResult::kSuccess);
+  } else {
+    RecordCopyShortcutResult(CopyShortcutResult::kCopyShortcutFailed);
   }
   return copy_result;
 }
@@ -644,7 +691,8 @@ bool WebAppShortcutCreator::BuildShortcut(
     return false;
   }
 
-#if defined(COMPONENT_BUILD) || defined(ADDRESS_SANITIZER)
+#if defined(COMPONENT_BUILD) || defined(ADDRESS_SANITIZER) || \
+    defined(UNDEFINED_SANITIZER)
   // Test bots could have the build in a different path than where it was on a
   // build bot. If this is the case in a component build, we'll need to fix the
   // rpath of app_mode_loader to make sure it can still find its dynamic
@@ -1014,6 +1062,8 @@ bool WebAppShortcutCreator::UpdateSignature(
   base::apple::ScopedCFTypeRef<SecStaticCodeRef> app_code;
   if (SecStaticCodeCreateWithPath(app_url.get(), kSecCSDefaultFlags,
                                   app_code.InitializeInto()) != errSecSuccess) {
+    RecordUpdateSignatureResult(
+        UpdateSignatureResult::kFailToCreateStaticCodeObject);
     return false;
   }
 
@@ -1033,6 +1083,7 @@ bool WebAppShortcutCreator::UpdateSignature(
   if (SecCodeSignerCreate(base::apple::NSToCFPtrCast(signer_params),
                           kSecCSDefaultFlags,
                           signer.InitializeInto()) != errSecSuccess) {
+    RecordUpdateSignatureResult(UpdateSignatureResult::kFailToCreateCodeSigner);
     return false;
   }
 
@@ -1041,6 +1092,7 @@ bool WebAppShortcutCreator::UpdateSignature(
           signer.get(), app_code.get(), kSecCSDefaultFlags,
           errors.InitializeInto()) != errSecSuccess) {
     LOG(ERROR) << "Failed to sign web app shim: " << errors.get();
+    RecordUpdateSignatureResult(UpdateSignatureResult::kFailToAddSignature);
     return false;
   }
 
@@ -1049,6 +1101,8 @@ bool WebAppShortcutCreator::UpdateSignature(
                                     app_shim_info.InitializeInto()) !=
       errSecSuccess) {
     LOG(ERROR) << "Failed to copy signing information from web app shim";
+    RecordUpdateSignatureResult(
+        UpdateSignatureResult::kFailToCopySigningInformation);
     return false;
   }
 
@@ -1058,10 +1112,12 @@ bool WebAppShortcutCreator::UpdateSignature(
   std::vector<uint8_t> cd_hash(cd_hash_span.begin(), cd_hash_span.end());
 
   content::GetUIThreadTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(&AppShimRegistry::SaveCdHashForApp,
-                                base::Unretained(AppShimRegistry::Get()),
-                                info_->app_id, std::move(cd_hash)));
+      FROM_HERE,
+      base::BindOnce(&AppShimRegistry::SaveCdHashForApp,
+                     base::Unretained(AppShimRegistry::Get()), info_->app_id,
+                     std::move(cd_hash), base::DoNothing()));
 
+  RecordUpdateSignatureResult(UpdateSignatureResult::kSuccess);
   return true;
 }
 

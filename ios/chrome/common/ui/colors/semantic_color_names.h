@@ -31,15 +31,16 @@ extern NSString* const kMDCSecondaryInkColor;
 extern NSString* const kPlaceholderImageTintColor;
 // Primary background color.
 extern NSString* const kPrimaryBackgroundColor;
+extern NSString* const kInvertedPrimaryBackgroundColor;
 extern NSString* const kScrimBackgroundColor;
 extern NSString* const kDarkerScrimBackgroundColor;
 // Secondary background color.
 extern NSString* const kSecondaryBackgroundColor;
 extern NSString* const kSeparatorColor;
+extern NSString* const kBWGSeparatorColor;
 extern NSString* const kSolidButtonTextColor;
 extern NSString* const kTableViewRowHighlightColor;
 extern NSString* const kTertiaryBackgroundColor;
-extern NSString* const kUpdatedTertiaryBackgroundColor;
 extern NSString* const kTextPrimaryColor;
 // Primary text color when the background color is inverted.
 extern NSString* const kInvertedTextPrimaryColor;
@@ -91,6 +92,7 @@ extern NSString* const kWhiteBlackAlpha50Color;
 // Lens overlay consent dialog description text color.
 extern NSString* const kLensOverlayConsentDialogDescriptionColor;
 extern NSString* const kLensOverlayConsentDialogAnimationPlayerButtonColor;
+
 // ***************
 // Standard Colors
 // ***************
@@ -180,7 +182,9 @@ extern NSString* const kGrey700Color;
 extern NSString* const kGrey800Color;
 extern NSString* const kGrey900Color;
 // Static Grey palette (same color for light and dark modes).
+extern NSString* const kStaticGrey50Color;
 extern NSString* const kStaticGrey300Color;
+extern NSString* const kStaticGrey400Color;
 extern NSString* const kStaticGrey600Color;
 extern NSString* const kStaticGrey900Color;
 

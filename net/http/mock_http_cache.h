@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/strings/string_split.h"
 #include "net/base/completion_once_callback.h"
 #include "net/base/request_priority.h"
@@ -61,14 +62,14 @@ class MockDiskEntry : public disk_cache::Entry,
   void Close() override;
   std::string GetKey() const override;
   base::Time GetLastUsed() const override;
-  int32_t GetDataSize(int index) const override;
+  int64_t GetDataSize(int index) const override;
   int ReadData(int index,
-               int offset,
+               int64_t offset,
                IOBuffer* buf,
                int buf_len,
                CompletionOnceCallback callback) override;
   int WriteData(int index,
-                int offset,
+                int64_t offset,
                 IOBuffer* buf,
                 int buf_len,
                 CompletionOnceCallback callback,
@@ -136,7 +137,7 @@ class MockDiskEntry : public disk_cache::Entry,
   static const int kNumCacheEntryDataIndices = 3;
 
   std::string key_;
-  std::array<std::vector<char>, kNumCacheEntryDataIndices> data_;
+  std::array<std::vector<uint8_t>, kNumCacheEntryDataIndices> data_;
   uint8_t in_memory_data_ = 0;
   int test_mode_;
   int max_file_size_;
@@ -161,7 +162,8 @@ class MockDiskCache : public disk_cache::Backend {
   MockDiskCache();
   ~MockDiskCache() override;
 
-  int32_t GetEntryCount() const override;
+  int32_t GetEntryCount(
+      net::Int32CompletionOnceCallback callback) const override;
   EntryResult OpenOrCreateEntry(const std::string& key,
                                 RequestPriority request_priority,
                                 EntryResultCallback callback) override;

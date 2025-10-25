@@ -159,13 +159,10 @@ NSAttributedString* Strikethrough(NSString* text) {
   self.isAccessibilityElement = YES;
   self.accessibilityLabel =
       [NSString stringWithFormat:@"%@, %@", title.text, description.text];
-
-  if (@available(iOS 17, *)) {
-    NSArray<UITrait>* traits = TraitCollectionSetForTraits(
-        @[ UITraitPreferredContentSizeCategory.class ]);
-    [self registerForTraitChanges:traits
-                       withAction:@selector(updateTryButtonWidth)];
-  }
+  NSArray<UITrait>* traits = TraitCollectionSetForTraits(
+      @[ UITraitPreferredContentSizeCategory.class ]);
+  [self registerForTraitChanges:traits
+                     withAction:@selector(updateTryButtonWidth)];
 }
 
 // Creates the title label.
@@ -190,9 +187,6 @@ NSAttributedString* Strikethrough(NSString* text) {
 // Returns the text for the title label.
 - (NSString*)titleText {
   switch (_data.type) {
-    case SetUpListItemType::kSignInSync:
-      return l10n_util::GetNSString(
-          IDS_IOS_CONSISTENCY_PROMO_DEFAULT_ACCOUNT_TITLE);
     case SetUpListItemType::kDefaultBrowser:
       return l10n_util::GetNSString(
           ui::GetDeviceFormFactor() == ui::DEVICE_FORM_FACTOR_TABLET
@@ -204,9 +198,6 @@ NSAttributedString* Strikethrough(NSString* text) {
       return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_NOTIFICATIONS_TITLE);
     case SetUpListItemType::kAllSet:
       return l10n_util::GetNSString(IDS_IOS_SET_UP_LIST_ALL_SET_TITLE);
-    case SetUpListItemType::kFollow:
-      // TODO(crbug.com/40262090): Add a Follow item to the Set Up List.
-      NOTREACHED();
   }
 }
 
@@ -233,8 +224,6 @@ NSAttributedString* Strikethrough(NSString* text) {
 // Returns the text for the description label.
 - (NSString*)descriptionText {
   switch (_data.type) {
-    case SetUpListItemType::kSignInSync:
-      return l10n_util::GetNSString(IDS_IOS_IDENTITY_DISC_SIGN_IN_PROMO_LABEL);
     case SetUpListItemType::kDefaultBrowser:
       return l10n_util::GetNSString(
           IDS_IOS_SET_UP_LIST_DEFAULT_BROWSER_SEE_MORE_DESCRIPTION);
@@ -247,7 +236,6 @@ NSAttributedString* Strikethrough(NSString* text) {
               ? IDS_IOS_SET_UP_LIST_NOTIFICATIONS_DESCRIPTION
               : IDS_IOS_SET_UP_LIST_NOTIFICATIONS_SHORT_DESCRIPTION);
     case SetUpListItemType::kAllSet:
-    case SetUpListItemType::kFollow:
       NOTREACHED();
   }
 }
@@ -264,23 +252,7 @@ NSAttributedString* Strikethrough(NSString* text) {
       kTryButtonMinWidth, kTryButtonMaxWidth);
 }
 
-#pragma mark - UITraitEnvironment
-
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  if (@available(iOS 17, *)) {
-    return;
-  }
-  if (previousTraitCollection.preferredContentSizeCategory !=
-      self.traitCollection.preferredContentSizeCategory) {
-    [self updateTryButtonWidth];
-  }
-}
-
-#endif
-
-#pragma mark - UIAccessibility
+#pragma mark - UIAccessibilityAction
 
 - (BOOL)accessibilityActivate {
   if (_data.complete) {

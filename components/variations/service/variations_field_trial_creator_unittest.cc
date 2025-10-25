@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "components/variations/service/variations_field_trial_creator.h"
 
 #include <stddef.h>
@@ -17,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/base64.h"
 #include "base/base_switches.h"
 #include "base/build_time.h"
 #include "base/command_line.h"
@@ -30,6 +26,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/field_trial_params.h"
 #include "base/strings/strcat.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -56,11 +53,8 @@
 #include "components/variations/scoped_variations_ids_provider.h"
 #include "components/variations/service/buildflags.h"
 #include "components/variations/service/safe_seed_manager.h"
-#include "components/variations/service/variations_field_trial_creator_base.h"
 #include "components/variations/service/variations_service.h"
 #include "components/variations/service/variations_service_client.h"
-#include "components/variations/synthetic_trial_registry.h"
-#include "components/variations/synthetic_trials.h"
 #include "components/variations/variations_safe_seed_store_local_state.h"
 #include "components/variations/variations_seed_store.h"
 #include "components/variations/variations_switches.h"
@@ -72,6 +66,7 @@
 #include "services/network/test/test_network_connection_tracker.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/zlib/google/compression_utils.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "components/variations/seed_response.h"
@@ -123,6 +118,7 @@ VariationsSeed CreateTestSeed() {
   VariationsSeed seed;
   Study* study = seed.add_study();
   study->set_name(kTestSeedStudyName);
+  study->set_consistency(Study::PERMANENT);
   study->set_default_experiment_name(kTestSeedExperimentName);
   Study_Experiment* experiment = study->add_experiment();
   experiment->set_name(kTestSeedExperimentName);
@@ -131,10 +127,9 @@ VariationsSeed CreateTestSeed() {
   return seed;
 }
 
-// Returns a test seed that contains a single study,
-// "UMA-Uniformity-Trial-10-Percent", which has a single experiment, "abc", with
-// probability weight 100. The study references the 100% slot of a LIMITED
-// entropy layer. The LIMITED layer created will use 0 bit of entropy.
+// Returns a seed with a single permanent-consistency study. The study is
+// constrained to all slots of a 100-slot limited-entropy-mode layer, and the
+// study's single group has an experiment ID. 0 bits of entropy are consumed.
 VariationsSeed CreateTestSeedWithLimitedEntropyLayer() {
   VariationsSeed seed;
   seed.set_serial_number(kTestSeedSerialNumber);
@@ -152,10 +147,12 @@ VariationsSeed CreateTestSeedWithLimitedEntropyLayer() {
 
   auto* study = seed.add_study();
   study->set_name(kTestLimitedLayerStudyName);
+  study->set_consistency(Study::PERMANENT);
 
   auto* experiment = study->add_experiment();
   experiment->set_name(kTestSeedExperimentName);
-  experiment->set_probability_weight(kTestSeedExperimentProbability);
+  experiment->set_probability_weight(1);
+  experiment->set_google_web_experiment_id(111);
 
   auto* layer_member_reference = study->mutable_layer();
   layer_member_reference->set_layer_id(1);
@@ -170,31 +167,47 @@ VariationsSeed CreateTestSeedWithLimitedEntropyLayerUsingExcessiveEntropy() {
 
   auto* layer = seed.add_layers();
   layer->set_id(1);
-  layer->set_num_slots(100);
+  layer->set_num_slots(1 << 20);
   layer->set_entropy_mode(Layer::LIMITED);
 
+  // Add a tiny member, using only 1 slot (20 bits of entropy)
   auto* layer_member = layer->add_members();
   layer_member->set_id(1);
   auto* slot = layer_member->add_slots();
   slot->set_start(0);
-  slot->set_end(99);
+  slot->set_end(0);
 
+  // For completeness, add a large member, using all but 1 slot.
+  layer_member = layer->add_members();
+  layer_member->set_id(2);
+  slot = layer_member->add_slots();
+  slot->set_start(1);
+  slot->set_end(layer->num_slots() - 1);
+
+  // Add a study that uses the tiny member.
   Study* study = seed.add_study();
   study->set_name(kTestLimitedLayerStudyName);
-
-  auto* experiment_1 = study->add_experiment();
-  experiment_1->set_name("experiment_very_small");
-  experiment_1->set_probability_weight(1);
-  experiment_1->set_google_web_experiment_id(100001);
-
-  auto* experiment_2 = study->add_experiment();
-  experiment_2->set_name("experiment");
-  experiment_2->set_probability_weight(999999);
-  experiment_1->set_google_web_experiment_id(100002);
-
+  study->set_consistency(Study::PERMANENT);
   auto* layer_member_reference = study->mutable_layer();
   layer_member_reference->set_layer_id(1);
   layer_member_reference->add_layer_member_ids(1);
+
+  // Add all platforms to the study's filter.
+  auto* platforms = study->mutable_filter()->mutable_platform();
+  for (int p = static_cast<int>(Study_Platform_Platform_MIN);
+       p <= static_cast<int>(Study_Platform_Platform_MAX); ++p) {
+    platforms->Add(static_cast<Study_Platform>(p));
+  }
+
+  // Add 256 experiment arms, this uses an additional 8 bits of entropy. This
+  // should be enough to exceed the entropy limit of the tiny member on all
+  // platforms.
+  for (int i = 1; i <= 256; ++i) {
+    auto* experiment_1 = study->add_experiment();
+    experiment_1->set_name(base::StrCat({"arm_", base::NumberToString(i)}));
+    experiment_1->set_probability_weight(1);
+    experiment_1->set_google_web_experiment_id(100000 + i);
+  }
 
   return seed;
 }
@@ -217,15 +230,6 @@ VariationsSeed CreateTestSafeSeed() {
 // return the start for epoch in Unix-like system (Jan 1, 1970).
 base::Time DistantPast() {
   return base::Time::UnixEpoch();
-}
-
-// Converts |list| to a string, to make it easier for debugging.
-std::string ListToString(const base::Value::List& list) {
-  std::string json;
-  JSONStringValueSerializer serializer(&json);
-  serializer.set_pretty_print(true);
-  serializer.Serialize(list);
-  return json;
 }
 
 #if BUILDFLAG(IS_ANDROID)
@@ -349,17 +353,17 @@ class TestVariationsSeedStore : public VariationsSeedStore {
 
   ~TestVariationsSeedStore() override = default;
 
-  bool LoadSeed(VariationsSeed* seed,
-                std::string* seed_data,
-                std::string* base64_signature) override {
+  bool LoadSeedSync(VariationsSeed* seed,
+                    std::string* seed_data,
+                    std::string* base64_signature) override {
     *seed = CreateTestSeed();
     *seed_data = kTestSeedSerializedData;
     *base64_signature = kTestSeedSignature;
     return true;
   }
 
-  bool LoadSafeSeed(VariationsSeed* seed,
-                    ClientFilterableState* client_state) override {
+  bool LoadSafeSeedSync(VariationsSeed* seed,
+                        ClientFilterableState* client_state) override {
     if (has_unloadable_safe_seed_) {
       return false;
     }
@@ -387,12 +391,10 @@ class TestVariationsFieldTrialCreator : public VariationsFieldTrialCreator {
       const base::FilePath user_data_dir = base::FilePath(),
       metrics::StartupVisibility startup_visibility =
           metrics::StartupVisibility::kUnknown)
-      : VariationsFieldTrialCreator(
-            client,
-            // Pass a VariationsSeedStore to base class.
-            CreateSeedStore(local_state,
-                            user_data_dir.AppendASCII("VariationsSeedV1")),
-            UIStringOverrider()),
+      : VariationsFieldTrialCreator(client,
+                                    // Pass a VariationsSeedStore to base class.
+                                    CreateSeedStore(local_state, user_data_dir),
+                                    UIStringOverrider()),
         enabled_state_provider_(/*consent=*/true, /*enabled=*/true),
         // Instead, use a TestVariationsSeedStore as the member variable.
         seed_store_(local_state),
@@ -414,14 +416,13 @@ class TestVariationsFieldTrialCreator : public VariationsFieldTrialCreator {
   // for uninteresting params.
   bool SetUpFieldTrials() {
     PlatformFieldTrials platform_field_trials;
-    SyntheticTrialRegistry synthetic_trial_registry;
     return VariationsFieldTrialCreator::SetUpFieldTrials(
         /*variation_ids=*/std::vector<std::string>(),
         base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
             switches::kForceVariationIds),
         std::vector<base::FeatureList::FeatureOverrideInfo>(),
         std::make_unique<base::FeatureList>(), metrics_state_manager_.get(),
-        &synthetic_trial_registry, &platform_field_trials, safe_seed_manager_,
+        &platform_field_trials, safe_seed_manager_,
         /*add_entropy_source_to_variations_ids=*/true,
         *metrics_state_manager_->CreateEntropyProviders(
             /*enable_limited_entropy_mode=*/false));
@@ -457,8 +458,6 @@ class TestVariationsFieldTrialCreator : public VariationsFieldTrialCreator {
   std::unique_ptr<metrics::MetricsStateManager> metrics_state_manager_;
 };
 
-}  // namespace
-
 class FieldTrialCreatorTest : public ::testing::Test {
  public:
   FieldTrialCreatorTest() = default;
@@ -490,7 +489,28 @@ class FieldTrialCreatorTest : public ::testing::Test {
   }
 
   const base::FilePath seed_file_path() const {
-    return user_data_dir_path().AppendASCII("TestSeedFile");
+    return user_data_dir_path().AppendASCII("VariationsSeedV1");
+  }
+
+  // Writes the given latest seed to its seed file and to Local State.
+  // Does the necessary setup for allowing empty seed signatures for test
+  // purposes.
+  void SetUpLatestSeedAndEmptySignature(const VariationsSeed& seed) {
+    std::string serialized_seed = seed.SerializeAsString();
+    std::string compressed_seed;
+    compression::GzipCompress(serialized_seed, &compressed_seed);
+
+    // Write the seed for the seed file experiment's treatment-group clients.
+    CHECK(base::WriteFile(seed_file_path(), compressed_seed));
+
+    // Write the seed for the seed file experiment's control-group clients.
+    local_state()->SetString(prefs::kVariationsCompressedSeed,
+                             base::Base64Encode(compressed_seed));
+
+    // Allows and writes an empty signature for the test seed.
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kAcceptEmptySeedSignatureForTesting);
+    local_state()->SetString(prefs::kVariationsSeedSignature, "");
   }
 
  private:
@@ -499,11 +519,9 @@ class FieldTrialCreatorTest : public ::testing::Test {
   base::test::ScopedCommandLine scoped_command_line_;
   TestingPrefServiceSimple local_state_;
   base::ScopedTempDir temp_dir_;
-  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
+  variations::test::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
 };
-
-namespace {
 
 class FieldTrialCreatorFetchAndLaunchTimeTest
     : public FieldTrialCreatorTest,
@@ -517,8 +535,6 @@ constexpr FetchAndLaunchTimeTestParams kAllFetchAndLaunchTimes[] = {
     // seed is applied even though it was downloaded more than 30 days ago.
     {.fetch_time = base::Days(1), .launch_time = base::Days(32)},
 };
-
-}  // namespace
 
 INSTANTIATE_TEST_SUITE_P(All,
                          FieldTrialCreatorFetchAndLaunchTimeTest,
@@ -544,10 +560,13 @@ TEST_P(FieldTrialCreatorFetchAndLaunchTimeTest,
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Simulate the seed being stored.
-  local_state()->SetTime(prefs::kVariationsLastFetchTime, seed_fetch_time);
+  field_trial_creator.seed_store()
+      ->GetSeedReaderWriterForTesting()
+      ->SetFetchTime(seed_fetch_time);
 
   // Simulate a seed from an earlier (i.e. valid) milestone.
   local_state()->SetInteger(prefs::kVariationsSeedMilestone,
@@ -588,10 +607,11 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_ValidSeed_NoLastFetchTime) {
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
-  // Simulate a first run by leaving |prefs::kVariationsLastFetchTime| empty.
-  EXPECT_EQ(0, local_state()->GetInt64(prefs::kVariationsLastFetchTime));
+  // Simulate a first run by leaving fetch time empty.
+  EXPECT_EQ(base::Time(), field_trial_creator.GetLatestSeedFetchTime());
 
   // Check that field trials are created from the seed. Since the test study has
   // only one experiment with 100% probability weight, we must be part of it.
@@ -626,10 +646,13 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_ValidSeed_NoMilestone) {
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Simulate the seed being stored.
-  local_state()->SetTime(prefs::kVariationsLastFetchTime, seed_fetch_time);
+  field_trial_creator.seed_store()
+      ->GetSeedReaderWriterForTesting()
+      ->SetFetchTime(seed_fetch_time);
 
   // Simulate the absence of a milestone by leaving
   // |prefs::kVariationsSeedMilestone| empty.
@@ -659,10 +682,13 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_ExpiredSeed) {
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
   // Simulate a seed that is fetched a long time ago and should definitely
   // have expired.
-  local_state()->SetTime(prefs::kVariationsLastFetchTime, DistantPast());
+  field_trial_creator.seed_store()
+      ->GetSeedReaderWriterForTesting()
+      ->SetFetchTime(DistantPast());
 
   // Check that field trials are not created from the expired seed.
   base::HistogramTester histogram_tester;
@@ -691,7 +717,8 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_FutureMilestone) {
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Simulate a seed from a future milestone.
   local_state()->SetInteger(prefs::kVariationsSeedMilestone,
@@ -727,7 +754,8 @@ TEST_P(FieldTrialCreatorFetchAndLaunchTimeTest,
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Simulate the safe seed being stored.
   local_state()->SetTime(prefs::kVariationsSafeSeedFetchTime,
@@ -767,7 +795,8 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_UnloadableSafeSeedNotUsed) {
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
   field_trial_creator.seed_store()->set_has_unloadable_safe_seed(true);
 
   base::HistogramTester histogram_tester;
@@ -793,10 +822,12 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_ValidSafeSeed_NoLastFetchTime) {
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Verify that the safe seed does not have a fetch time.
-  EXPECT_EQ(0, local_state()->GetInt64(prefs::kVariationsSafeSeedFetchTime));
+  EXPECT_EQ(base::Time(),
+            local_state()->GetTime(prefs::kVariationsSafeSeedFetchTime));
 
   // Check that field trials are created from the safe seed. Since the test
   // study has only one experiment with 100% probability weight, we must be part
@@ -827,7 +858,8 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_ExpiredSafeSeed) {
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
   // Simulate a safe seed that is fetched a long time ago and should definitely
   // have expired.
   local_state()->SetTime(prefs::kVariationsSafeSeedFetchTime, DistantPast());
@@ -860,7 +892,8 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_SafeSeedForFutureMilestone) {
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Simulate a safe seed that was fetched with a future milestone.
   local_state()->SetInteger(prefs::kVariationsSafeSeedMilestone,
@@ -886,7 +919,8 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_NullSeed) {
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Check that field trials are not created from the null seed.
   base::HistogramTester histogram_tester;
@@ -915,7 +949,7 @@ TEST_F(FieldTrialCreatorTest, LoadSeedFromTestSeedJsonPath) {
       variations::switches::kVariationsTestSeedJsonPath, test_seed_file);
 
   // Use a real VariationsFieldTrialCreator and VariationsSeedStore to exercise
-  // the VariationsSeedStore::LoadSeed() logic.
+  // the VariationsSeedStore::LoadSeedSync() logic.
   TestVariationsServiceClient variations_service_client;
   auto seed_store = CreateSeedStore(local_state(), seed_file_path());
   VariationsFieldTrialCreator field_trial_creator(
@@ -929,7 +963,6 @@ TEST_F(FieldTrialCreatorTest, LoadSeedFromTestSeedJsonPath) {
 
   PlatformFieldTrials platform_field_trials;
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
-  SyntheticTrialRegistry synthetic_trial_registry;
 
   ASSERT_FALSE(base::FieldTrialList::TrialExists(kTestSeedData.study_names[0]));
 
@@ -938,7 +971,7 @@ TEST_F(FieldTrialCreatorTest, LoadSeedFromTestSeedJsonPath) {
       /*command_line_variation_ids=*/std::string(),
       std::vector<base::FeatureList::FeatureOverrideInfo>(),
       std::make_unique<base::FeatureList>(), metrics_state_manager.get(),
-      &synthetic_trial_registry, &platform_field_trials, &safe_seed_manager,
+      &platform_field_trials, &safe_seed_manager,
       /*add_entropy_source_to_variations_ids=*/true,
       *metrics_state_manager->CreateEntropyProviders(
           /*enable_limited_entropy_mode=*/false)));
@@ -952,64 +985,64 @@ TEST_F(FieldTrialCreatorTest, LoadSeedFromTestSeedJsonPath) {
 TEST_F(FieldTrialCreatorTest, LoadPermanentConsistencyCountry) {
   struct {
     const char* permanent_overridden_country_before;
-    // Comma separated list, NULL if the pref isn't set initially.
+    // Country and version previously stored.
     const char* permanent_consistency_country_before;
+    const char* version_before;
+    // Current version.
     const char* version;
     // NULL indicates that no latest country code is present.
     const char* latest_country_code;
-    // Comma separated list.
+    // Country and version expected to be stored after the call.
     const char* permanent_consistency_country_after;
+    const char* version_after;
     std::string expected_country;
     LoadPermanentConsistencyCountryResult expected_result;
   } test_cases[] = {
       // Existing permanent overridden country.
-      {"ca", "20.0.0.0,us", "20.0.0.0", "us", "20.0.0.0,us", "ca",
-       LOAD_COUNTRY_HAS_PERMANENT_OVERRIDDEN_COUNTRY},
-      {"us", "20.0.0.0,us", "20.0.0.0", "us", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_HAS_PERMANENT_OVERRIDDEN_COUNTRY},
-      {"ca", "", "20.0.0.0", "", "", "ca",
-       LOAD_COUNTRY_HAS_PERMANENT_OVERRIDDEN_COUNTRY},
+      {"ca", "us", "20.0.0.0", "20.0.0.0", "us", "us", "20.0.0.0", "ca",
+       LoadPermanentConsistencyCountryResult::kHasPermanentOverriddenCountry},
+      {"us", "us", "20.0.0.0", "20.0.0.0", "us", "us", "20.0.0.0", "us",
+       LoadPermanentConsistencyCountryResult::kHasPermanentOverriddenCountry},
+      {"ca", "", "", "20.0.0.0", "", "", "", "ca",
+       LoadPermanentConsistencyCountryResult::kHasPermanentOverriddenCountry},
 
       // Existing pref value present for this version.
-      {"", "20.0.0.0,us", "20.0.0.0", "ca", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_HAS_BOTH_VERSION_EQ_COUNTRY_NEQ},
-      {"", "20.0.0.0,us", "20.0.0.0", "us", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_HAS_BOTH_VERSION_EQ_COUNTRY_EQ},
-      {"", "20.0.0.0,us", "20.0.0.0", "", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_HAS_PREF_NO_SEED_VERSION_EQ},
+      {"", "us", "20.0.0.0", "20.0.0.0", "ca", "us", "20.0.0.0", "us",
+       LoadPermanentConsistencyCountryResult::kHasBothVersionEqCountryNeq},
+      {"", "us", "20.0.0.0", "20.0.0.0", "us", "us", "20.0.0.0", "us",
+       LoadPermanentConsistencyCountryResult::kHasBothVersionEqCountryEq},
+      {"", "us", "20.0.0.0", "20.0.0.0", "", "us", "20.0.0.0", "us",
+       LoadPermanentConsistencyCountryResult::kHasPrefNoSeedVersionEq},
 
       // Existing pref value present for a different version.
-      {"", "19.0.0.0,ca", "20.0.0.0", "us", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_HAS_BOTH_VERSION_NEQ_COUNTRY_NEQ},
-      {"", "19.0.0.0,us", "20.0.0.0", "us", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_HAS_BOTH_VERSION_NEQ_COUNTRY_EQ},
-      {"", "19.0.0.0,ca", "20.0.0.0", "", "19.0.0.0,ca", "",
-       LOAD_COUNTRY_HAS_PREF_NO_SEED_VERSION_NEQ},
+      {"", "ca", "19.0.0.0", "20.0.0.0", "us", "us", "20.0.0.0", "us",
+       LoadPermanentConsistencyCountryResult::kHasBothVersionNeqCountryNeq},
+      {"", "us", "19.0.0.0", "20.0.0.0", "us", "us", "20.0.0.0", "us",
+       LoadPermanentConsistencyCountryResult::kHasBothVersionNeqCountryEq},
+      {"", "ca", "19.0.0.0", "20.0.0.0", "", "ca", "19.0.0.0", "",
+       LoadPermanentConsistencyCountryResult::kHasPrefNoSeedVersionNeq},
 
       // No existing pref value present.
-      {"", "", "20.0.0.0", "us", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_NO_PREF_HAS_SEED},
-      {"", "", "20.0.0.0", "", "", "", LOAD_COUNTRY_NO_PREF_NO_SEED},
-      {"", "", "20.0.0.0", "us", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_NO_PREF_HAS_SEED},
-      {"", "", "20.0.0.0", "", "", "", LOAD_COUNTRY_NO_PREF_NO_SEED},
+      {"", "", "", "20.0.0.0", "us", "us", "20.0.0.0", "us",
+       LoadPermanentConsistencyCountryResult::kNoPrefHasSeed},
+      {"", "", "", "20.0.0.0", "", "", "", "",
+       LoadPermanentConsistencyCountryResult::kNoPrefNoSeed},
+      {"", "", "", "20.0.0.0", "us", "us", "20.0.0.0", "us",
+       LoadPermanentConsistencyCountryResult::kNoPrefHasSeed},
+      {"", "", "", "20.0.0.0", "", "", "", "",
+       LoadPermanentConsistencyCountryResult::kNoPrefNoSeed},
 
       // Invalid existing pref value.
-      {"", "20.0.0.0", "20.0.0.0", "us", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_INVALID_PREF_HAS_SEED},
-      {"", "20.0.0.0", "20.0.0.0", "", "", "",
-       LOAD_COUNTRY_INVALID_PREF_NO_SEED},
-      {"", "20.0.0.0,us,element3", "20.0.0.0", "us", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_INVALID_PREF_HAS_SEED},
-      {"", "20.0.0.0,us,element3", "20.0.0.0", "", "", "",
-       LOAD_COUNTRY_INVALID_PREF_NO_SEED},
-      {"", "badversion,ca", "20.0.0.0", "us", "20.0.0.0,us", "us",
-       LOAD_COUNTRY_INVALID_PREF_HAS_SEED},
-      {"", "badversion,ca", "20.0.0.0", "", "", "",
-       LOAD_COUNTRY_INVALID_PREF_NO_SEED},
+      {"", "", "20.0.0.0", "20.0.0.0", "us", "us", "20.0.0.0", "us",
+       LoadPermanentConsistencyCountryResult::kInvalidPrefHasSeed},
+      {"", "", "20.0.0.0", "20.0.0.0", "", "", "", "",
+       LoadPermanentConsistencyCountryResult::kInvalidPrefNoSeed},
+      {"", "ca", "badversion", "20.0.0.0", "us", "us", "20.0.0.0", "us",
+       LoadPermanentConsistencyCountryResult::kInvalidPrefHasSeed},
+      {"", "ca", "badversion", "20.0.0.0", "", "", "", "",
+       LoadPermanentConsistencyCountryResult::kInvalidPrefNoSeed},
   };
 
-  SyntheticTrialRegistry synthetic_trial_registry;
   metrics::TestEnabledStateProvider enabled_state_provider(
       /*consent=*/true,
       /*enabled=*/true);
@@ -1018,6 +1051,7 @@ TEST_F(FieldTrialCreatorTest, LoadPermanentConsistencyCountry) {
   metrics_state_manager->InstantiateFieldTrialList();
 
   for (const auto& test : test_cases) {
+    auto seed_store = CreateSeedStore(local_state(), seed_file_path());
     if (!test.permanent_overridden_country_before) {
       local_state()->ClearPref(prefs::kVariationsPermanentOverriddenCountry);
     } else {
@@ -1026,16 +1060,11 @@ TEST_F(FieldTrialCreatorTest, LoadPermanentConsistencyCountry) {
     }
 
     if (!test.permanent_consistency_country_before) {
-      local_state()->ClearPref(prefs::kVariationsPermanentConsistencyCountry);
+      seed_store->ClearPermanentConsistencyCountryAndVersion();
     } else {
-      base::Value::List list_value;
-      for (const std::string& component :
-           base::SplitString(test.permanent_consistency_country_before, ",",
-                             base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
-        list_value.Append(component);
-      }
-      local_state()->SetList(prefs::kVariationsPermanentConsistencyCountry,
-                             std::move(list_value));
+      seed_store->SetPermanentConsistencyCountryAndVersion(
+          std::string(test.permanent_consistency_country_before),
+          std::string(test.version_before));
     }
 
     std::string latest_country;
@@ -1044,7 +1073,6 @@ TEST_F(FieldTrialCreatorTest, LoadPermanentConsistencyCountry) {
     }
 
     TestVariationsServiceClient variations_service_client;
-    auto seed_store = CreateSeedStore(local_state(), seed_file_path());
     VariationsFieldTrialCreator field_trial_creator(
         &variations_service_client, std::move(seed_store), UIStringOverrider());
 
@@ -1052,20 +1080,21 @@ TEST_F(FieldTrialCreatorTest, LoadPermanentConsistencyCountry) {
     EXPECT_EQ(test.expected_country,
               field_trial_creator.LoadPermanentConsistencyCountry(
                   base::Version(test.version), latest_country))
-        << test.permanent_consistency_country_before << ", " << test.version
-        << ", " << test.latest_country_code;
+        << test.permanent_consistency_country_before << ", "
+        << test.version_before << ", " << test.latest_country_code;
 
-    base::Value::List expected_list;
-    for (const std::string& component :
-         base::SplitString(test.permanent_consistency_country_after, ",",
-                           base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
-      expected_list.Append(component);
-    }
-    const base::Value::List& pref_list =
-        local_state()->GetList(prefs::kVariationsPermanentConsistencyCountry);
-    EXPECT_EQ(ListToString(expected_list), ListToString(pref_list))
-        << test.permanent_consistency_country_before << ", " << test.version
-        << ", " << test.latest_country_code;
+    EXPECT_EQ(
+        std::string(test.permanent_consistency_country_after),
+        std::string(
+            field_trial_creator.seed_store()->GetPermanentConsistencyCountry()))
+        << test.permanent_consistency_country_before << ", "
+        << test.version_before << ", " << test.latest_country_code;
+    EXPECT_EQ(
+        std::string(test.version_after),
+        std::string(
+            field_trial_creator.seed_store()->GetPermanentConsistencyVersion()))
+        << test.permanent_consistency_country_before << ", "
+        << test.version_before << ", " << test.latest_country_code;
 
     histogram_tester.ExpectUniqueSample(
         "Variations.LoadPermanentConsistencyCountryResult",
@@ -1107,7 +1136,6 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_LoadsCountryOnFirstRun) {
   auto metrics_state_manager = metrics::MetricsStateManager::Create(
       local_state(), &enabled_state_provider, std::wstring(), base::FilePath());
   metrics_state_manager->InstantiateFieldTrialList();
-  SyntheticTrialRegistry synthetic_trial_registry;
 
   // Check that field trials are created from the seed. The test seed contains a
   // single study with an experiment targeting 100% of users in India. Since
@@ -1119,7 +1147,7 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrials_LoadsCountryOnFirstRun) {
           switches::kForceVariationIds),
       std::vector<base::FeatureList::FeatureOverrideInfo>(),
       std::make_unique<base::FeatureList>(), metrics_state_manager.get(),
-      &synthetic_trial_registry, &platform_field_trials, &safe_seed_manager,
+      &platform_field_trials, &safe_seed_manager,
       /*add_entropy_source_to_variations_ids=*/true,
       *metrics_state_manager->CreateEntropyProviders(
           /*enable_limited_entropy_mode=*/false)));
@@ -1134,7 +1162,8 @@ TEST_F(FieldTrialCreatorTest, ClientFilterableState_HardwareClass) {
 
   TestVariationsServiceClient variations_service_client;
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   const base::Version& current_version = version_info::GetVersion();
   EXPECT_TRUE(current_version.IsValid());
@@ -1151,15 +1180,17 @@ std::unique_ptr<TestVariationsFieldTrialCreator>
 SetUpFieldTrialCreatorWithValidSeed(
     PrefService* local_state,
     TestVariationsServiceClient* variations_service_client,
-    NiceMock<MockSafeSeedManager>* safe_seed_manager) {
+    NiceMock<MockSafeSeedManager>* safe_seed_manager,
+    const base::FilePath& user_data_dir_path) {
   // Set up a valid unexpired seed.
   const base::Time now = base::Time::Now();
   const base::Time seed_fetch_time = now - base::Days(1);
   std::unique_ptr<TestVariationsFieldTrialCreator> field_trial_creator =
       std::make_unique<TestVariationsFieldTrialCreator>(
-          local_state, variations_service_client, safe_seed_manager);
+          local_state, variations_service_client, safe_seed_manager,
+          user_data_dir_path);
   // Simulate the seed being stored.
-  local_state->SetTime(prefs::kVariationsLastFetchTime, seed_fetch_time);
+  field_trial_creator->seed_store()->RecordLastFetchTime(seed_fetch_time);
   // Simulate a seed from an earlier (i.e. valid) milestone.
   local_state->SetInteger(prefs::kVariationsSeedMilestone, kTestSeedMilestone);
   return field_trial_creator;
@@ -1173,7 +1204,8 @@ TEST_F(FieldTrialCreatorTest, NotSetUpFieldTrialConfig_ValidSeed) {
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   std::unique_ptr<TestVariationsFieldTrialCreator> field_trial_creator =
       SetUpFieldTrialCreatorWithValidSeed(
-          local_state(), &variations_service_client, &safe_seed_manager);
+          local_state(), &variations_service_client, &safe_seed_manager,
+          user_data_dir_path());
 
   // Verify that |SetUpFieldTrials| uses the seed. |SetUpFieldTrials| returns
   // true if it used a seed.
@@ -1201,7 +1233,8 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrialConfig_ValidSeed) {
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   std::unique_ptr<TestVariationsFieldTrialCreator> field_trial_creator =
       SetUpFieldTrialCreatorWithValidSeed(
-          local_state(), &variations_service_client, &safe_seed_manager);
+          local_state(), &variations_service_client, &safe_seed_manager,
+          user_data_dir_path());
 
   // Verify that |SetUpFieldTrials| does not use the seed, despite it being
   // valid and unexpired. |SetUpFieldTrials| returns false if it did not use a
@@ -1249,7 +1282,8 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrialConfig_ForceFieldTrials) {
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   std::unique_ptr<TestVariationsFieldTrialCreator> field_trial_creator =
       SetUpFieldTrialCreatorWithValidSeed(
-          local_state(), &variations_service_client, &safe_seed_manager);
+          local_state(), &variations_service_client, &safe_seed_manager,
+          user_data_dir_path());
 
   // Verify that |SetUpFieldTrials| does not use the seed, despite it being
   // valid and unexpired. |SetUpFieldTrials| returns false if it did not use a
@@ -1303,7 +1337,8 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrialConfig_ForceFieldTrialsOverride) {
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   std::unique_ptr<TestVariationsFieldTrialCreator> field_trial_creator =
       SetUpFieldTrialCreatorWithValidSeed(
-          local_state(), &variations_service_client, &safe_seed_manager);
+          local_state(), &variations_service_client, &safe_seed_manager,
+          user_data_dir_path());
 
   // Verify that |SetUpFieldTrials| does not use the seed, despite it being
   // valid and unexpired. |SetUpFieldTrials| returns false if it did not use a
@@ -1348,7 +1383,8 @@ TEST_F(FieldTrialCreatorTest, SetUpFieldTrialConfig_ForceFieldTrialParams) {
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   std::unique_ptr<TestVariationsFieldTrialCreator> field_trial_creator =
       SetUpFieldTrialCreatorWithValidSeed(
-          local_state(), &variations_service_client, &safe_seed_manager);
+          local_state(), &variations_service_client, &safe_seed_manager,
+          user_data_dir_path());
 
   // Verify that |SetUpFieldTrials| does not use the seed, despite it being
   // valid and unexpired. |SetUpFieldTrials| returns false if it did not use a
@@ -1404,7 +1440,8 @@ TEST_P(FieldTrialCreatorTestWithFeatures,
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   std::unique_ptr<TestVariationsFieldTrialCreator> field_trial_creator =
       SetUpFieldTrialCreatorWithValidSeed(
-          local_state(), &variations_service_client, &safe_seed_manager);
+          local_state(), &variations_service_client, &safe_seed_manager,
+          user_data_dir_path());
 
   // Verify that |SetUpFieldTrials| does not use the seed, despite it being
   // valid and unexpired. |SetUpFieldTrials| returns false if it did not use a
@@ -1535,7 +1572,8 @@ TEST_F(FieldTrialCreatorTest, GetGoogleGroupsFromPrefsWhenPrefNotPresent) {
   TestVariationsServiceClient variations_service_client;
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   ASSERT_EQ(field_trial_creator.GetGoogleGroupsFromPrefs(),
             base::flat_set<uint64_t>());
@@ -1545,7 +1583,8 @@ TEST_F(FieldTrialCreatorTest, GetGoogleGroupsFromPrefsWhenEmptyDict) {
   TestVariationsServiceClient variations_service_client;
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Add an empty dict value for the pref.
   base::Value::Dict google_groups_dict;
@@ -1561,7 +1600,8 @@ TEST_F(FieldTrialCreatorTest,
   TestVariationsServiceClient variations_service_client;
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Add an empty dict value for the pref.
   base::Value::Dict google_groups_dict;
@@ -1579,7 +1619,8 @@ TEST_F(FieldTrialCreatorTest,
   TestVariationsServiceClient variations_service_client;
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Add an empty dict value for the pref.
   base::Value::Dict google_groups_dict;
@@ -1599,7 +1640,8 @@ TEST_F(FieldTrialCreatorTest,
   TestVariationsServiceClient variations_service_client;
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   // Add an empty dict value for the pref.
   base::Value::Dict google_groups_dict;
@@ -1618,94 +1660,91 @@ TEST_F(FieldTrialCreatorTest, GetGoogleGroupsFromPrefsClearsDeletedProfiles) {
   NiceMock<MockVariationsServiceClient> variations_service_client;
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
   TestVariationsFieldTrialCreator field_trial_creator(
-      local_state(), &variations_service_client, &safe_seed_manager);
+      local_state(), &variations_service_client, &safe_seed_manager,
+      user_data_dir_path());
 
   EXPECT_CALL(variations_service_client,
               RemoveGoogleGroupsFromPrefsForDeletedProfiles(local_state()));
   field_trial_creator.GetGoogleGroupsFromPrefs();
 }
 
-namespace {
-
-enum class LimitedModeGate {
-  ENABLED,
-  DISABLED,
-};
-
-struct LimitedEntropyProcessingTestCase {
+struct SeedWithLimitedLayerTestParams {
   std::string test_name;
   VariationsSeed seed;
-
-  bool is_seed_rejection_expected;
-  bool is_limited_study_active;
+  bool apply_seed;
 };
 
-class LimitedEntropyProcessingTest
+class LimitedLayerFieldTrialCreatorTest
     : public FieldTrialCreatorTest,
-      public ::testing::WithParamInterface<LimitedEntropyProcessingTestCase> {};
+      public ::testing::WithParamInterface<SeedWithLimitedLayerTestParams> {};
 
 INSTANTIATE_TEST_SUITE_P(
-    FieldTrialCreatorTest,
-    LimitedEntropyProcessingTest,
+    ,
+    LimitedLayerFieldTrialCreatorTest,
     ::testing::Values(
-        LimitedEntropyProcessingTestCase{
-            .test_name = "ShouldProcessLimitedLayer",
+        SeedWithLimitedLayerTestParams{
+            .test_name = "ApplySeedWithLimitedLayer",
             .seed = CreateTestSeedWithLimitedEntropyLayer(),
-            .is_seed_rejection_expected = false,
-            .is_limited_study_active = true},
-        LimitedEntropyProcessingTestCase{
-            .test_name = "ShouldRejectSeedWithExcessiveEntropyUse",
+            .apply_seed = true},
+        SeedWithLimitedLayerTestParams{
+            .test_name = "RejectSeedWithExcessiveEntropyUseInLimitedLayer",
             .seed =
                 CreateTestSeedWithLimitedEntropyLayerUsingExcessiveEntropy(),
-            .is_seed_rejection_expected = true,
-            .is_limited_study_active = false}),
-    [](const ::testing::TestParamInfo<LimitedEntropyProcessingTestCase>& info) {
+            .apply_seed = false}),
+    [](const ::testing::TestParamInfo<SeedWithLimitedLayerTestParams>& info) {
       return info.param.test_name;
     });
 
-TEST_P(LimitedEntropyProcessingTest,
-       RandomizeLimitedEntropyStudyOrRejectTheSeed) {
-  const LimitedEntropyProcessingTestCase test_case = GetParam();
+TEST_P(LimitedLayerFieldTrialCreatorTest, SetUpFieldTrials) {
+  // First, do some seed-related setup.
+  SeedWithLimitedLayerTestParams params = GetParam();
+  SetUpLatestSeedAndEmptySignature(params.seed);
 
-  auto encoded_and_compressed = GZipAndB64EncodeToHexString(test_case.seed);
-  local_state()->SetString(prefs::kVariationsCompressedSeed,
-                           encoded_and_compressed);
-
-  // Allows and writes an empty signature for the test seed.
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kAcceptEmptySeedSignatureForTesting);
-  local_state()->SetString(prefs::kVariationsSeedSignature, "");
-
-  // Sets up dependencies and mocks.
+  // Second, create a real VariationsFieldTrialCreator.
   TestVariationsServiceClient variations_service_client;
-  auto seed_store = CreateSeedStore(local_state(), seed_file_path());
+  std::unique_ptr<VariationsSeedStore> seed_store =
+      CreateSeedStore(local_state(), seed_file_path());
   VariationsFieldTrialCreator field_trial_creator(
       &variations_service_client, std::move(seed_store), UIStringOverrider());
+
+  // Third, create the FieldTrialList.
   metrics::TestEnabledStateProvider enabled_state_provider(
       /*consent=*/true,
       /*enabled=*/true);
-  auto metrics_state_manager = metrics::MetricsStateManager::Create(
-      local_state(), &enabled_state_provider, std::wstring(), base::FilePath());
+  std::unique_ptr<metrics::MetricsStateManager> metrics_state_manager =
+      metrics::MetricsStateManager::Create(local_state(),
+                                           &enabled_state_provider,
+                                           std::wstring(), base::FilePath());
   metrics_state_manager->InstantiateFieldTrialList();
+
+  // Next, set up a few more classes before calling the function under test.
   PlatformFieldTrials platform_field_trials;
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
-  SyntheticTrialRegistry synthetic_trial_registry;
+  base::HistogramTester histogram_tester;
 
-  EXPECT_NE(
-      test_case.is_seed_rejection_expected,
+  ASSERT_FALSE(base::FieldTrialList::TrialExists(kTestLimitedLayerStudyName));
+
+  // Call the function under test.
+  EXPECT_EQ(
       field_trial_creator.SetUpFieldTrials(
           /*variation_ids=*/{},
           /*command_line_variation_ids=*/std::string(),
           std::vector<base::FeatureList::FeatureOverrideInfo>(),
           std::make_unique<base::FeatureList>(), metrics_state_manager.get(),
-          &synthetic_trial_registry, &platform_field_trials, &safe_seed_manager,
+          &platform_field_trials, &safe_seed_manager,
           /*add_entropy_source_to_variations_ids=*/true,
           *metrics_state_manager->CreateEntropyProviders(
-              /*enable_limited_entropy_mode=*/true)));
+              /*enable_limited_entropy_mode=*/true)),
+      params.apply_seed);
 
-  // Verifies that the limited entropy test study is randomized.
-  EXPECT_EQ(test_case.is_limited_study_active,
-            base::FieldTrialList::TrialExists(kTestLimitedLayerStudyName));
+  EXPECT_EQ(base::FieldTrialList::TrialExists(kTestLimitedLayerStudyName),
+            params.apply_seed);
+
+  SeedUsage expected_seed_usage =
+      params.apply_seed ? SeedUsage::kRegularSeedUsed
+                        : SeedUsage::kMisconfiguredRegularSeedNotUsed;
+  histogram_tester.ExpectUniqueSample("Variations.SeedUsage",
+                                      expected_seed_usage, 1);
 }
 
 // Test feature names prefixed with __ to avoid collision with real features.
@@ -1737,8 +1776,6 @@ constexpr char kFormFactorTestSeedData[] =
     "MWWrdXxpnYwvimz3Lf1PpKn3NugRiX4BYbwfL7vhKCT1RsLETAFYSF+"
     "TSjnvoMQEz0f2Ch3Gevro5/AQAA//8RFDdTJQIAAA==";
 constexpr char kFormFactorTestSeedSignature[] = "";  // Deliberately empty.
-
-}  // namespace
 
 INSTANTIATE_TEST_SUITE_P(All,
                          FieldTrialCreatorFormFactorTest,
@@ -1775,7 +1812,6 @@ TEST_P(FieldTrialCreatorFormFactorTest, FilterByFormFactor) {
 
   PlatformFieldTrials platform_field_trials;
   NiceMock<MockSafeSeedManager> safe_seed_manager(local_state());
-  SyntheticTrialRegistry synthetic_trial_registry;
 
   // Set up the field trials.
   VariationsFieldTrialCreator field_trial_creator{
@@ -1786,7 +1822,7 @@ TEST_P(FieldTrialCreatorFormFactorTest, FilterByFormFactor) {
       /*command_line_variation_ids=*/std::string(),
       std::vector<base::FeatureList::FeatureOverrideInfo>(),
       std::make_unique<base::FeatureList>(), metrics_state_manager.get(),
-      &synthetic_trial_registry, &platform_field_trials, &safe_seed_manager,
+      &platform_field_trials, &safe_seed_manager,
       /*add_entropy_source_to_variations_ids=*/true,
       *metrics_state_manager->CreateEntropyProviders(
           /*enable_limited_entropy_mode=*/false)));
@@ -1816,4 +1852,5 @@ TEST_P(FieldTrialCreatorFormFactorTest, FilterByFormFactor) {
             current_form_factor == Study::AUTOMOTIVE);
 }
 
+}  // namespace
 }  // namespace variations

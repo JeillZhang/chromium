@@ -264,21 +264,8 @@ class BASE_EXPORT GSL_OWNER DictValue {
   // results in a faster initial sort operation. Takes move iterators to avoid
   // having to clone the input.
   template <class IteratorType>
-  explicit DictValue(std::move_iterator<IteratorType> first,
-                     std::move_iterator<IteratorType> last) {
-    // Need to move into a vector first, since `storage_` currently uses
-    // unique_ptrs.
-    std::vector<std::pair<std::string, std::unique_ptr<Value>>> values;
-    for (auto current = first; current != last; ++current) {
-      // With move iterators, no need to call Clone(), but do need to move
-      // to a temporary first, as accessing either field individually will
-      // directly from the iterator will delete the other field.
-      auto value = *current;
-      values.emplace_back(std::move(value.first),
-                          std::make_unique<Value>(std::move(value.second)));
-    }
-    storage_ = flat_map<std::string, std::unique_ptr<Value>>(std::move(values));
-  }
+  DictValue(std::move_iterator<IteratorType> first,
+            std::move_iterator<IteratorType> last);
 
   DictValue(PassKey<internal::JSONParser>,
             flat_map<std::string, std::unique_ptr<Value>>);
@@ -291,6 +278,10 @@ class BASE_EXPORT GSL_OWNER DictValue {
 
   // Returns the number of entries in this dictionary.
   size_t size() const;
+
+  // Increase the capacity of the backing container, but does not change the
+  // size. Assume all existing iterators will be invalidated.
+  void reserve(size_t capacity);
 
   // Returns an iterator to the first entry in this dictionary.
   iterator begin();
@@ -370,6 +361,10 @@ class BASE_EXPORT GSL_OWNER DictValue {
   Value* Set(std::string_view key, BlobStorage&& value) &;
   Value* Set(std::string_view key, DictValue&& value) &;
   Value* Set(std::string_view key, ListValue&& value) &;
+
+  // Same as above, but more efficient if the new key is greater than all
+  // pre-existing keys in the dictionary.
+  Value* Set_HintAtEnd(std::string_view key, Value&& value) &;
 
   // Rvalue overrides of the `Set` methods, which allow you to construct
   // a `Value::Dict` builder-style:
@@ -1092,6 +1087,24 @@ bool ListValue::contains(const T& val,
   return std::ranges::any_of(storage_, [&](const Value& value) {
     return (value.*test)() && (value.*get)() == val;
   });
+}
+
+template <class IteratorType>
+DictValue::DictValue(std::move_iterator<IteratorType> first,
+                     std::move_iterator<IteratorType> last) {
+  // Need to move into a vector first, since `storage_` currently uses
+  // unique_ptrs.
+  std::vector<std::pair<std::string, std::unique_ptr<Value>>> values;
+  values.reserve(static_cast<size_t>(std::distance(first, last)));
+  for (auto current = first; current != last; ++current) {
+    // With move iterators, no need to call Clone(), but do need to move
+    // to a temporary first, as accessing either field individually will
+    // directly from the iterator will delete the other field.
+    auto value = *current;
+    values.emplace_back(std::move(value.first),
+                        std::make_unique<Value>(std::move(value.second)));
+  }
+  storage_ = flat_map<std::string, std::unique_ptr<Value>>(std::move(values));
 }
 
 }  // namespace base

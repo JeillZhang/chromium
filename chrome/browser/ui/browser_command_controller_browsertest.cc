@@ -20,10 +20,10 @@
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
 #include "chrome/browser/sessions/tab_restore_service_load_waiter.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/translate/translate_test_utils.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
@@ -65,8 +65,9 @@
 #endif  // BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_WIN)
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/glic_pref_names.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
@@ -236,7 +237,7 @@ class BrowserCommandControllerBrowserTestLockedFullscreen
   }
 
   void EnterLockedFullscreen() {
-    PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
+    ash::PinWindow(browser()->window()->GetNativeWindow(), /*trusted=*/true);
 
     // Update the corresponding command controller state as well as other
     // states so we can verify what commands are enabled.
@@ -251,7 +252,7 @@ class BrowserCommandControllerBrowserTestLockedFullscreen
   }
 
   void ExitLockedFullscreen() {
-    UnpinWindow(browser()->window()->GetNativeWindow());
+    ash::UnpinWindow(browser()->window()->GetNativeWindow());
     browser()->command_controller()->LockedFullscreenStateChanged();
   }
 
@@ -711,14 +712,19 @@ IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
 
 IN_PROC_BROWSER_TEST_F(BrowserCommandControllerBrowserTestGlic,
                        ExecuteGlicThreeDotMenuItem) {
+  if (base::FeatureList::IsEnabled(features::kGlicMultiInstance)) {
+    // TODO(b/453696965): Broken in multi-instance.
+    GTEST_SKIP() << "Skipping for kGlicMultiInstance";
+  }
   // Bypass glic eligibility check.
   PrefService* profile_prefs = browser()->profile()->GetPrefs();
   profile_prefs->SetInteger(
       ::prefs::kGeminiSettings,
       static_cast<int>(glic::prefs::SettingsPolicyState::kEnabled));
   // Bypass fre.
-  profile_prefs->SetInteger(glic::prefs::kGlicCompletedFre,
-                            static_cast<int>(glic::prefs::FreStatus::kCompleted));
+  profile_prefs->SetInteger(
+      glic::prefs::kGlicCompletedFre,
+      static_cast<int>(glic::prefs::FreStatus::kCompleted));
 
   EXPECT_TRUE(chrome::ExecuteCommand(browser(), IDC_OPEN_GLIC));
   ASSERT_TRUE(

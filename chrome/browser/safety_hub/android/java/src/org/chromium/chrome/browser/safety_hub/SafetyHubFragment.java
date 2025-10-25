@@ -128,7 +128,7 @@ public class SafetyHubFragment extends SafetyHubBaseFragment
                         findPreference(PREF_SAFE_BROWSING), this, getProfile());
 
         mModuleMediators =
-                new ArrayList<SafetyHubModuleMediator>(
+                new ArrayList<>(
                         Arrays.asList(
                                 updateCheckModuleMediator,
                                 permissionsRevocationModuleMediator,
@@ -338,6 +338,7 @@ public class SafetyHubFragment extends SafetyHubBaseFragment
         mBrowserStateModuleMediator.updateModule();
 
         updateAllModulesExpandState();
+        notifyPreferencesUpdated();
     }
 
     private void updateAllModulesExpandState() {

@@ -32,9 +32,7 @@ import org.robolectric.annotation.Config;
 
 import org.chromium.base.Token;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
-import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.sync.SyncServiceFactory;
 import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncFeatures;
@@ -94,13 +92,13 @@ public class TabGroupVisualDataDialogManagerUnitTest {
         TabGroupSyncFeaturesJni.setInstanceForTesting(mTabGroupSyncFeaturesJniMock);
         SyncServiceFactory.setInstanceForTesting(mSyncService);
 
+        doReturn(true).when(mTabGroupModelFilter).tabGroupExists(TAB_GROUP_ID);
         doReturn(mTabModel).when(mTabGroupModelFilter).getTabModel();
         doReturn(mProfile).when(mTabModel).getProfile();
         doReturn(true).when(mTabGroupSyncFeaturesJniMock).isTabGroupSyncEnabled(mProfile);
     }
 
     @Test
-    @EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
     public void testVisualDataDialogDelegate_showDialog() {
         mTabGroupVisualDataDialogManager.showDialog(
                 TAB_GROUP_ID, mTabGroupModelFilter, mDialogController);
@@ -122,7 +120,6 @@ public class TabGroupVisualDataDialogManagerUnitTest {
     }
 
     @Test
-    @EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
     public void testVisualDataDialogDelegate_doubleShowDismissed() {
         // Mock a double trigger for the creation dialog observer method for the same group action,
         // but show dialog is only called once.
@@ -135,7 +132,6 @@ public class TabGroupVisualDataDialogManagerUnitTest {
     }
 
     @Test
-    @EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
     public void testVisualDataDialog_descriptionTextNotSet() {
         // Set the opposite values for the conditional statement to be true.
         doReturn(true).when(mTabModel).isIncognitoBranded();
@@ -154,12 +150,11 @@ public class TabGroupVisualDataDialogManagerUnitTest {
         Assert.assertEquals(View.GONE, description.getVisibility());
         verify(mTracker, never()).notifyEvent(eq(TAB_GROUP_CREATION_DIALOG_SHOWN));
 
-        mTabGroupVisualDataDialogManager.hideDialog();
+        mTabGroupVisualDataDialogManager.onHideDialog();
         verify(mTracker, never()).dismissed(eq(TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE));
     }
 
     @Test
-    @EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
     public void testVisualDataDialog_descriptionTextSetButNotSyncing() {
         doReturn(false).when(mTabModel).isIncognitoBranded();
         doReturn(true)
@@ -183,12 +178,11 @@ public class TabGroupVisualDataDialogManagerUnitTest {
                 description.getText());
         verify(mTracker).notifyEvent(eq(TAB_GROUP_CREATION_DIALOG_SHOWN));
 
-        mTabGroupVisualDataDialogManager.hideDialog();
+        mTabGroupVisualDataDialogManager.onHideDialog();
         verify(mTracker).dismissed(eq(TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE));
     }
 
     @Test
-    @EnableFeatures({ChromeFeatureList.TAB_GROUP_SYNC_ANDROID})
     public void testVisualDataDialog_descriptionTextSetAndSyncing() {
         doReturn(false).when(mTabModel).isIncognitoBranded();
         doReturn(true)
@@ -213,7 +207,7 @@ public class TabGroupVisualDataDialogManagerUnitTest {
                 description.getText());
         verify(mTracker).notifyEvent(eq(TAB_GROUP_CREATION_DIALOG_SHOWN));
 
-        mTabGroupVisualDataDialogManager.hideDialog();
+        mTabGroupVisualDataDialogManager.onHideDialog();
         verify(mTracker).dismissed(eq(TAB_GROUP_CREATION_DIALOG_SYNC_TEXT_FEATURE));
     }
 }

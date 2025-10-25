@@ -59,7 +59,6 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
-#include "net/test/spawned_test_server/spawned_test_server.h"
 #include "net/test/test_data_directory.h"
 #include "net/test/test_net_log_manager.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
@@ -174,80 +173,6 @@ TEST_F(NetworkServiceTest, CreateContextWithoutChannelID) {
   mojo::Remote<mojom::NetworkContext> network_context;
   service()->CreateNetworkContext(network_context.BindNewPipeAndPassReceiver(),
                                   std::move(params));
-  network_context.reset();
-  // Make sure the NetworkContext is destroyed.
-  base::RunLoop().RunUntilIdle();
-}
-
-TEST_F(NetworkServiceTest, CreateContextWithMaskedDomainListProxyConfig) {
-  base::test::ScopedFeatureList scoped_feature_list_;
-  scoped_feature_list_.InitWithFeatures(
-      {net::features::kEnableIpProtectionProxy},
-      {network::features::kMaskedDomainListFlatbufferImpl});
-
-  masked_domain_list::MaskedDomainList mdl;
-  auto* resourceOwner = mdl.add_resource_owners();
-  resourceOwner->set_owner_name("foo");
-  resourceOwner->add_owned_resources()->set_domain("example.com");
-  service()->UpdateMaskedDomainList(
-      mojo_base::ProtoWrapper(mdl),
-      /*exclusion_list=*/std::vector<std::string>());
-  task_environment()->RunUntilIdle();
-
-  mojom::NetworkContextParamsPtr params = CreateContextParams();
-  mojo::Remote<mojom::NetworkContext> network_context;
-  service()->CreateNetworkContext(network_context.BindNewPipeAndPassReceiver(),
-                                  std::move(params));
-
-  // TODO(aakallam): verify that the allow list is used
-
-  network_context.reset();
-  // Make sure the NetworkContext is destroyed.
-  base::RunLoop().RunUntilIdle();
-}
-
-TEST_F(NetworkServiceTest,
-       CreateContextWithCustomProxyConfig_MdlConfigIsNotUsed) {
-  base::test::ScopedFeatureList scoped_feature_list_;
-  scoped_feature_list_.InitWithFeatures(
-      {net::features::kEnableIpProtectionProxy},
-      {network::features::kMaskedDomainListFlatbufferImpl});
-
-  masked_domain_list::MaskedDomainList mdl;
-  auto* resourceOwner = mdl.add_resource_owners();
-  resourceOwner->set_owner_name("foo");
-  resourceOwner->add_owned_resources()->set_domain("example.com");
-  service()->UpdateMaskedDomainList(
-      mojo_base::ProtoWrapper(mdl),
-      /*exclusion_list=*/std::vector<std::string>());
-  task_environment()->RunUntilIdle();
-
-  mojom::NetworkContextParamsPtr params = CreateContextParams();
-  params->initial_custom_proxy_config =
-      network::mojom::CustomProxyConfig::New();
-  mojo::Remote<mojom::NetworkContext> network_context;
-  service()->CreateNetworkContext(network_context.BindNewPipeAndPassReceiver(),
-                                  std::move(params));
-
-  // TODO(aakallam): verify that the allow list isn't used
-
-  network_context.reset();
-  // Make sure the NetworkContext is destroyed.
-  base::RunLoop().RunUntilIdle();
-}
-
-TEST_F(NetworkServiceTest, CreateContextWithoutMaskedDomainListData) {
-  base::test::ScopedFeatureList scoped_feature_list_;
-  scoped_feature_list_.InitAndEnableFeature(
-      net::features::kEnableIpProtectionProxy);
-
-  mojom::NetworkContextParamsPtr params = CreateContextParams();
-  mojo::Remote<mojom::NetworkContext> network_context;
-  service()->CreateNetworkContext(network_context.BindNewPipeAndPassReceiver(),
-                                  std::move(params));
-
-  // TODO(aakallam): verify that the allow list isn't used
-
   network_context.reset();
   // Make sure the NetworkContext is destroyed.
   base::RunLoop().RunUntilIdle();
@@ -1110,25 +1035,6 @@ TEST_F(NetworkServiceTest, DisableCTEnforcement) {
 }
 #endif  // BUILDFLAG(IS_CT_SUPPORTED)
 
-TEST_F(NetworkServiceTest, SetMaskedDomainList) {
-  base::test::ScopedFeatureList scoped_feature_list_;
-  scoped_feature_list_.InitWithFeatures(
-      {net::features::kEnableIpProtectionProxy,
-       network::features::kMaskedDomainList},
-      {network::features::kMaskedDomainListFlatbufferImpl});
-
-  masked_domain_list::MaskedDomainList mdl;
-  auto* resourceOwner = mdl.add_resource_owners();
-  resourceOwner->set_owner_name("foo");
-  resourceOwner->add_owned_resources()->set_domain("example.com");
-
-  service()->UpdateMaskedDomainList(
-      mojo_base::ProtoWrapper(mdl),
-      /*exclusion_list=*/std::vector<std::string>());
-
-  EXPECT_TRUE(service()->masked_domain_list_manager()->IsPopulated());
-}
-
 class TestCookieEncryptionProvider : public mojom::CookieEncryptionProvider {
  public:
   TestCookieEncryptionProvider() = default;
@@ -1254,16 +1160,17 @@ TEST_P(NetworkServiceCookieTest, CookieEncryptionProvider) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(/*no prefix*/,
-                         NetworkServiceCookieTest,
-                         testing::Combine(testing::Bool(), testing::Bool()),
-                         [](const auto& info) {
-                           return base::StringPrintf(
-                               "%s_%s",
-                               std::get<0>(info.param) ? "crypt" : "no_crypt",
-                               std::get<1>(info.param) ? "provider"
-                                                       : "no_provider");
-                         });
+INSTANTIATE_TEST_SUITE_P(
+    /*no prefix*/,
+    NetworkServiceCookieTest,
+    testing::Values(std::make_tuple(true, true),     // crypt_provider
+                    std::make_tuple(false, true),    // no_crypt_provider
+                    std::make_tuple(false, false)),  // no_crypt_no_provider
+    [](const auto& info) {
+      return base::StringPrintf(
+          "%s_%s", std::get<0>(info.param) ? "crypt" : "no_crypt",
+          std::get<1>(info.param) ? "provider" : "no_provider");
+    });
 
 class NetworkServiceTestWithService : public testing::Test {
  public:
@@ -1513,10 +1420,13 @@ class NetworkServiceTestWithResolverMap : public NetworkServiceTestWithService {
 TEST_F(NetworkServiceTestWithService, SetNetworkConditions) {
   const base::UnguessableToken profile_id = base::UnguessableToken::Create();
   CreateNetworkContext();
-  mojom::NetworkConditionsPtr network_conditions =
-      mojom::NetworkConditions::New();
-  network_conditions->offline = true;
-  context()->SetNetworkConditions(profile_id, std::move(network_conditions));
+  {
+    std::vector<mojom::MatchedNetworkConditionsPtr> network_conditions;
+    network_conditions.emplace_back(mojom::MatchedNetworkConditions::New());
+    network_conditions.back()->conditions = mojom::NetworkConditions::New();
+    network_conditions.back()->conditions->offline = true;
+    context()->SetNetworkConditions(profile_id, std::move(network_conditions));
+  }
 
   ResourceRequest request;
   request.url = test_server()->GetURL("/nocache.html");
@@ -1534,23 +1444,31 @@ TEST_F(NetworkServiceTestWithService, SetNetworkConditions) {
   EXPECT_EQ(net::ERR_INTERNET_DISCONNECTED,
             client()->completion_status().error_code);
 
-  network_conditions = mojom::NetworkConditions::New();
-  network_conditions->offline = false;
-  context()->SetNetworkConditions(profile_id, std::move(network_conditions));
+  {
+    std::vector<mojom::MatchedNetworkConditionsPtr> network_conditions;
+    network_conditions.emplace_back(mojom::MatchedNetworkConditions::New());
+    network_conditions.back()->conditions = mojom::NetworkConditions::New();
+    network_conditions.back()->conditions->offline = false;
+    context()->SetNetworkConditions(profile_id, std::move(network_conditions));
+  }
   StartLoadingURL(request, 0);
   client()->RunUntilComplete();
   EXPECT_EQ(net::OK, client()->completion_status().error_code);
 
-  network_conditions = mojom::NetworkConditions::New();
-  network_conditions->offline = true;
-  context()->SetNetworkConditions(profile_id, std::move(network_conditions));
+  {
+    std::vector<mojom::MatchedNetworkConditionsPtr> network_conditions;
+    network_conditions.emplace_back(mojom::MatchedNetworkConditions::New());
+    network_conditions.back()->conditions = mojom::NetworkConditions::New();
+    network_conditions.back()->conditions->offline = true;
+    context()->SetNetworkConditions(profile_id, std::move(network_conditions));
+  }
 
   request.throttling_profile_id = profile_id;
   StartLoadingURL(request, 0);
   client()->RunUntilComplete();
   EXPECT_EQ(net::ERR_INTERNET_DISCONNECTED,
             client()->completion_status().error_code);
-  context()->SetNetworkConditions(profile_id, nullptr);
+  context()->SetNetworkConditions(profile_id, {});
   StartLoadingURL(request, 0);
   client()->RunUntilComplete();
   EXPECT_EQ(net::OK, client()->completion_status().error_code);
@@ -2109,13 +2027,12 @@ class StubHostResolverClient : public mojom::ResolveHostClient {
   void OnTextResults(const std::vector<std::string>& text_results) override {}
   void OnHostnameResults(const std::vector<net::HostPortPair>& hosts) override {
   }
-  void OnComplete(int result,
-                  const net::ResolveErrorInfo& resolve_error_info,
-                  const std::optional<net::AddressList>& resolved_addresses,
-                  const std::optional<net::HostResolverEndpointResults>&
-                      endpoint_results_with_metadata) override {
-    std::move(resolve_host_callback_)
-        .Run(resolved_addresses.value_or(net::AddressList()));
+  void OnComplete(
+      int result,
+      const net::ResolveErrorInfo& resolve_error_info,
+      const net::AddressList& resolved_addresses,
+      const net::HostResolverEndpointResults& alternative_endpoints) override {
+    std::move(resolve_host_callback_).Run(resolved_addresses);
   }
 
  private:

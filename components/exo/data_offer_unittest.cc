@@ -98,7 +98,7 @@ class TestDataTransferPolicyController : ui::DataTransferPolicyController {
 };
 
 bool ReadString(base::ScopedFD fd, std::string* out) {
-  std::array<char, 128> buffer;
+  std::array<char, 1024> buffer;
   char* it = buffer.data();
   char* end = it + buffer.size();
   while (it != end) {
@@ -114,7 +114,7 @@ bool ReadString(base::ScopedFD fd, std::string* out) {
 }
 
 bool ReadString16(base::ScopedFD fd, std::u16string* out) {
-  std::array<char, 128> buffer;
+  std::array<char, 1024> buffer;
   char* it = buffer.data();
   char* end = it + buffer.size();
   while (it != it + buffer.size()) {
@@ -439,7 +439,7 @@ TEST_F(DataOfferTest, SetClipboardDataPlainText) {
     writer.WriteText(u"Test data");
   }
 
-  auto* window = CreateTestWindowInShellWithBounds(gfx::Rect());
+  auto* window = CreateTestWindowInShell({});
   data_offer.SetClipboardData(
       &data_exchange_delegate, *ui::Clipboard::GetForCurrentThread(),
       data_exchange_delegate.GetDataTransferEndpointType(window));
@@ -483,7 +483,7 @@ TEST_F(DataOfferTest, SetClipboardDataHTML) {
     writer.WriteHTML(u"Test data", "");
   }
 
-  auto* window = CreateTestWindowInShellWithBounds(gfx::Rect());
+  auto* window = CreateTestWindowInShell({});
   data_offer.SetClipboardData(
       &data_exchange_delegate, *ui::Clipboard::GetForCurrentThread(),
       data_exchange_delegate.GetDataTransferEndpointType(window));
@@ -524,7 +524,7 @@ TEST_F(DataOfferTest, SetClipboardDataRTF) {
     writer.WriteRTF("Test data");
   }
 
-  auto* window = CreateTestWindowInShellWithBounds(gfx::Rect());
+  auto* window = CreateTestWindowInShell({});
   data_offer.SetClipboardData(
       &data_exchange_delegate, *ui::Clipboard::GetForCurrentThread(),
       data_exchange_delegate.GetDataTransferEndpointType(window));
@@ -556,7 +556,7 @@ TEST_F(DataOfferTest, SetClipboardDataImage) {
     writer.WriteImage(image);
   }
 
-  auto* window = CreateTestWindowInShellWithBounds(gfx::Rect());
+  auto* window = CreateTestWindowInShell({});
   data_offer.SetClipboardData(
       &data_exchange_delegate, *ui::Clipboard::GetForCurrentThread(),
       data_exchange_delegate.GetDataTransferEndpointType(window));
@@ -602,7 +602,7 @@ TEST_F(DataOfferTest, SetClipboardDataFilenames) {
     writer.WriteFilenames("file:///test/path");
   }
 
-  auto* window = CreateTestWindowInShellWithBounds(gfx::Rect());
+  auto* window = CreateTestWindowInShell({});
   data_offer.SetClipboardData(
       &data_exchange_delegate, *ui::Clipboard::GetForCurrentThread(),
       data_exchange_delegate.GetDataTransferEndpointType(window));
@@ -640,7 +640,7 @@ TEST_F(DataOfferTest, SetClipboardDataWithTransferPolicy) {
     writer.WriteText(u"Test data");
   }
 
-  auto* window = CreateTestWindowInShellWithBounds(gfx::Rect());
+  auto* window = CreateTestWindowInShell({});
   data_offer.SetClipboardData(
       &data_exchange_delegate, *ui::Clipboard::GetForCurrentThread(),
       data_exchange_delegate.GetDataTransferEndpointType(window));

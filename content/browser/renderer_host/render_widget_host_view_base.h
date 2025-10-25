@@ -22,10 +22,8 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/input/event_with_latency_info.h"
-#include "components/input/input_router_impl.h"
 #include "components/input/render_input_router.h"
 #include "components/input/render_widget_host_view_input.h"
-#include "components/viz/common/frame_sinks/copy_output_request.h"
 #include "components/viz/common/hit_test/hit_test_query.h"
 #include "components/viz/common/surfaces/scoped_surface_id_allocator.h"
 #include "components/viz/common/surfaces/surface_id.h"
@@ -52,7 +50,7 @@
 #include "ui/events/blink/did_overscroll_params.h"
 #include "ui/events/event_constants.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #include "ui/gfx/range/range.h"
 #include "ui/surface/transport_dib.h"
 #include "url/origin.h"
@@ -68,6 +66,10 @@ class Cursor;
 class LatencyInfo;
 enum class DomCode : uint32_t;
 }  // namespace ui
+
+namespace viz {
+struct CopyOutputBitmapWithMetadata;
+}
 
 namespace content {
 
@@ -131,7 +133,8 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   void CopyFromSurface(
       const gfx::Rect& src_rect,
       const gfx::Size& output_size,
-      base::OnceCallback<void(const SkBitmap&)> callback) override;
+      base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+          callback) override;
   std::unique_ptr<viz::ClientFrameSinkVideoCapturer> CreateVideoCapturer()
       override;
   display::ScreenInfo GetScreenInfo() const override;
@@ -171,13 +174,15 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   virtual void CopyFromExactSurface(
       const gfx::Rect& src_rect,
       const gfx::Size& output_size,
-      base::OnceCallback<void(const SkBitmap&)> callback);
+      base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+          callback);
 
 #if BUILDFLAG(IS_ANDROID)
   virtual void CopyFromExactSurfaceWithIpcDelay(
       const gfx::Rect& src_rect,
       const gfx::Size& output_size,
-      base::OnceCallback<void(const SkBitmap&)> callback,
+      base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+          callback,
       base::TimeDelta ipc_delay);
 
   // Returns whethere there's a touch sequence active on Viz.
@@ -210,7 +215,6 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   ui::mojom::VirtualKeyboardMode GetVirtualKeyboardMode() override;
   void NotifyVirtualKeyboardOverlayRect(
       const gfx::Rect& keyboard_rect) override {}
-  void NotifyContextMenuInsetsObservers(const gfx::Rect&) override {}
   void ShowInterestInElement(int) override {}
   bool IsHTMLFormPopup() const override;
 
@@ -218,6 +222,11 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
   // that handle content embedded within other RenderWidgetHostViews.
   gfx::PointF TransformPointToRootCoordSpaceF(
       const gfx::PointF& point) const override;
+
+  // This only needs to be overridden by RenderWidgetHostViewBase subclasses
+  // that handle content embedded within other RenderWidgetHostViews.
+  gfx::PointF TransformRootPointToViewCoordSpace(
+      const gfx::PointF& point) override;
 
   // Returns the value for whether the auto-resize has been enabled or not.
   bool IsAutoResizeEnabled();
@@ -233,7 +242,8 @@ class CONTENT_EXPORT RenderWidgetHostViewBase
       const gfx::Rect& src_subrect,
       const gfx::Size& dst_size,
       float scale_factor,
-      base::OnceCallback<void(const SkBitmap&)> callback);
+      base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
+          callback);
 
   void SetWidgetType(WidgetType widget_type);
 

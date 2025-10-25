@@ -30,9 +30,7 @@
 namespace {
 
 // If true, then use the HDRCopierLayer for all HLG video content.
-BASE_FEATURE(kMacHlgUseHdrCopier,
-             "MacHlgUseHdrCopier",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kMacHlgUseHdrCopier, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Source of the shader to perform tonemapping. Note that the functions
 // ToLinearSRGBIsh, ToLinearPQ, and ToLinearHLG are copy-pasted from the GLSL
@@ -575,10 +573,10 @@ bool ShouldUseHDRCopier(IOSurfaceRef buffer,
   }
 
   // Rasterized tiles and the primary plane specify a color space of SRGB_HDR
-  // with no extended range metadata.
+  // LINEAR_HDR, or CUSTOM_HDR, with no extended range metadata.
   // TODO(crbug.com/40268540): Use extended range metadata instead of
   // the SDR_HDR color space to indicate this.
-  if (color_space.GetTransferID() == gfx::ColorSpace::TransferID::SRGB_HDR) {
+  if (color_space.IsHDR()) {
     return !is_unorm;
   }
 

@@ -9,6 +9,7 @@
 #include "base/i18n/time_formatting.h"
 #include "base/json/values_util.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -52,19 +53,26 @@ ImpressionLimitService::ImpressionLimitService(
       bookmark_model_(bookmark_model),
       shopping_service_(shopping_service) {
   DCHECK(history_service_);
-  if (base::FeatureList::IsEnabled(commerce::kShopCardImpressionLimits)) {
-    history_service_observation_.Observe(history_service_.get());
-    subscriptions_observation_.Observe(shopping_service_);
-    bookmark_model_observation_.Observe(bookmark_model);
-    for (const auto& pref_name : GetAllowListedPrefs()) {
-      RemoveEntriesOlderThan30Days(pref_name);
-    }
-  } else {
-    // ShopCard feature is experimental. Don't keep impression
-    // counts around when flag is turned off.
-    for (const auto& pref_name : GetAllowListedPrefs()) {
-      pref_service_->ClearPref(pref_name);
-    }
+  history_service_observation_.Observe(history_service_.get());
+  subscriptions_observation_.Observe(shopping_service_);
+  bookmark_model_observation_.Observe(bookmark_model);
+  for (const auto& pref_name : GetAllowListedPrefs()) {
+    RemoveEntriesOlderThan30Days(pref_name);
+  }
+  // ShopCard arm 3, 4 and 5 are still experimental (only arm 1 has launched).
+  // So delete any preferences stored for those arms, unless the arm is turned
+  // on.
+  if (commerce::kShopCardVariation.Get() != commerce::kShopCardArm3) {
+    pref_service_->ClearPref(
+        tab_resumption_prefs::kTabResumptionWithPriceDropUrlImpressions);
+  }
+  if (commerce::kShopCardVariation.Get() != commerce::kShopCardArm4) {
+    pref_service_->ClearPref(
+        tab_resumption_prefs::kTabResumptionWithPriceTrackableUrlImpressions);
+  }
+  if (commerce::kShopCardVariation.Get() != commerce::kShopCardArm5) {
+    pref_service_->ClearPref(
+        tab_resumption_prefs::kTabResumptionRegularUrlImpressions);
   }
 }
 
@@ -156,6 +164,32 @@ void ImpressionLimitService::LogImpressionForURL(
                  << " must be registered with ImpressionLimitService";
   }
   LogImpressionForURLAtTime(url, pref_name, base::Time::Now());
+  size_t storage_size_kb =
+      pref_service_->GetDict(pref_name).EstimateMemoryUsage() / 1024;
+  if (pref_name == shop_card_prefs::kShopCardPriceDropUrlImpressions) {
+    base::UmaHistogramMemoryKB(
+        "IOS.MagicStack.ShopCard.PriceDropOnTrackedItem."
+        "ImpressionLimitStorageSize",
+        storage_size_kb);
+  } else if (pref_name ==
+             tab_resumption_prefs::kTabResumptionRegularUrlImpressions) {
+    base::UmaHistogramMemoryKB(
+        "IOS.MagicStack.ShopCard.TabResumptionRegular."
+        "ImpressionLimitStorageSize",
+        storage_size_kb);
+  } else if (pref_name ==
+             tab_resumption_prefs::kTabResumptionWithPriceDropUrlImpressions) {
+    base::UmaHistogramMemoryKB(
+        "IOS.MagicStack.ShopCard.TabResumptionWithPriceDrop."
+        "ImpressionLimitStorageSize",
+        storage_size_kb);
+  } else if (pref_name == tab_resumption_prefs::
+                              kTabResumptionWithPriceTrackableUrlImpressions) {
+    base::UmaHistogramMemoryKB(
+        "IOS.MagicStack.ShopCard.TabResumptionWithPriceTracking."
+        "ImpressionLimitStorageSize",
+        storage_size_kb);
+  }
 }
 
 std::optional<int> ImpressionLimitService::GetImpressionCount(

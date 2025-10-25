@@ -26,7 +26,6 @@
 #include "gpu/command_buffer/common/command_buffer_id.h"
 #include "gpu/command_buffer/common/constants.h"
 #include "gpu/command_buffer/common/gpu_memory_allocation.h"
-#include "gpu/command_buffer/common/mailbox.h"
 #include "gpu/command_buffer/service/command_buffer_service.h"
 #include "gpu/command_buffer/service/context_group.h"
 #include "gpu/command_buffer/service/decoder_client.h"
@@ -101,7 +100,6 @@ class GPU_IPC_SERVICE_EXPORT CommandBufferStub
   // CommandBufferStub current, so the GpuChannel can initialize
   // the gpu::Capabilities.
   virtual gpu::ContextResult Initialize(
-      CommandBufferStub* share_group,
       const mojom::CreateCommandBufferParams& params,
       base::UnsafeSharedMemoryRegion shared_state_shm) = 0;
 
@@ -183,7 +181,7 @@ class GPU_IPC_SERVICE_EXPORT CommandBufferStub
 
   gl::GLSurface* surface() const { return surface_.get(); }
 
-  ContextType context_type() const { return context_type_; }
+  bool has_stateful_context() const { return has_stateful_context_; }
 
   void AddDestructionObserver(DestructionObserver* observer);
   void RemoveDestructionObserver(DestructionObserver* observer);
@@ -229,12 +227,6 @@ class GPU_IPC_SERVICE_EXPORT CommandBufferStub
   void SignalSyncToken(const SyncToken& sync_token, uint32_t id) override;
   void SignalQuery(uint32_t query, uint32_t id) override;
 
-  virtual void OnSetDefaultFramebufferSharedImage(const Mailbox& mailbox,
-                                                  int samples_count,
-                                                  bool preserve,
-                                                  bool needs_depth,
-                                                  bool needs_stencil) {}
-
   scoped_refptr<MemoryTracker> CreateMemoryTracker() const;
 
   // Must be called during Initialize(). Takes ownership to co-ordinate
@@ -254,7 +246,6 @@ class GPU_IPC_SERVICE_EXPORT CommandBufferStub
   // they are destroyed. So a raw pointer is safe.
   const raw_ptr<GpuChannel> channel_;
 
-  ContextType context_type_;
   ContextUrl active_url_;
   std::string context_label_;
 
@@ -337,6 +328,10 @@ class GPU_IPC_SERVICE_EXPORT CommandBufferStub
 
   mojo::AssociatedReceiver<mojom::CommandBuffer> receiver_{this};
   mojo::SharedAssociatedRemote<mojom::CommandBufferClient> client_;
+
+  // Indicates whether this context holds state and are needed to be notified if
+  // we discard this context to reclaim the memory.
+  const bool has_stateful_context_;
 
   // Caching the `release_delegate` argument of ExecuteDeferredRequest() during
   // the call.

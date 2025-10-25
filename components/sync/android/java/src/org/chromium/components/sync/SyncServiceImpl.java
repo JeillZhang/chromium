@@ -111,20 +111,6 @@ public class SyncServiceImpl implements SyncService, AccountsChangeObserver {
     }
 
     @Override
-    public boolean hasUnrecoverableError() {
-        mThreadChecker.assertOnValidThread();
-        assert mSyncServiceAndroidBridge != 0;
-        return SyncServiceImplJni.get().hasUnrecoverableError(mSyncServiceAndroidBridge);
-    }
-
-    @Override
-    public boolean requiresClientUpgrade() {
-        mThreadChecker.assertOnValidThread();
-        assert mSyncServiceAndroidBridge != 0;
-        return SyncServiceImplJni.get().requiresClientUpgrade(mSyncServiceAndroidBridge);
-    }
-
-    @Override
     public @Nullable CoreAccountInfo getAccountInfo() {
         mThreadChecker.assertOnValidThread();
         assert mSyncServiceAndroidBridge != 0;
@@ -313,6 +299,13 @@ public class SyncServiceImpl implements SyncService, AccountsChangeObserver {
         mThreadChecker.assertOnValidThread();
         assert mSyncServiceAndroidBridge != 0;
         return SyncServiceImplJni.get().getTransportState(mSyncServiceAndroidBridge);
+    }
+
+    @Override
+    public @UserActionableError int getUserActionableError() {
+        mThreadChecker.assertOnValidThread();
+        assert mSyncServiceAndroidBridge != 0;
+        return SyncServiceImplJni.get().getUserActionableError(mSyncServiceAndroidBridge);
     }
 
     @Override
@@ -588,6 +581,8 @@ public class SyncServiceImpl implements SyncService, AccountsChangeObserver {
 
         int getTransportState(long nativeSyncServiceAndroidBridge);
 
+        int getUserActionableError(long nativeSyncServiceAndroidBridge);
+
         void setEncryptionPassphrase(long nativeSyncServiceAndroidBridge, String passphrase);
 
         boolean setDecryptionPassphrase(long nativeSyncServiceAndroidBridge, String passphrase);
@@ -598,10 +593,6 @@ public class SyncServiceImpl implements SyncService, AccountsChangeObserver {
 
         @JniType("GoogleServiceAuthError")
         GoogleServiceAuthError getAuthError(long nativeSyncServiceAndroidBridge);
-
-        boolean hasUnrecoverableError(long nativeSyncServiceAndroidBridge);
-
-        boolean requiresClientUpgrade(long nativeSyncServiceAndroidBridge);
 
         @Nullable CoreAccountInfo getAccountInfo(long nativeSyncServiceAndroidBridge);
 

@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/files/scoped_temp_dir.h"
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/run_until.h"
@@ -40,14 +41,19 @@ namespace speech {
 
 class OnDeviceSpeechRecognitionImplBrowserTest : public InProcessBrowserTest {
  public:
-  OnDeviceSpeechRecognitionImplBrowserTest() {
-    scoped_feature_list_.InitAndEnableFeature(media::kOnDeviceWebSpeech);
-  }
+  OnDeviceSpeechRecognitionImplBrowserTest()
+      : OnDeviceSpeechRecognitionImplBrowserTest(
+            std::vector<base::test::FeatureRef>{media::kOnDeviceWebSpeech}) {}
   OnDeviceSpeechRecognitionImplBrowserTest(
       const OnDeviceSpeechRecognitionImplBrowserTest&) = delete;
   OnDeviceSpeechRecognitionImplBrowserTest& operator=(
       const OnDeviceSpeechRecognitionImplBrowserTest&) = delete;
   ~OnDeviceSpeechRecognitionImplBrowserTest() override = default;
+
+  explicit OnDeviceSpeechRecognitionImplBrowserTest(
+      const std::vector<base::test::FeatureRef>& enabled_features) {
+    scoped_feature_list_.InitWithFeatures(enabled_features, {});
+  }
 
   // InProcessBrowserTest
   void SetUpOnMainThread() override;
@@ -313,4 +319,96 @@ IN_PROC_BROWSER_TEST_F(OnDeviceSpeechRecognitionImplBrowserTest,
       base::BindOnce(&OnDeviceSpeechRecognitionImplBrowserTest::InstallCallback,
                      base::Unretained(this), false));
 }
+
+IN_PROC_BROWSER_TEST_F(OnDeviceSpeechRecognitionImplBrowserTest,
+                       FileSchemeUrl) {
+  base::ScopedAllowBlockingForTesting allow_blocking;
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+  ASSERT_TRUE(
+      ui_test_utils::NavigateToURL(browser(), GURL("file:///empty.html")));
+
+  on_device_speech_recognition()->Available(
+      {kEnglishLanguageCode},
+      base::BindOnce(&OnDeviceSpeechRecognitionImplBrowserTest::
+                         OnDeviceWebSpeechAvailableCallbackAndAssertStatus,
+                     base::Unretained(this),
+                     media::mojom::AvailabilityStatus::kDownloadable));
+
+  on_device_speech_recognition()->Install(
+      {kEnglishLanguageCode},
+      base::BindOnce(&OnDeviceSpeechRecognitionImplBrowserTest::InstallCallback,
+                     base::Unretained(this), true));
+  speech::SodaInstaller::GetInstance()->NotifySodaInstalledForTesting();
+  speech::SodaInstaller::GetInstance()->NotifySodaInstalledForTesting(
+      speech::LanguageCode::kEnUs);
+  WaitUntilAvailable(kEnglishLanguageCode);
+
+  on_device_speech_recognition()->Available(
+      {kEnglishAlternateLocaleCode},
+      base::BindOnce(&OnDeviceSpeechRecognitionImplBrowserTest::
+                         OnDeviceWebSpeechAvailableCallbackAndAssertStatus,
+                     base::Unretained(this),
+                     media::mojom::AvailabilityStatus::kAvailable));
+}
+
+class OnDeviceSpeechRecognitionImplGeminiNanoBrowserTest
+    : public OnDeviceSpeechRecognitionImplBrowserTest {
+ public:
+  OnDeviceSpeechRecognitionImplGeminiNanoBrowserTest()
+      : OnDeviceSpeechRecognitionImplBrowserTest(
+            {media::kOnDeviceWebSpeech, media::kOnDeviceWebSpeechGeminiNano}) {}
+};
+
+IN_PROC_BROWSER_TEST_F(OnDeviceSpeechRecognitionImplGeminiNanoBrowserTest,
+                       AvailableAndInstall) {
+  NavigateToUrl("foo.com");
+  on_device_speech_recognition()->Available(
+      {kEnglishLanguageCode},
+      base::BindOnce(&OnDeviceSpeechRecognitionImplBrowserTest::
+                         OnDeviceWebSpeechAvailableCallbackAndAssertStatus,
+                     base::Unretained(this),
+                     media::mojom::AvailabilityStatus::kDownloadable));
+  on_device_speech_recognition()->Install(
+      {kEnglishLanguageCode},
+      base::BindOnce(&OnDeviceSpeechRecognitionImplBrowserTest::InstallCallback,
+                     base::Unretained(this), true));
+}
+
+IN_PROC_BROWSER_TEST_F(OnDeviceSpeechRecognitionImplGeminiNanoBrowserTest,
+                       AvailableAndInstallUnsupportedLanguage) {
+  NavigateToUrl("foo.com");
+  on_device_speech_recognition()->Available(
+      {kFrenchLanguageCode},
+      base::BindOnce(&OnDeviceSpeechRecognitionImplBrowserTest::
+                         OnDeviceWebSpeechAvailableCallbackAndAssertStatus,
+                     base::Unretained(this),
+                     media::mojom::AvailabilityStatus::kUnavailable));
+  on_device_speech_recognition()->Install(
+      {kFrenchLanguageCode},
+      base::BindOnce(&OnDeviceSpeechRecognitionImplBrowserTest::InstallCallback,
+                     base::Unretained(this), false));
+}
+
+IN_PROC_BROWSER_TEST_F(OnDeviceSpeechRecognitionImplGeminiNanoBrowserTest,
+                       AvailableUnsupportedLanguage) {
+  NavigateToUrl("foo.com");
+  on_device_speech_recognition()->Available(
+      {kFrenchLanguageCode},
+      base::BindOnce(&OnDeviceSpeechRecognitionImplBrowserTest::
+                         OnDeviceWebSpeechAvailableCallbackAndAssertStatus,
+                     base::Unretained(this),
+                     media::mojom::AvailabilityStatus::kUnavailable));
+}
+
+// TODO(crbug.com/454128590): Disabled because breaking UBsan.
+IN_PROC_BROWSER_TEST_F(OnDeviceSpeechRecognitionImplGeminiNanoBrowserTest,
+                       DISABLED_InstallUnsupportedLanguage) {
+  NavigateToUrl("foo.com");
+  on_device_speech_recognition()->Install(
+      {kFrenchLanguageCode},
+      base::BindOnce(&OnDeviceSpeechRecognitionImplBrowserTest::InstallCallback,
+                     base::Unretained(this), false));
+}
+
 }  // namespace speech

@@ -37,15 +37,9 @@ namespace {
 
 class CSSStyleSheetResourceTest : public PageTestBase {
  protected:
-  CSSStyleSheetResourceTest() {
-    original_memory_cache_ =
-        ReplaceMemoryCacheForTesting(MakeGarbageCollected<MemoryCache>(
-            blink::scheduler::GetSingleThreadTaskRunnerForTesting()));
-  }
-
-  ~CSSStyleSheetResourceTest() override {
-    ReplaceMemoryCacheForTesting(original_memory_cache_.Release());
-  }
+  CSSStyleSheetResourceTest()
+      : scoped_memory_cache_(MakeGarbageCollected<MemoryCache>(
+            blink::scheduler::GetSingleThreadTaskRunnerForTesting())) {}
 
   void SetUp() override {
     PageTestBase::SetUp(gfx::Size());
@@ -59,14 +53,14 @@ class CSSStyleSheetResourceTest : public PageTestBase {
     response.SetMimeType(AtomicString("style/css"));
 
     CSSStyleSheetResource* css_resource =
-        CSSStyleSheetResource::CreateForTest(css_url, UTF8Encoding());
+        CSSStyleSheetResource::CreateForTest(css_url, Utf8Encoding());
     css_resource->ResponseReceived(response);
     css_resource->FinishForTest();
     MemoryCache::Get()->Add(css_resource);
     return css_resource;
   }
 
-  Persistent<MemoryCache> original_memory_cache_;
+  ScopedMemoryCacheForTesting scoped_memory_cache_;
 };
 
 TEST_F(CSSStyleSheetResourceTest, DuplicateResourceNotCached) {
@@ -84,7 +78,7 @@ TEST_F(CSSStyleSheetResourceTest, DuplicateResourceNotCached) {
   ASSERT_TRUE(MemoryCache::Get()->Contains(image_resource));
 
   CSSStyleSheetResource* css_resource =
-      CSSStyleSheetResource::CreateForTest(css_url, UTF8Encoding());
+      CSSStyleSheetResource::CreateForTest(css_url, Utf8Encoding());
   css_resource->ResponseReceived(response);
   css_resource->FinishForTest();
 
@@ -143,7 +137,8 @@ TEST_F(CSSStyleSheetResourceTest, CreateFromCacheWithMediaQueries) {
   contents->CheckLoaded();
   EXPECT_TRUE(contents->IsCacheableForResource());
 
-  contents->EnsureRuleSet(MediaQueryEvaluator(GetDocument().GetFrame()));
+  contents->EnsureRuleSet(MediaQueryEvaluator(GetDocument().GetFrame()),
+                          /*mixins=*/{});
   EXPECT_TRUE(contents->HasRuleSet());
 
   css_resource->SaveParsedStyleSheet(contents);

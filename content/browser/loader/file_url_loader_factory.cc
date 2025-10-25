@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/byte_count.h"
 #include "base/command_line.h"
 #include "base/containers/span.h"
 #include "base/files/file.h"
@@ -104,7 +105,7 @@ enum class LinkFollowingPolicy {
 };
 
 GURL AppendUrlSeparator(const GURL& url) {
-  std::string new_path = url.path() + '/';
+  std::string new_path = url.GetPath() + '/';
   GURL::Replacements replacements;
   replacements.SetPathStr(new_path);
   return url.ReplaceComponents(replacements);
@@ -282,7 +283,8 @@ class FileURLDirectoryLoader
 #endif
       pending_data_.append(net::GetDirectoryListingEntry(
           filename.LossyDisplayName(), raw_bytes, data.info.IsDirectory(),
-          data.info.GetSize(), data.info.GetLastModifiedTime()));
+          base::ByteCount(data.info.GetSize()),
+          data.info.GetLastModifiedTime()));
     }
 
     MaybeTransferPendingData();

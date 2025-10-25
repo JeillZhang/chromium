@@ -33,10 +33,10 @@ import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeController;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeControllerFactory;
 import org.chromium.chrome.ui.messages.R;
-import org.chromium.components.browser_ui.edge_to_edge.EdgeToEdgePadAdjuster;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.text.TemplatePreservingTextView;
 import org.chromium.ui.base.WindowAndroid;
+import org.chromium.ui.edge_to_edge.EdgeToEdgePadAdjuster;
 import org.chromium.ui.insets.InsetObserver;
 import org.chromium.ui.interpolators.Interpolators;
 
@@ -49,6 +49,7 @@ import org.chromium.ui.interpolators.Interpolators;
 @NullMarked
 public class SnackbarView implements InsetObserver.WindowInsetObserver {
     private static final int MAX_LINES = 5;
+    private static final int DEFAULT_LINES = 2;
 
     private final @Nullable WindowAndroid mWindowAndroid;
     protected final ViewGroup mContainerView;
@@ -156,6 +157,8 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
         mActionButtonView.setOnClickListener(listener);
         mProfileImageView = (ImageView) mContainerView.findViewById(R.id.snackbar_profile_image);
         mEdgeToEdgeSupplier = edgeToEdgeSupplier;
+        // TODO(crbug/com/451807932): Replace with a custom pad adjuster to account for inset
+        //  changes.
         if (SnackbarManager.isFloatingSnackbarEnabled()) {
             // Add bottom margin to extend the snackbar view into the bottom window inset. This
             // margin has to be applied to the snackbar view itself to avoid weird visual clipping
@@ -252,7 +255,7 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
             int prevGravity = lp.gravity;
 
             if (SnackbarManager.isFloatingSnackbarEnabled()) {
-                // If floating snackbar is enabled, set a max width of 600dp for both mobile and
+                // If floating snackbar is enabled, set a max width of 480dp for both mobile and
                 // tablet.
                 int maxWidth =
                         mParent.getResources().getDimensionPixelSize(R.dimen.snackbar_width_max);
@@ -394,7 +397,7 @@ public class SnackbarView implements InsetObserver.WindowInsetObserver {
     private boolean updateInternal(Snackbar snackbar, boolean animate) {
         if (mSnackbar == snackbar) return false;
         mSnackbar = snackbar;
-        mMessageView.setMaxLines(snackbar.getSingleLine() ? 1 : MAX_LINES);
+        mMessageView.setMaxLines(snackbar.getDefaultLines() ? DEFAULT_LINES : MAX_LINES);
         mMessageView.setTemplate(snackbar.getTemplateText());
         setViewText(mMessageView, snackbar.getText(), animate);
 

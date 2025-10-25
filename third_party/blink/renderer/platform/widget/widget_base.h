@@ -117,7 +117,7 @@ class PLATFORM_EXPORT WidgetBase : public mojom::blink::Widget,
   // function won't block on doing the release in the compositor thread.
   void Shutdown(bool delay_release);
 
-  void DidFirstVisuallyNonEmptyPaint(base::TimeTicks&);
+  void OnFirstContentfulPaint(const base::TimeTicks& first_paint_time);
 
   // Set the compositor as visible. If |visible| is true, then the compositor
   // will request a new layer frame sink, begin producing frames from the
@@ -139,9 +139,8 @@ class PLATFORM_EXPORT WidgetBase : public mojom::blink::Widget,
   // mojom::blink::RenderInputRouterClient overrides;
   void GetWidgetInputHandler(
       mojo::PendingReceiver<mojom::blink::WidgetInputHandler> request,
-      mojo::PendingRemote<mojom::blink::WidgetInputHandlerHost> host) override;
-  void GetWidgetInputHandlerForInputOnViz(
-      mojo::PendingReceiver<mojom::blink::WidgetInputHandler> request) override;
+      mojo::PendingRemote<mojom::blink::WidgetInputHandlerHost> host,
+      bool from_viz) override;
   void ShowContextMenu(ui::mojom::blink::MenuSourceType source_type,
                        const gfx::Point& location) override;
   void BindInputTargetClient(
@@ -279,7 +278,7 @@ class PLATFORM_EXPORT WidgetBase : public mojom::blink::Widget,
   void ImeFinishComposingText(bool keep_selection);
   bool IsForProvisionalFrame();
   void FlushInputProcessedCallback();
-  void CancelCompositionForPepper();
+  void CancelComposition();
 
   void RequestPresentationAfterScrollAnimationEnd(
       mojom::blink::Widget::ForceRedrawCallback callback);
@@ -605,7 +604,7 @@ class PLATFORM_EXPORT WidgetBase : public mojom::blink::Widget,
   // until a WidgetInputHandlerHost is bound which only happens after Browser
   // side `WidgetInputHandler` call is received.
   std::optional<mojo::PendingReceiver<mojom::blink::WidgetInputHandler>>
-      pending_widget_input_handler_ = std::nullopt;
+      pending_viz_widget_input_handler_ = std::nullopt;
 
   base::WeakPtrFactory<WidgetBase> weak_ptr_factory_{this};
 };

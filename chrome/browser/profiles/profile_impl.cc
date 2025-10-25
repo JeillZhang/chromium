@@ -61,7 +61,6 @@
 #include "chrome/browser/download/download_core_service.h"
 #include "chrome/browser/download/download_core_service_factory.h"
 #include "chrome/browser/download/download_manager_utils.h"
-#include "chrome/browser/extensions/chrome_content_browser_client_extensions_part.h"
 #include "chrome/browser/file_system_access/chrome_file_system_access_permission_context.h"
 #include "chrome/browser/file_system_access/file_system_access_permission_context_factory.h"
 #include "chrome/browser/heavy_ad_intervention/heavy_ad_service_factory.h"
@@ -106,10 +105,9 @@
 #include "chrome/browser/startup_data.h"
 #include "chrome/browser/storage/storage_notification_service_factory.h"
 #include "chrome/browser/sync/sync_service_factory.h"
-#include "chrome/browser/tpcd/support/origin_trial_service_factory.h"
-#include "chrome/browser/tpcd/support/top_level_trial_service_factory.h"
 #include "chrome/browser/tpcd/support/tpcd_support_service_factory.h"
 #include "chrome/browser/transition_manager/full_browser_transition_manager.h"
+#include "chrome/browser/ui/signin/dice_migration_service.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/webui/prefs_internals_source.h"
 #include "chrome/browser/updates/announcement_notification/announcement_notification_service.h"
@@ -136,6 +134,7 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/pref_names.h"
 #include "components/download/public/common/in_progress_download_manager.h"
+#include "components/guest_view/buildflags/buildflags.h"
 #include "components/heavy_ad_intervention/heavy_ad_service.h"
 #include "components/history/core/common/pref_names.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
@@ -159,6 +158,7 @@
 #include "components/safe_search_api/safe_search_util.h"
 #include "components/security_interstitials/content/stateful_ssl_host_state_delegate.h"
 #include "components/signin/public/base/signin_pref_names.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/site_isolation/site_isolation_policy.h"
 #include "components/spellcheck/spellcheck_buildflags.h"
@@ -173,19 +173,19 @@
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/dom_storage_context.h"
-#include "content/public/browser/federated_identity_api_permission_context_delegate.h"
-#include "content/public/browser/federated_identity_auto_reauthn_permission_context_delegate.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/browser/permission_controller.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/url_data_source.h"
+#include "content/public/browser/webid/federated_identity_api_permission_context_delegate.h"
+#include "content/public/browser/webid/federated_identity_auto_reauthn_permission_context_delegate.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/content_constants.h"
 #include "extensions/buildflags/buildflags.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
 #include "pdf/buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "printing/buildflags/buildflags.h"
 #include "services/data_decoder/public/cpp/data_decoder.h"
 #include "services/preferences/public/mojom/preferences.mojom.h"
@@ -226,7 +226,6 @@
 #else
 #include "chrome/browser/accessibility/ax_main_node_annotator_controller_factory.h"
 #include "chrome/browser/first_run/first_run.h"
-#include "chrome/browser/profiles/guest_profile_creation_logger.h"
 #include "content/public/common/page_zoom.h"
 #include "ui/accessibility/accessibility_features.h"
 #endif
@@ -236,18 +235,17 @@
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+#include "chrome/browser/extensions/chrome_content_browser_client_extensions_part.h"
 #include "chrome/browser/extensions/extension_special_storage_policy.h"
 #include "extensions/browser/extension_pref_store.h"
 #include "extensions/browser/extension_pref_value_map.h"
 #include "extensions/browser/extension_pref_value_map_factory.h"
-#endif
-
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/browser/extensions/extension_service.h"
-#include "chrome/browser/ui/webui/extensions/extension_icon_source.h"
-#include "components/guest_view/browser/guest_view_manager.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_system.h"
+#endif
+
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
+#include "components/guest_view/browser/guest_view_manager.h"
 #endif
 
 #if BUILDFLAG(ENABLE_PLUGINS)
@@ -663,7 +661,7 @@ void ProfileImpl::LoadPrefsForNormalStartup(bool async_prefs) {
       profile_policy_connector_->policy_service(),
       g_browser_process->browser_policy_connector(),
       std::move(pref_validation_delegate), GetIOTaskRunner(), key_.get(), path_,
-      async_prefs);
+      async_prefs, g_browser_process->os_crypt_async());
   key_->SetPrefs(prefs_.get());
 }
 
@@ -771,15 +769,6 @@ void ProfileImpl::DoFinalInit(CreateMode create_mode) {
   }
 #endif
 
-#if !BUILDFLAG(IS_ANDROID)
-  if (IsGuestSession()) {
-    // Note: We need to record the creation of the guest parent before the
-    // `delegate_`'s `OnProfileCreationFinished()` callback executes, as it
-    // might trigger the creation of a child OTR profile.
-    profile::RecordGuestParentCreation(this);
-  }
-#endif  // !BUILDFLAG(IS_ANDROID)
-
 #if !BUILDFLAG(IS_CHROMEOS)
   // Listen for bookmark model load, to bootstrap the sync service.
   // Not necessary for profiles that don't have a BookmarkModel.
@@ -874,13 +863,11 @@ void ProfileImpl::DoFinalInit(CreateMode create_mode) {
   // as it depends on the default StoragePartition being initialized.
   GetOriginTrialsControllerDelegate();
 
-  // The TpcdTrialService, TopLevelTrialService, and OriginTrialService for
+  // The TpcdTrialService for
   // third-party cookie deprecation must be created with the profile, but after
   // the initialization of the OriginTrialsControllerDelegate, as it depends on
   // it.
   tpcd::trial::TpcdTrialServiceFactory::GetForProfile(this);
-  tpcd::trial::TopLevelTrialServiceFactory::GetForProfile(this);
-  tpcd::trial::OriginTrialServiceFactory::GetForProfile(this);
 }
 
 base::FilePath ProfileImpl::last_selected_directory() {
@@ -982,10 +969,6 @@ ProfileImpl::CreateZoomLevelDelegate(const base::FilePath& partition_path) {
       zoom::ZoomEventManager::GetForBrowserContext(this)->GetWeakPtr());
 }
 
-base::FilePath ProfileImpl::GetPath() {
-  return path_;
-}
-
 base::FilePath ProfileImpl::GetPath() const {
   return path_;
 }
@@ -1068,15 +1051,6 @@ bool ProfileImpl::IsChild() const {
          supervised_user::kChildAccountSUID;
 }
 
-bool ProfileImpl::AllowsBrowserWindows() const {
-#if BUILDFLAG(IS_CHROMEOS)
-  if (ash::ProfileHelper::IsSigninProfile(this)) {
-    return false;
-  }
-#endif
-  return !IsSystemProfile();
-}
-
 ExtensionSpecialStoragePolicy* ProfileImpl::GetExtensionSpecialStoragePolicy() {
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   if (!extension_special_storage_policy_.get()) {
@@ -1096,7 +1070,7 @@ void ProfileImpl::OnLocaleReady(CreateMode create_mode) {
 
   // Migrate obsolete prefs.
   MigrateObsoleteProfilePrefs(GetPrefs(), GetPath());
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   // Note: Extension preferences can be keyed off the extension ID, so need to
   // be handled specially (rather than directly as part of
   // MigrateObsoleteProfilePrefs()).
@@ -1122,13 +1096,6 @@ void ProfileImpl::OnLocaleReady(CreateMode create_mode) {
   CHECK(!ReadingListModelFactory::HasModel(this));
   browser_sync::MaybeMigrateSyncingUserToSignedIn(GetPath(), GetPrefs());
 
-#if BUILDFLAG(IS_ANDROID)
-  // On Android StartupData creates proto database provider for the profile
-  // before profile is created, so move ownership to storage partition.
-  GetDefaultStoragePartition()->SetProtoDatabaseProvider(
-      g_browser_process->startup_data()->TakeProtoDatabaseProvider());
-#endif
-
 #if BUILDFLAG(IS_CHROMEOS)
   // If this is a kiosk profile, reset some of its prefs which should not
   // persist between sessions.
@@ -1143,11 +1110,46 @@ void ProfileImpl::OnLocaleReady(CreateMode create_mode) {
   arc::ArcServiceLauncher::Get()->MaybeSetProfile(this);
 #endif
 
-  FullBrowserTransitionManager::Get()->OnProfileCreated(this);
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+  // Revert the DICe migration as early as possible to avoid user-visible theme
+  // changes upon startup.
+  if (base::FeatureList::IsEnabled(switches::kRollbackDiceMigration)) {
+    DiceMigrationService::RevertDiceMigration(GetPrefs());
+  }
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
+
+  if (!base::FeatureList::IsEnabled(
+          features::kDelayOnProfileCreatedForFullBrowserTransition)) {
+    FullBrowserTransitionManager::Get()->OnProfileCreated(this);
+  }
 
   SimpleDependencyManager::GetInstance()->CreateServices(GetProfileKey());
+
+#if !BUILDFLAG(IS_ANDROID)
+  // Check that the IdentityManager was not created before the browser context
+  // services were created. This ensures that browser tests can override the
+  // IdentityManager with a fake.
+  CHECK(!IdentityManagerFactory::GetForProfileIfExists(this),
+        base::NotFatalUntil::M160);
+#else
+  if (base::FeatureList::IsEnabled(
+          features::kDelayOnProfileCreatedForFullBrowserTransition)) {
+    // TODO(msarda): This invariant is violated on Android, but may be fixed by
+    // enabling the kDelayOnProfileCreatedForFullBrowserTransition feature.
+    // Remove this check once the IdentityManager is no longer created too early
+    // on Android.
+    CHECK(!IdentityManagerFactory::GetForProfileIfExists(this),
+          base::NotFatalUntil::M160);
+  }
+#endif
+
   BrowserContextDependencyManager::GetInstance()->CreateBrowserContextServices(
       this);
+
+  if (base::FeatureList::IsEnabled(
+          features::kDelayOnProfileCreatedForFullBrowserTransition)) {
+    FullBrowserTransitionManager::Get()->OnProfileCreated(this);
+  }
 
   ChromeVersionService::OnProfileLoaded(prefs_.get(), IsNewProfile());
   DoFinalInit(create_mode);
@@ -1306,7 +1308,7 @@ ProfileImpl::GetURLLoaderFactory() {
 }
 
 content::BrowserPluginGuestManager* ProfileImpl::GetGuestManager() {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_GUEST_VIEW)
   return guest_view::GuestViewManager::FromBrowserContext(this);
 #else
   return NULL;
@@ -1407,6 +1409,17 @@ ProfileImpl::GetReduceAcceptLanguageControllerDelegate() {
 content::OriginTrialsControllerDelegate*
 ProfileImpl::GetOriginTrialsControllerDelegate() {
   return OriginTrialsFactory::GetForBrowserContext(this);
+}
+
+std::unique_ptr<leveldb_proto::ProtoDatabaseProvider>
+ProfileImpl::TakeDefaultProtoDatabaseProvider() {
+#if BUILDFLAG(IS_ANDROID)
+  // On Android StartupData creates proto database provider for the profile
+  // before profile is created, so move ownership to storage partition.
+  return g_browser_process->startup_data()->TakeProtoDatabaseProvider();
+#else
+  return nullptr;
+#endif
 }
 
 std::unique_ptr<download::InProgressDownloadManager>

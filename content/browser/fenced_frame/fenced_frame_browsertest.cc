@@ -1521,8 +1521,7 @@ IN_PROC_BROWSER_TEST_F(FencedFrameMPArchBrowserTest,
       fenced_frame_rfh->GetFrameTreeNodeId());
   std::vector<std::pair<GURL, base::WeakPtr<PrefetchContainer>>> prefetches =
       prefetch_service->GetAllForUrlWithoutRefAndQueryForTesting(
-          PrefetchContainer::Key(fenced_frame_rfh->GetDocumentToken(),
-                                 prefetch_url));
+          PrefetchKey(fenced_frame_rfh->GetDocumentToken(), prefetch_url));
   EXPECT_EQ(prefetches.size(), 1u);
 
   // Script speculationrules prefetch is not started in fenced frame. This is
@@ -2676,13 +2675,13 @@ class FencedFrameParameterizedBrowserTest : public FencedFrameBrowserTestBase {
     std::string val = request.headers.find("Cookie") != request.headers.end()
                           ? request.headers.at("Cookie").c_str()
                           : "";
-    cookie_headers_map_.insert(std::make_pair(request.GetURL().path(), val));
+    cookie_headers_map_.insert(std::make_pair(request.GetURL().GetPath(), val));
 
     val = request.headers.find("Sec-Fetch-Dest") != request.headers.end()
               ? request.headers.at("Sec-Fetch-Dest").c_str()
               : "";
     sec_fetch_dest_headers_map_.insert(
-        std::make_pair(request.GetURL().path(), val));
+        std::make_pair(request.GetURL().GetPath(), val));
   }
 
   // Returns true if the cookie header was present in the last request received
@@ -2696,7 +2695,7 @@ class FencedFrameParameterizedBrowserTest : public FencedFrameBrowserTestBase {
     base::AutoLock auto_lock(requests_lock_);
     SCOPED_TRACE(from_here.ToString());
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    std::string file_name = url.path();
+    std::string file_name = url.GetPath();
     CHECK(base::Contains(cookie_headers_map_, file_name));
     std::string header = cookie_headers_map_[file_name];
     EXPECT_EQ(expected_value, header);
@@ -2711,7 +2710,7 @@ class FencedFrameParameterizedBrowserTest : public FencedFrameBrowserTestBase {
     base::AutoLock auto_lock(requests_lock_);
     SCOPED_TRACE(from_here.ToString());
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
-    std::string file_name = url.path();
+    std::string file_name = url.GetPath();
     CHECK(base::Contains(sec_fetch_dest_headers_map_, file_name));
     std::string header = sec_fetch_dest_headers_map_[file_name];
     EXPECT_EQ(expected_value, header);
@@ -4276,10 +4275,10 @@ IN_PROC_BROWSER_TEST_F(FencedFrameParameterizedBrowserTest,
     const peerConnection = new RTCPeerConnection(configuration);
   )");
 
-  EXPECT_THAT(
-      result.error,
-      testing::HasSubstr("Failed to construct 'RTCPeerConnection': "
-                         "RTCPeerConnection is not allowed in fenced frames."));
+  EXPECT_THAT(result,
+              EvalJsResult::ErrorIs(testing::HasSubstr(
+                  "Failed to construct 'RTCPeerConnection': "
+                  "RTCPeerConnection is not allowed in fenced frames.")));
 }
 
 namespace {
@@ -5404,8 +5403,8 @@ IN_PROC_BROWSER_TEST_F(FencedFrameParameterizedBrowserTest,
                                         new_width, new_height)));
 
     // Force a style recomputation.
-    ASSERT_TRUE(EvalJs(nodeA, "getComputedStyle(nested_fenced_frame).width")
-                    .error.empty());
+    ASSERT_TRUE(
+        EvalJs(nodeA, "getComputedStyle(nested_fenced_frame).width").is_ok());
 
     // Check that the inner size hasn't changed.
     EXPECT_TRUE(
@@ -6207,11 +6206,11 @@ IN_PROC_BROWSER_TEST_F(
         // Shared storage get is denied.
         EvalJsResult get_result = EvalJs(ff1, "sharedStorage.get('test');");
         EXPECT_THAT(
-            get_result.error,
-            testing::HasSubstr(
+            get_result,
+            EvalJsResult::ErrorIs(testing::HasSubstr(
                 "sharedStorage.get() is not allowed in a fenced frame until "
                 "network access for it and all descendent frames has been "
-                "revoked with window.fence.disableUntrustedNetwork()"));
+                "revoked with window.fence.disableUntrustedNetwork()")));
       }));
 
   // Embedder initiates nested fenced frame navigation.
@@ -6868,6 +6867,8 @@ IN_PROC_BROWSER_TEST_F(FencedFrameParameterizedBrowserTest,
   // Navigate the fenced frame to an error page. Fenced frames have their own
   // NavigationController and should always perform a "replace" navigation,
   // meaning the controller's entry count stays at 1.
+  // Note: the custom error page HTML is loaded with this URL, but the URL
+  // actually points to a normal page, not an error page.
   GURL fenced_frame_error_url(
       https_server()->GetURL("c.test", "/fenced_frames/title1.html"));
   TestFrameNavigationObserver error_observer(fenced_frame);
@@ -6896,6 +6897,11 @@ IN_PROC_BROWSER_TEST_F(FencedFrameParameterizedBrowserTest,
                            ->GetUniqueID();
   EXPECT_NE(error_entry_id, starting_fenced_frame_entry_id);
 
+  // The root NavigationController should still have the main frame URL in its
+  // last committed entry.
+  EXPECT_EQ(main_url,
+            root->navigator().controller().GetLastCommittedEntry()->GetURL());
+
   // We can't go back or forward in the fenced frame.
   EXPECT_FALSE(fenced_frame->navigator().controller().CanGoBack());
   EXPECT_FALSE(fenced_frame->navigator().controller().CanGoForward());
@@ -6906,6 +6912,7 @@ IN_PROC_BROWSER_TEST_F(FencedFrameParameterizedBrowserTest,
   EXPECT_TRUE(ExecJs(fenced_frame, "location.reload();"));
   reload_observer.Wait();
   EXPECT_EQ(1, fenced_frame->navigator().controller().GetEntryCount());
+  EXPECT_EQ(1, root->navigator().controller().GetEntryCount());
   EXPECT_EQ(error_entry_id, fenced_frame->navigator()
                                 .controller()
                                 .GetLastCommittedEntry()
@@ -6918,6 +6925,8 @@ IN_PROC_BROWSER_TEST_F(FencedFrameParameterizedBrowserTest,
   EXPECT_EQ(
       fenced_frame_error_url,
       fenced_frame->navigator().controller().GetLastCommittedEntry()->GetURL());
+  EXPECT_EQ(main_url,
+            root->navigator().controller().GetLastCommittedEntry()->GetURL());
   EXPECT_FALSE(fenced_frame->current_frame_host()->IsErrorDocument());
 }
 
@@ -7410,14 +7419,12 @@ class FencedFrameReportEventBrowserTest
             Step::Result::kExceedMaxEventDataLength) {
           // When eventData exceeds the length limit, a security error is thrown
           // instead of a console error.
-          EXPECT_FALSE(result.error.empty());
-          EXPECT_THAT(
-              result.error,
-              testing::HasSubstr(GetErrorPattern(step.report_event_result)));
+          EXPECT_THAT(result, EvalJsResult::ErrorIs(testing::HasSubstr(
+                                  GetErrorPattern(step.report_event_result))));
           continue;
         }
 
-        EXPECT_TRUE(result.error.empty());
+        EXPECT_TRUE(result.is_ok());
       }
 
       // If relevant, check that the event report succeeded.
@@ -9358,18 +9365,18 @@ class FencedFrameAutomaticBeaconBrowserTest
         if (config.message->length() > blink::kFencedFrameMaxBeaconLength) {
           // When eventData exceeds the length limit, a security error is thrown
           // instead of a console error.
-          EXPECT_FALSE(result.error.empty());
-          EXPECT_THAT(
-              result.error,
-              testing::HasSubstr("The data provided to "
-                                 "setReportEventDataForAutomaticBeacons() "
-                                 "exceeds the maximum length, which is 64KB."));
+          EXPECT_FALSE(result.is_ok());
+          EXPECT_THAT(result,
+                      content::EvalJsResult::ErrorIs(testing::HasSubstr(
+                          "The data provided to "
+                          "setReportEventDataForAutomaticBeacons() "
+                          "exceeds the maximum length, which is 64KB.")));
 
           histogram_tester_.ExpectUniqueSample(
               blink::kAutomaticBeaconEventTypeHistogram,
               config.beacon_type.type, 0);
         } else {
-          EXPECT_TRUE(result.error.empty());
+          EXPECT_TRUE(result.is_ok());
           histogram_tester_.ExpectUniqueSample(
               blink::kAutomaticBeaconEventTypeHistogram,
               config.beacon_type.type, 1);

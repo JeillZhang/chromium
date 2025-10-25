@@ -16,12 +16,18 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.CHROME_COLORS;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.FEED;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.MAIN;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.MVT;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.NTP_CARDS;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.SINGLE_THEME_COLLECTION;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.THEME;
+import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType.THEME_COLLECTIONS;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LAYOUT_TO_DISPLAY;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.LIST_CONTAINER_VIEW_DELEGATE;
 import static org.chromium.chrome.browser.ntp_customization.NtpCustomizationViewProperties.MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE;
@@ -39,13 +45,15 @@ import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnit;
 import org.mockito.junit.MockitoRule;
 
-import org.chromium.base.supplier.Supplier;
 import org.chromium.base.test.BaseRobolectricTestRunner;
+import org.chromium.base.test.util.Features;
 import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.chrome.browser.feed.FeedFeatures;
 import org.chromium.chrome.browser.feed.FeedServiceBridge;
 import org.chromium.chrome.browser.feed.FeedServiceBridgeJni;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ntp_customization.NtpCustomizationCoordinator.BottomSheetType;
+import org.chromium.chrome.browser.ntp_customization.theme.NtpThemeStateProvider;
 import org.chromium.chrome.browser.preferences.Pref;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetContent;
@@ -56,6 +64,7 @@ import org.chromium.ui.modelutil.PropertyModel;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /** Unit tests for {@link NtpCustomizationMediator} */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -85,6 +94,7 @@ public class NtpCustomizationMediatorUnitTest {
         FeedFeatures.setFakePrefsForTest(mPrefService);
         mMediator =
                 new NtpCustomizationMediator(
+                        mContext,
                         mBottomSheetController,
                         mBottomSheetContent,
                         mViewFlipperPropertyModel,
@@ -278,6 +288,29 @@ public class NtpCustomizationMediatorUnitTest {
         observer.onSheetClosed(0); // Closes the sheet by clicking the system back button.
         verify(mBottomSheetContent).onSheetClosed();
         verify(mBottomSheetController).removeObserver(eq(observer));
+
+        NtpThemeStateProvider.setInstanceForTesting(null);
+    }
+
+    @Test
+    public void testBottomSheetObserver_notifyApplyThemeChanges() {
+        BottomSheetObserver observer = mMediator.getBottomSheetObserverForTesting();
+        NtpThemeStateProvider ntpThemeStateProvider = mock(NtpThemeStateProvider.class);
+        NtpThemeStateProvider.setInstanceForTesting(ntpThemeStateProvider);
+
+        // Verifies notifyApplyThemeChanges() is called when a different theme color is selected.
+        mMediator.onNewColorSelected(/* isDifferentColor= */ true);
+        observer.onSheetClosed(2);
+        verify(ntpThemeStateProvider).notifyApplyThemeChanges();
+
+        clearInvocations(ntpThemeStateProvider);
+
+        // Verifies notifyApplyThemeChanges() is NOT called when theme color isn't changed.
+        mMediator.onNewColorSelected(/* isDifferentColor= */ false);
+        observer.onSheetClosed(2);
+        verify(ntpThemeStateProvider, never()).notifyApplyThemeChanges();
+
+        NtpThemeStateProvider.setInstanceForTesting(null);
     }
 
     @Test
@@ -317,11 +350,35 @@ public class NtpCustomizationMediatorUnitTest {
     @Test
     public void testBuildListContentWhenProfileIsNotReady() {
         List<Integer> listContent = mMediator.buildListContent();
+        assertEquals(List.of(MVT, NTP_CARDS), listContent);
+    }
+
+    @Test
+    @Features.DisableFeatures(ChromeFeatureList.NEW_TAB_PAGE_CUSTOMIZATION_FOR_MVT)
+    public void testBuildListContentWhenProfileIsNotReadyAsNtpCustomizationForMvtFeatureDisabled() {
+        List<Integer> listContent = mMediator.buildListContent();
         assertEquals(List.of(NTP_CARDS), listContent);
     }
 
     @Test
     public void testBuildListContent() {
+        // Mock dependencies to enable FeedFeatures.isFeedEnabled(profile) to return true.
+        when(mPrefService.getBoolean(Pref.ENABLE_SNIPPETS_BY_DSE)).thenReturn(true);
+        when(mFeedServiceBridgeJniMock.isEnabled()).thenReturn(true);
+
+        assertTrue(FeedFeatures.isFeedEnabled(mProfile));
+        assertEquals(List.of(MVT, NTP_CARDS, FEED), mMediator.buildListContent());
+
+        // Mock dependencies to enable FeedFeatures.isFeedEnabled(profile) to return false.
+        when(mPrefService.getBoolean(Pref.ENABLE_SNIPPETS_BY_DSE)).thenReturn(false);
+
+        assertFalse(FeedFeatures.isFeedEnabled(mProfile));
+        assertEquals(List.of(MVT, NTP_CARDS), mMediator.buildListContent());
+    }
+
+    @Test
+    @Features.DisableFeatures(ChromeFeatureList.NEW_TAB_PAGE_CUSTOMIZATION_FOR_MVT)
+    public void testBuildListContentWithNtpCustomizationForMvtFeatureDisabled() {
         // Mock dependencies to enable FeedFeatures.isFeedEnabled(profile) to return true.
         when(mPrefService.getBoolean(Pref.ENABLE_SNIPPETS_BY_DSE)).thenReturn(true);
         when(mFeedServiceBridgeJniMock.isEnabled()).thenReturn(true);
@@ -344,5 +401,33 @@ public class NtpCustomizationMediatorUnitTest {
         mMediator.updateFeedSectionSubtitle(/* isFeedVisible= */ false);
         verify(mContainerPropertyModel)
                 .set(eq(MAIN_BOTTOM_SHEET_FEED_SECTION_SUBTITLE), eq(R.string.text_off));
+    }
+
+    @Test
+    public void testBackPressOnThemeBottomSheet() {
+        mViewFlipperMap.put(THEME_COLLECTIONS, 0);
+        mViewFlipperMap.put(THEME, 1);
+        mViewFlipperMap.put(MAIN, 2);
+
+        mMediator.setCurrentBottomSheetForTesting(SINGLE_THEME_COLLECTION);
+        mMediator.backPressOnCurrentBottomSheet();
+        assertEquals(THEME_COLLECTIONS, (int) mMediator.getCurrentBottomSheetType());
+        verify(mViewFlipperPropertyModel).set(eq(LAYOUT_TO_DISPLAY), eq(0));
+
+        mMediator.setCurrentBottomSheetForTesting(THEME_COLLECTIONS);
+        mMediator.backPressOnCurrentBottomSheet();
+        assertEquals(THEME, (int) mMediator.getCurrentBottomSheetType());
+        verify(mViewFlipperPropertyModel).set(eq(LAYOUT_TO_DISPLAY), eq(1));
+
+        mMediator.setCurrentBottomSheetForTesting(CHROME_COLORS);
+        mMediator.backPressOnCurrentBottomSheet();
+        assertEquals(THEME, (int) mMediator.getCurrentBottomSheetType());
+        verify(mViewFlipperPropertyModel, times(2)).set(eq(LAYOUT_TO_DISPLAY), eq(1));
+
+        mMediator.setCurrentBottomSheetForTesting(THEME);
+        when(mPrefService.getBoolean(Pref.ARTICLES_LIST_VISIBLE)).thenReturn(true);
+        mMediator.backPressOnCurrentBottomSheet();
+        assertEquals(MAIN, (int) mMediator.getCurrentBottomSheetType());
+        verify(mViewFlipperPropertyModel).set(eq(LAYOUT_TO_DISPLAY), eq(2));
     }
 }

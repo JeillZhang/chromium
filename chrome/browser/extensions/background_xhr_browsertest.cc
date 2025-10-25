@@ -21,7 +21,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
@@ -42,6 +41,7 @@
 #include "net/ssl/ssl_server_config.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/test_data_directory.h"
+#include "services/network/public/cpp/ip_address_space_overrides_test_utils.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "url/gurl.h"
 
@@ -79,9 +79,9 @@ class BackgroundXhrTest : public ExtensionBrowserTest {
     ASSERT_TRUE(extension);
 
     ResultCatcher catcher;
-    GURL test_url = net::AppendQueryParameter(
-        extension->ResolveExtensionURL(path), "url", url.spec());
-    ASSERT_TRUE(ui_test_utils::NavigateToURL(browser(), test_url));
+    GURL test_url = net::AppendQueryParameter(extension->GetResourceURL(path),
+                                              "url", url.spec());
+    ASSERT_TRUE(NavigateToURL(GetActiveWebContents(), test_url));
     profile()->GetDefaultStoragePartition()->FlushNetworkInterfaceForTesting();
     static constexpr char kSendXHRScript[] = R"(
       var xhr = new XMLHttpRequest();
@@ -101,7 +101,7 @@ class BackgroundXhrTest : public ExtensionBrowserTest {
 IN_PROC_BROWSER_TEST_F(BackgroundXhrTest, TlsClientAuth) {
   // Install a FakeClientCertStore so the client auth prompt isn't bypassed due
   // to the system certificate store returning no certificates.
-  ProfileNetworkContextServiceFactory::GetForContext(browser()->profile())
+  ProfileNetworkContextServiceFactory::GetForContext(profile())
       ->set_client_cert_store_factory_for_testing(
           base::BindRepeating(&CreateFakeClientCertStore));
 
@@ -134,11 +134,8 @@ class BackgroundFetchPolicyTest : public ExtensionApiTestWithManagementPolicy {
     // subclasses need it in their own SetUpCommandLine functions.
     ASSERT_TRUE(embedded_test_server()->Start());
     // Treat the test server as public to bypass Local Network Access checks.
-    command_line->AppendSwitchASCII(
-        network::switches::kIpAddressSpaceOverrides,
-        base::StringPrintf(
-            "%s=public",
-            embedded_test_server()->host_port_pair().ToString().c_str()));
+    network::AddPublicIpAddressSpaceOverrideToCommandLine(
+        *embedded_test_server(), *command_line);
   }
 
   void SetUpOnMainThread() override {
@@ -375,7 +372,7 @@ class BackgroundFetchWebstoreTest : public BackgroundFetchPolicyTest,
     // Override the test server SSL config with the webstore domain under test
     // and another non-webstore domain used in the tests.
     net::EmbeddedTestServer::ServerCertificateConfig cert_config;
-    cert_config.dns_names = {GetParam().host(), "google.com"};
+    cert_config.dns_names = {GetParam().GetHost(), "google.com"};
     embedded_test_server()->SetSSLConfig(cert_config);
     // Add the extensions directory to the test server as it has a /webstore/
     // directory to serve files from, which the webstore hosted app requires as
@@ -422,7 +419,7 @@ IN_PROC_BROWSER_TEST_P(BackgroundFetchWebstoreTest, FetchToWebstore) {
 IN_PROC_BROWSER_TEST_P(BackgroundFetchWebstoreTest, FetchToWebstorePolicy) {
   {
     ExtensionManagementPolicyUpdater pref(&policy_provider_);
-    pref.AddPolicyAllowedHost("*", "*://" + GetParam().host());
+    pref.AddPolicyAllowedHost("*", "*://" + GetParam().GetHost());
   }
 
   const Extension* extension = LoadFetchExtension("<all_urls>");

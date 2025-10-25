@@ -6,18 +6,21 @@
 
 #include <string>
 
+#include "base/check_deref.h"
 #include "base/functional/bind.h"
 #include "base/functional/callback.h"
 #include "base/i18n/message_formatter.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
-#include "chrome/browser/ui/browser.h"
+#include "chrome/browser/tab_group_sync/tab_group_sync_service_factory.h"
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_pref_names.h"
 #include "chrome/browser/ui/tabs/saved_tab_groups/saved_tab_group_utils.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/prefs/pref_service.h"
@@ -71,7 +74,7 @@ DialogText GetDialogText(
     Profile* profile,
     const DeletionDialogController::DialogMetadata& dialog_metadata) {
   tab_groups::TabGroupSyncService* tab_group_service =
-      tab_groups::SavedTabGroupUtils::GetServiceForProfile(profile);
+      tab_groups::TabGroupSyncServiceFactory::GetForProfile(profile);
 
   const bool is_sync_enabled =
       tab_group_service &&
@@ -314,12 +317,6 @@ bool IsDialogKeepType(DeletionDialogController::DialogType type) {
              DeletionDialogController::DialogType::CloseTabAndKeepOrLeaveGroup;
 }
 
-void CreateDialogFromBrowser(BrowserWindowInterface* browser,
-                             std::unique_ptr<ui::DialogModel> dialog_model) {
-  chrome::ShowBrowserModal(browser->GetBrowserForMigrationOnly(),
-                           std::move(dialog_model));
-}
-
 }  // anonymous namespace
 
 // DialogMetadata
@@ -350,14 +347,26 @@ DeletionDialogController::DialogState::DialogState(
 DeletionDialogController::DialogState::~DialogState() = default;
 
 DeletionDialogController::DeletionDialogController(
-    BrowserWindowInterface* browser)
-    : profile_(browser->GetProfile()),
-      show_dialog_model_fn_(
-          base::BindRepeating(&CreateDialogFromBrowser, browser)) {}
-DeletionDialogController::DeletionDialogController(
+    BrowserWindowInterface* browser,
     Profile* profile,
+    TabStripModel* tab_strip_model)
+    : profile_(CHECK_DEREF(profile)),
+      show_dialog_model_fn_(base::BindRepeating(
+          &DeletionDialogController::CreateDialogFromBrowser,
+          base::Unretained(this),
+          browser)),
+      tab_strip_model_(CHECK_DEREF(tab_strip_model)) {
+  tab_strip_model_->AddObserver(this);
+}
+
+DeletionDialogController::DeletionDialogController(
+    BrowserWindowInterface* browser,
+    Profile* profile,
+    TabStripModel* tab_strip_model,
     ShowDialogModelCallback show_dialog_model_fn)
-    : profile_(profile), show_dialog_model_fn_(show_dialog_model_fn) {}
+    : profile_(CHECK_DEREF(profile)),
+      show_dialog_model_fn_(show_dialog_model_fn),
+      tab_strip_model_(CHECK_DEREF(tab_strip_model)) {}
 
 DeletionDialogController::~DeletionDialogController() = default;
 
@@ -367,6 +376,13 @@ bool DeletionDialogController::CanShowDialog() const {
 
 bool DeletionDialogController::IsShowingDialog() const {
   return !!state_;
+}
+
+void DeletionDialogController::CreateDialogFromBrowser(
+    BrowserWindowInterface* browser,
+    std::unique_ptr<ui::DialogModel> dialog_model) {
+  widget_ = chrome::ShowBrowserModal(browser->GetBrowserForMigrationOnly(),
+                                     std::move(dialog_model));
 }
 
 bool DeletionDialogController::MaybeShowDialog(
@@ -383,7 +399,7 @@ bool DeletionDialogController::MaybeShowDialog(
     return false;
   }
 
-  if (IsDialogSkippedByUserSettings(profile_, metadata.type)) {
+  if (IsDialogSkippedByUserSettings(GetProfile(), metadata.type)) {
     std::move(callback).Run(DeletionDialogTiming::Synchronous);
     return false;
   }
@@ -395,6 +411,15 @@ bool DeletionDialogController::MaybeShowDialog(
 
   show_dialog_model_fn_.Run(std::move(dialog_model));
   return true;
+}
+
+void DeletionDialogController::OnTabStripModelChanged(
+    TabStripModel* tab_strip_model,
+    const TabStripModelChange& change,
+    const TabStripSelectionChange& selection) {
+  if (widget_) {
+    widget_->Close();
+  }
 }
 
 void DeletionDialogController::SetPrefsPreventShowingDialogForTesting(
@@ -420,7 +445,7 @@ void DeletionDialogController::OnDialogOk() {
       state_->dialog_model
           ->GetCheckboxByUniqueId(kDeletionDialogDontAskCheckboxId)
           ->is_checked()) {
-    SetSkipDialogForType(profile_, state_->type, true);
+    SetSkipDialogForType(GetProfile(), state_->type, true);
   }
   if (IsDialogKeepType(state_->type)) {
     std::move(state_->keep_groups.value()).Run();
@@ -438,7 +463,7 @@ void DeletionDialogController::OnDialogCancel() {
 
 std::unique_ptr<ui::DialogModel> DeletionDialogController::BuildDialogModel(
     const DialogMetadata& metadata) {
-  DialogText strings = GetDialogText(profile_, metadata);
+  DialogText strings = GetDialogText(GetProfile(), metadata);
 
   ui::DialogModel::Button::Params cancel_button_params;
   cancel_button_params.SetEnabled(true).SetId(kDeletionDialogCancelButtonId);
@@ -465,6 +490,7 @@ std::unique_ptr<ui::DialogModel> DeletionDialogController::BuildDialogModel(
           base::Unretained(this)))
       .SetDialogDestroyingCallback(base::BindOnce(
           [](DeletionDialogController* dialog_controller) {
+            dialog_controller->widget_ = nullptr;
             dialog_controller->state_.reset();
           },
           base::Unretained(this)));
@@ -474,6 +500,10 @@ std::unique_ptr<ui::DialogModel> DeletionDialogController::BuildDialogModel(
         ui::DialogModelLabel(l10n_util::GetStringUTF16(kDontAskId)));
   }
   return dialog_builder.Build();
+}
+
+Profile* DeletionDialogController::GetProfile() {
+  return &profile_.get();
 }
 
 }  // namespace tab_groups

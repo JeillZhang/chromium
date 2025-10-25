@@ -62,7 +62,8 @@ class ChoiceScreenData;
 
 namespace syncer {
 class SyncData;
-}
+struct EntityData;
+}  // namespace syncer
 
 namespace TemplateURLPrepopulateData {
 class Resolver;
@@ -79,11 +80,15 @@ class Origin;
 // TemplateURLService is the backend for keywords. It's used by
 // KeywordAutocomplete.
 //
-// TemplateURLService stores a vector of TemplateURLs. The TemplateURLs are
-// persisted to the database maintained by KeywordWebDataService.
-// *ALL* mutations to the TemplateURLs must funnel through TemplateURLService.
-// This allows TemplateURLService to notify listeners of changes as well as keep
-// the database in sync.
+// TemplateURLService stores a vector of TemplateURLs. It manages both "local"
+// and "account" search engines. Local search engines are stored on the device
+// and are not synced. Account search engines are synced with the user's
+// account.
+//
+// The TemplateURLs are persisted to the database maintained by
+// KeywordWebDataService. *ALL* mutations to the TemplateURLs must funnel
+// through TemplateURLService. This allows TemplateURLService to notify
+// listeners of changes as well as keep the database in sync.
 //
 // TemplateURLService does not load the vector of TemplateURLs in its
 // constructor (except for testing). Use the Load method to trigger a load.
@@ -99,7 +104,6 @@ class TemplateURLService final : public WebDataServiceConsumer,
                                  public KeyedService,
                                  public syncer::SyncableService {
  public:
-  using QueryTerms = std::map<std::string, std::string>;
   using TemplateURLVector = TemplateURL::TemplateURLVector;
   using OwnedTemplateURLVector = TemplateURL::OwnedTemplateURLVector;
   using SyncDataMap = std::map<std::string, syncer::SyncData>;
@@ -213,8 +217,8 @@ class TemplateURLService final : public WebDataServiceConsumer,
                            bool supports_replacement_only,
                            TemplateURLVector* turls);
 
-  // Looks up |keyword| and returns the best TemplateURL for it.  Returns
-  // nullptr if the keyword was not found. The caller should not try to delete
+  // Looks up `keyword` and returns the best `TemplateURL` for it. Returns
+  // `nullptr` if the keyword was not found. The caller should not try to delete
   // the returned pointer; the data store retains ownership of it.
   TemplateURL* GetTemplateURLForKeyword(const std::u16string& keyword);
   const TemplateURL* GetTemplateURLForKeyword(
@@ -311,9 +315,6 @@ class TemplateURLService final : public WebDataServiceConsumer,
   // `search_engines::ChoiceScreenData` for more details.
   std::unique_ptr<search_engines::ChoiceScreenData> GetChoiceScreenData();
 
-  TemplateURLService::TemplateURLVector GetFeaturedEnterpriseSearchEngines()
-      const;
-
   // Returns the TemplateURL created by the EnterpriseSearchAggregatorSettings
   // policy.
   TemplateURL* GetEnterpriseSearchAggregatorEngine() const;
@@ -322,6 +323,9 @@ class TemplateURLService final : public WebDataServiceConsumer,
   // policy from the prefs indicating whether keyword mode is required for using
   // the enterprise search aggregator TemplateURL.
   bool IsShortcutRequiredForSearchAggregatorEngine() const;
+
+  TemplateURLService::TemplateURLVector GetFeaturedEnterpriseSiteSearchEngines()
+      const;
 
 #if BUILDFLAG(IS_ANDROID)
   // Returns the list prepopulated template URLs for `country_code`.
@@ -394,6 +398,9 @@ class TemplateURLService final : public WebDataServiceConsumer,
       TemplateURL* url,
       search_engines::ChoiceMadeLocation choice_made_location =
           search_engines::ChoiceMadeLocation::kOther);
+
+  // Returns the DefaultSearchManager for this service.
+  DefaultSearchManager* GetDefaultSearchManager();
 
   // Returns the default search provider. If the TemplateURLService hasn't been
   // loaded, the default search provider is pulled from preferences.
@@ -497,13 +504,6 @@ class TemplateURLService final : public WebDataServiceConsumer,
       KeywordWebDataService::Handle h,
       std::unique_ptr<WDTypedResult> result) override;
 
-  // Returns the locale-direction-adjusted short name for the given keyword.
-  // Also sets the out param to indicate whether the keyword belongs to an
-  // Omnibox extension or the Gemini starter pack engine.
-  std::u16string GetKeywordShortName(const std::u16string& keyword,
-                                     bool* is_omnibox_api_extension_keyword,
-                                     bool* is_gemini_keyword) const;
-
   // Called by the history service when a URL is visited.
   void OnHistoryURLVisited(const URLVisitedDetails& details);
 
@@ -534,6 +534,8 @@ class TemplateURLService final : public WebDataServiceConsumer,
   void StopSyncing(syncer::DataType type) override;
   void OnBrowserShutdown(syncer::DataType type) override;
   base::WeakPtr<SyncableService> AsWeakPtr() override;
+  std::string GetClientTag(
+      const syncer::EntityData& entity_data) const override;
 
   // Processes a TemplateURL change for Sync. `turl` is the TemplateURL
   // that has been modified, and `type` is the Sync ChangeType that took place.
@@ -773,11 +775,6 @@ class TemplateURLService final : public WebDataServiceConsumer,
   // `existing_turl` with `new_data`. The current active value can either be the
   // local value or the account value.
   bool UpdateData(TemplateURL* existing_turl, TemplateURLData new_data);
-
-  // If the TemplateURL's sync GUID matches the kSyncedDefaultSearchProviderGUID
-  // preference it will be used to update the DSE in prefs.
-  // OnDefaultSearchChange may be triggered as a result.
-  void MaybeUpdateDSEViaPrefs(TemplateURL* synced_turl);
 
   // Iterates through the TemplateURLs to see if one matches the visited url.
   // For each TemplateURL whose url matches the visited url

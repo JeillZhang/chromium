@@ -20,6 +20,7 @@ import org.chromium.base.ResettersForTesting;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.lifetime.Destroyable;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.build.BuildConfig;
 import org.chromium.build.annotations.Initializer;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
@@ -118,23 +119,18 @@ public class SearchEngineUtils implements Destroyable, TemplateUrlServiceObserve
         void onSearchEngineIconChanged(@Nullable StatusIconResource newIcon);
     }
 
-    @VisibleForTesting
-    SearchEngineUtils(Profile profile, FaviconHelper faviconHelper) {
+    private SearchEngineUtils(
+            Profile profile, FaviconHelper faviconHelper, ImageFetcher imageFetcher) {
         mProfile = profile;
         mIsOffTheRecord = profile.isOffTheRecord();
         mFaviconHelper = faviconHelper;
         mContext = ContextUtils.getApplicationContext();
 
-        mImageFetcher =
-                ImageFetcherFactory.createImageFetcher(
-                        ImageFetcherConfig.IN_MEMORY_WITH_DISK_CACHE,
-                        profile.getProfileKey(),
-                        GlobalDiscardableReferencePool.getReferencePool(),
-                        MAX_IMAGE_CACHE_SIZE_BYTES);
+        mImageFetcher = imageFetcher;
 
         mSearchEngineLogoTargetSizePixels =
                 mContext.getResources()
-                        .getDimensionPixelSize(R.dimen.omnibox_search_engine_logo_favicon_size);
+                        .getDimensionPixelSize(R.dimen.omnibox_search_engine_logo_composed_size);
 
         // Apply safe fallback values.
         setSearchBoxHintText(
@@ -146,6 +142,23 @@ public class SearchEngineUtils implements Destroyable, TemplateUrlServiceObserve
         mDefaultSearchEngineMetadata = CachedZeroSuggestionsManager.readSearchEngineMetadata();
 
         onTemplateURLServiceChanged();
+    }
+
+    @VisibleForTesting
+    SearchEngineUtils(Profile profile, FaviconHelper faviconHelper) {
+        this(
+                profile,
+                faviconHelper,
+                ImageFetcherFactory.createImageFetcher(
+                        ImageFetcherConfig.IN_MEMORY_WITH_DISK_CACHE,
+                        profile.getProfileKey(),
+                        GlobalDiscardableReferencePool.getReferencePool(),
+                        MAX_IMAGE_CACHE_SIZE_BYTES));
+    }
+
+    public static SearchEngineUtils createSearchEngineUtilsForTesting(
+            Profile profile, FaviconHelper faviconHelper, ImageFetcher imageFetcher) {
+        return new SearchEngineUtils(profile, faviconHelper, imageFetcher);
     }
 
     /** Get the instance of SearchEngineUtils associated with the supplied Profile. */
@@ -182,8 +195,7 @@ public class SearchEngineUtils implements Destroyable, TemplateUrlServiceObserve
             return;
         }
 
-        if (OmniboxFeatures.sOmniboxMobileParityUpdate.isEnabled()
-                && !TextUtils.isEmpty(templateUrl.getShortName())) {
+        if (!TextUtils.isEmpty(templateUrl.getShortName())) {
             setSearchBoxHintText(
                     OmniboxResourceProvider.getString(
                             mContext,
@@ -202,7 +214,7 @@ public class SearchEngineUtils implements Destroyable, TemplateUrlServiceObserve
             CachedZeroSuggestionsManager.saveSearchEngineMetadata(mDefaultSearchEngineMetadata);
         }
 
-        retrieveFavicon(templateUrl);
+        retrieveFaviconFromBrandedResources(templateUrl);
     }
 
     /** Add observer to be notified whenever the Omnibox hint text changes. */
@@ -250,37 +262,29 @@ public class SearchEngineUtils implements Destroyable, TemplateUrlServiceObserve
     }
 
     @VisibleForTesting
-    void retrieveFavicon(TemplateUrl templateUrl) {
+    void retrieveFaviconFromDefaultResources(TemplateUrl templateUrl) {
         if (!mTemplateUrlService.isDefaultSearchEngineGoogle()) {
             // Fall back to next source.
             recordEvent(Events.FETCH_NON_GOOGLE_LOGO_REQUEST);
-            retrieveFaviconFromFaviconUrl(templateUrl);
+            retrieveFaviconFromOriginUrl(templateUrl);
             return;
         }
 
         setSearchEngineIcon(new StatusIconResource(R.drawable.ic_logo_googleg_20dp, 0));
     }
 
-    private void retrieveFaviconFromFaviconUrl(TemplateUrl templateUrl) {
-        var faviconUrl = templateUrl.getFaviconURL();
-        if (!OmniboxFeatures.sOmniboxParityRetrieveTrueFavicon.getValue()
-                || GURL.isEmptyOrInvalid(faviconUrl)) {
-            // Fall back to next source.
-            retrieveFaviconFromOriginUrl(templateUrl);
-            return;
+    private void retrieveFaviconFromBrandedResources(TemplateUrl templateUrl) {
+        // Branded resources are only available on Chrome branded builds.
+        if (BuildConfig.IS_CHROME_BRANDED
+                && OmniboxFeatures.sOmniboxParityRetrieveBuiltInEngineIcon.getValue()) {
+            @Nullable Bitmap bm = templateUrl.getBuiltInSearchEngineIcon();
+            if (bm != null) {
+                onFaviconRetrieveCompleted(templateUrl.getFaviconURL(), bm);
+                return;
+            }
         }
 
-        ImageFetcher.Params params =
-                ImageFetcher.Params.create(faviconUrl, ImageFetcher.OMNIBOX_UMA_CLIENT_NAME);
-        mImageFetcher.fetchImage(
-                params,
-                bitmap -> {
-                    if (bitmap == null) {
-                        retrieveFaviconFromOriginUrl(templateUrl);
-                    } else {
-                        onFaviconRetrieveCompleted(faviconUrl, bitmap);
-                    }
-                });
+        retrieveFaviconFromDefaultResources(templateUrl);
     }
 
     private void retrieveFaviconFromOriginUrl(TemplateUrl templateUrl) {

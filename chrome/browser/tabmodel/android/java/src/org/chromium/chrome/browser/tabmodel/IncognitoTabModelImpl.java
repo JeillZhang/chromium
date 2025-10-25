@@ -16,6 +16,11 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabCreationState;
 import org.chromium.chrome.browser.tab.TabLaunchType;
 import org.chromium.chrome.browser.tab.TabSelectionType;
+import org.chromium.components.tabs.TabStripCollection;
+
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
 
 /**
  * A TabModel implementation that handles off the record tabs.
@@ -41,6 +46,8 @@ class IncognitoTabModelImpl implements IncognitoTabModelInternal {
     private final IncognitoTabModelDelegate mDelegate;
     private final ObserverList<TabModelObserver> mObservers = new ObserverList<>();
     private final ObserverList<IncognitoTabModelObserver> mIncognitoObservers =
+            new ObserverList<>();
+    private final ObserverList<Callback<TabModelInternal>> mDelegateModelObservers =
             new ObserverList<>();
     private final Callback<@Nullable Tab> mDelegateModelCurrentTabSupplierObserver;
     private final ObservableSupplierImpl<@Nullable Tab> mCurrentTabSupplier =
@@ -84,6 +91,7 @@ class IncognitoTabModelImpl implements IncognitoTabModelInternal {
                 }
             };
 
+    private long mNativeAndroidBrowserWindow;
     private TabModelInternal mDelegateModel;
     private int mCountOfAddingOrClosingTabs;
     private boolean mActive;
@@ -105,12 +113,18 @@ class IncognitoTabModelImpl implements IncognitoTabModelInternal {
         if (!(mDelegateModel instanceof EmptyTabModel)) return;
 
         mDelegateModel = mDelegate.createTabModel();
+        if (mNativeAndroidBrowserWindow != 0) {
+            mDelegateModel.associateWithBrowserWindow(mNativeAndroidBrowserWindow);
+        }
         mDelegateModel
                 .getCurrentTabSupplier()
                 .addObserver(mDelegateModelCurrentTabSupplierObserver);
         mDelegateModel.getTabCountSupplier().addObserver(mDelegateModelTabCountSupplierObserver);
         for (TabModelObserver observer : mObservers) {
             mDelegateModel.addObserver(observer);
+        }
+        for (Callback<TabModelInternal> delegateModelObserver : mDelegateModelObservers) {
+            delegateModelObserver.onResult(mDelegateModel);
         }
     }
 
@@ -139,6 +153,9 @@ class IncognitoTabModelImpl implements IncognitoTabModelInternal {
         mTabCountSupplier.set(0);
 
         mDelegateModel = EmptyTabModel.getInstance(true);
+        for (Callback<TabModelInternal> delegateModelObserver : mDelegateModelObservers) {
+            delegateModelObserver.onResult(mDelegateModel);
+        }
     }
 
     private boolean isEmpty() {
@@ -159,6 +176,13 @@ class IncognitoTabModelImpl implements IncognitoTabModelInternal {
     @Override
     public @Nullable Profile getProfile() {
         return mDelegateModel.getProfile();
+    }
+
+    @Override
+    public void associateWithBrowserWindow(long nativeAndroidBrowserWindow) {
+        assert mNativeAndroidBrowserWindow == 0;
+        mNativeAndroidBrowserWindow = nativeAndroidBrowserWindow;
+        mDelegateModel.associateWithBrowserWindow(nativeAndroidBrowserWindow);
     }
 
     @Override
@@ -216,6 +240,12 @@ class IncognitoTabModelImpl implements IncognitoTabModelInternal {
     }
 
     @Override
+    public Iterator<Tab> iterator() {
+        // The underlying model already returns a read-only iterator.
+        return mDelegateModel.iterator();
+    }
+
+    @Override
     public int index() {
         return mDelegateModel.index();
     }
@@ -238,6 +268,19 @@ class IncognitoTabModelImpl implements IncognitoTabModelInternal {
     @Override
     public void moveTab(int id, int newIndex) {
         mDelegateModel.moveTab(id, newIndex);
+    }
+
+    @Override
+    public void pinTab(
+            int tabId,
+            boolean showUngroupDialog,
+            @Nullable TabModelActionListener tabModelActionListener) {
+        mDelegateModel.pinTab(tabId, showUngroupDialog, tabModelActionListener);
+    }
+
+    @Override
+    public void unpinTab(int tabId) {
+        mDelegateModel.unpinTab(tabId);
     }
 
     @Override
@@ -314,6 +357,14 @@ class IncognitoTabModelImpl implements IncognitoTabModelInternal {
     }
 
     @Override
+    public void addDelegateModelObserver(Callback<TabModelInternal> delegateModelObserver) {
+        mDelegateModelObservers.addObserver(delegateModelObserver);
+        if (mDelegateModel != null) {
+            delegateModelObserver.onResult(mDelegateModel);
+        }
+    }
+
+    @Override
     public void addIncognitoObserver(IncognitoTabModelObserver observer) {
         mIncognitoObservers.addObserver(observer);
     }
@@ -346,4 +397,54 @@ class IncognitoTabModelImpl implements IncognitoTabModelInternal {
 
     @Override
     public void broadcastSessionRestoreComplete() {}
+
+    @Override
+    public void setTabsMultiSelected(Set<Integer> tabIds, boolean isSelected) {
+        mDelegateModel.setTabsMultiSelected(tabIds, isSelected);
+    }
+
+    @Override
+    public void clearMultiSelection(boolean notifyObservers) {
+        mDelegateModel.clearMultiSelection(notifyObservers);
+    }
+
+    @Override
+    public boolean isTabMultiSelected(int tabId) {
+        return mDelegateModel.isTabMultiSelected(tabId);
+    }
+
+    @Override
+    public int getMultiSelectedTabsCount() {
+        return mDelegateModel.getMultiSelectedTabsCount();
+    }
+
+    @Override
+    public int findFirstNonPinnedTabIndex() {
+        return mDelegateModel.findFirstNonPinnedTabIndex();
+    }
+
+    @Override
+    public int getPinnedTabsCount() {
+        return mDelegateModel.getPinnedTabsCount();
+    }
+
+    @Override
+    public @Nullable Integer getNativeSessionIdForTesting() {
+        return mDelegateModel.getNativeSessionIdForTesting();
+    }
+
+    @Override
+    public void setMuteSetting(List<Tab> tabs, boolean mute) {
+        mDelegateModel.setMuteSetting(tabs, mute);
+    }
+
+    @Override
+    public boolean isMuted(Tab tab) {
+        return mDelegateModel.isMuted(tab);
+    }
+
+    @Override
+    public @Nullable TabStripCollection getTabStripCollection() {
+        return mDelegateModel.getTabStripCollection();
+    }
 }

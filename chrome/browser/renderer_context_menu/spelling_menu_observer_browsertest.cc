@@ -30,7 +30,7 @@ namespace {
 // accesses resources.
 class SpellingMenuObserverTest : public InProcessBrowserTest {
  public:
-  SpellingMenuObserverTest();
+  SpellingMenuObserverTest() = default;
 
   void SetUpOnMainThread() override {
     Reset(false);
@@ -53,6 +53,12 @@ class SpellingMenuObserverTest : public InProcessBrowserTest {
   std::unique_ptr<KeyedService> BuildSpellcheckService(
       content::BrowserContext* context) {
     auto spellcheck_service = std::make_unique<SpellcheckService>(context);
+
+    // With delayed initialization, we need to initialize dictionaries.
+    spellcheck_service->InitializeDictionaries(
+        base::BindOnce(&SpellingMenuObserverTest::OnSuggestionsComplete,
+                       base::Unretained(this)));
+    RunUntilCallbackReceived();
 
     // Call SetLanguage to assure that the platform spellchecker is initialized.
     spellcheck_platform::SetLanguage(
@@ -167,22 +173,20 @@ class SpellingMenuObserverTest : public InProcessBrowserTest {
 #endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
 };
 
-#if BUILDFLAG(IS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
-SpellingMenuObserverTest::SpellingMenuObserverTest() {
-  feature_list_.InitWithFeatures(
-      /*enabled_features=*/{},
-      /*disabled_features=*/{spellcheck::kWinDelaySpellcheckServiceInit});
-}
-#else
-SpellingMenuObserverTest::SpellingMenuObserverTest() = default;
-#endif  // BUILDFLAG(IS_WIN) && BUILDFLAG(USE_BROWSER_SPELLCHECKER)
-
 SpellingMenuObserverTest::~SpellingMenuObserverTest() = default;
 
 }  // namespace
 
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
 // Tests that right-clicking a correct word does not add any items.
-IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest, InitMenuWithCorrectWord) {
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_InitMenuWithCorrectWord DISABLED_InitMenuWithCorrectWord
+#else
+#define MAYBE_InitMenuWithCorrectWord InitMenuWithCorrectWord
+#endif
+IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
+                       MAYBE_InitMenuWithCorrectWord) {
   InitMenu("", nullptr);
   EXPECT_EQ(static_cast<size_t>(0), menu()->GetMenuSize());
 }
@@ -366,8 +370,16 @@ IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
 // integration to verify an item "Use enhanced spell check" is checked. Even
 // though this menu itself does not add this item, its sub-menu adds the item
 // and calls SpellingMenuObserver::IsChecked() to check it.
+// TODO(crbug.com/410751413): Flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_EnableSpellingServiceWithCorrectWord \
+  DISABLED_EnableSpellingServiceWithCorrectWord
+#else
+#define MAYBE_EnableSpellingServiceWithCorrectWord \
+  EnableSpellingServiceWithCorrectWord
+#endif
 IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
-                       EnableSpellingServiceWithCorrectWord) {
+                       MAYBE_EnableSpellingServiceWithCorrectWord) {
   menu()->GetPrefs()->SetBoolean(
       spellcheck::prefs::kSpellCheckUseSpellingService, true);
   InitMenu("", nullptr);
@@ -380,7 +392,15 @@ IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
 // integration to verify an item "Use enhanced spell check" is checked. (This
 // test does not actually send JSON-RPC requests to the service because it makes
 // this test flaky.)
-IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest, EnableSpellingService) {
+// TODO(https://crbug.com/410751413): Deleting temporary directories using
+// test_file_util is flaky on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_EnableSpellingService DISABLED_EnableSpellingService
+#else
+#define MAYBE_EnableSpellingService EnableSpellingService
+#endif
+IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
+                       MAYBE_EnableSpellingService) {
   menu()->GetPrefs()->SetBoolean(
       spellcheck::prefs::kSpellCheckUseSpellingService, true);
   base::Value::List dictionary;
@@ -423,8 +443,15 @@ IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
 
 // Test that we don't show "No more suggestions from Google" if the spelling
 // service is enabled and that there is only one suggestion.
+// TODO(crbug.com/434222699): Fix flakiness and re-enable on Windows.
+#if BUILDFLAG(IS_WIN)
+#define MAYBE_NoMoreSuggestionsNotDisplayed \
+  DISABLED_NoMoreSuggestionsNotDisplayed
+#else
+#define MAYBE_NoMoreSuggestionsNotDisplayed NoMoreSuggestionsNotDisplayed
+#endif
 IN_PROC_BROWSER_TEST_F(SpellingMenuObserverTest,
-                       NoMoreSuggestionsNotDisplayed) {
+                       MAYBE_NoMoreSuggestionsNotDisplayed) {
   menu()->GetPrefs()->SetBoolean(
       spellcheck::prefs::kSpellCheckUseSpellingService, true);
 

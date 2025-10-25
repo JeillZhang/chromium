@@ -10,6 +10,7 @@
 
 #include <optional>
 
+#include "base/android/self_compaction_manager.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_file.h"
@@ -50,7 +51,7 @@ class MockMetric final
   MockMetric() : PreFreezeBackgroundMemoryTrimmer::PreFreezeMetric("Mock") {
     count_++;
   }
-  std::optional<uint64_t> Measure() const override { return 0; }
+  std::optional<ByteCount> Measure() const override { return ByteCount(0); }
   static size_t count_;
 
   ~MockMetric() override { count_--; }
@@ -136,8 +137,8 @@ class PreFreezeSelfCompactionTest : public testing::Test {
   void SetUp() override { SelfCompactionManager::ResetCompactionForTesting(); }
 
   bool ShouldContinueCompaction(base::TimeTicks compaction_started_at) {
-    return PreFreezeBackgroundMemoryTrimmer::Instance()
-        .ShouldContinueCompaction(compaction_started_at);
+    return SelfCompactionManager::Instance().ShouldContinueCompaction(
+        compaction_started_at);
   }
 
   bool CompactionIsSupported() {
@@ -198,7 +199,7 @@ class PreFreezeSelfCompactionTestWithParam
     : public PreFreezeSelfCompactionTest,
       public testing::WithParamInterface<int> {
  public:
-  std::unique_ptr<PreFreezeBackgroundMemoryTrimmer::CompactionState> GetState(
+  std::unique_ptr<SelfCompactionManager::CompactionState> GetState(
       const base::TimeTicks& triggered_at) {
     auto task_runner = task_environment_.GetMainThreadTaskRunner();
     if (UseRunningCompact()) {

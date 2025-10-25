@@ -11,9 +11,12 @@
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/pref_names.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/extension.h"
 #include "ui/base/accelerators/command.h"
 #include "ui/base/accelerators/global_accelerator_listener/global_accelerator_listener.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -107,7 +110,9 @@ bool ExtensionCommandsGlobalRegistry::PopulateCommands(
 }
 
 bool ExtensionCommandsGlobalRegistry::RegisterAccelerator(
-    const ui::Accelerator& accelerator) {
+    const ui::Accelerator& accelerator,
+    const ExtensionId& extension_id,
+    const std::string& command_name) {
   auto* instance = ui::GlobalAcceleratorListener::GetInstance();
   if (!instance) {
     return false;

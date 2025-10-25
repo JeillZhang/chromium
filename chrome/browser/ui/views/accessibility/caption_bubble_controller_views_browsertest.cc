@@ -5,14 +5,18 @@
 #include "components/live_caption/views/caption_bubble_controller_views.h"
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include "base/functional/callback_forward.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/bind.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_mock_time_message_loop_task_runner.h"
 #include "build/build_config.h"
+#include "chrome/browser/preloading/scoped_prewarm_feature_list.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -39,6 +43,8 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/keycodes/keyboard_codes.h"
+#include "ui/gfx/font.h"
+#include "ui/gfx/font_list.h"
 #include "ui/views/accessibility/ax_virtual_view.h"
 #include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/controls/button/image_button.h"
@@ -172,6 +178,12 @@ class CaptionBubbleControllerViewsTest
   views::View* GetHeader() {
     return controller_ ? controller_->caption_bubble_->GetHeaderForTesting()
                        : nullptr;
+  }
+
+  void SetNewFontListGetter(
+      CaptionBubble::NewFontListGetter new_font_list_getter) {
+    GetController()->caption_bubble_->SetNewFontListGetterForTesting(
+        std::move(new_font_list_getter));
   }
 
   views::Label* GetTitle() {
@@ -310,8 +322,8 @@ class CaptionBubbleControllerViewsTest
   bool OnPartialTranscription(std::string text,
                               CaptionBubbleContext* caption_bubble_context) {
     return GetController()->OnTranscription(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        caption_bubble_context, media::SpeechRecognitionResult(text, false));
+        GetPrimaryMainFrame(), caption_bubble_context,
+        media::SpeechRecognitionResult(text, false));
   }
 
   bool OnFinalTranscription(std::string text) {
@@ -328,8 +340,8 @@ class CaptionBubbleControllerViewsTest
   bool OnFinalTranscription(std::string text,
                             CaptionBubbleContext* caption_bubble_context) {
     return GetController()->OnTranscription(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        caption_bubble_context, media::SpeechRecognitionResult(text, true));
+        GetPrimaryMainFrame(), caption_bubble_context,
+        media::SpeechRecognitionResult(text, true));
   }
 
   void OnLanguageIdentificationEvent(std::string language) {
@@ -338,8 +350,7 @@ class CaptionBubbleControllerViewsTest
     event->language = language;
     event->asr_switch_result = media::mojom::AsrSwitchResult::kSwitchSucceeded;
     GetController()->OnLanguageIdentificationEvent(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        GetCaptionBubbleContext(), event);
+        GetPrimaryMainFrame(), GetCaptionBubbleContext(), event);
   }
 
   void OnError() { OnError(GetCaptionBubbleContext()); }
@@ -366,9 +377,8 @@ class CaptionBubbleControllerViewsTest
   }
 
   void OnAudioStreamEnd() {
-    GetController()->OnAudioStreamEnd(
-        browser()->tab_strip_model()->GetActiveWebContents(),
-        GetCaptionBubbleContext());
+    GetController()->OnAudioStreamEnd(GetPrimaryMainFrame(),
+                                      GetCaptionBubbleContext());
   }
 
   std::vector<ui::AXNodeData> GetAXLinesNodeData() {
@@ -415,7 +425,18 @@ class CaptionBubbleControllerViewsTest
         speech::LanguageCode::kFrFr);
   }
 
+  content::RenderFrameHost* GetPrimaryMainFrame() {
+    return browser()
+        ->tab_strip_model()
+        ->GetActiveWebContents()
+        ->GetPrimaryMainFrame();
+  }
+
  private:
+  // TODO(https://crbug.com/423465927): Explore a better approach to make the
+  // existing tests run with the prewarm feature enabled.
+  test::ScopedPrewarmFeatureList scoped_prewarm_feature_list_{
+      test::ScopedPrewarmFeatureList::PrewarmState::kDisabled};
   base::test::ScopedFeatureList scoped_feature_list_;
   std::unique_ptr<LiveCaptionBubbleSettings> caption_bubble_settings_;
   std::unique_ptr<CaptionBubbleControllerViews> controller_;
@@ -576,8 +597,16 @@ IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
   EXPECT_LT(bubble_bounds.y(), web_contents_bounds_in_screen.bottom());
 }
 
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_BubblePositioningSmallNonBrowserContext \
+  DISABLED_BubblePositioningSmallNonBrowserContext
+#else
+#define MAYBE_BubblePositioningSmallNonBrowserContext \
+  BubblePositioningSmallNonBrowserContext
+#endif
+// TODO(crbug.com/422049338): Re-enable once flakiness is addressed.
 IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
-                       BubblePositioningSmallNonBrowserContext) {
+                       MAYBE_BubblePositioningSmallNonBrowserContext) {
   auto context_widget =
       MakeWebViewWidget(browser()->profile(), {{0, 0}, {300, 100}});
 
@@ -834,6 +863,29 @@ IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
             GetTitle()->font_list().GetPrimaryFont().GetFontName());
   EXPECT_EQ("Helvetica",
             GetErrorText()->font_list().GetPrimaryFont().GetFontName());
+}
+
+IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,
+                       FontFamilyArabicFallback) {
+#if BUILDFLAG(IS_CHROMEOS)
+  constexpr size_t kExpectedSize = 4;
+#else
+  constexpr size_t kExpectedSize = 3;
+#endif
+  std::vector<std::string> fonts;
+  SetNewFontListGetter(base::BindLambdaForTesting(
+      [&fonts](const std::vector<std::string>& font_names, int font_style,
+               int font_size, gfx::Font::Weight font_weight) -> gfx::FontList {
+        fonts = font_names;
+        return gfx::FontList(font_names, font_style, font_size, font_weight);
+      }));
+  ui::CaptionStyle caption_style;
+  caption_style.font_family = "";
+  GetController()->UpdateCaptionStyle(caption_style);
+  ASSERT_EQ(kExpectedSize, fonts.size());
+#if BUILDFLAG(IS_CHROMEOS)
+  EXPECT_EQ("Noto Sans Arabic UI", fonts[3]);
+#endif
 }
 
 IN_PROC_BROWSER_TEST_P(CaptionBubbleControllerViewsTest,

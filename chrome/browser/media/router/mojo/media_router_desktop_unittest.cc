@@ -17,6 +17,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/json/string_escape.h"
 #include "base/memory/ref_counted.h"
+#include "base/notimplemented.h"
 #include "base/run_loop.h"
 #include "base/strings/strcat.h"
 #include "base/test/gmock_callback_support.h"
@@ -262,11 +263,11 @@ TEST_F(MediaRouterDesktopTest, CreateRouteFails) {
               CreateRouteInternal(kSource, kSinkId, _,
                                   url::Origin::Create(GURL(kOrigin)),
                                   kInvalidFrameNodeId, _, _))
-      .WillOnce(WithArg<6>(
-          Invoke([](mojom::MediaRouteProvider::CreateRouteCallback& cb) {
+      .WillOnce(
+          WithArg<6>([](mojom::MediaRouteProvider::CreateRouteCallback& cb) {
             std::move(cb).Run(std::nullopt, nullptr, std::string(kError),
                               mojom::RouteRequestResultCode::TIMED_OUT);
-          })));
+          }));
 
   RouteResponseCallbackHandler handler;
   base::RunLoop run_loop;
@@ -317,11 +318,11 @@ TEST_F(MediaRouterDesktopTest, JoinRouteTimedOutFails) {
               JoinRouteInternal(
                   kSource, kPresentationId, url::Origin::Create(GURL(kOrigin)),
                   kInvalidFrameNodeId, base::Milliseconds(kTimeoutMillis), _))
-      .WillOnce(WithArg<5>(
-          Invoke([](mojom::MediaRouteProvider::JoinRouteCallback& cb) {
+      .WillOnce(
+          WithArg<5>([](mojom::MediaRouteProvider::JoinRouteCallback& cb) {
             std::move(cb).Run(std::nullopt, nullptr, std::string(kError),
                               mojom::RouteRequestResultCode::TIMED_OUT);
-          })));
+          }));
 
   RouteResponseCallbackHandler handler;
   base::RunLoop run_loop;
@@ -351,12 +352,11 @@ TEST_F(MediaRouterDesktopTest, TerminateRoute) {
 TEST_F(MediaRouterDesktopTest, TerminateRouteFails) {
   ProvideTestRoute(mojom::MediaRouteProviderId::CAST, kRouteId);
   EXPECT_CALL(mock_cast_provider_, TerminateRouteInternal(kRouteId, _))
-      .WillOnce(
-          Invoke([](const std::string& route_id,
-                    mojom::MediaRouteProvider::TerminateRouteCallback& cb) {
-            std::move(cb).Run(std::string("timed out"),
-                              mojom::RouteRequestResultCode::TIMED_OUT);
-          }));
+      .WillOnce([](const std::string& route_id,
+                   mojom::MediaRouteProvider::TerminateRouteCallback& cb) {
+        std::move(cb).Run(std::string("timed out"),
+                          mojom::RouteRequestResultCode::TIMED_OUT);
+      });
   router()->TerminateRoute(kRouteId);
   base::RunLoop().RunUntilIdle();
   ExpectCastResultBucketCount("TerminateRoute",

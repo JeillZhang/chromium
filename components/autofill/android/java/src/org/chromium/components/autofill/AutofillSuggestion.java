@@ -22,20 +22,17 @@ public class AutofillSuggestion extends DropdownItemBase {
     private final @Nullable String mSecondaryLabel;
     private final String mSublabel;
     private final @Nullable String mSecondarySublabel;
-    private final @Nullable String mLabelContentDescription;
+    private final @Nullable String mVoiceOver;
     private final int mIconId;
     private final @SuggestionType int mSuggestionType;
     private final boolean mIsDeletable;
     private final boolean mApplyDeactivatedStyle;
-    private final boolean mShouldDisplayTermsAvailable;
     private final @Nullable String mFeatureForIph;
     private final @Nullable String mIphDescriptionText;
     private final @Nullable GURL mCustomIconUrl;
-    private final @Nullable String mGuid;
-    private final boolean mIsLocalPaymentsMethod;
     private final @Nullable Payload mPayload;
 
-    public static sealed interface Payload permits AutofillProfilePayload {}
+    public sealed interface Payload permits AutofillProfilePayload, PaymentsPayload {}
 
     /**
      * Constructs a Autofill suggestion container. Use the {@link AutofillSuggestion.Builder}
@@ -43,21 +40,16 @@ public class AutofillSuggestion extends DropdownItemBase {
      *
      * @param label The main label of the Autofill suggestion.
      * @param sublabel The describing sublabel of the Autofill suggestion.
+     * @param voiceOver Voice over text read for the Autofill suggestion.
      * @param iconId The resource ID for the icon associated with the suggestion, or {@code
      *     DropdownItem.NO_ICON} for no icon.
      * @param popupItemId The type of suggestion.
      * @param isDeletable Whether the item can be deleted by the user.
      * @param applyDeactivatedStyle Whether to apply deactivated style to the suggestion.
-     * @param shouldDisplayTermsAvailable Whether the terms message is displayed.
      * @param featureForIph The IPH feature for the autofill suggestion. If present, it'll be
      *     attempted to be shown in the keyboard accessory.
      * @param customIconUrl The {@link GURL} for the custom icon, if any.
-     * @param guid The payment method identifier associated with the suggestion.
-     * @param isLocalPaymentsMethod Whether the payments method associated with the suggestion is
-     *     local.
-     * @param payload Additional data passed with the suggestion. Currently only
-     *     AutofillProfilePayload may passed. New payloads can be added by implementing the {@link
-     *     AutofillSuggestion.Payload} interface.
+     * @param payload Additional data passed with the suggestion.
      */
     @VisibleForTesting
     public AutofillSuggestion(
@@ -65,33 +57,27 @@ public class AutofillSuggestion extends DropdownItemBase {
             @Nullable String secondaryLabel,
             String sublabel,
             @Nullable String secondarySublabel,
-            @Nullable String labelContentDescription,
+            @Nullable String voiceOver,
             int iconId,
             @SuggestionType int popupItemId,
             boolean isDeletable,
             boolean applyDeactivatedStyle,
-            boolean shouldDisplayTermsAvailable,
             @Nullable String featureForIph,
             @Nullable String iphDescriptionText,
             @Nullable GURL customIconUrl,
-            @Nullable String guid,
-            boolean isLocalPaymentsMethod,
             @Nullable Payload payload) {
         mLabel = label;
         mSecondaryLabel = secondaryLabel;
         mSublabel = sublabel;
         mSecondarySublabel = secondarySublabel;
-        mLabelContentDescription = labelContentDescription;
+        mVoiceOver = voiceOver;
         mIconId = iconId;
         mSuggestionType = popupItemId;
         mIsDeletable = isDeletable;
         mApplyDeactivatedStyle = applyDeactivatedStyle;
-        mShouldDisplayTermsAvailable = shouldDisplayTermsAvailable;
         mFeatureForIph = featureForIph;
         mIphDescriptionText = iphDescriptionText;
         mCustomIconUrl = customIconUrl;
-        mGuid = guid;
-        mIsLocalPaymentsMethod = isLocalPaymentsMethod;
         mPayload = payload;
     }
 
@@ -133,20 +119,8 @@ public class AutofillSuggestion extends DropdownItemBase {
         return mCustomIconUrl;
     }
 
-    public @Nullable String getLabelContentDescription() {
-        return mLabelContentDescription;
-    }
-
     public @SuggestionType int getSuggestionType() {
         return mSuggestionType;
-    }
-
-    public @Nullable String getGuid() {
-        return mGuid;
-    }
-
-    public boolean isLocalPaymentsMethod() {
-        return mIsLocalPaymentsMethod;
     }
 
     public boolean isDeletable() {
@@ -162,10 +136,6 @@ public class AutofillSuggestion extends DropdownItemBase {
         return mApplyDeactivatedStyle;
     }
 
-    public boolean shouldDisplayTermsAvailable() {
-        return mShouldDisplayTermsAvailable;
-    }
-
     public @Nullable String getFeatureForIph() {
         return mFeatureForIph;
     }
@@ -174,8 +144,22 @@ public class AutofillSuggestion extends DropdownItemBase {
         return mIphDescriptionText;
     }
 
-    public @Nullable Payload getPayload() {
-        return mPayload;
+    public @Nullable String getVoiceOver() {
+        return mVoiceOver;
+    }
+
+    public @Nullable AutofillProfilePayload getAutofillProfilePayload() {
+        if (mPayload instanceof AutofillProfilePayload) {
+            return (AutofillProfilePayload) mPayload;
+        }
+        return null;
+    }
+
+    public @Nullable PaymentsPayload getPaymentsPayload() {
+        if (mPayload instanceof PaymentsPayload) {
+            return (PaymentsPayload) mPayload;
+        }
+        return null;
     }
 
     @Override
@@ -183,26 +167,38 @@ public class AutofillSuggestion extends DropdownItemBase {
         if (this == o) {
             return true;
         }
-        if (!(o instanceof AutofillSuggestion)) {
+        if (!(o instanceof AutofillSuggestion other)) {
             return false;
         }
-        AutofillSuggestion other = (AutofillSuggestion) o;
         return Objects.equals(this.mLabel, other.mLabel)
                 && Objects.equals(this.mSecondaryLabel, other.mSecondaryLabel)
                 && this.mSublabel.equals(other.mSublabel)
                 && Objects.equals(this.mSecondarySublabel, other.mSecondarySublabel)
-                && Objects.equals(this.mLabelContentDescription, other.mLabelContentDescription)
                 && this.mIconId == other.mIconId
                 && this.mSuggestionType == other.mSuggestionType
                 && this.mIsDeletable == other.mIsDeletable
                 && this.mApplyDeactivatedStyle == other.mApplyDeactivatedStyle
-                && this.mShouldDisplayTermsAvailable == other.mShouldDisplayTermsAvailable
                 && Objects.equals(this.mFeatureForIph, other.mFeatureForIph)
                 && Objects.equals(this.mIphDescriptionText, other.mIphDescriptionText)
                 && Objects.equals(this.mCustomIconUrl, other.mCustomIconUrl)
-                && Objects.equals(this.mGuid, other.mGuid)
-                && this.mIsLocalPaymentsMethod == other.mIsLocalPaymentsMethod
                 && Objects.equals(this.mPayload, other.mPayload);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(
+                this.mLabel,
+                this.mSecondaryLabel,
+                this.mSublabel,
+                this.mSecondarySublabel,
+                this.mIconId,
+                this.mSuggestionType,
+                this.mIsDeletable,
+                this.mApplyDeactivatedStyle,
+                this.mFeatureForIph,
+                this.mIphDescriptionText,
+                this.mCustomIconUrl,
+                this.mPayload);
     }
 
     /** Builder for the {@link AutofillSuggestion}. */
@@ -211,17 +207,14 @@ public class AutofillSuggestion extends DropdownItemBase {
         private @Nullable GURL mCustomIconUrl;
         private boolean mIsDeletable;
         private boolean mApplyDeactivatedStyle;
-        private boolean mShouldDisplayTermsAvailable;
         private @Nullable String mFeatureForIph;
         private @Nullable String mIphDescriptionText;
         private @Nullable String mLabel;
         private @Nullable String mSecondaryLabel;
         private @Nullable String mSubLabel;
         private @Nullable String mSecondarySubLabel;
-        private @Nullable String mLabelContentDescription;
+        private @Nullable String mVoiceOver;
         private int mSuggestionType;
-        private @Nullable String mGuid;
-        private boolean mIsLocalPaymentsMethod;
         private @Nullable Payload mPayload;
 
         public Builder setIconId(int iconId) {
@@ -241,11 +234,6 @@ public class AutofillSuggestion extends DropdownItemBase {
 
         public Builder setApplyDeactivatedStyle(boolean applyDeactivatedStyle) {
             this.mApplyDeactivatedStyle = applyDeactivatedStyle;
-            return this;
-        }
-
-        public Builder setShouldDisplayTermsAvailable(boolean shouldDisplayTermsAvailable) {
-            this.mShouldDisplayTermsAvailable = shouldDisplayTermsAvailable;
             return this;
         }
 
@@ -279,23 +267,13 @@ public class AutofillSuggestion extends DropdownItemBase {
             return this;
         }
 
-        public Builder setLabelContentDescription(String labelContentDescription) {
-            this.mLabelContentDescription = labelContentDescription;
-            return this;
-        }
-
         public Builder setSuggestionType(int popupItemId) {
             this.mSuggestionType = popupItemId;
             return this;
         }
 
-        public Builder setGuid(String guid) {
-            this.mGuid = guid;
-            return this;
-        }
-
-        public Builder setIsLocalPaymentsMethod(boolean isLocalPaymentsMethod) {
-            this.mIsLocalPaymentsMethod = isLocalPaymentsMethod;
+        public Builder setVoiceOver(String voiceOver) {
+            this.mVoiceOver = voiceOver;
             return this;
         }
 
@@ -314,17 +292,14 @@ public class AutofillSuggestion extends DropdownItemBase {
                     mSecondaryLabel,
                     mSubLabel,
                     mSecondarySubLabel,
-                    mLabelContentDescription,
+                    mVoiceOver,
                     mIconId,
                     mSuggestionType,
                     mIsDeletable,
                     mApplyDeactivatedStyle,
-                    mShouldDisplayTermsAvailable,
                     mFeatureForIph,
                     mIphDescriptionText,
                     mCustomIconUrl,
-                    mGuid,
-                    mIsLocalPaymentsMethod,
                     mPayload);
         }
     }

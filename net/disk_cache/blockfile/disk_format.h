@@ -102,8 +102,11 @@ struct NET_EXPORT_PRIVATE IndexHeader {
 // The structure of the whole index file.
 struct Index {
   IndexHeader header;
-  CacheAddr table[kIndexTablesize];  // Default size. Actual size controlled
-                                     // by header.table_len.
+  // Default size. Actual size controlled by header.table_len, and may be bigger
+  // or lower than this. Do not make this an std::array as the bound would be
+  // incorrect; see `BackendImpl::index_table_` for how boundary checking of
+  // this works.
+  CacheAddr table[kIndexTablesize];
 };
 
 // Main structure for an entry on the backing storage. If the key is longer than
@@ -149,13 +152,13 @@ enum EntryFlags {
 #pragma pack(push, 4)
 // Rankings information for a given entry.
 struct RankingsNode {
-  uint64_t last_used;           // LRU info.
-  uint64_t no_longer_used_last_modified;
-  CacheAddr   next;             // LRU list.
-  CacheAddr   prev;             // LRU list.
-  CacheAddr   contents;         // Address of the EntryStore.
-  int32_t dirty;                // The entry is being modifyied.
-  uint32_t self_hash;           // RankingsNode's hash.
+  uint64_t last_used = 0;  // LRU info.
+  uint64_t no_longer_used_last_modified = 0;
+  CacheAddr next = 0;      // LRU list.
+  CacheAddr prev = 0;      // LRU list.
+  CacheAddr contents = 0;  // Address of the EntryStore.
+  int32_t dirty = 0;       // The entry is being modifyied.
+  uint32_t self_hash = 0;  // RankingsNode's hash.
 };
 #pragma pack(pop)
 

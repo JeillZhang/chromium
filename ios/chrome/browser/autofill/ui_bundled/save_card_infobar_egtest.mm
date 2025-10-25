@@ -5,6 +5,7 @@
 #import <memory>
 
 #import "base/i18n/time_formatting.h"
+#import "base/ios/ios_util.h"
 #import "base/strings/sys_string_conversions.h"
 #import "base/strings/utf_string_conversions.h"
 #import "base/test/ios/wait_util.h"
@@ -17,7 +18,10 @@
 #import "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
 #import "ios/chrome/browser/autofill/ui_bundled/bottom_sheet/bottom_sheet_constants.h"
+#import "ios/chrome/browser/badges/model/features.h"
+#import "ios/chrome/browser/badges/ui_bundled/badge_constants.h"
 #import "ios/chrome/browser/infobars/ui_bundled/banners/infobar_banner_constants.h"
+#import "ios/chrome/browser/infobars/ui_bundled/modals/infobar_save_card_modal_constants.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/common/ui/confirmation_alert/constants.h"
 #import "ios/chrome/grit/ios_strings.h"
@@ -88,21 +92,48 @@ id<GREYMatcher> UploadModalSaveButtonMatcher() {
       IDS_IOS_AUTOFILL_SAVE_CARD);
 }
 
+id<GREYMatcher> BottomSheetAcceptButtonMatcher() {
+  return chrome_test_util::ButtonWithAccessibilityLabelId(
+      IDS_AUTOFILL_SAVE_CARD_INFOBAR_ACCEPT);
+}
+
+id<GREYMatcher> LocalBottomSheetCancelButtonMatcher() {
+  return chrome_test_util::ButtonWithAccessibilityLabelId(
+      IDS_AUTOFILL_NO_THANKS_MOBILE_LOCAL_SAVE);
+}
+
+id<GREYMatcher> UploadBottomSheetCancelButtonMatcher() {
+  return chrome_test_util::ButtonWithAccessibilityLabelId(
+      IDS_AUTOFILL_NO_THANKS_MOBILE_UPLOAD_SAVE);
+}
+
+// Matcher for the activity indicator.
+id<GREYMatcher> ActivityIndicatorMatcher() {
+  return grey_allOf(
+      grey_kindOfClassName(@"UIActivityIndicatorView"),
+      grey_ancestor(grey_accessibilityID(
+          kConfirmationAlertPrimaryActionAccessibilityIdentifier)),
+      nil);
+}
+
 id<GREYMatcher> LocalBannerLabelsMatcher() {
-  NSString* bannerLabel =
-      [NSString stringWithFormat:@"%@,%@",
-                                 l10n_util::GetNSString(
-                                     IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_LOCAL),
-                                 kSaveCardLabel];
+  NSString* bannerLabel = [NSString
+      stringWithFormat:
+          @"%@,%@",
+          l10n_util::GetNSString(
+              IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_LOCAL_ON_THIS_DEVICE),
+          kSaveCardLabel];
   return grey_allOf(
       grey_accessibilityID(kInfobarBannerLabelsStackViewIdentifier),
       grey_accessibilityLabel(bannerLabel), nil);
 }
 
-id<GREYMatcher> UploadBannerLabelsMatcher() {
+id<GREYMatcher> UploadBannerLabelsMatcher(bool is_bottomsheet_enabled = true) {
 #if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-  NSString* title =
-      l10n_util::GetNSString(IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_TO_CLOUD_V3);
+  NSString* title = l10n_util::GetNSString(
+      is_bottomsheet_enabled
+          ? IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_TO_CLOUD_SECURITY
+          : IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_TO_CLOUD_V3);
 #else
   NSString* title =
       l10n_util::GetNSString(IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_TO_CLOUD);
@@ -112,6 +143,11 @@ id<GREYMatcher> UploadBannerLabelsMatcher() {
   return grey_allOf(
       grey_accessibilityID(kInfobarBannerLabelsStackViewIdentifier),
       grey_accessibilityLabel(bannerLabel), nil);
+}
+
+id<GREYMatcher> LocalBottomSheetTitleMatcher() {
+  return grey_accessibilityLabel(
+      l10n_util::GetNSString(IDS_AUTOFILL_SAVE_CARD_PROMPT_TITLE_LOCAL));
 }
 
 id<GREYMatcher> UploadBottomSheetTitleMatcher() {
@@ -124,14 +160,7 @@ id<GREYMatcher> UploadBottomSheetTitleMatcher() {
 #endif
 }
 
-#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
-id<GREYMatcher> UploadBottomSheetSubTitleMatcher() {
-  return grey_accessibilityLabel(l10n_util::GetNSString(
-      IDS_AUTOFILL_SAVE_CARD_PROMPT_UPLOAD_EXPLANATION_SECURITY));
-}
-#endif
-
-id<GREYMatcher> UploadBottomSheetCardDescriptionMatcher() {
+id<GREYMatcher> BottomSheetCardDescriptionMatcher() {
   NSString* cardDescriptionLabel =
       base::SysUTF16ToNSString(l10n_util::GetStringFUTF16(
           IDS_AUTOFILL_SAVE_CARD_PROMPT_CARD_DESCRIPTION, kNetwork,
@@ -144,14 +173,8 @@ id<GREYMatcher> UploadBottomSheetCardDescriptionMatcher() {
                     grey_accessibilityLabel(cardDescriptionLabel), nil);
 }
 
-id<GREYMatcher> UploadBottomSheetAcceptButtonMatcher() {
-  return chrome_test_util::ButtonWithAccessibilityLabelId(
-      IDS_AUTOFILL_SAVE_CARD_INFOBAR_ACCEPT);
-}
-
-id<GREYMatcher> UploadBottomSheetCancelButtonMatcher() {
-  return chrome_test_util::ButtonWithAccessibilityLabelId(
-      IDS_AUTOFILL_NO_THANKS_MOBILE_UPLOAD_SAVE);
+id<GREYMatcher> CVCTextField() {
+  return grey_accessibilityID(kSaveCardModalCVCTextFieldIdentifier);
 }
 
 // Simulates typing text on the keyboard and avoid having the first character
@@ -233,6 +256,16 @@ void FillAndSubmitXframeCreditCardForm() {
 // Some tests are not compatible with explicit save prompts for addresses.
 - (AppLaunchConfiguration)appConfigurationForTestCase {
   AppLaunchConfiguration config;
+
+  if ([self isRunningTest:@selector(FLAKY_testInfobarWithoutBadge)]) {
+    config.features_enabled.push_back(kAutofillBadgeRemoval);
+  }
+
+  if ([self isRunningTest:@selector(testOfferLocalSave_WithInfobar)]) {
+    // This test needs the badge.
+    config.features_disabled.push_back(kAutofillBadgeRemoval);
+  }
+
   if ([self isRunningTest:@selector(testStickySavePromptJourney)]) {
     config.features_enabled.push_back(kAutofillStickyInfobarIos);
   }
@@ -260,6 +293,13 @@ void FillAndSubmitXframeCreditCardForm() {
     config.features_enabled.push_back(
         autofill::features::kAutofillSaveCardBottomSheet);
   }
+
+  config.features_enabled.push_back(
+      autofill::features::kAutofillLocalSaveCardBottomSheet);
+
+  config.features_enabled.push_back(
+      autofill::features::kAutofillEnableCvcStorageAndFilling);
+
   return config;
 }
 
@@ -310,14 +350,22 @@ void FillAndSubmitXframeCreditCardForm() {
   return WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, condition);
 }
 
-- (BOOL)waitForUIElementToDisappearWithMatcher:(id<GREYMatcher>)matcher {
+- (BOOL)waitForUIElementToDisappearWithMatcher:(id<GREYMatcher>)matcher
+                           showingConfirmation:(BOOL)showingConfirmation {
   ConditionBlock condition = ^{
     NSError* error = nil;
     [[EarlGrey selectElementWithMatcher:matcher] assertWithMatcher:grey_nil()
                                                              error:&error];
     return error == nil;
   };
-  return WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, condition);
+
+  // Waiting slightly longer for confirmation to dismiss than the actual timeout
+  // duration to avoid flakiness since it can take longer on the bots running
+  // the simulator.
+  return WaitUntilConditionOrTimeout(showingConfirmation
+                                         ? kConfirmationDismissDelay * 1.5
+                                         : kWaitForUIElementTimeout,
+                                     condition);
 }
 
 // Sets up the Google Payments server response to offer upload or local save on
@@ -355,7 +403,7 @@ void FillAndSubmitXframeCreditCardForm() {
       @"Request upload save or get upload details response not called");
 }
 
-- (void)dismissSaveCardBottomSheetWithoutAccepting {
+- (void)dismissUploadSaveCardBottomSheetWithoutAccepting {
   [AutofillAppInterface resetEventWaiterForEvents:@[
     @(CreditCardSaveManagerObserverEvent::kOnStrikeChangeCompleteCalled)
   ]
@@ -365,13 +413,58 @@ void FillAndSubmitXframeCreditCardForm() {
   [[EarlGrey selectElementWithMatcher:UploadBottomSheetCancelButtonMatcher()]
       performAction:grey_tap()];
 
+  // Synchronization off due to an infinite spinner.
+  ScopedSynchronizationDisabler disabler;
+
   // Assert save card bottomsheet dimisses.
-  GREYAssertTrue([self waitForUIElementToDisappearWithMatcher:
-                           UploadBottomSheetTitleMatcher()],
-                 @"Save card bottomsheet failed to dismiss.");
+  GREYAssertTrue(
+      [self
+          waitForUIElementToDisappearWithMatcher:UploadBottomSheetTitleMatcher()
+                             showingConfirmation:NO],
+      @"Save card bottomsheet failed to dismiss.");
 
   GREYAssertTrue([AutofillAppInterface waitForEvents],
                  @"Strike not added on bottomsheet dismissed");
+}
+
+- (void)dismissLocalSaveCardBottomSheetWithoutAccepting {
+  [AutofillAppInterface resetEventWaiterForEvents:@[
+    @(CreditCardSaveManagerObserverEvent::kOnStrikeChangeCompleteCalled)
+  ]
+                                          timeout:kWaitForDownloadTimeout];
+
+  // Push the cancel button.
+  [[EarlGrey selectElementWithMatcher:LocalBottomSheetCancelButtonMatcher()]
+      performAction:grey_tap()];
+
+  // Assert save card bottomsheet dimisses.
+  GREYAssertTrue(
+      [self
+          waitForUIElementToDisappearWithMatcher:LocalBottomSheetTitleMatcher()
+                             showingConfirmation:NO],
+      @"Local save card bottomsheet failed to dismiss.");
+
+  GREYAssertTrue([AutofillAppInterface waitForEvents],
+                 @"Strike not added on local save bottomsheet dismissed");
+}
+
+- (void)dismissLocalSaveCardBannerWithoutAccepting {
+  [AutofillAppInterface resetEventWaiterForEvents:@[
+    @(CreditCardSaveManagerObserverEvent::kOnStrikeChangeCompleteCalled)
+  ]
+                                          timeout:kWaitForDownloadTimeout];
+
+  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
+                                          kInfobarBannerViewIdentifier)]
+      performAction:grey_swipeFastInDirection(kGREYDirectionUp)];
+
+  GREYAssert(
+      [self waitForUIElementToDisappearWithMatcher:LocalBannerLabelsMatcher()
+                               showingConfirmation:NO],
+      @"Local save card infobar banner failed to disappear.");
+
+  GREYAssertTrue([AutofillAppInterface waitForEvents],
+                 @"Strike not added on local save card infobar dismissed");
 }
 
 - (void)removeInfoBar {
@@ -382,6 +475,35 @@ void FillAndSubmitXframeCreditCardForm() {
   [ChromeTestCase removeAnyOpenMenusAndInfoBars];
   GREYAssertTrue([AutofillAppInterface waitForEvents],
                  @"Strike not added on infobar dismissed");
+}
+
+- (void)triggerCreditCardSaveModal {
+  [self fillAndSubmitFormWithID:kFillFullFormId
+               paymentsResponse:kResponseGetUploadDetailsSuccess
+                      errorCode:net::HTTP_OK
+                   forLocalSave:NO];
+  GREYAssertTrue(
+      [self
+          waitForUIElementToAppearWithMatcher:UploadBottomSheetTitleMatcher()],
+      @"Save card bottom sheet failed to appear on the first attempt.");
+  [self dismissUploadSaveCardBottomSheetWithoutAccepting];
+
+  // Trigger the infobar banner.
+  [self fillAndSubmitFormWithID:kFillFullFormId
+               paymentsResponse:kResponseGetUploadDetailsSuccess
+                      errorCode:net::HTTP_OK
+                   forLocalSave:NO];
+  GREYAssertTrue(
+      [self waitForUIElementToAppearWithMatcher:UploadBannerLabelsMatcher()],
+      @"Save card infobar failed to show on the second attempt.");
+
+  // Tap the banner's save button to open the modal.
+  [[EarlGrey selectElementWithMatcher:UploadBannerSaveButtonMatcher()]
+      performAction:grey_tap()];
+
+  // Ensure the modal is visible by asserting its save button is present.
+  [[EarlGrey selectElementWithMatcher:UploadModalSaveButtonMatcher()]
+      assertWithMatcher:grey_enabled()];
 }
 
 #pragma mark - Tests
@@ -395,12 +517,12 @@ void FillAndSubmitXframeCreditCardForm() {
                       errorCode:net::HTTP_INTERNAL_SERVER_ERROR
                    forLocalSave:YES];
 
-  // Wait until the save card infobar becomes visible.
+  // Wait until the save card bottomsheet becomes visible.
   GREYAssert(
-      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
-      @"Save card infobar failed to show.");
+      [self waitForUIElementToAppearWithMatcher:LocalBottomSheetTitleMatcher()],
+      @"Local save card bottomsheet failed to show.");
 
-  [self removeInfoBar];
+  [self dismissLocalSaveCardBottomSheetWithoutAccepting];
 }
 
 // Ensures that submitting the form should query Google Payments; and the
@@ -412,12 +534,12 @@ void FillAndSubmitXframeCreditCardForm() {
                       errorCode:net::HTTP_OK
                    forLocalSave:YES];
 
-  // Wait until the save card infobar becomes visible.
+  // Wait until the save card bottomsheet becomes visible.
   GREYAssert(
-      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
-      @"Save card infobar failed to show.");
+      [self waitForUIElementToAppearWithMatcher:LocalBottomSheetTitleMatcher()],
+      @"Local save card bottomsheet failed to show.");
 
-  [self removeInfoBar];
+  [self dismissLocalSaveCardBottomSheetWithoutAccepting];
 }
 
 // Ensures that submitting the form, even with only card number and expiration
@@ -429,10 +551,10 @@ void FillAndSubmitXframeCreditCardForm() {
                       errorCode:net::HTTP_OK
                    forLocalSave:NO];
 
-  // Make sure the save card infobar does not become visible.
+  // Make sure the save card bottomsheet does not become visible.
   GREYAssertFalse(
-      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
-      @"Save card infobar should not show.");
+      [self waitForUIElementToAppearWithMatcher:LocalBottomSheetTitleMatcher()],
+      @"Local save card bottomsheet should not show.");
 }
 
 // Test upstream card upload is offered in infobar when submitting the credit
@@ -446,7 +568,8 @@ void FillAndSubmitXframeCreditCardForm() {
 
   // Wait until the save card infobar becomes visible.
   GREYAssert(
-      [self waitForUIElementToAppearWithMatcher:UploadBannerLabelsMatcher()],
+      [self waitForUIElementToAppearWithMatcher:
+                UploadBannerLabelsMatcher(/*is_bottomsheet_enabled=*/false)],
       @"Save card infobar failed to show.");
 
   [self removeInfoBar];
@@ -467,7 +590,7 @@ void FillAndSubmitXframeCreditCardForm() {
       [self
           waitForUIElementToAppearWithMatcher:UploadBottomSheetTitleMatcher()],
       @"Save card bottomsheet failed to appear.");
-  [self dismissSaveCardBottomSheetWithoutAccepting];
+  [self dismissUploadSaveCardBottomSheetWithoutAccepting];
 }
 
 // Test upstream card upload is offered in infobar when submitting xframe credit
@@ -502,7 +625,8 @@ void FillAndSubmitXframeCreditCardForm() {
 
   // Wait until the save card infobar becomes visible.
   GREYAssert(
-      [self waitForUIElementToAppearWithMatcher:UploadBannerLabelsMatcher()],
+      [self waitForUIElementToAppearWithMatcher:
+                UploadBannerLabelsMatcher(/*is_bottomsheet_enabled=*/false)],
       @"Save card infobar failed to show.");
 
   [self removeInfoBar];
@@ -543,15 +667,14 @@ void FillAndSubmitXframeCreditCardForm() {
           waitForUIElementToAppearWithMatcher:UploadBottomSheetTitleMatcher()],
       @"Save card bottomsheet failed to appear.");
 
-  [self dismissSaveCardBottomSheetWithoutAccepting];
+  [self dismissUploadSaveCardBottomSheetWithoutAccepting];
 }
 
 // Test upstream card upload is offered when submitting the credit card form
 // with partial data (only card number and expiration date) and that Google
 // Payments server is queried to request card upload. Due to partial data,
 // instead of bottomsheet, infobar will be shown.
-// TODO(crbug.com/419219302): Test is flaky.
-- (void)DISABLED_testOfferUpstream_PartialData_PaymentsAccepts {
+- (void)testOfferUpstream_PartialData_PaymentsAccepts {
   [self fillAndSubmitFormWithID:kFillPartialFormId
                paymentsResponse:kResponseGetUploadDetailsSuccess
                       errorCode:net::HTTP_OK
@@ -567,8 +690,7 @@ void FillAndSubmitXframeCreditCardForm() {
 
 // Ensures that UMA metrics are correctly logged when the user declines upload
 // on a bottomsheet and an infobar.
-// TODO(crbug.com/419219302): Test is flaky.
-- (void)DISABLED_testUMA_Upstream_UserDeclinesBottomSheetAndInfobar {
+- (void)testUMA_Upstream_UserDeclinesBottomSheetAndInfobar {
   // Form submitted with full credit card data and no previous strikes offers
   // upstream save in a bottomsheet.
   [self fillAndSubmitFormWithID:kFillFullFormId
@@ -586,7 +708,7 @@ void FillAndSubmitXframeCreditCardForm() {
   // upload offer, an infobar banner will be shown. This is in accordance with
   // the strike logic used to conditionally show bottomsheet and fallback to
   // infobar UI until max strike limit is reached.
-  [self dismissSaveCardBottomSheetWithoutAccepting];
+  [self dismissUploadSaveCardBottomSheetWithoutAccepting];
 
   // Ensure UMA logs that upload was offered.
   NSError* error = [MetricsAppInterface
@@ -595,6 +717,9 @@ void FillAndSubmitXframeCreditCardForm() {
   if (error) {
     GREYFail([error description]);
   }
+
+  // Wait a bit before re-submitting the form.
+  base::test::ios::SpinRunLoopWithMinDelay(base::Seconds(2));
 
   // Submit the credit card form again to be offered card upload in a save card
   // infobar.
@@ -618,7 +743,8 @@ void FillAndSubmitXframeCreditCardForm() {
 
   // Wait until the save card infobar disappears.
   GREYAssertTrue(
-      [self waitForUIElementToDisappearWithMatcher:UploadBannerLabelsMatcher()],
+      [self waitForUIElementToDisappearWithMatcher:UploadBannerLabelsMatcher()
+                               showingConfirmation:NO],
       @"Save card infobar failed to disappear.");
 
   // Ensure UMA logs that upload was offered twice and card upload was not
@@ -640,8 +766,7 @@ void FillAndSubmitXframeCreditCardForm() {
 // Ensures that UMA metrics are correctly logged when the user declines upload
 // on a bottomsheet and accepts when offered infobar. On accept, ensures that an
 // UploadCardRequest RPC is sent to Google Payments Server.
-// TODO(crbug.com/419219302): Test is flaky.
-- (void)DISABLED_testUMA_Upstream_UserDeclinesBottomSheetAcceptsInfobar {
+- (void)testUMA_Upstream_UserDeclinesBottomSheetAcceptsInfobar {
   // Form submitted with full credit card data and no previous strikes offers
   // card upload in a bottomsheet.
   [self fillAndSubmitFormWithID:kFillFullFormId
@@ -659,7 +784,7 @@ void FillAndSubmitXframeCreditCardForm() {
   // upload offer, an infobar banner will be shown. This is in accordance with
   // the strike logic used to conditionally show bottomsheet and fallback to
   // infobar UI until max strike limit is reached.
-  [self dismissSaveCardBottomSheetWithoutAccepting];
+  [self dismissUploadSaveCardBottomSheetWithoutAccepting];
 
   // Ensure UMA logs that upload was offered once and card upload was not
   // accepted.
@@ -675,6 +800,9 @@ void FillAndSubmitXframeCreditCardForm() {
   if (error) {
     GREYFail([error description]);
   }
+
+  // Wait a bit before re-submitting the form.
+  base::test::ios::SpinRunLoopWithMinDelay(base::Seconds(2));
 
   // Submit the credit card form again to be offered card upload in a save card
   // infobar.
@@ -710,7 +838,8 @@ void FillAndSubmitXframeCreditCardForm() {
 
   // Wait until the save card infobar disappears.
   GREYAssert(
-      [self waitForUIElementToDisappearWithMatcher:UploadBannerLabelsMatcher()],
+      [self waitForUIElementToDisappearWithMatcher:UploadBannerLabelsMatcher()
+                               showingConfirmation:NO],
       @"Save card infobar failed to disappear.");
 
   // Ensure UMA logs that upload was offered twice and card upload was accepted
@@ -729,9 +858,12 @@ void FillAndSubmitXframeCreditCardForm() {
   }
 }
 
-// TODO(crbug.com/419219302): Test is flaky.
-- (void)
-    DISABLED_testSaveCardBottomSheetShowsLoadingAndConfirmationAfterAcceptPushed {
+- (void)testSaveCardBottomSheetShowsLoadingAndConfirmationAfterAcceptPushed {
+  // TODO(crbug.com/439735103): Re-enable the test on iOS26.
+  if (base::ios::IsRunningOnIOS26OrLater()) {
+    EARL_GREY_TEST_DISABLED(@"Test disabled on iOS 26.");
+  }
+
   [self fillAndSubmitFormWithID:kFillFullFormId
                paymentsResponse:kResponseGetUploadDetailsSuccess
                       errorCode:net::HTTP_OK
@@ -749,33 +881,32 @@ void FillAndSubmitXframeCreditCardForm() {
                      IDS_AUTOFILL_GOOGLE_PAY_LOGO_ACCESSIBLE_NAME))]
       assertWithMatcher:grey_sufficientlyVisible()];
 
-  [[EarlGrey selectElementWithMatcher:UploadBottomSheetSubTitleMatcher()]
+  [[EarlGrey
+      selectElementWithMatcher:
+          grey_accessibilityValue(l10n_util::GetNSString(
+              IDS_AUTOFILL_SAVE_CARD_PROMPT_UPLOAD_EXPLANATION_SECURITY))]
       assertWithMatcher:grey_sufficientlyVisible()];
 #endif
 
-  [[EarlGrey selectElementWithMatcher:UploadBottomSheetCardDescriptionMatcher()]
+  [[EarlGrey selectElementWithMatcher:BottomSheetCardDescriptionMatcher()]
       assertWithMatcher:grey_sufficientlyVisible()];
 
-  [[EarlGrey selectElementWithMatcher:UploadBottomSheetAcceptButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:BottomSheetAcceptButtonMatcher()]
       assertWithMatcher:grey_userInteractionEnabled()];
 
   [[EarlGrey selectElementWithMatcher:UploadBottomSheetCancelButtonMatcher()]
       assertWithMatcher:grey_userInteractionEnabled()];
 
   // Push the accept button on the save card bottomsheet.
-  [[EarlGrey selectElementWithMatcher:UploadBottomSheetAcceptButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:BottomSheetAcceptButtonMatcher()]
       performAction:grey_tap()];
 
   // Assert an activity indicator view is being shown in the loading state.
-  id<GREYMatcher> activityIndicatorView =
-      grey_kindOfClassName(@"UIActivityIndicatorView");
   GREYAssertTrue(
-      [self waitForUIElementToAppearWithMatcher:activityIndicatorView],
+      [self waitForUIElementToAppearWithMatcher:ActivityIndicatorMatcher()],
       @"Save card bottomsheet failed to show activity indicator in loading "
       @"state.");
-  [[[EarlGrey selectElementWithMatcher:activityIndicatorView]
-      inRoot:grey_accessibilityID(
-                 kConfirmationAlertPrimaryActionAccessibilityIdentifier)]
+  [[EarlGrey selectElementWithMatcher:ActivityIndicatorMatcher()]
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Assert the accept button is disabled and has accessibility label for
@@ -839,55 +970,35 @@ void FillAndSubmitXframeCreditCardForm() {
       assertWithMatcher:grey_not(grey_enabled())];
 
   // Wait for bottomsheet to auto-dismiss.
-  ConditionBlock condition = ^{
-    NSError* error = nil;
-    [[EarlGrey selectElementWithMatcher:UploadBottomSheetTitleMatcher()]
-        assertWithMatcher:grey_nil()
-                    error:&error];
-    return error == nil;
-  };
-
-  // Waiting slightly longer than the actual timeout duration toavoid flakiness
-  // since it can take longer on the bots running the simulator.
   GREYAssertTrue(
-      WaitUntilConditionOrTimeout(kConfirmationDismissDelay * 1.5, condition),
+      [self
+          waitForUIElementToDisappearWithMatcher:UploadBottomSheetTitleMatcher()
+                             showingConfirmation:YES],
       @"Save card bottomsheet failed to auto-dismiss in confirmation state.");
 }
 
-// Ensures that the infobar goes away and no credit card is saved to Chrome if
-// the user declines local save.
+// Ensures that the bottomsheet goes away and no credit card is saved to Chrome
+// if the user declines local save.
 - (void)testUserData_LocalSave_UserDeclines {
   [self fillAndSubmitFormWithID:kFillFullFormId
                paymentsResponse:kResponseGetUploadDetailsFailure
                       errorCode:net::HTTP_OK
                    forLocalSave:YES];
 
-  // Wait until the save card infobar becomes visible.
+  // Wait until the save card bottomsheet becomes visible.
   GREYAssert(
-      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
-      @"Save card infobar failed to show.");
+      [self waitForUIElementToAppearWithMatcher:LocalBottomSheetTitleMatcher()],
+      @"Local save card bottomsheet failed to show.");
 
-  [AutofillAppInterface resetEventWaiterForEvents:@[
-    @(CreditCardSaveManagerObserverEvent::kOnStrikeChangeCompleteCalled)
-  ]
-                                          timeout:kWaitForDownloadTimeout];
-  // Dismiss infobar banner.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          kInfobarBannerViewIdentifier)]
-      performAction:grey_swipeFastInDirection(kGREYDirectionUp)];
-
-  // Wait until the save card infobar disappears.
-  GREYAssert(
-      [self waitForUIElementToDisappearWithMatcher:LocalBannerLabelsMatcher()],
-      @"Save card infobar failed to disappear.");
+  [self dismissLocalSaveCardBottomSheetWithoutAccepting];
 
   // Ensure credit card is not saved locally.
   GREYAssertEqual(0U, [AutofillAppInterface localCreditCount],
                   @"No credit card should have been saved.");
 }
 
-// Ensures that the infobar goes away and the credit card is saved to Chrome if
-// the user accepts local save.
+// Ensures that the bottomsheet goes away and the credit card is saved to Chrome
+// if the user accepts local save.
 - (void)testUserData_LocalSave_UserAccepts {
 
   // Ensure there are no saved credit cards.
@@ -899,19 +1010,22 @@ void FillAndSubmitXframeCreditCardForm() {
                       errorCode:net::HTTP_OK
                    forLocalSave:YES];
 
-  // Wait until the save card infobar becomes visible.
+  // Wait until the save card bottomsheet becomes visible.
   GREYAssert(
-      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
-      @"Save card infobar failed to show.");
+      [self waitForUIElementToAppearWithMatcher:LocalBottomSheetTitleMatcher()],
+      @"Save card bottomsheet failed to show.");
 
   // Tap the save button.
-  [[EarlGrey selectElementWithMatcher:LocalSaveButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:BottomSheetAcceptButtonMatcher()]
       performAction:grey_tap()];
 
-  // Wait until the save card infobar disappears.
-  GREYAssert(
-      [self waitForUIElementToDisappearWithMatcher:LocalBannerLabelsMatcher()],
-      @"Save card infobar failed to disappear.");
+  // Wait for bottomsheet to auto-dismiss.
+  GREYAssertTrue(
+      [self
+          waitForUIElementToDisappearWithMatcher:LocalBottomSheetTitleMatcher()
+                             showingConfirmation:YES],
+      @"Local save card bottomsheet failed to auto-dismiss in confirmation "
+      @"state.");
 
   // Ensure credit card is saved locally.
   GREYAssertEqual(1U, [AutofillAppInterface localCreditCount],
@@ -951,19 +1065,22 @@ void FillAndSubmitXframeCreditCardForm() {
   GREYAssertTrue([AutofillAppInterface waitForEvents],
                  @"Event was not triggered");
 
-  // Wait until the save card infobar becomes visible.
+  // Wait until the save card bottomsheet becomes visible.
   GREYAssert(
-      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
-      @"Save card infobar failed to show.");
+      [self waitForUIElementToAppearWithMatcher:LocalBottomSheetTitleMatcher()],
+      @"Save card bottomsheet failed to show.");
 
   // Tap the save button.
-  [[EarlGrey selectElementWithMatcher:LocalSaveButtonMatcher()]
+  [[EarlGrey selectElementWithMatcher:BottomSheetAcceptButtonMatcher()]
       performAction:grey_tap()];
 
-  // Wait until the save card infobar disappears.
-  GREYAssert(
-      [self waitForUIElementToDisappearWithMatcher:LocalBannerLabelsMatcher()],
-      @"Save card infobar failed to disappear.");
+  // Wait for bottomsheet to auto-dismiss.
+  GREYAssertTrue(
+      [self
+          waitForUIElementToDisappearWithMatcher:LocalBottomSheetTitleMatcher()
+                             showingConfirmation:YES],
+      @"Local save card bottomsheet failed to auto-dismiss in confirmation "
+      @"state.");
 
   // Ensure credit card is saved locally.
   GREYAssertEqual(1U, [AutofillAppInterface localCreditCount],
@@ -971,49 +1088,91 @@ void FillAndSubmitXframeCreditCardForm() {
 }
 
 // Ensures that submitting the form should query Google Payments; but the
-// fallback local save infobar should not appear if the maximum StrikeDatabase
-// strike limit is reached.
-// TODO(crbug.com/41437589): remove SetFormFillMaxStrikes() and incur
-// the maximum number of strikes by showing and declining save infobar instead.
+// fallback local save prompt should not appear if the maximum
+// StrikeDatabase strike limit is reached.
 - (void)testNotOfferLocalSave_MaxStrikesReached {
-  [ChromeEarlGrey
-      loadURL:web::test::HttpServer::MakeUrl(kCreditCardUploadForm)];
+  // Incur the maximum number of strikes by showing and declining save
+  // bottomsheet and infobar.
+
+  // Show and dismiss bottomsheet to incur strike 1.
+  [self fillAndSubmitFormWithID:kFillFullFormId
+               paymentsResponse:kResponseGetUploadDetailsFailure
+                      errorCode:net::HTTP_OK
+                   forLocalSave:YES];
+
+  GREYAssert(
+      [self waitForUIElementToAppearWithMatcher:LocalBottomSheetTitleMatcher()],
+      @"Local save card bottomsheet failed to show.");
+
+  [self dismissLocalSaveCardBottomSheetWithoutAccepting];
+
+  // Show and dismiss infobar to incur strike 2.
+  [self fillAndSubmitFormWithID:kFillFullFormId
+               paymentsResponse:kResponseGetUploadDetailsFailure
+                      errorCode:net::HTTP_OK
+                   forLocalSave:YES];
+
+  GREYAssert(
+      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
+      @"Local save card infobar banner failed to show.");
+
+  [self dismissLocalSaveCardBannerWithoutAccepting];
+
+  // Show and dismiss bottomsheet to incur strike 3 which is the max strike
+  // limit.
+  [self fillAndSubmitFormWithID:kFillFullFormId
+               paymentsResponse:kResponseGetUploadDetailsFailure
+                      errorCode:net::HTTP_OK
+                   forLocalSave:YES];
+
+  GREYAssert(
+      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
+      @"Local save card infobar banner failed to show.");
+
+  [self dismissLocalSaveCardBannerWithoutAccepting];
+
+  // Submit the form for the fourth time.
+  [self fillAndSubmitFormWithID:kFillFullFormId
+               paymentsResponse:kResponseGetUploadDetailsFailure
+                      errorCode:net::HTTP_OK
+                   forLocalSave:NO];
+
+  // Make sure the save card infobar does not become visible.
+  GREYAssertFalse(
+      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
+      @"Local save card infobar banner should not show.");
+}
+
+// Test the sticky credit card prompt journey where the prompt remains there
+// when navigating without an explicit user gesture, and then the prompt is
+// dismissed when navigating with a user gesture. Test with the credit card save
+// prompt but the type of credit card prompt doesn't matter in this test case.
+- (void)testStickySavePromptJourney {
+  const GURL testPageURL =
+      web::test::HttpServer::MakeUrl(kCreditCardUploadForm);
+
+  [ChromeEarlGrey loadURL:testPageURL];
 
   // Set up the Google Payments server response.
   [AutofillAppInterface setPaymentsResponse:kResponseGetUploadDetailsFailure
                                  forRequest:kURLGetUploadDetailsRequest
                               withErrorCode:net::HTTP_OK];
 
-  [AutofillAppInterface setFormFillMaxStrikes:3
+  // Set strike count as 1 to directly show the infobar.
+  [AutofillAppInterface setFormFillMaxStrikes:1
                                       forCard:@"CreditCardSave__5454"];
 
   [AutofillAppInterface resetEventWaiterForEvents:@[
     @(CreditCardSaveManagerObserverEvent::kOnDecideToRequestUploadSaveCalled),
     @(CreditCardSaveManagerObserverEvent::
-          kOnReceivedGetUploadDetailsResponseCalled)
+          kOnReceivedGetUploadDetailsResponseCalled),
+    @(CreditCardSaveManagerObserverEvent::kOnOfferLocalSaveCalled)
   ]
                                           timeout:kWaitForDownloadTimeout];
-
   [self fillAndSubmitFormWithID:kFillFullFormId];
-
   GREYAssertTrue([AutofillAppInterface waitForEvents],
-                 @"Event was not triggered");
-
-  // Make sure the save card infobar does not become visible.
-  GREYAssertFalse(
-      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
-      @"Save card infobar should not show.");
-}
-
-// Tests the sticky credit card prompt journey where the prompt remains there
-// when navigating without an explicit user gesture, and then the prompt is
-// dismissed when navigating with a user gesture. Test with the credit card save
-// prompt but the type of credit card prompt doesn't matter in this test case.
-- (void)testStickySavePromptJourney {
-  [self fillAndSubmitFormWithID:kFillFullFormId
-               paymentsResponse:kResponseGetUploadDetailsFailure
-                      errorCode:net::HTTP_OK
-                   forLocalSave:YES];
+                 @"Request upload save or get upload details response or offer "
+                 @"local save not called");
 
   // Wait until the save card infobar becomes visible.
   GREYAssert(
@@ -1058,13 +1217,311 @@ void FillAndSubmitXframeCreditCardForm() {
       assertWithMatcher:grey_sufficientlyVisible()];
 
   // Navigate with an emulated user gesture.
-  [ChromeEarlGrey
-      loadURL:web::test::HttpServer::MakeUrl(kCreditCardUploadForm)];
+  [ChromeEarlGrey loadURL:testPageURL];
 
   // Wait until the save card infobar disappears.
   GREYAssertTrue(
-      [self waitForUIElementToDisappearWithMatcher:LocalBannerLabelsMatcher()],
+      [self waitForUIElementToDisappearWithMatcher:LocalBannerLabelsMatcher()
+                               showingConfirmation:NO],
       @"Save card infobar failed to disappear.");
+}
+
+// Test local save bottomsheet is shown and directly shows confirmation state on
+// being accepted.
+- (void)testLocalSaveBottomSheet {
+  [self fillAndSubmitFormWithID:kFillFullFormId
+               paymentsResponse:kResponseGetUploadDetailsFailure
+                      errorCode:net::HTTP_OK
+                   forLocalSave:YES];
+
+  // Wait until the save card bottomsheet becomes visible.
+  GREYAssert(
+      [self waitForUIElementToAppearWithMatcher:LocalBottomSheetTitleMatcher()],
+      @"Local save card bottomsheet failed to show.");
+
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityLabel(l10n_util::GetNSString(
+                                   IDS_AUTOFILL_CHROME_LOGO_ACCESSIBLE_NAME))]
+      assertWithMatcher:grey_sufficientlyVisible()];
+#endif
+
+  [[EarlGrey selectElementWithMatcher:
+                 grey_accessibilityValue(l10n_util::GetNSString(
+                     IDS_AUTOFILL_SAVE_CARD_WITH_CVC_PROMPT_EXPLANATION_LOCAL))]
+      assertWithMatcher:grey_sufficientlyVisible()];
+
+  [[EarlGrey selectElementWithMatcher:BottomSheetCardDescriptionMatcher()]
+      assertWithMatcher:grey_sufficientlyVisible()];
+
+  [[EarlGrey selectElementWithMatcher:BottomSheetAcceptButtonMatcher()]
+      assertWithMatcher:grey_userInteractionEnabled()];
+
+  [[EarlGrey selectElementWithMatcher:LocalBottomSheetCancelButtonMatcher()]
+      assertWithMatcher:grey_userInteractionEnabled()];
+
+  {
+    // Disable the synchronization, otherwise the test runner waits for the
+    // animation for the accept button and the following assertions will fail on
+    // iOS 26.
+    ScopedSynchronizationDisabler disabler;
+
+    // Push the accept button on the save card bottomsheet.
+    [[EarlGrey selectElementWithMatcher:BottomSheetAcceptButtonMatcher()]
+        performAction:grey_tap()];
+
+    // Assert the accept button is disabled and has accessibility label for
+    // confirmation state.
+    [[EarlGrey selectElementWithMatcher:
+                   grey_accessibilityID(
+                       kConfirmationAlertPrimaryActionAccessibilityIdentifier)]
+        assertWithMatcher:
+            grey_allOf(
+                grey_not(grey_enabled()),
+                grey_accessibilityLabel(l10n_util::GetNSString(
+                    IDS_AUTOFILL_SAVE_CARD_CONFIRMATION_SUCCESS_ACCESSIBLE_NAME)),
+                nil)];
+
+    // Assert a checkmark symbol is being shown in the confirmation state.
+    [[[EarlGrey
+        selectElementWithMatcher:
+            grey_accessibilityID(kConfirmationAlertCheckmarkSymbolIdentifier)]
+        inRoot:grey_accessibilityID(
+                   kConfirmationAlertPrimaryActionAccessibilityIdentifier)]
+        assertWithMatcher:grey_sufficientlyVisible()];
+
+    // Assert the cancel button is disabled.
+    [[EarlGrey selectElementWithMatcher:LocalBottomSheetCancelButtonMatcher()]
+        assertWithMatcher:grey_not(grey_enabled())];
+  }
+
+  // Wait for bottomsheet to auto-dismiss.
+  GREYAssertTrue(
+      [self
+          waitForUIElementToDisappearWithMatcher:LocalBottomSheetTitleMatcher()
+                             showingConfirmation:YES],
+      @"Local save card bottomsheet failed to auto-dismiss in confirmation "
+      @"state.");
+}
+
+// Test local save bottomsheet doesn't show loading state after being accepted.
+- (void)testLocalSaveBottomSheetDoesNotShowLoading {
+  [self fillAndSubmitFormWithID:kFillFullFormId
+               paymentsResponse:kResponseGetUploadDetailsFailure
+                      errorCode:net::HTTP_OK
+                   forLocalSave:YES];
+
+  // Wait until the save card bottomsheet becomes visible.
+  GREYAssert(
+      [self waitForUIElementToAppearWithMatcher:LocalBottomSheetTitleMatcher()],
+      @"Local save card bottomsheet failed to show.");
+
+  // Push the accept button on the save card bottomsheet.
+  [[EarlGrey selectElementWithMatcher:BottomSheetAcceptButtonMatcher()]
+      performAction:grey_tap()];
+
+  GREYAssertFalse(
+      [self waitForUIElementToAppearWithMatcher:ActivityIndicatorMatcher()],
+      @"Local save card bottomsheet should not show activity indicator.");
+
+  // Wait for bottomsheet to auto-dismiss.
+  GREYAssertTrue(
+      [self
+          waitForUIElementToDisappearWithMatcher:LocalBottomSheetTitleMatcher()
+                             showingConfirmation:YES],
+      @"Local save card bottomsheet failed to auto-dismiss in confirmation "
+      @"state.");
+}
+
+// Test infobar is offered for card with non zero strike and card is saved to
+// Chrome if user accepts the infobar.
+- (void)testOfferLocalSave_WithInfobar {
+  // Ensure there are no saved credit cards.
+  GREYAssertEqual(0U, [AutofillAppInterface localCreditCount],
+                  @"There should be no saved credit card.");
+
+  [ChromeEarlGrey
+      loadURL:web::test::HttpServer::MakeUrl(kCreditCardUploadForm)];
+
+  // Set up the Google Payments server response.
+  [AutofillAppInterface setPaymentsResponse:kResponseGetUploadDetailsFailure
+                                 forRequest:kURLGetUploadDetailsRequest
+                              withErrorCode:net::HTTP_OK];
+
+  // Set strike count as 1 to directly show the infobar.
+  [AutofillAppInterface setFormFillMaxStrikes:1
+                                      forCard:@"CreditCardSave__5454"];
+
+  [AutofillAppInterface resetEventWaiterForEvents:@[
+    @(CreditCardSaveManagerObserverEvent::kOnDecideToRequestUploadSaveCalled),
+    @(CreditCardSaveManagerObserverEvent::
+          kOnReceivedGetUploadDetailsResponseCalled),
+    @(CreditCardSaveManagerObserverEvent::kOnOfferLocalSaveCalled)
+  ]
+                                          timeout:kWaitForDownloadTimeout];
+
+  [self fillAndSubmitFormWithID:kFillFullFormId];
+
+  GREYAssertTrue([AutofillAppInterface waitForEvents],
+                 @"Request upload save or get upload details response or offer "
+                 @"local save not called");
+
+  // Wait until the save card infobar becomes visible.
+  GREYAssert(
+      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
+      @"Local save card infobar failed to show.");
+
+  // Verify that the badge is displayed.
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(
+                                   kBadgeButtonSaveCardAccessibilityIdentifier)]
+      assertWithMatcher:grey_notNil()];
+
+  // Tap the save button.
+  [[EarlGrey selectElementWithMatcher:LocalSaveButtonMatcher()]
+      performAction:grey_tap()];
+
+  // Wait until the save card infobar disappears.
+  GREYAssert(
+      [self waitForUIElementToDisappearWithMatcher:LocalBannerLabelsMatcher()
+                               showingConfirmation:NO],
+      @"Local save card infobar failed to disappear.");
+
+  // Ensure credit card is saved locally.
+  GREYAssertEqual(1U, [AutofillAppInterface localCreditCount],
+                  @"Credit card should have been saved.");
+}
+
+// TODO(crbug.com/440644620): Find a solution to page loading flakes.
+// Tests that the save card flow via the infobar still works correctly when the
+// badge is removed.
+- (void)FLAKY_testInfobarWithoutBadge {
+  // Ensure there are no saved credit cards.
+  GREYAssertEqual(0U, [AutofillAppInterface localCreditCount],
+                  @"There should be no saved credit card.");
+
+  [ChromeEarlGrey
+      loadURL:web::test::HttpServer::MakeUrl(kCreditCardUploadForm)];
+
+  // Set up the Google Payments server response.
+  [AutofillAppInterface setPaymentsResponse:kResponseGetUploadDetailsFailure
+                                 forRequest:kURLGetUploadDetailsRequest
+                              withErrorCode:net::HTTP_OK];
+
+  // Set strike count as 1 to directly show the infobar.
+  [AutofillAppInterface setFormFillMaxStrikes:1
+                                      forCard:@"CreditCardSave__5454"];
+
+  [AutofillAppInterface resetEventWaiterForEvents:@[
+    @(CreditCardSaveManagerObserverEvent::kOnDecideToRequestUploadSaveCalled),
+    @(CreditCardSaveManagerObserverEvent::
+          kOnReceivedGetUploadDetailsResponseCalled),
+    @(CreditCardSaveManagerObserverEvent::kOnOfferLocalSaveCalled)
+  ]
+                                          timeout:kWaitForDownloadTimeout];
+
+  [self fillAndSubmitFormWithID:kFillFullFormId];
+
+  GREYAssertTrue([AutofillAppInterface waitForEvents],
+                 @"Request upload save or get upload details response or offer "
+                 @"local save not called");
+
+  // Wait until the save card infobar becomes visible.
+  GREYAssert(
+      [self waitForUIElementToAppearWithMatcher:LocalBannerLabelsMatcher()],
+      @"Local save card infobar failed to show.");
+
+  // Verify that the badge isn't displayed.
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(
+                                   kBadgeButtonSaveCardAccessibilityIdentifier)]
+      assertWithMatcher:grey_nil()];
+
+  // Tap the save button.
+  [[EarlGrey selectElementWithMatcher:LocalSaveButtonMatcher()]
+      performAction:grey_tap()];
+
+  // Wait until the save card infobar disappears.
+  GREYAssert(
+      [self waitForUIElementToDisappearWithMatcher:LocalBannerLabelsMatcher()
+                               showingConfirmation:NO],
+      @"Local save card infobar failed to disappear.");
+
+  // Ensure credit card is saved locally.
+  GREYAssertEqual(1U, [AutofillAppInterface localCreditCount],
+                  @"Credit card should have been saved.");
+}
+
+// Tests CVC validation with short invalid input in the credit card upload save
+// modal.
+- (void)testUpstreamCVCValidation_WithShortInvalidInput {
+  // Action: Trigger the upstream save modal to be displayed.
+  [self triggerCreditCardSaveModal];
+
+  // The modal is now visible. The save button should initially be enabled
+  // because the pre-filled CVC is valid.
+  [[EarlGrey selectElementWithMatcher:UploadModalSaveButtonMatcher()]
+      assertWithMatcher:grey_enabled()];
+
+  [[EarlGrey selectElementWithMatcher:CVCTextField()]
+      performAction:grey_replaceText(@"12")];
+
+  [[EarlGrey selectElementWithMatcher:UploadModalSaveButtonMatcher()]
+      assertWithMatcher:grey_not(grey_enabled())];
+}
+
+// Tests CVC validation with long invalid input in the credit card upload save
+// modal.
+- (void)testUpstreamCVCValidation_WithLongInvalidInput {
+  // Trigger the upstream save modal to be displayed.
+  [self triggerCreditCardSaveModal];
+
+  // The modal is now visible. The save button should initially be enabled
+  // because the pre-filled CVC is valid.
+  [[EarlGrey selectElementWithMatcher:UploadModalSaveButtonMatcher()]
+      assertWithMatcher:grey_enabled()];
+
+  [[EarlGrey selectElementWithMatcher:CVCTextField()]
+      performAction:grey_replaceText(@"12345")];
+
+  [[EarlGrey selectElementWithMatcher:UploadModalSaveButtonMatcher()]
+      assertWithMatcher:grey_not(grey_enabled())];
+}
+
+// Tests CVC validation with non-digit invalid input in the credit card upload
+// save modal.
+- (void)testUpstreamCVCValidation_WithNonDigitInput {
+  // Trigger the upstream save modal to be displayed.
+  [self triggerCreditCardSaveModal];
+
+  // The modal is now visible. The save button should initially be enabled
+  // because the pre-filled CVC is valid.
+  [[EarlGrey selectElementWithMatcher:UploadModalSaveButtonMatcher()]
+      assertWithMatcher:grey_enabled()];
+
+  [[EarlGrey selectElementWithMatcher:CVCTextField()]
+      performAction:grey_replaceText(@"a")];
+
+  [[EarlGrey selectElementWithMatcher:UploadModalSaveButtonMatcher()]
+      assertWithMatcher:grey_not(grey_enabled())];
+}
+
+// Tests CVC validation with 4 digits valid input in the credit card upload save
+// modal.
+- (void)testUpstreamCVCValidation_WithValidInput {
+  // Trigger the upstream save modal to be displayed.
+  [self triggerCreditCardSaveModal];
+
+  // The modal is now visible. The save button should initially be enabled
+  // because the pre-filled CVC is valid.
+  [[EarlGrey selectElementWithMatcher:UploadModalSaveButtonMatcher()]
+      assertWithMatcher:grey_enabled()];
+
+  [[EarlGrey selectElementWithMatcher:CVCTextField()]
+      performAction:grey_replaceText(@"1234")];
+
+  [[EarlGrey selectElementWithMatcher:UploadModalSaveButtonMatcher()]
+      assertWithMatcher:grey_enabled()];
 }
 
 @end

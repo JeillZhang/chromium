@@ -9,7 +9,7 @@
 #include "chrome/browser/extensions/permissions/site_permissions_helper.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_delegate.h"
 #include "ui/base/models/image_model.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 TestToolbarActionViewController::TestToolbarActionViewController(
     const std::string& id)
@@ -76,7 +76,6 @@ bool TestToolbarActionViewController::IsShowingPopup() const {
 
 void TestToolbarActionViewController::HidePopup() {
   popup_showing_ = false;
-  delegate_->OnPopupClosed();
 }
 
 gfx::NativeView TestToolbarActionViewController::GetPopupNativeView() {
@@ -97,10 +96,6 @@ void TestToolbarActionViewController::ExecuteUserAction(
 void TestToolbarActionViewController::TriggerPopupForAPI(
     ShowPopupCallback callback) {}
 
-void TestToolbarActionViewController::UpdateState() {
-  UpdateDelegate();
-}
-
 extensions::SitePermissionsHelper::SiteInteraction
 TestToolbarActionViewController::GetSiteInteraction(
     content::WebContents* web_contents) const {
@@ -109,7 +104,6 @@ TestToolbarActionViewController::GetSiteInteraction(
 
 void TestToolbarActionViewController::ShowPopup(bool by_user) {
   popup_showing_ = true;
-  delegate_->OnPopupShown(by_user);
 }
 
 void TestToolbarActionViewController::SetActionName(

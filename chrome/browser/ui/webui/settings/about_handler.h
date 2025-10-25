@@ -20,7 +20,6 @@
 
 #if BUILDFLAG(IS_CHROMEOS)
 #include "base/callback_list.h"
-#include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/ash/tpm/tpm_firmware_update.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
@@ -108,6 +107,9 @@ class AboutHandler : public settings::SettingsPageUIHandler,
 
   // Retrieves channel info.
   void HandleGetChannelInfo(const base::Value::List& args);
+
+  // Checks whether we can update the firmware.
+  void HandleCanChangeFirmware(const base::Value::List& args);
 
   // Checks whether we can change the current channel.
   void HandleCanChangeChannel(const base::Value::List& args);

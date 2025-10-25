@@ -29,6 +29,7 @@
 #include "third_party/blink/renderer/core/frame/local_frame_view.h"
 #include "third_party/blink/renderer/core/html/canvas/canvas_rendering_context.h"
 #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_replaced.h"
 #include "third_party/blink/renderer/core/layout/layout_view.h"
 #include "third_party/blink/renderer/core/page/page.h"
@@ -102,10 +103,12 @@ void LayoutHTMLCanvas::InvalidatePaint(
   LayoutReplaced::InvalidatePaint(context);
 }
 
-void LayoutHTMLCanvas::StyleDidChange(StyleDifference diff,
-                                      const ComputedStyle* old_style) {
+void LayoutHTMLCanvas::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutReplaced::StyleDidChange(diff, old_style);
+  LayoutReplaced::StyleDidChange(diff, old_style, style_change_context);
   To<HTMLCanvasElement>(GetNode())->StyleDidChange(old_style, StyleRef());
 }
 

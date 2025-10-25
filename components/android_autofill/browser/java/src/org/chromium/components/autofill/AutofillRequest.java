@@ -159,15 +159,15 @@ public class AutofillRequest {
 
     public void onServerPredictionsAvailable() {
         if (mAutofillHintsService == null) return;
-        ArrayList<ViewType> viewTypes = new ArrayList<ViewType>();
+        ArrayList<ViewType> viewTypes = new ArrayList<>();
         for (FormFieldData field : mFormData.mFields) {
             viewTypes.add(
                     new ViewType(
                             field.getAutofillId(),
                             field.getServerType(),
-                            field.getComputedType(),
+                            field.getOverallType(),
                             field.getServerPredictions()));
-            }
+        }
         mAutofillHintsService.onViewTypeAvailable(viewTypes);
     }
 }

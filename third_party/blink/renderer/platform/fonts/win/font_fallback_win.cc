@@ -29,11 +29,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/platform/fonts/win/font_fallback_win.h"
 
 #include <unicode/uchar.h>
@@ -43,6 +38,7 @@
 #include "base/check_op.h"
 #include "third_party/blink/renderer/platform/fonts/font_cache.h"
 #include "third_party/blink/renderer/platform/fonts/font_fallback_priority.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/text/icu_error.h"
 #include "third_party/blink/renderer/platform/wtf/hash_map.h"
 #include "third_party/blink/renderer/platform/wtf/text/string_hash.h"
@@ -58,28 +54,7 @@ inline bool IsFontPresent(const char* font_name_utf8,
                           const SkFontMgr& font_manager) {
   sk_sp<SkTypeface> tf(
       font_manager.matchFamilyStyle(font_name_utf8, SkFontStyle()));
-  if (!tf)
-    return false;
-
-  if (RuntimeEnabledFeatures::FontPresentWinEnabled()) {
-    return true;
-  }
-
-  const String font_name = String::FromUTF8(font_name_utf8);
-  SkTypeface::LocalizedStrings* actual_families =
-      tf->createFamilyNameIterator();
-  bool matches_requested_family = false;
-  SkTypeface::LocalizedString actual_family;
-  while (actual_families->next(&actual_family)) {
-    if (DeprecatedEqualIgnoringCase(
-            font_name, String::FromUTF8(actual_family.fString.c_str()))) {
-      matches_requested_family = true;
-      break;
-    }
-  }
-  actual_families->unref();
-
-  return matches_requested_family;
+  return !!tf;
 }
 
 const char* FirstAvailableFont(
@@ -118,11 +93,14 @@ class ScriptToFontMap {
  public:
   static constexpr UScriptCode kSize = USCRIPT_CODE_LIMIT;
 
-  FontMapping& operator[](UScriptCode script) { return mappings_[script]; }
+  FontMapping& operator[](UScriptCode script) {
+    return UNSAFE_TODO(mappings_[script]);
+  }
 
   void Set(base::span<const ScriptToFontFamilies> families) {
     for (const auto& family : families) {
-      mappings_[family.script].candidate_family_names = family.families;
+      UNSAFE_TODO(mappings_[family.script]).candidate_family_names =
+          family.families;
     }
   }
 
@@ -550,7 +528,7 @@ const AtomicString& GetFontFamilyForScript(
     std::optional<AtomicString> families[ScriptToFontMap::kSize];
   };
   DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicFamilies, families, ());
-  std::optional<AtomicString>& family = families.families[script];
+  std::optional<AtomicString>& family = UNSAFE_TODO(families.families[script]);
   if (family) {
     return *family;
   }
@@ -641,7 +619,15 @@ const AtomicString& GetFallbackFamily(
       DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, kPlane1, ("code2001"));
       return kPlane1;
     }
-    case 2:
+    case 2: {
+      // Extension I (category IX) is part of Plane 2: U+2EBF0–U+2EE5F. As per
+      // GB18030-2022, these characters must be rendered using simsun-extg
+      // because simsun-extg supports these newer and extended ideographs.
+      if (character >= 0x2EBF0 && character <= 0x2EE5F) {
+        DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, kPlane2exti,
+                                        ("simsun-extg"));
+        return kPlane2exti;
+      }
       // Use a Traditional Chinese ExtB font if in Traditional Chinese locale.
       // Otherwise, use a Simplified Chinese ExtB font. Windows Japanese
       // fonts do support a small subset of ExtB (that are included in JIS X
@@ -655,6 +641,15 @@ const AtomicString& GetFallbackFamily(
       DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, kPlane2zhs,
                                       ("simsun-extb"));
       return kPlane2zhs;
+    }
+    case 3:
+      // Plane 3 includes Extension G (category GX): U+30000–U+3134F and
+      // Extension H (category HX): U+31350–U+323AF. Both are required by
+      // GB18030-2022 and must be rendered using simsun-extg because simsun-extg
+      // supports these newer and extended ideographs.
+      DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, kPlane3extgh,
+                                      ("simsun-extg"));
+      return kPlane3extgh;
   }
 
   DEFINE_THREAD_SAFE_STATIC_LOCAL(AtomicString, kLastResort,

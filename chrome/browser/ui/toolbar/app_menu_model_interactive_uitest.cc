@@ -13,7 +13,9 @@
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
+#include "build/build_config.h"
 #include "chrome/app/vector_icons/vector_icons.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/profiles/profile.h"
@@ -23,6 +25,7 @@
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/browser/ui/ui_features.h"
@@ -33,6 +36,7 @@
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/common/pref_names.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/interactive_test_utils.h"
@@ -73,12 +77,19 @@
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_MAC)
+#include "base/mac/mac_util.h"
 #include "chrome/browser/ui/browser_commands_mac.h"
 #include "chrome/browser/ui/fullscreen_util_mac.h"
 #endif  // BUILDFLAG(IS_MAC)
 
 namespace {
 DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kPrimaryTabPageElementId);
+
+#if BUILDFLAG(IS_MAC)
+bool kTestDisabledForVirtualMachineMac =
+    (base::mac::MacOSMajorVersion() == 15) && base::mac::IsVirtualMachine();
+#endif  // BUILDFLAG(IS_MAC)
+
 }  // namespace
 
 class AppMenuModelInteractiveTest : public InteractiveBrowserTest {
@@ -107,39 +118,41 @@ class AppMenuModelInteractiveTest : public InteractiveBrowserTest {
  protected:
   auto CheckIncognitoWindowOpened(const Browser* default_browser) {
     return Check(base::BindLambdaForTesting([default_browser]() {
-      Browser* new_browser = nullptr;
+      BrowserWindowInterface* new_browser = nullptr;
       if (BrowserList::GetIncognitoBrowserCount() == 1) {
         EXPECT_EQ(2u, BrowserList::GetInstance()->size());
-        for (Browser* browser : *BrowserList::GetInstance()) {
-          if (browser != default_browser) {
-            new_browser = browser;
-            break;
-          }
-        }
+        ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+            [default_browser, &new_browser](BrowserWindowInterface* browser) {
+              if (browser != default_browser) {
+                new_browser = browser;
+              }
+              return !new_browser;
+            });
         CHECK(new_browser);
       } else {
         new_browser = ui_test_utils::WaitForBrowserToOpen();
       }
-      return new_browser->profile()->IsIncognitoProfile();
+      return new_browser->GetProfile()->IsIncognitoProfile();
     }));
   }
 
   auto CheckGuestWindowOpened(const Browser* default_browser) {
     return Check(base::BindLambdaForTesting([default_browser]() {
-      Browser* new_browser = nullptr;
+      BrowserWindowInterface* new_browser = nullptr;
       if (BrowserList::GetGuestBrowserCount() == 1) {
         EXPECT_EQ(2u, BrowserList::GetInstance()->size());
-        for (Browser* browser : *BrowserList::GetInstance()) {
-          if (browser != default_browser) {
-            new_browser = browser;
-            break;
-          }
-        }
+        ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+            [default_browser, &new_browser](BrowserWindowInterface* browser) {
+              if (browser != default_browser) {
+                new_browser = browser;
+              }
+              return !new_browser;
+            });
         CHECK(new_browser);
       } else {
         new_browser = ui_test_utils::WaitForBrowserToOpen();
       }
-      return new_browser->profile()->IsGuestSession();
+      return new_browser->GetProfile()->IsGuestSession();
     }));
   }
 };
@@ -148,7 +161,9 @@ IN_PROC_BROWSER_TEST_F(AppMenuModelInteractiveTest, PerformanceNavigation) {
   RunTestSequence(
       InstrumentTab(kPrimaryTabPageElementId),
       PressButton(kToolbarAppMenuButtonElementId),
+      ScrollIntoView(AppMenuModel::kMoreToolsMenuItem),
       SelectMenuItem(AppMenuModel::kMoreToolsMenuItem),
+      ScrollIntoView(ToolsMenuModel::kPerformanceMenuItem),
       SelectMenuItem(ToolsMenuModel::kPerformanceMenuItem),
       WaitForWebContentsNavigation(
           kPrimaryTabPageElementId,
@@ -173,6 +188,13 @@ IN_PROC_BROWSER_TEST_F(AppMenuModelInteractiveTest, IncognitoAccelerator) {
 
 IN_PROC_BROWSER_TEST_F(AppMenuModelInteractiveTest,
                        CastSaveShareSubMenuItemText) {
+  // TODO(crbug.com/445214951): Flaky on mac-vm builder for macOS 15.
+#if BUILDFLAG(IS_MAC)
+  if (kTestDisabledForVirtualMachineMac) {
+    GTEST_SKIP() << "Disabled on macOS Sequoia for virtual machines.";
+  }
+#endif  // BUILDFLAG(IS_MAC)
+
   if (!media_router::MediaRouterEnabled(browser()->profile())) {
     GTEST_SKIP() << "The cast item only exists if cast is enabled.";
   }
@@ -232,6 +254,14 @@ class AppMenuModelExtensionsInteractiveTest
   }
 
   void SetUpOnMainThread() override {
+    if (GetParam() != ExtensionsTestMode::kDoNotCollapse) {
+      // Enable promotions.
+      promotions_enabled_value_to_restore_opt_ =
+          g_browser_process->local_state()->GetBoolean(
+              prefs::kPromotionsEnabled);
+      g_browser_process->local_state()->SetBoolean(prefs::kPromotionsEnabled,
+                                                   true);
+    }
     if (GetParam() == ExtensionsTestMode::kCollapseWithExtensions) {
       // Create and load a dummy extension.
       constexpr char kExtensionManifest[] = R"(
@@ -257,9 +287,21 @@ class AppMenuModelExtensionsInteractiveTest
     AppMenuModelInteractiveTest::SetUpOnMainThread();
   }
 
+  void TearDownOnMainThread() override {
+    InteractiveBrowserTest::TearDownOnMainThread();
+    if (promotions_enabled_value_to_restore_opt_.has_value()) {
+      g_browser_process->local_state()->SetBoolean(
+          prefs::kPromotionsEnabled,
+          promotions_enabled_value_to_restore_opt_.value());
+    }
+  }
+
  protected:
   base::HistogramTester histograms_;
   base::test::ScopedFeatureList scoped_feature_list_;
+
+ private:
+  std::optional<bool> promotions_enabled_value_to_restore_opt_;
 };
 
 INSTANTIATE_TEST_SUITE_P(
@@ -340,6 +382,43 @@ IN_PROC_BROWSER_TEST_P(AppMenuModelExtensionsInteractiveTest,
                                 MENU_ACTION_FIND_EXTENSIONS, collapse ? 1 : 0);
   histograms_.ExpectBucketCount("WrenchMenu.MenuAction",
                                 MENU_ACTION_MANAGE_EXTENSIONS, 0);
+}
+
+class AppMenuModelCreateNewTabGroupTest : public AppMenuModelInteractiveTest {
+ public:
+  AppMenuModelCreateNewTabGroupTest() {
+    scoped_feature_list_.InitWithFeatures(
+        {features::kCreateNewTabGroupAppMenuTopLevel}, {});
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(AppMenuModelCreateNewTabGroupTest,
+                       CheckCreateNewTabGroupAppMenuTopLevel) {
+  RunTestSequence(InstrumentTab(kPrimaryTabPageElementId),
+                  PressButton(kToolbarAppMenuButtonElementId),
+                  EnsurePresent(AppMenuModel::kCreateNewTabGroupTopLevel));
+}
+
+class AppMenuModelCreateNewTabGroupDisabled
+    : public AppMenuModelInteractiveTest {
+ public:
+  AppMenuModelCreateNewTabGroupDisabled() {
+    scoped_feature_list_.InitWithFeatures(
+        {}, {features::kCreateNewTabGroupAppMenuTopLevel});
+  }
+
+ private:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+IN_PROC_BROWSER_TEST_F(AppMenuModelCreateNewTabGroupDisabled,
+                       CheckCreateNewTabGroupAppMenuTopLevelNotPresent) {
+  RunTestSequence(InstrumentTab(kPrimaryTabPageElementId),
+                  PressButton(kToolbarAppMenuButtonElementId),
+                  EnsureNotPresent(AppMenuModel::kCreateNewTabGroupTopLevel));
 }
 
 class PasswordManagerMenuItemInteractiveTest
@@ -527,6 +606,13 @@ class UniversalInstallAppMenuModelInteractiveTest
 
 IN_PROC_BROWSER_TEST_F(UniversalInstallAppMenuModelInteractiveTest,
                        DIYAppMenuWorksCorrectly) {
+  // TODO(crbug.com/445214951): Flaky on mac-vm builder for macOS 15.
+#if BUILDFLAG(IS_MAC)
+  if (kTestDisabledForVirtualMachineMac) {
+    GTEST_SKIP() << "Disabled on macOS Sequoia for virtual machines.";
+  }
+#endif  // BUILDFLAG(IS_MAC)
+
   RunTestSequence(
       InstrumentTab(kPrimaryTabPageElementId),
       ObserveState(kAppBannerManagerState, GetManager()),
@@ -540,8 +626,16 @@ IN_PROC_BROWSER_TEST_F(UniversalInstallAppMenuModelInteractiveTest,
       VerifyDiyAppMenuItemViews());
 }
 
-IN_PROC_BROWSER_TEST_F(UniversalInstallAppMenuModelInteractiveTest,
-                       DIYAppMenuWorksCorrectlyInvalidManifestParsingSites) {
+#if BUILDFLAG(IS_MAC)
+#define MAYBE_DIYAppMenuWorksCorrectlyInvalidManifestParsingSites \
+  DISABLED_DIYAppMenuWorksCorrectlyInvalidManifestParsingSites
+#else
+#define MAYBE_DIYAppMenuWorksCorrectlyInvalidManifestParsingSites \
+  DIYAppMenuWorksCorrectlyInvalidManifestParsingSites
+#endif
+IN_PROC_BROWSER_TEST_F(
+    UniversalInstallAppMenuModelInteractiveTest,
+    MAYBE_DIYAppMenuWorksCorrectlyInvalidManifestParsingSites) {
   RunTestSequence(InstrumentTab(kPrimaryTabPageElementId),
                   ObserveState(kAppBannerManagerState, GetManager()),
                   NavigateWebContents(kPrimaryTabPageElementId,

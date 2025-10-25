@@ -19,9 +19,11 @@ import android.widget.RemoteViews;
 
 import androidx.annotation.IntDef;
 import androidx.annotation.Px;
+import androidx.browser.customtabs.CustomContentAction;
 import androidx.browser.customtabs.CustomTabsIntent;
 import androidx.browser.customtabs.CustomTabsIntent.CloseButtonPosition;
 import androidx.browser.customtabs.CustomTabsIntent.OpenInBrowserState;
+import androidx.browser.customtabs.ExperimentalCustomContentAction;
 import androidx.browser.customtabs.ExperimentalOpenInBrowser;
 import androidx.browser.trusted.FileHandlingData;
 import androidx.browser.trusted.LaunchHandlerClientMode;
@@ -33,6 +35,7 @@ import org.chromium.blink.mojom.DisplayMode;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.flags.ActivityType;
+import org.chromium.chrome.browser.util.WindowFeatures;
 import org.chromium.components.embedder_support.util.Origin;
 import org.chromium.device.mojom.ScreenOrientationLockType;
 import org.chromium.net.NetId;
@@ -56,7 +59,8 @@ public abstract class BrowserServicesIntentDataProvider {
         CustomTabsUiType.OFFLINE_PAGE,
         CustomTabsUiType.AUTH_TAB,
         CustomTabsUiType.NETWORK_BOUND_TAB,
-        CustomTabsUiType.POPUP
+        CustomTabsUiType.POPUP,
+        CustomTabsUiType.TRUSTED_WEB_ACTIVITY,
     })
     @Retention(RetentionPolicy.SOURCE)
     public @interface CustomTabsUiType {
@@ -70,6 +74,7 @@ public abstract class BrowserServicesIntentDataProvider {
         int AUTH_TAB = 7;
         int NETWORK_BOUND_TAB = 8;
         int POPUP = 9;
+        int TRUSTED_WEB_ACTIVITY = 10;
     }
 
     // The type of Disclosure for TWAs to use.
@@ -107,6 +112,46 @@ public abstract class BrowserServicesIntentDataProvider {
         int INCOGNITO = 1;
         // An off-the-record profile without references to incognito mode.
         int EPHEMERAL = 2;
+    }
+
+    /**
+     * Represents apps that launch Incognito CCT. DO NOT reorder items in this interface, because
+     * it's mirrored to UMA (as {@link IncognitoCctCallerId}). Values should be enumerated from 0.
+     * When removing items, comment them out and keep existing numeric values stable.
+     */
+    @IntDef({
+        IncognitoCctCallerId.OTHER_APPS,
+        IncognitoCctCallerId.GOOGLE_APPS,
+        IncognitoCctCallerId.OTHER_CHROME_FEATURES,
+        IncognitoCctCallerId.READER_MODE,
+        IncognitoCctCallerId.READ_LATER,
+        IncognitoCctCallerId.EPHEMERAL_TAB,
+        IncognitoCctCallerId.DOWNLOAD_HOME,
+    })
+    @Retention(RetentionPolicy.SOURCE)
+    public @interface IncognitoCctCallerId {
+        int OTHER_APPS = 0;
+        int GOOGLE_APPS = 1;
+        // This should not be used, it's a fallback for Chrome features that didn't identify
+        // themselves. Please see {@link
+        // IncognitoCustomTabIntentDataProvider#addIncognitoExtrasForChromeFeatures}
+        int OTHER_CHROME_FEATURES = 2;
+
+        // Chrome Features
+        int READER_MODE = 3;
+        int READ_LATER = 4;
+
+        // An ephemeral custom tab without incognito branding.
+        int EPHEMERAL_TAB = 5;
+
+        // Chrome feature.
+        // The Download Home UI may launch a CCT to display a help page for a download.
+        // If the file was downloaded in an Incognito profile, the CCT for the help page should
+        // likewise be an Incognito tab.
+        int DOWNLOAD_HOME = 6;
+
+        // Update {@link IncognitoCctCallerId} in enums.xml when adding new items.
+        int NUM_ENTRIES = 7;
     }
 
     /**
@@ -230,7 +275,7 @@ public abstract class BrowserServicesIntentDataProvider {
      * @return The URL that should be used from this intent. Must be called only after native has
      *     loaded.
      */
-    public abstract String getUrlToLoad();
+    public abstract @Nullable String getUrlToLoad();
 
     /**
      * @return Whether url bar hiding should be enabled in the custom tab.
@@ -683,8 +728,13 @@ public abstract class BrowserServicesIntentDataProvider {
         return ACTIVITY_SIDE_SHEET_POSITION_END;
     }
 
-    /** Return whether calling package should be allowed to present an interactive Omnibox. */
+    /** Return whether omnibox is allowed to be displayed in the CCT. */
     public boolean isInteractiveOmniboxAllowed() {
+        return false;
+    }
+
+    /** Return whether omnibox should be enabled for the calling package. */
+    public boolean isInteractiveOmniboxEnabled() {
         return false;
     }
 
@@ -777,17 +827,46 @@ public abstract class BrowserServicesIntentDataProvider {
     }
 
     /**
-     * @return the TWA startup timestamp associated with an intent in the uptimeMillis timebase, or
-     *     null.
+     * @return {@link List<CustomContentAction>} the developer defined contextual menu items.
      */
-    public @Nullable Long getTwaStartupUptimeMillis() {
+    @ExperimentalCustomContentAction
+    public List<CustomContentAction> getCustomContentActions() {
+        return List.of();
+    }
+
+    /**
+     * @return if optional button on the toolbar can be shown.
+     */
+    public boolean isOptionalButtonSupported() {
+        return false;
+    }
+
+    /**
+     * @return the TWA startup timestamp associated with an intent in the uptimeMillis timebase, or
+     *     zero.
+     */
+    public long getTwaStartupUptimeMillis() {
+        return 0;
+    }
+
+    /**
+     * @return the version code of android_browser_helper, or zero.
+     */
+    public int getAndroidBrowserHelperVersion() {
+        return 0;
+    }
+
+    /**
+     * @return properties of window bounds requested by the opener if this CCT is a popup.
+     */
+    public @Nullable WindowFeatures getRequestedWindowFeatures() {
         return null;
     }
 
     /**
-     * @return the version of android_browser_helper, or null.
+     * @return the reason the CCT was launched with an off-the-record profile.
      */
-    public @Nullable Integer getAndroidBrowserHelperVersion() {
-        return null;
+    public @IncognitoCctCallerId int getFeatureIdForMetricsCollection() {
+        return IncognitoCctCallerId.OTHER_APPS;
     }
 }

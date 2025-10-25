@@ -5,6 +5,7 @@
 #include "third_party/blink/renderer/platform/geometry/calculation_expression_node.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/blink/renderer/platform/geometry/evaluation_input.h"
 
 namespace blink {
 
@@ -198,7 +199,7 @@ TEST(CalculationExpressionOperationNodeTest, NonExplicitPixelsAndPercent) {
 TEST(CalculationExpressionOperationNodeTest, ProgressNotation) {
   EXPECT_EQ(BuildOperationNode({3.f, 0.f, 1.f}, CalculationOperator::kProgress)
                 ->Evaluate(FLT_MAX, {}),
-            3.f);
+            1.f);
   EXPECT_EQ(
       BuildOperationNode({10.f, 5.f, 10.f}, CalculationOperator::kProgress)
           ->Evaluate(FLT_MAX, {}),

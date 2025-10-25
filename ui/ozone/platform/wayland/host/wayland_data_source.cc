@@ -13,6 +13,7 @@
 
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/notimplemented.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/ozone/platform/wayland/host/wayland_connection.h"
@@ -29,12 +30,12 @@ DataSource<T>::DataSource(T* data_source,
   DCHECK(delegate_);
 
   Initialize();
-  VLOG(1) << "DataSoure created:" << this;
+  VLOG(1) << "DataSource created:" << this;
 }
 
 template <typename T>
 DataSource<T>::~DataSource() {
-  VLOG(1) << "DataSoure deleted:" << this;
+  VLOG(1) << "DataSource deleted:" << this;
 }
 
 template <typename T>

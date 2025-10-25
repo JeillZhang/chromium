@@ -10,8 +10,10 @@
 #include "ui/gfx/display_color_spaces.h"
 
 #include <array>
+#include <cmath>
 
 #include "build/build_config.h"
+#include "components/viz/common/resources/shared_image_format_utils.h"
 #include "skia/ext/skcolorspace_primaries.h"
 
 namespace gfx {
@@ -73,32 +75,36 @@ DisplayColorSpaces::DisplayColorSpaces(const gfx::ColorSpace& c)
     color_spaces_[i] = c;
 }
 
-DisplayColorSpaces::DisplayColorSpaces(const ColorSpace& c, BufferFormat f)
+DisplayColorSpaces::DisplayColorSpaces(const ColorSpace& c,
+                                       viz::SharedImageFormat f)
     : DisplayColorSpaces(c) {
+  auto buffer_format = viz::SinglePlaneSharedImageFormatToBufferFormat(f);
   for (size_t i = 0; i < kConfigCount; i++) {
-    buffer_formats_[i] = f;
+    buffer_formats_[i] = buffer_format;
   }
 }
 
-void DisplayColorSpaces::SetOutputBufferFormats(
-    gfx::BufferFormat buffer_format_no_alpha,
-    gfx::BufferFormat buffer_format_needs_alpha) {
+void DisplayColorSpaces::SetOutputFormats(
+    viz::SharedImageFormat format_no_alpha,
+    viz::SharedImageFormat format_with_alpha) {
   for (const auto& color_usage : kAllColorUsages) {
     size_t i_no_alpha = GetIndex(color_usage, false);
     size_t i_needs_alpha = GetIndex(color_usage, true);
-    buffer_formats_[i_no_alpha] = buffer_format_no_alpha;
-    buffer_formats_[i_needs_alpha] = buffer_format_needs_alpha;
+    buffer_formats_[i_no_alpha] =
+        viz::SinglePlaneSharedImageFormatToBufferFormat(format_no_alpha);
+    buffer_formats_[i_needs_alpha] =
+        viz::SinglePlaneSharedImageFormatToBufferFormat(format_with_alpha);
   }
 }
 
-void DisplayColorSpaces::SetOutputColorSpaceAndBufferFormat(
+void DisplayColorSpaces::SetOutputColorSpaceAndFormat(
     ContentColorUsage color_usage,
     bool needs_alpha,
     const gfx::ColorSpace& color_space,
-    gfx::BufferFormat buffer_format) {
+    viz::SharedImageFormat format) {
   size_t i = GetIndex(color_usage, needs_alpha);
   color_spaces_[i] = color_space;
-  buffer_formats_[i] = buffer_format;
+  buffer_formats_[i] = viz::SinglePlaneSharedImageFormatToBufferFormat(format);
 }
 
 ColorSpace DisplayColorSpaces::GetOutputColorSpace(
@@ -107,22 +113,53 @@ ColorSpace DisplayColorSpaces::GetOutputColorSpace(
   return color_spaces_[GetIndex(color_usage, needs_alpha)];
 }
 
-BufferFormat DisplayColorSpaces::GetOutputBufferFormat(
+viz::SharedImageFormat DisplayColorSpaces::GetOutputFormat(
     ContentColorUsage color_usage,
     bool needs_alpha) const {
-  return buffer_formats_[GetIndex(color_usage, needs_alpha)];
+  return viz::GetSharedImageFormat(
+      buffer_formats_[GetIndex(color_usage, needs_alpha)]);
 }
 
-gfx::ColorSpace DisplayColorSpaces::GetRasterColorSpace() const {
-  return GetOutputColorSpace(ContentColorUsage::kHDR, false /* needs_alpha */);
-}
-
-gfx::ColorSpace DisplayColorSpaces::GetCompositingColorSpace(
-    bool needs_alpha,
+ColorSpace DisplayColorSpaces::GetRasterAndCompositeColorSpace(
     ContentColorUsage color_usage) const {
-  gfx::ColorSpace result = GetOutputColorSpace(color_usage, needs_alpha);
-  if (!result.IsSuitableForBlending())
-    result = gfx::ColorSpace::CreateExtendedSRGB();
+  gfx::ColorSpace result;
+  if (color_usage == ContentColorUsage::kSRGB) {
+    result =
+        GetOutputColorSpace(ContentColorUsage::kSRGB, /*needs_alpha=*/true);
+    if (!result.IsSuitableForBlending()) {
+      result = ColorSpace::CreateSRGB();
+    }
+  } else {
+    result = GetOutputColorSpace(ContentColorUsage::kWideColorGamut,
+                                 /*needs_alpha=*/true);
+
+    // The below logic is to work around the issue that Windows' output buffer
+    // choices are limited. It is not a generic operation. Windows only offers
+    // three usable options for backbuffer formats:
+    // * 8-bit sRGB
+    // * 10-bit Rec2020 PQ
+    // * F16 sRGB linear HDR (identical to PQ, with 1.0 matching 80 nits)
+    // Absent in this list is an 8-bit wide color gamut option (like P3). This
+    // gives us the options of:
+    // * Raster wide color gamut content into F16 extended-sRGB buffers.
+    //   This is expensive, but raster/composite results are always consistent.
+    // * Raster wide color gamut into 8-bit P3 buffers
+    //   This isn't expensive, but raster/composite results differ based on
+    //   whether or not WCG content is visible.
+    // We go with the second option, and do all non-sRGB raster and composite
+    // in P3.
+    if (!result.IsSuitableForBlending()) {
+      result =
+          ColorSpace(ColorSpace::PrimaryID::P3, ColorSpace::TransferID::SRGB);
+    }
+
+    // Report the HDR version of the space only if HDR is both requested and
+    // supported.
+    if (SupportsHDR() && color_usage == ContentColorUsage::kHDR) {
+      result = result.GetAsHDR();
+    }
+  }
+
   return result;
 }
 
@@ -132,6 +169,10 @@ bool DisplayColorSpaces::SupportsHDR() const {
          hdr_max_luminance_relative_ > 1.f;
 }
 
+float DisplayColorSpaces::GetHdrHeadroom() const {
+  return std::log2(hdr_max_luminance_relative_);
+}
+
 ColorSpace DisplayColorSpaces::GetScreenInfoColorSpace() const {
   return GetOutputColorSpace(ContentColorUsage::kHDR, false /* needs_alpha */);
 }
@@ -139,7 +180,7 @@ ColorSpace DisplayColorSpaces::GetScreenInfoColorSpace() const {
 void DisplayColorSpaces::ToStrings(
     std::vector<std::string>* out_names,
     std::vector<gfx::ColorSpace>* out_color_spaces,
-    std::vector<gfx::BufferFormat>* out_buffer_formats) const {
+    std::vector<viz::SharedImageFormat>* out_formats) const {
   // The names of the configurations.
   std::array<const char*, kConfigCount> config_names = {
       "sRGB/no-alpha", "sRGB/alpha",   "WCG/no-alpha",
@@ -194,7 +235,7 @@ void DisplayColorSpaces::ToStrings(
 
     // Add an entry, and continue with the interval [j, j).
     out_names->push_back(name);
-    out_buffer_formats->push_back(buffer_formats_[i]);
+    out_formats->push_back(viz::GetSharedImageFormat(buffer_formats_[i]));
     out_color_spaces->push_back(color_spaces_[i]);
     i = j;
   };
@@ -225,5 +266,11 @@ bool DisplayColorSpaces::EqualExceptForHdrHeadroom(
   b_with_a_params.hdr_max_luminance_relative_ = a.hdr_max_luminance_relative_;
   return a == b_with_a_params;
 }
+
+DisplayColorSpacesRef::DisplayColorSpacesRef() = default;
+
+DisplayColorSpacesRef::DisplayColorSpacesRef(
+    const gfx::DisplayColorSpaces& color_spaces)
+    : color_spaces_(color_spaces) {}
 
 }  // namespace gfx

@@ -22,6 +22,7 @@
 #include "third_party/blink/renderer/core/execution_context/execution_context.h"
 #include "third_party/blink/renderer/core/frame/event_handler_registry.h"
 #include "third_party/blink/renderer/core/frame/local_frame.h"
+#include "third_party/blink/renderer/core/html/anchor_element_utils.h"
 #include "third_party/blink/renderer/core/html/html_anchor_element.h"
 #include "third_party/blink/renderer/core/html/html_area_element.h"
 #include "third_party/blink/renderer/core/inspector/console_message.h"
@@ -76,6 +77,8 @@ String SpeculationActionAsString(mojom::blink::SpeculationAction action) {
     case mojom::blink::SpeculationAction::kPrefetch:
     case mojom::blink::SpeculationAction::kPrefetchWithSubresources:
       return "prefetch";
+    case mojom::blink::SpeculationAction::kPrerenderUntilScript:
+      return "prerender-until-script";
     case mojom::blink::SpeculationAction::kPrerender:
       return "prerender";
   }
@@ -123,7 +126,8 @@ std::optional<Referrer> GetReferrer(const SpeculationRule* rule,
   network::mojom::ReferrerPolicy referrer_policy;
   if (rule->referrer_policy()) {
     referrer_policy = rule->referrer_policy().value();
-  } else if (link && link->HasRel(kRelationNoReferrer)) {
+  } else if (link && AnchorElementUtils::HasRel(link->GetLinkRelations(),
+                                                kRelationNoReferrer)) {
     referrer_policy = network::mojom::ReferrerPolicy::kNever;
     UseCounter::Count(document,
                       WebFeature::kSpeculationRulesUsedLinkReferrerPolicy);
@@ -229,7 +233,7 @@ DocumentSpeculationRules::DocumentSpeculationRules(Document& document)
   if (!lcpp) {
     return;
   }
-  lcpp->AddLCPPredictedCallback(WTF::BindOnce(
+  lcpp->AddLCPPredictedCallback(BindOnce(
       &DocumentSpeculationRules::OnLCPPredicted, WrapPersistent(this)));
 }
 
@@ -596,7 +600,7 @@ void DocumentSpeculationRules::QueueUpdateSpeculationCandidates(
 
   auto* execution_context = GetSupplementable()->GetExecutionContext();
   if (needs_microtask && !microtask_already_queued && execution_context) {
-    execution_context->GetAgent()->event_loop()->EnqueueMicrotask(WTF::BindOnce(
+    execution_context->GetAgent()->event_loop()->EnqueueMicrotask(BindOnce(
         &DocumentSpeculationRules::UpdateSpeculationCandidatesMicrotask,
         WrapWeakPersistent(this)));
   }
@@ -674,11 +678,12 @@ void DocumentSpeculationRules::UpdateSpeculationCandidates() {
 
         // Ensured by `SpeculationRuleSet`.
         CHECK(!rule->target_browsing_context_name_hint() ||
-              action == mojom::blink::SpeculationAction::kPrerender);
+              action == mojom::blink::SpeculationAction::kPrerender ||
+              action == mojom::blink::SpeculationAction::kPrerenderUntilScript);
         CHECK(!rule->requires_anonymous_client_ip_when_cross_origin() ||
               action == mojom::blink::SpeculationAction::kPrefetch);
 
-        Vector<WTF::String> tags;
+        Vector<String> tags;
         if (rule->rule_tag()) {
           tags.push_back(rule->rule_tag());
         }
@@ -720,6 +725,10 @@ void DocumentSpeculationRules::UpdateSpeculationCandidates() {
     push_candidates(mojom::blink::SpeculationAction::kPrerender, rule_set,
                     rule_set->prerender_rules());
 
+    if (RuntimeEnabledFeatures::PrerenderUntilScriptEnabled()) {
+      push_candidates(mojom::blink::SpeculationAction::kPrerenderUntilScript,
+                      rule_set, rule_set->prerender_until_script_rules());
+    }
     // Set the flag to evict the cached data of Session Storage when the
     // document is frozen or unload to avoid reusing old data in the cache
     // after the session storage has been modified by another renderer process.
@@ -764,7 +773,10 @@ void DocumentSpeculationRules::UpdateSpeculationCandidates() {
     mojom_candidates.push_back(std::move(mojom_candidate));
   }
 
-  host->UpdateSpeculationCandidates(std::move(mojom_candidates));
+  host->UpdateSpeculationCandidates(
+      std::move(mojom_candidates),
+      RuntimeEnabledFeatures::Prerender2CrossOriginIframesEnabled(
+          execution_context));
 
   if (eagerness_set.Has(SpeculationEagerness::kConservative)) {
     UseCounter::Count(document,
@@ -775,6 +787,10 @@ void DocumentSpeculationRules::UpdateSpeculationCandidates() {
   }
   if (eagerness_set.Has(SpeculationEagerness::kEager)) {
     UseCounter::Count(document, WebFeature::kSpeculationRulesEagernessEager);
+  }
+  if (eagerness_set.Has(SpeculationEagerness::kImmediate)) {
+    UseCounter::Count(document,
+                      WebFeature::kSpeculationRulesEagernessImmediate);
   }
 
   base::UmaHistogramEnumeration(
@@ -799,7 +815,7 @@ void DocumentSpeculationRules::AddLinkBasedSpeculationCandidates(
     CHECK(execution_context);
 
     const auto push_link_candidates =
-        [&link, &link_candidates, &document, &execution_context, this](
+        [&link, &link_candidates, &document, this](
             mojom::blink::SpeculationAction action,
             SpeculationRuleSet* rule_set,
             const HeapVector<Member<SpeculationRule>>& speculation_rules) {
@@ -837,9 +853,9 @@ void DocumentSpeculationRules::AddLinkBasedSpeculationCandidates(
 
             mojom::blink::SpeculationTargetHint target_hint =
                 mojom::blink::SpeculationTargetHint::kNoHint;
-            if (RuntimeEnabledFeatures::SpeculationRulesTargetHintEnabled(
-                    execution_context) &&
-                action == mojom::blink::SpeculationAction::kPrerender) {
+            if (action == mojom::blink::SpeculationAction::kPrerender ||
+                action ==
+                    mojom::blink::SpeculationAction::kPrerenderUntilScript) {
               if (rule->target_browsing_context_name_hint()) {
                 target_hint = rule->target_browsing_context_name_hint().value();
               } else {
@@ -850,7 +866,7 @@ void DocumentSpeculationRules::AddLinkBasedSpeculationCandidates(
               }
             }
 
-            Vector<WTF::String> tags;
+            Vector<String> tags;
             if (rule->rule_tag()) {
               tags.push_back(rule->rule_tag());
             }
@@ -888,6 +904,12 @@ void DocumentSpeculationRules::AddLinkBasedSpeculationCandidates(
 
       push_link_candidates(mojom::blink::SpeculationAction::kPrerender,
                            rule_set, rule_set->prerender_rules());
+
+      if (RuntimeEnabledFeatures::PrerenderUntilScriptEnabled()) {
+        push_link_candidates(
+            mojom::blink::SpeculationAction::kPrerenderUntilScript, rule_set,
+            rule_set->prerender_until_script_rules());
+      }
     }
 
     if (!link_candidates->empty()) {
@@ -1041,6 +1063,10 @@ void DocumentSpeculationRules::SetPendingUpdateState(
   }
 #endif
   pending_update_state_ = new_state;
+}
+
+void DocumentSpeculationRules::FlushMojoMessageForTesting() {
+  host_.FlushForTesting();
 }
 
 }  // namespace blink

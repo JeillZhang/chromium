@@ -17,14 +17,19 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/raw_ptr.h"
 #include "base/metrics/user_metrics.h"
+#include "base/notimplemented.h"
+#include "base/token.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/slim/layer.h"
 #include "chrome/browser/android/background_tab_manager.h"
 #include "chrome/browser/android/compositor/tab_content_manager.h"
+#include "chrome/browser/android/media_state_observer.h"
+#include "chrome/browser/android/selection/chrome_selection_dropdown_menu_delegate.h"
 #include "chrome/browser/android/tab_features.h"
 #include "chrome/browser/android/tab_web_contents_delegate_android.h"
 #include "chrome/browser/browser_about_handler.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/flags/android/chrome_feature_list.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/notifications/notification_permission_context.h"
 #include "chrome/browser/profiles/profile.h"
@@ -36,18 +41,21 @@
 #include "chrome/browser/ui/android/context_menu_helper.h"
 #include "chrome/browser/ui/android/tab_model/tab_model.h"
 #include "chrome/browser/ui/android/tab_model/tab_model_list.h"
-#include "chrome/browser/ui/autofill/chrome_autofill_client.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/startup/bad_flags_prompt.h"
 #include "chrome/browser/ui/tab_helpers.h"
+#include "chrome/common/chrome_features.h"
 #include "components/android_autofill/browser/android_autofill_client.h"
 #include "components/android_autofill/browser/android_autofill_manager.h"
 #include "components/android_autofill/browser/android_autofill_provider.h"
 #include "components/android_autofill/browser/autofill_provider.h"
+#include "components/autofill/content/browser/content_autofill_client.h"
 #include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/infobars/content/content_infobar_manager.h"
 #include "components/no_state_prefetch/browser/no_state_prefetch_manager.h"
 #include "components/sessions/content/session_tab_helper.h"
+#include "components/tab_groups/tab_group_id.h"
+#include "components/tabs/public/supports_handles.h"
 #include "components/tabs/public/tab_collection.h"
 #include "components/tabs/public/tab_group_tab_collection.h"
 #include "content/public/browser/browser_thread.h"
@@ -120,8 +128,16 @@ TabInterface* TabInterface::GetFromContents(
   return tab_android;
 }
 
+const TabInterface* TabInterface::GetFromContents(
+    const content::WebContents* web_contents) {
+  const auto* tab_android = TabAndroid::FromWebContents(web_contents);
+  CHECK(tab_android);
+  return tab_android;
+}
+
 // static
-TabInterface* MaybeGetFromContents(content::WebContents* web_contents) {
+TabInterface* TabInterface::MaybeGetFromContents(
+    content::WebContents* web_contents) {
   return TabAndroid::FromWebContents(web_contents);
 }
 
@@ -131,6 +147,11 @@ TabInterface* MaybeGetFromContents(content::WebContents* web_contents) {
 TabAndroid* TabAndroid::FromWebContents(
     const content::WebContents* web_contents) {
   return TabAndroidHelper::FromWebContents(web_contents);
+}
+
+// static
+TabAndroid* TabAndroid::FromTabHandle(tabs::TabHandle handle) {
+  return static_cast<TabAndroid*>(handle.Get());
 }
 
 // static
@@ -228,6 +249,11 @@ base::android::ScopedJavaLocalRef<jobject> TabAndroid::GetJavaObject() {
   return weak_java_tab_.get(env);
 }
 
+base::android::ScopedJavaLocalRef<jobject> TabAndroid::GetJavaObject() const {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return weak_java_tab_.get(env);
+}
+
 scoped_refptr<cc::slim::Layer> TabAndroid::GetContentLayer() const {
   return content_layer_;
 }
@@ -315,20 +341,6 @@ void TabAndroid::SetWindowSessionID(SessionID window_id) {
   session_tab_helper->SetWindowID(session_window_id_);
 }
 
-std::unique_ptr<content::WebContents> TabAndroid::SwapWebContents(
-    std::unique_ptr<content::WebContents> new_contents,
-    bool did_start_load,
-    bool did_finish_load) {
-  content::WebContents* old_contents = web_contents_.get();
-  JNIEnv* env = base::android::AttachCurrentThread();
-  Java_TabImpl_swapWebContents(env, weak_java_tab_.get(env),
-                               new_contents->GetJavaWebContents(),
-                               did_start_load, did_finish_load);
-  DCHECK_EQ(web_contents_, new_contents);
-  new_contents.release();
-  return base::WrapUnique(old_contents);
-}
-
 bool TabAndroid::IsCustomTab() const {
   JNIEnv* env = base::android::AttachCurrentThread();
   return Java_TabImpl_isCustomTab(env, weak_java_tab_.get(env));
@@ -337,6 +349,11 @@ bool TabAndroid::IsCustomTab() const {
 bool TabAndroid::IsHidden() const {
   JNIEnv* env = base::android::AttachCurrentThread();
   return Java_TabImpl_isHidden(env, weak_java_tab_.get(env));
+}
+
+void TabAndroid::SetMediaState(int media_state) {
+  JNIEnv* env = AttachCurrentThread();
+  Java_TabImpl_setMediaState(env, weak_java_tab_.get(env), media_state);
 }
 
 void TabAndroid::AddObserver(Observer* observer) {
@@ -371,6 +388,8 @@ void TabAndroid::InitWebContents(
       std::make_unique<android::TabWebContentsDelegateAndroid>(
           env, jweb_contents_delegate);
   web_contents()->SetDelegate(web_contents_delegate_.get());
+  web_contents()->SetSelectionPopupDelegate(
+      std::make_unique<android::ChromeSelectionDropdownMenuDelegate>());
 
   AttachTabHelpers(web_contents_.get());
   tab_features_ =
@@ -386,6 +405,10 @@ void TabAndroid::InitWebContents(
       resource_coordinator::ResourceCoordinatorTabHelper::IsLoaded(
           web_contents_.get()));
 
+  const SessionID session_id =
+      sessions::SessionTabHelper::IdForTab(web_contents_.get());
+  CHECK(session_id.is_valid());
+  SetSessionId(session_id.id());
   SetWindowSessionID(session_window_id_);
 
   ContextMenuHelper::FromWebContents(web_contents())
@@ -404,6 +427,10 @@ void TabAndroid::InitWebContents(
 
   // Shows a warning notification for dangerous flags in about:flags.
   ShowBadFlagsPrompt(web_contents());
+
+  if (base::FeatureList::IsEnabled(chrome::android::kMediaIndicatorsAndroid)) {
+    MediaStateObserver::CreateForWebContents(web_contents_.get());
+  }
 
   for (Observer& observer : observers_) {
     observer.OnInitWebContents(this);
@@ -495,6 +522,7 @@ void TabAndroid::ReleaseWebContents(JNIEnv* env) {
   // Remove the link from the native WebContents to |this|, since the
   // lifetimes of the two objects are no longer intertwined.
   TabAndroidHelper::SetTabForWebContents(released_contents, nullptr);
+  ClearSessionId();
 
   synced_tab_delegate_->ResetWebContents();
 }
@@ -562,6 +590,17 @@ void TabAndroid::OnShow(JNIEnv* env) {
   web_contents_->SetTabSwitchStartTime(base::TimeTicks::Now(), loaded);
 }
 
+void TabAndroid::NotifyPinnedStateChanged(JNIEnv* env, jboolean is_pinned) {
+  pinned_state_changed_callback_list_.Notify(this, is_pinned);
+}
+
+void TabAndroid::NotifyTabGroupChanged(
+    JNIEnv* env,
+    std::optional<base::Token> tab_group_id) {
+  group_changed_callback_list_.Notify(
+      this, tab_groups::TabGroupId::FromOptionalToken(tab_group_id));
+}
+
 scoped_refptr<content::DevToolsAgentHost> TabAndroid::GetDevToolsAgentHost() {
   return devtools_host_;
 }
@@ -596,7 +635,7 @@ void TabAndroid::Close() {
 base::CallbackListSubscription TabAndroid::RegisterWillDiscardContents(
     WillDiscardContentsCallback callback) {
   // Tab discarding is currently an OS level operation and we don't necessarily
-  // get signal when this occurs.
+  // get signals when this occurs.
   NOTIMPLEMENTED();
   return base::CallbackListSubscription();
 }
@@ -622,6 +661,11 @@ base::CallbackListSubscription TabAndroid::RegisterWillDeactivate(
 
 bool TabAndroid::IsVisible() const {
   return !IsHidden();
+}
+
+bool TabAndroid::IsSelected() const {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return Java_TabImpl_isMultiSelected(env, weak_java_tab_.get(env));
 }
 
 // TODO(crbug.com/409366905): Finish TabInterface implementation.
@@ -652,18 +696,14 @@ base::CallbackListSubscription TabAndroid::RegisterDidInsert(
   return base::CallbackListSubscription();
 }
 
-// TODO(crbug.com/409366905): Finish TabInterface implementation.
 base::CallbackListSubscription TabAndroid::RegisterPinnedStateChanged(
     PinnedStateChangedCallback callback) {
-  NOTIMPLEMENTED();
-  return base::CallbackListSubscription();
+  return pinned_state_changed_callback_list_.Add(std::move(callback));
 }
 
-// TODO(crbug.com/409366905): Finish TabInterface implementation.
 base::CallbackListSubscription TabAndroid::RegisterGroupChanged(
     GroupChangedCallback callback) {
-  NOTIMPLEMENTED();
-  return base::CallbackListSubscription();
+  return group_changed_callback_list_.Add(std::move(callback));
 }
 
 // For now tab scoped modals should continue to be handled by the window-scoped
@@ -712,13 +752,9 @@ bool TabAndroid::IsSplit() const {
 
 std::optional<tab_groups::TabGroupId> TabAndroid::GetGroup() const {
   JNIEnv* env = base::android::AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> j_token =
+  std::optional<base::Token> token =
       Java_TabImpl_getTabGroupId(env, weak_java_tab_.get(env));
-  if (j_token.is_null()) {
-    return std::nullopt;
-  }
-  return tab_groups::TabGroupId::FromRawToken(
-      base::android::TokenAndroid::FromJavaToken(env, j_token));
+  return tab_groups::TabGroupId::FromOptionalToken(token);
 }
 
 // Split tabs is currently desktop only.
@@ -743,10 +779,20 @@ void TabAndroid::OnReparented(tabs::TabCollection* parent,
 }
 
 void TabAndroid::OnAncestorChanged(base::PassKey<tabs::TabCollection>) {
-  // TODO(crbug.com/409366905): Possibly add a detached state.
+  // We only want to update this when getting attached to a collection. Keeping
+  // the old data around allows us to keep the tab group id or pinned state
+  // during undoable closures and reparenting.
   if (parent_collection_) {
     UpdateProperties();
   }
+}
+
+ui::UnownedUserDataHost& TabAndroid::GetUnownedUserDataHost() {
+  return unowned_user_data_host_;
+}
+
+const ui::UnownedUserDataHost& TabAndroid::GetUnownedUserDataHost() const {
+  return unowned_user_data_host_;
 }
 
 TabAndroid::TabAndroid(Profile* profile, int tab_id)

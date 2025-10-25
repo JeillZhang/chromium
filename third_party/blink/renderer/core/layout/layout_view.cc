@@ -50,6 +50,7 @@
 #include "third_party/blink/renderer/core/layout/hit_test_result.h"
 #include "third_party/blink/renderer/core/layout/layout_counter.h"
 #include "third_party/blink/renderer/core/layout/layout_embedded_content.h"
+#include "third_party/blink/renderer/core/layout/layout_object_inlines.h"
 #include "third_party/blink/renderer/core/layout/layout_result.h"
 #include "third_party/blink/renderer/core/layout/layout_view_transition_root.h"
 #include "third_party/blink/renderer/core/layout/length_utils.h"
@@ -508,7 +509,7 @@ bool LayoutView::ShouldUsePaginatedLayout(const Document& document) {
 PhysicalRect LayoutView::ViewRect() const {
   NOT_DESTROYED();
   if (GetDocument().Printing()) {
-    return PhysicalRect(PhysicalOffset(), Size());
+    return PhysicalRect(PhysicalOffset(), StitchedSize());
   }
 
   if (!frame_view_)
@@ -867,17 +868,36 @@ gfx::SizeF LayoutView::DynamicViewportSizeForViewportUnits() const {
                         : gfx::SizeF();
 }
 
-gfx::SizeF LayoutView::DefaultPageAreaSize() const {
+gfx::SizeF LayoutView::PaginationViewportSizeForMediaQueries() const {
   NOT_DESTROYED();
+  // The spec says to use the page *box* size when evaluating width and height
+  // media queries: https://drafts.csswg.org/mediaqueries-3/#width
+  //
+  // Nobody has ever done that, though. It's always been about the page
+  // *area*.
+  // General discussion: https://github.com/w3c/csswg-drafts/issues/5437
+  //
+  // Furthermore, declarations in @page rules that affect the size must be
+  // ignored, to avoid circular dependencies.
+  // See https://drafts.csswg.org/css-page-3/#page-size-prop
+  //
+  // Therefore use the default page area size, as provided by the system and
+  // print settings (i.e. unaffected by CSS).
+  const WebPrintParams& params = frame_view_->GetFrame().GetPrintParams();
   const WebPrintPageDescription& default_page_description =
-      frame_view_->GetFrame().GetPrintParams().default_page_description;
-  return gfx::SizeF(
-      std::max(.0f, default_page_description.size.width() -
-                        (default_page_description.margin_left +
-                         default_page_description.margin_right)),
-      std::max(.0f, default_page_description.size.height() -
-                        (default_page_description.margin_top +
-                         default_page_description.margin_bottom)));
+      params.default_page_description;
+  gfx::SizeF size(std::max(.0f, default_page_description.size.width() -
+                                    (default_page_description.margin_left +
+                                     default_page_description.margin_right)),
+                  std::max(.0f, default_page_description.size.height() -
+                                    (default_page_description.margin_top +
+                                     default_page_description.margin_bottom)));
+
+  // If the paginated content is scaled, the number of pixels that can fit
+  // within the page area is inversely proportional to the scale factor.
+  size.Scale(1.0f / params.scale_factor);
+
+  return size;
 }
 
 void LayoutView::WillBeDestroyed() {
@@ -898,10 +918,40 @@ void LayoutView::UpdateFromStyle() {
     SetHasBoxDecorationBackground(true);
 }
 
-void LayoutView::StyleDidChange(StyleDifference diff,
-                                const ComputedStyle* old_style) {
+void LayoutView::UpdateAfterLayout() {
   NOT_DESTROYED();
-  LayoutBlockFlow::StyleDidChange(diff, old_style);
+  LayoutBlockFlow::UpdateAfterLayout();
+  if (cached_scroll_dimensions_.has_value() && GetFrame()->Owner() &&
+      !GetFrame()->Owner()->IsDisplayNone() && !GetDocument().Printing()) {
+    auto* scrollable_area = GetScrollableArea();
+    CHECK(scrollable_area);
+    // Only restore scroll offset if the scroll dimensions match
+    if (scrollable_area->ScrollWidth() == cached_scroll_dimensions_->width &&
+        scrollable_area->ScrollHeight() == cached_scroll_dimensions_->height &&
+        scrollable_area->ScrollOrigin() == cached_scroll_dimensions_->origin) {
+      scrollable_area->SetScrollOffset(cached_scroll_dimensions_->offset,
+                                       mojom::blink::ScrollType::kProgrammatic,
+                                       cc::ScrollSourceType::kAbsoluteScroll);
+    }
+    cached_scroll_dimensions_.reset();
+  }
+}
+
+void LayoutView::CacheScrollDimensions() {
+  NOT_DESTROYED();
+  auto* scrollable_area = GetScrollableArea();
+  CHECK(scrollable_area);
+  cached_scroll_dimensions_.emplace(CachedScrollDimensions{
+      scrollable_area->ScrollWidth(), scrollable_area->ScrollHeight(),
+      scrollable_area->ScrollOrigin(), scrollable_area->GetScrollOffset()});
+}
+
+void LayoutView::StyleDidChange(
+    StyleDifference diff,
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
+  NOT_DESTROYED();
+  LayoutBlockFlow::StyleDidChange(diff, old_style, style_change_context);
 
   LocalFrame& frame = GetFrameView()->GetFrame();
   VisualViewport& visual_viewport = frame.GetPage()->GetVisualViewport();

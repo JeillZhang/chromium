@@ -4,6 +4,7 @@
 
 import {EventTracker} from '//resources/js/event_tracker.js';
 import {loadTimeData} from '//resources/js/load_time_data.js';
+import {GlicRequestHeaderInjector} from '/shared/glic_request_headers.js';
 import type {ChromeEvent} from '/tools/typescript/definitions/chrome_event.js';
 
 import type {BrowserProxyImpl} from './browser_proxy.js';
@@ -14,13 +15,47 @@ import {ObservableValue} from './observable.js';
 import type {ObservableValueReadOnly} from './observable.js';
 import {OneShotTimer} from './timer.js';
 
+// LINT.IfChange(WebviewExitReason)
+enum WebviewExitReason {
+  NORMAL = 0,
+  ABNORMAL = 1,
+  CRASHED = 2,
+  KILLED = 3,
+  OOM_KILLED = 4,
+  OOM = 5,
+  FAILED_TO_LAUNCH = 6,
+  INTEGRITY_FAILURE = 7,
+  UNKNOWN = 8,
+}
+// LINT.ThenChange(//tools/metrics/histograms/metadata/glic/enums.xml:GlicWebviewExitReason)
+
+const WEBVIEW_EXIT_REASON_MAP = {
+  'normal': WebviewExitReason.NORMAL,
+  'abnormal': WebviewExitReason.ABNORMAL,
+  'crashed': WebviewExitReason.CRASHED,
+  'killed': WebviewExitReason.KILLED,
+  'oom killed': WebviewExitReason.OOM_KILLED,
+  'oom': WebviewExitReason.OOM,
+  'failed to launch': WebviewExitReason.FAILED_TO_LAUNCH,
+  'integrity failure': WebviewExitReason.INTEGRITY_FAILURE,
+};
+
+function webviewExitReasonStringToEnum(reason: chrome.webviewTag.ExitReason):
+    WebviewExitReason {
+  return WEBVIEW_EXIT_REASON_MAP[reason] ?? WebviewExitReason.UNKNOWN;
+}
+
 export type PageType =
     // A login page.
     'login'
     // A page that should be displayed.
     |'regular'
     // A error page that should be displayed.
-    |'guestError';
+    |'guestError'
+    // An error page that indicates access loss.
+    |'guestCaaError'
+    // The page could not be loaded.
+    |'loadError';
 
 // Calls from the webview to its owner.
 export interface WebviewDelegate {
@@ -30,6 +65,8 @@ export interface WebviewDelegate {
   webviewUnresponsive(): void;
   // Called when a page commits inside the webview.
   webviewPageCommit(pageType: PageType): void;
+  // Called when the webview redirects to an access error page.
+  webviewDeniedByAdmin(): void;
 }
 
 // To match needed pieces of tools/typescript/definitions/web_request.d.ts,
@@ -84,6 +121,7 @@ export class WebviewController {
   private webClientState =
       ObservableValue.withValue(WebClientState.UNINITIALIZED);
   private oneMinuteTimer = new OneShotTimer(1000 * 60);
+  private glicRequestHeaderInjector: GlicRequestHeaderInjector;
 
   constructor(
       private readonly container: HTMLElement,
@@ -94,6 +132,11 @@ export class WebviewController {
   ) {
     this.webview =
         document.createElement('webview') as chrome.webviewTag.WebView;
+
+    this.glicRequestHeaderInjector = new GlicRequestHeaderInjector(
+        this.webview, loadTimeData.getString('chromeVersion'),
+        loadTimeData.getString('chromeChannel'),
+        loadTimeData.getString('glicHeaderRequestTypes'));
 
     // Intercept all main frame requests, and block them if they are not allowed
     // origins.
@@ -106,17 +149,6 @@ export class WebviewController {
         ['blocking']);
     this.onDestroy.push(() => {
       this.webview.request.onBeforeRequest.removeListener(onBeforeRequest);
-    });
-    const onBeforeSendHeaders = this.onBeforeSendHeaders.bind(this);
-    this.webview.request.onBeforeSendHeaders.addListener(
-        onBeforeSendHeaders, {
-          types: [ResourceType.MAIN_FRAME],
-          urls: ['<all_urls>'],
-        },
-        ['blocking', 'requestHeaders']);
-    this.onDestroy.push(() => {
-      this.webview.request.onBeforeSendHeaders.removeListener(
-          onBeforeSendHeaders);
     });
 
     this.webview.id = 'guestFrame';
@@ -134,7 +166,7 @@ export class WebviewController {
         this.webview, 'permissionrequest', this.onPermissionRequest.bind(this));
     this.eventTracker.add(
         this.webview, 'unresponsive', this.onUnresponsive.bind(this));
-    this.eventTracker.add(this.webview, 'exit', this.onExit.bind(this));
+    this.eventTracker.add(this.webview, 'exit', this.onExit.bind(this) as any);
 
     this.webview.src = this.persistentState.useLoadUrl();
 
@@ -153,6 +185,7 @@ export class WebviewController {
   }
 
   destroy() {
+    this.glicRequestHeaderInjector.destroy();
     this.oneMinuteTimer.reset();
     if (this.host) {
       chrome.metricsPrivate.recordEnumerationValue(
@@ -184,6 +217,15 @@ export class WebviewController {
 
   waitingOnPanelWillOpen(): boolean {
     return this.host?.waitingOnPanelWillOpen() ?? false;
+  }
+
+  onLoadTimeOut(): void {
+    if (this.host) {
+      chrome.metricsPrivate.recordEnumerationValue(
+          'Glic.Host.WebClientState.OnLoadTimeOut',
+          this.host.getDetailedWebClientState(),
+          DetailedWebClientState.MAX_VALUE + 1);
+    }
   }
 
   private onLoadCommit(e: any): void {
@@ -230,13 +272,19 @@ export class WebviewController {
     this.delegate.webviewUnresponsive();
   }
 
-  private onExit(e: any): void {
-    if (e.reason !== 'normal') {
-      this.destroyHost(WebClientState.ERROR);
-      chrome.metricsPrivate.recordUserAction('GlicSessionWebClientCrash');
-      console.warn(`webview exit. reason: ${e.reason}`);
-    }
-  }
+  private onExit: ChromeEventFunctionType<typeof chrome.webviewTag.exit> =
+      (event) => {
+        chrome.metricsPrivate.recordEnumerationValue(
+            'Glic.Session.WebClientCrash.ExitReason',
+            webviewExitReasonStringToEnum(event.reason),
+            Object.keys(WEBVIEW_EXIT_REASON_MAP).length);
+        if (event.reason !== 'normal') {
+          this.destroyHost(WebClientState.ERROR);
+          chrome.metricsPrivate.recordUserAction('GlicSessionWebClientCrash');
+          console.warn(`webview exit. processID: ${event.processID}, reason: ${
+              event.reason}`);
+        }
+      };
 
   private loadCommit(url: string, isTopLevel: boolean) {
     if (!isTopLevel) {
@@ -253,9 +301,10 @@ export class WebviewController {
 
     this.destroyHost(WebClientState.UNINITIALIZED);
 
-    if (this.webview.contentWindow) {
+    const origin = new URL(url).origin;
+    if (this.webview.contentWindow && origin !== 'null') {
       this.host = new GlicApiHost(
-          this.browserProxy, this.webview.contentWindow, new URL(url).origin,
+          this.browserProxy, this.webview.contentWindow, origin,
           this.hostEmbedder);
       this.hostSubscriber = this.host.getWebClientState().subscribe(state => {
         if (state === WebClientState.RESPONSIVE) {
@@ -266,7 +315,13 @@ export class WebviewController {
     }
     this.browserProxy.handler.webviewCommitted({url});
 
-    // TODO(https://crbug.com/388328847): Remove when login issues are resolved.
+    if (!this.host) {
+      this.delegate.webviewPageCommit('loadError');
+      return;
+    }
+
+    // TODO(https://crbug.com/388328847): Remove when login issues are
+    // resolved.
     if (url.startsWith('https://login.corp.google.com/') ||
         url.startsWith('https://accounts.google.com/') ||
         url.startsWith('https://accounts.googlers.com/') ||
@@ -278,7 +333,12 @@ export class WebviewController {
       if (wasResponsive) {
         this.persistentState.onCommitAfterConnect(url);
       }
-      this.delegate.webviewPageCommit('regular');
+
+      // This forces the page to reload after navigation.
+      // TODO(b/439718538): revisit overall logic, this may be buggy.
+      if (loadTimeData.getBoolean('reloadAfterNavigation')) {
+        this.delegate.webviewPageCommit('regular');
+      }
     }
   }
 
@@ -297,6 +357,20 @@ export class WebviewController {
     event.stopPropagation();
   }
 
+  private urlMatchesAdminBlockedUrl(url: string) {
+    const adminBlockedRedirectPatterns =
+        loadTimeData.getString('adminBlockedRedirectPatterns');
+    if (!adminBlockedRedirectPatterns) {
+      return false;
+    }
+    if (adminBlockedRedirectPatterns.split(' ').some(
+            pattern => new URLPattern(pattern.trim()).test(url))) {
+      console.warn(`Admin blocked error page detected.`);
+      return true;
+    }
+    return false;
+  }
+
   private onBeforeRequest:
       ChromeEventFunctionType<typeof chrome.webRequest.onBeforeRequest> =
           (details) => {
@@ -304,34 +378,12 @@ export class WebviewController {
             if (details.frameId !== 0) {
               return {};
             }
-            return {cancel: !urlMatchesAllowedOrigin(details.url)};
-          };
-
-  // Attaches the X-Glic headers to all main-frame requests.
-  // X-Glic: 1
-  // X-Glic-Chrome-Channel: stable
-  // X-Glic-Chrome-Version: 137.0.1234.0
-  private onBeforeSendHeaders:
-      ChromeEventFunctionType<typeof chrome.webRequest.onBeforeSendHeaders> =
-          (details) => {
-            // Ignore subframe requests.
-            if (details.frameId !== 0) {
-              return {};
+            if (this.urlMatchesAdminBlockedUrl(details.url)) {
+              this.delegate.webviewDeniedByAdmin();
+              return {cancel: true};
             }
-            const requestHeaders = details.requestHeaders || [];
-            requestHeaders.push({
-              name: 'X-Glic',
-              value: '1',
-            });
-            requestHeaders.push({
-              name: 'X-Glic-Chrome-Version',
-              value: loadTimeData.getString('chromeVersion'),
-            });
-            requestHeaders.push({
-              name: 'X-Glic-Chrome-Channel',
-              value: loadTimeData.getString('chromeChannel'),
-            });
-            return {requestHeaders};
+
+            return {cancel: !urlMatchesAllowedOrigin(details.url)};
           };
 }
 

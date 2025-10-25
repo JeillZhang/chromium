@@ -12,7 +12,6 @@ import android.view.View;
 import android.widget.Spinner;
 import android.widget.TextView;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.transit.ConditionStatus;
 import org.chromium.base.test.transit.Facility;
 import org.chromium.base.test.transit.UiThreadCondition;
@@ -77,16 +76,19 @@ public class QuickDeleteDialogFacility extends ModalDialogFacility {
 
     /**
      * Click Delete to delete the selected time period, go to the tab switcher and show a snackbar.
+     *
+     * @param regularTabsExistAfterDeletion True if there are any regular tabs to display in the tab
+     *     switcher post-deletion. This should typically be false if all tabs are deleted or if the
+     *     last tab in the tab switcher is closed.
      */
-    public Pair<RegularTabSwitcherStation, QuickDeleteSnackbarFacility> confirmDelete() {
+    public Pair<RegularTabSwitcherStation, QuickDeleteSnackbarFacility> confirmDelete(
+            boolean regularTabsExistAfterDeletion) {
         RegularTabSwitcherStation tabSwitcher =
                 new RegularTabSwitcherStation(
-                        /* regularTabsExist= */ true, /* incognitoTabsExist= */ false);
+                        regularTabsExistAfterDeletion, /* incognitoTabsExist= */ false);
         QuickDeleteSnackbarFacility snackbar = new QuickDeleteSnackbarFacility(mTimePeriod);
-        tabSwitcher.addInitialFacility(snackbar);
 
-        mHostStation.travelToSync(tabSwitcher, positiveButtonElement.getClickTrigger());
-
+        positiveButtonElement.clickTo().arriveAt(tabSwitcher, snackbar);
         return Pair.create(tabSwitcher, snackbar);
     }
 
@@ -96,12 +98,9 @@ public class QuickDeleteDialogFacility extends ModalDialogFacility {
                 TimePeriodUtils.getTimePeriodSpinnerOptions(mHostStation.getActivity());
         final int positionToSet = getSpinnerPositionForTimePeriod(timePeriod, options);
 
-        return mHostStation.swapFacilitySync(
-                this,
-                new QuickDeleteDialogFacility(timePeriod),
-                () ->
-                        ThreadUtils.runOnUiThread(
-                                () -> spinnerElement.get().setSelection(positionToSet)));
+        return runOnUiThreadTo(() -> spinnerElement.value().setSelection(positionToSet))
+                .exitFacilityAnd()
+                .enterFacility(new QuickDeleteDialogFacility(timePeriod));
     }
 
     private static int getSpinnerPositionForTimePeriod(
@@ -117,9 +116,9 @@ public class QuickDeleteDialogFacility extends ModalDialogFacility {
 
     /** Click the "More options" button to open the in Settings. */
     public SettingsStation<ClearBrowsingDataFragment> clickMoreOptions() {
-        return mHostStation.travelToSync(
-                new SettingsStation<>(ClearBrowsingDataFragment.class),
-                moreOptionsElement.getClickTrigger());
+        return moreOptionsElement
+                .clickTo()
+                .arriveAt(new SettingsStation<>(ClearBrowsingDataFragment.class));
     }
 
     public void expectSearchHistoryDisambiguation(boolean shown) {
@@ -130,7 +129,7 @@ public class QuickDeleteDialogFacility extends ModalDialogFacility {
         } else {
             facility.declareNoView(spec);
         }
-        mHostStation.enterFacilitySync(facility, /* trigger= */ null);
+        noopTo().enterFacility(facility);
     }
 
     public void expectMoreOnSyncedDevices(boolean shown) {
@@ -142,7 +141,7 @@ public class QuickDeleteDialogFacility extends ModalDialogFacility {
         } else {
             facility.declareNoView(spec);
         }
-        mHostStation.enterFacilitySync(facility, /* trigger= */ null);
+        noopTo().enterFacility(facility);
     }
 
     private class TimePeriodSelectedCondition extends UiThreadCondition {
@@ -152,7 +151,7 @@ public class QuickDeleteDialogFacility extends ModalDialogFacility {
 
         @Override
         protected ConditionStatus checkWithSuppliers() {
-            Spinner spinner = spinnerElement.get();
+            Spinner spinner = spinnerElement.value();
             var item = (TimePeriodUtils.TimePeriodSpinnerOption) spinner.getSelectedItem();
             int timePeriod = item.getTimePeriod();
             return whether(

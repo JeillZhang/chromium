@@ -1486,25 +1486,25 @@ class AndroidBannedImportTest(unittest.TestCase):
         for file in test_files:
             mock_input_api.files = [file]
             msgs.append(
-                PRESUBMIT._CheckAndroidNoBannedImports(mock_input_api,
-                                                       mock_output_api))
+                PRESUBMIT.CheckNoBannedPatterns(mock_input_api,
+                                                mock_output_api))
         self.assertEqual(0, len(msgs[0]))
         self.assertEqual(0, len(msgs[1]))
         self.assertTrue(msgs[2][0].message.startswith(
             textwrap.dedent("""\
-      Banned imports were used.
+      A banned pattern was used.
           BannedUri.java:1:""")))
         self.assertTrue(msgs[3][0].message.startswith(
             textwrap.dedent("""\
-      Banned imports were used.
+      A banned pattern was used.
           BannedTargetApi.java:1:""")))
         self.assertTrue(msgs[4][0].message.startswith(
             textwrap.dedent("""\
-      Banned imports were used.
+      A banned pattern was used.
           BannedActivityTestRule.java:1:""")))
         self.assertTrue(msgs[5][0].message.startswith(
             textwrap.dedent("""\
-      Banned imports were used.
+      A banned pattern was used.
           BannedVectorDrawableCompat.java:1:""")))
 
 
@@ -1777,9 +1777,11 @@ class LogUsageTest(unittest.TestCase):
         # Util Log usage
         nb = len(msgs[3].items)
         self.assertEqual(
-            3, nb, 'Expected %d items, found %d: %s' % (3, nb, msgs[3].items))
+            5, nb, 'Expected %d items, found %d: %s' % (3, nb, msgs[3].items))
+        self.assertTrue('HasAndroidLog.java:1' in msgs[3].items)
         self.assertTrue('HasAndroidLog.java:3' in msgs[3].items)
         self.assertTrue('HasExplicitUtilLog.java:2' in msgs[3].items)
+        self.assertTrue('IsInBasePackageButImportsLog.java:2' in msgs[3].items)
         self.assertTrue('IsInBasePackageButImportsLog.java:4' in msgs[3].items)
 
         # Tag must not contain
@@ -2505,7 +2507,6 @@ class IpcSecurityOwnerTest(_SecurityOwnersTestCase):
         ('*_mojom_traits*.*', 'scary_mojom_traits.h'),
         ('*_mojom_traits*.*', 'scary_mojom_traits_mac.h'),
         ('*_type_converter*.*', 'scary_type_converter.h'),
-        ('*_type_converter*.*', 'scary_type_converter_nacl.h'),
         ('*.aidl', 'scary.aidl'),
     ]
 
@@ -2937,7 +2938,7 @@ class BannedTypeCheckTest(unittest.TestCase):
             MockFile('some/js/ok/file.js', ['chrome.send(something);']),
         ]
 
-        results = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
+        results = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
 
         self.assertEqual(1, len(results))
         self.assertTrue('ash/webui/file.js' in results[0].message)
@@ -2972,14 +2973,22 @@ class BannedTypeCheckTest(unittest.TestCase):
                 'some/java/problematic/accessibilityTypeAnnouncement.java', [
                     'accessibilityEvent.setEventType(AccessibilityEvent.TYPE_ANNOUNCEMENT);'
                 ]),
-            MockFile(
+             MockFile(
                 'content/java/problematic/desktopandroid.java', [
+                    'if (DeviceInfo.isDesktop()) {}'
+                ]),
+             MockFile(
+                'content/java/problematic/desktopandroid1.java', [
+                    'if (PackageManager.FEATURE_PC) {}'
+                ]),
+             MockFile(
+                'content/java/problematic/desktopandroid2.java', [
                     'if (BuildConfig.IS_DESKTOP_ANDROID) {}'
                 ]),
         ]
 
-        errors = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
-        self.assertEqual(12, len(errors))
+        errors = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
+        self.assertEqual(14, len(errors))
         self.assertTrue(
             'some/java/problematic/diskread.java' in errors[0].message)
         self.assertTrue(
@@ -3007,6 +3016,12 @@ class BannedTypeCheckTest(unittest.TestCase):
         self.assertTrue(
             'content/java/problematic/desktopandroid.java' in
             errors[11].message)
+        self.assertTrue(
+            'content/java/problematic/desktopandroid1.java' in
+            errors[12].message)
+        self.assertTrue(
+            'content/java/problematic/desktopandroid2.java' in
+            errors[13].message)
 
 
     def testBannedCppFunctions(self):
@@ -3054,7 +3069,7 @@ class BannedTypeCheckTest(unittest.TestCase):
             ]),
         ]
 
-        results = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
+        results = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
 
         # Each entry in results corresponds to a BanRule with a violation, in
         # the order they were encountered.
@@ -3111,7 +3126,7 @@ class BannedTypeCheckTest(unittest.TestCase):
                          [f'{banned_rng} engine;']),
                 MockFile('third_party/ok/file.cc', [f'{banned_rng} engine;']),
             ]
-            results = PRESUBMIT.CheckNoBannedFunctions(input_api,
+            results = PRESUBMIT.CheckNoBannedPatterns(input_api,
                                                        MockOutputApi())
             self.assertEqual(2, len(results), banned_rng)
             self.assertTrue(
@@ -3139,7 +3154,7 @@ class BannedTypeCheckTest(unittest.TestCase):
             ]),
         ]
 
-        errors = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
+        errors = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
         self.assertEqual(3, len(errors))
         self.assertTrue('some/ios/file.mm' in errors[0].message)
         self.assertTrue('another/ios_file.mm' in errors[1].message)
@@ -3155,7 +3170,7 @@ class BannedTypeCheckTest(unittest.TestCase):
             MockFile('content/renderer/ok/file3.cc', ['mojo::ConvertTo<>']),
         ]
 
-        results = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
+        results = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
 
         # Each entry in results corresponds to a BanRule with a violation, in
         # the order they were encountered.
@@ -3180,7 +3195,7 @@ class BannedTypeCheckTest(unittest.TestCase):
             ]),
         ]
 
-        results = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
+        results = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
 
         # Each entry in results corresponds to a BanRule with a violation, in
         # the order they were encountered.
@@ -3208,7 +3223,7 @@ class BannedTypeCheckTest(unittest.TestCase):
 
         # Each entry in results corresponds to a BanRule with a violation, in
         # the order they were encountered.
-        results = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
+        results = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
 
         self.assertEqual(3, len(results))
 
@@ -3683,7 +3698,7 @@ class StringTest(unittest.TestCase):
     VALID_SHA1 = ('0000000000000000000000000000000000000000', )
     DO_NOT_UPLOAD_PNG_MESSAGE = ('Do not include actual screenshots in the '
                                  'changelist. Run '
-                                 'tools/translate/upload_screenshots.py to '
+                                 'tools/translation/upload_screenshots.py to '
                                  'upload them instead:')
     ADD_SIGNATURES_MESSAGE = ('You are adding UI strings.\n'
                               'To ensure the best translations, take '
@@ -3699,7 +3714,7 @@ class StringTest(unittest.TestCase):
     SHA1_FORMAT_MESSAGE = (
         'The following files do not seem to contain valid sha1 '
         'hashes. Make sure they contain hashes created by '
-        'tools/translate/upload_screenshots.py:')
+        'tools/translation/upload_screenshots.py:')
 
     def makeInputApi(self, files):
         input_api = MockInputApi()
@@ -4565,12 +4580,32 @@ class SetNoParentTest(unittest.TestCase):
 
 class MojomStabilityCheckTest(unittest.TestCase):
 
-    def runTestWithAffectedFiles(self, affected_files):
+    def runTestWithAffectedFiles(self, affected_files, footers={}):
         mock_input_api = MockInputApi()
         mock_input_api.files = affected_files
+        mock_input_api.change.footers = footers
         mock_output_api = MockOutputApi()
         return PRESUBMIT.CheckStableMojomChanges(mock_input_api,
                                                  mock_output_api)
+
+    def testNoMojomChangePasses(self):
+        errors = self.runTestWithAffectedFiles([
+            MockAffectedFile('foo/foo.cc', ['// world'],
+                             old_contents=['// Hello'])
+        ])
+        self.assertEqual([], errors)
+
+    def testNoMojomChangeWithUnnecessaryFooterFails(self):
+        errors = self.runTestWithAffectedFiles([
+            MockAffectedFile('foo/foo.cc', ['// world'],
+                             old_contents=['// Hello'])
+        ],
+                                               footers={
+                                                   'No-Stable-Mojom-Checks':
+                                                   ['true'],
+                                               })
+        self.assertEqual(1, len(errors))
+        self.assertTrue('unnecessary git footer' in errors[0].message)
 
     def testSafeChangePasses(self):
         errors = self.runTestWithAffectedFiles([
@@ -4581,6 +4616,19 @@ class MojomStabilityCheckTest(unittest.TestCase):
         ])
         self.assertEqual([], errors)
 
+    def testSafeChangeWithUnnecessaryFooterFails(self):
+        errors = self.runTestWithAffectedFiles([
+            MockAffectedFile('foo/foo.mojom',
+                             ['[Stable] struct S { int32 x; };'],
+                             old_contents=['[Stable] struct S { int32 y; };'])
+        ],
+                                               footers={
+                                                   'No-Stable-Mojom-Checks':
+                                                   ['true'],
+                                               })
+        self.assertEqual(1, len(errors))
+        self.assertTrue('unnecessary git footer' in errors[0].message)
+
     def testBadChangeFails(self):
         errors = self.runTestWithAffectedFiles([
             MockAffectedFile('foo/foo.mojom',
@@ -4588,7 +4636,33 @@ class MojomStabilityCheckTest(unittest.TestCase):
                              old_contents=['[Stable] struct S {};'])
         ])
         self.assertEqual(1, len(errors))
-        self.assertTrue('not backward-compatible' in errors[0].message)
+        self.assertTrue('changed in a way that breaks backward compatibility.'
+                        in errors[0].message)
+
+    def testBadChangeButExplicitlyAllowed(self):
+        errors = self.runTestWithAffectedFiles([
+            MockAffectedFile('foo/foo.mojom',
+                             ['[Stable] struct S { int32 x; };'],
+                             old_contents=['[Stable] struct S {};'])
+        ],
+                                               footers={
+                                                   'No-Stable-Mojom-Checks':
+                                                   ['true'],
+                                               })
+        self.assertEqual([], errors)
+
+    def testBadChangeButExplicitlyAllowedWithWrongValue(self):
+        errors = self.runTestWithAffectedFiles([
+            MockAffectedFile('foo/foo.mojom',
+                             ['[Stable] struct S { int32 x; };'],
+                             old_contents=['[Stable] struct S {};'])
+        ],
+                                               footers={
+                                                   'No-Stable-Mojom-Checks':
+                                                   ['🐮'],
+                                               })
+        self.assertEqual(1, len(errors))
+        self.assertTrue('only accepts the value "true"' in errors[0].message)
 
     def testDeletedFile(self):
         """Regression test for https://crbug.com/1091407."""
@@ -4659,42 +4733,6 @@ class CheckForUseOfChromeAppsDeprecationsTest(unittest.TestCase):
                     '--- manifest.json.old  2020-12-02 20:40:54.430676385 +0100',
                     '+++ manifest.json.new  2020-12-02 20:41:02.086700197 +0100',
                     '@@ -1,2 +1,3 @@', ' "app"', '+"Z":"content"', ' B'
-                ]),
-                action='M')
-        ]
-        mock_output_api = MockOutputApi()
-        errors = PRESUBMIT.CheckForUseOfChromeAppsDeprecations(
-            mock_input_api, mock_output_api)
-        self.assertEqual(0, len(errors))
-
-    def testWarningPPAPI(self):
-        mock_input_api = MockInputApi()
-        mock_input_api.files = [
-            MockAffectedFile(
-                'foo.hpp', ['A', '#include <ppapi.h>', 'B'], ['A', 'B'],
-                scm_diff='\n'.join([
-                    '--- foo.hpp.old  2020-12-02 20:40:54.430676385 +0100',
-                    '+++ foo.hpp.new  2020-12-02 20:41:02.086700197 +0100',
-                    '@@ -1,2 +1,3 @@', ' A', '+#include <ppapi.h>', ' B'
-                ]),
-                action='M')
-        ]
-        mock_output_api = MockOutputApi()
-        errors = PRESUBMIT.CheckForUseOfChromeAppsDeprecations(
-            mock_input_api, mock_output_api)
-        self.assertEqual(1, len(errors))
-        self.assertTrue(self.ERROR_MSG_PIECE in errors[0].message)
-        self.assertTrue('foo.hpp' in errors[0].message)
-
-    def testNoWarningPPAPI(self):
-        mock_input_api = MockInputApi()
-        mock_input_api.files = [
-            MockAffectedFile(
-                'foo.txt', ['A', 'Peppapig', 'B'], ['A', 'B'],
-                scm_diff='\n'.join([
-                    '--- foo.txt.old  2020-12-02 20:40:54.430676385 +0100',
-                    '+++ foo.txt.new  2020-12-02 20:41:02.086700197 +0100',
-                    '@@ -1,2 +1,3 @@', ' A', '+Peppapig', ' B'
                 ]),
                 action='M')
         ]
@@ -5761,7 +5799,7 @@ class CheckDeprecatedSyncConsentFunctionsTest(unittest.TestCase):
                      ['IsSyncFeatureActive']),
         ]
 
-        results = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
+        results = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
 
         self.assertEqual(7, len(results))
         self.assertTrue(all('chrome/browser/android/file.cc' not in r.message for r in results))
@@ -5785,7 +5823,7 @@ class CheckDeprecatedSyncConsentFunctionsTest(unittest.TestCase):
             MockFile('components/kiosk/file.cc', ['HasSyncConsent']),
         ]
 
-        results = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
+        results = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
 
         self.assertEqual(0, len(results))
 
@@ -5799,7 +5837,7 @@ class CheckDeprecatedSyncConsentFunctionsTest(unittest.TestCase):
             MockFile('chrome/foo/file5.java', ['isSyncFeatureActive']),
         ]
 
-        results = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
+        results = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
 
         self.assertEqual(4, len(results))
         self.assertTrue(all('components/foo/file1.java' not in r.message for r in results))
@@ -5822,7 +5860,7 @@ class CheckAnonymousNamespaceTest(unittest.TestCase):
             MockFile('chrome/test.txt', ['namespace {']),
         ]
 
-        results = PRESUBMIT.CheckNoBannedFunctions(input_api, MockOutputApi())
+        results = PRESUBMIT.CheckNoBannedPatterns(input_api, MockOutputApi())
 
         self.assertEqual(1, len(results))
         self.assertTrue(
@@ -5835,6 +5873,79 @@ class CheckAnonymousNamespaceTest(unittest.TestCase):
             'chrome/test.cpp' in results[0].message),
         self.assertFalse(
             'chrome/test.txt' in results[0].message),
+
+
+class CheckBaseFeatureMacroTest(unittest.TestCase):
+
+    def testBaseFeatureMacro(self):
+        mock_input_api = MockInputApi()
+        mock_input_api.files = [
+            # #################################################################
+            # Valid cases (no warnings)
+            # #################################################################
+            MockAffectedFile(
+                'valid1.cc',
+                ['BASE_FEATURE(kMyToggle, base::FEATURE_ENABLED_BY_DEFAULT);'
+                 ]),
+            MockAffectedFile('valid_multiline.cc', [
+                'BASE_FEATURE(kMyMultilineToggle,',
+                '    base::FEATURE_ENABLED_BY_DEFAULT);'
+            ]),
+            MockAffectedFile(
+                'valid_complex_arg.cc',
+                ['BASE_FEATURE(kMyToggle, GetDefaultState(vector<int>(1)));']),
+            MockAffectedFile('valid_comment.cc', [
+                '// BASE_FEATURE(invalidToggle, '
+                'base::FEATURE_ENABLED_BY_DEFAULT);'
+            ]),
+            MockAffectedFile('valid_3param_comment.cc', [
+                '// BASE_FEATURE(kMyToggle, "MyToggle", '
+                'base::FEATURE_ENABLED_BY_DEFAULT);'
+            ]),
+
+            # #################################################################
+            # Cases that should produce warnings.
+            # #################################################################
+            MockAffectedFile('warning_3param.cc', [
+                'BASE_FEATURE(kMyToggle, "MyToggle", '
+                'base::FEATURE_ENABLED_BY_DEFAULT);'
+            ]),
+            MockAffectedFile(
+                'warning_no_k.cc',
+                ['BASE_FEATURE(MyToggle, base::FEATURE_ENABLED_BY_DEFAULT);']),
+            MockAffectedFile(
+                'warning_lowercase_after_k.cc',
+                ['BASE_FEATURE(kmyToggle, base::FEATURE_ENABLED_BY_DEFAULT);'
+                 ]),
+            MockAffectedFile('warning_3param_multiline.cc', [
+                'BASE_FEATURE(kMyToggle,',
+                '             "MyToggle",',
+                '             base::FEATURE_ENABLED_BY_DEFAULT);'
+            ]),
+        ]
+        results = PRESUBMIT.CheckBaseFeatureMacro(mock_input_api,
+                                                  MockOutputApi())
+
+        self.assertEqual(1, len(results))
+        self.assertEqual('warning', results[0].type)
+        self.assertEqual('BASE_FEATURE() macro naming:', results[0].message)
+        warnings = results[0].items
+
+        expected_warnings = [
+            '    warning_3param.cc:1: The 3-argument BASE_FEATURE macro with a '
+            'string literal is discouraged. Use the 2-argument version '
+            'instead.',
+            '    warning_3param_multiline.cc:1: The 3-argument BASE_FEATURE '
+            'macro with a string literal is discouraged. Use the 2-argument '
+            'version instead.',
+            '    warning_no_k.cc:1: Feature identifier "MyToggle" should start '
+            'with "k" followed by an uppercase letter.',
+            '    warning_lowercase_after_k.cc:1: Feature identifier "kmyToggle"'
+            ' should start with "k" followed by an uppercase letter.',
+        ]
+
+        self.assertEqual(len(expected_warnings), len(warnings))
+        self.assertEqual(sorted(expected_warnings), sorted(warnings))
 
 
 if __name__ == '__main__':

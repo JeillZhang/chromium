@@ -40,6 +40,8 @@ std::optional<std::string> TranslateOpenFlagsToJavaMode(uint32_t open_flags) {
 
   switch (open_flags) {
     case File::FLAG_OPEN | File::FLAG_READ:
+    case File::FLAG_OPEN_ALWAYS | File::FLAG_READ:
+    case File::FLAG_CREATE | File::FLAG_READ:
       return "r";
     case File::FLAG_OPEN_ALWAYS | File::FLAG_READ | File::FLAG_WRITE:
       return "rw";
@@ -97,10 +99,11 @@ bool ContentUriGetFileInfo(const FilePath& content_uri,
 }
 
 std::vector<FileEnumerator::FileInfo> ListContentUriDirectory(
-    const FilePath& content_uri) {
+    const FilePath& content_uri,
+    int file_type) {
   JNIEnv* env = android::AttachCurrentThread();
   std::vector<FileEnumerator::FileInfo> result;
-  Java_ContentUriUtils_listDirectory(env, content_uri.value(),
+  Java_ContentUriUtils_listDirectory(env, content_uri.value(), file_type,
                                      reinterpret_cast<jlong>(&result));
   // Java will call back sync to AddFileInfoToVector(&result).
   return result;

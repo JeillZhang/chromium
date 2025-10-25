@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <xf86drmMode.h>
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -22,6 +23,7 @@
 
 #include "base/logging.h"
 #include "base/notreached.h"
+#include "components/viz/common/resources/shared_image_format.h"
 #include "ui/display/display_features.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/display/types/display_snapshot.h"
@@ -151,6 +153,8 @@ std::unique_ptr<display::DisplaySnapshot> CreateDisplaySnapshot(
     uint8_t device_index);
 
 int GetFourCCFormatForOpaqueFramebuffer(gfx::BufferFormat format);
+
+int GetFourCCFormatForOpaqueFramebuffer(viz::SharedImageFormat format);
 
 gfx::Size GetMaximumCursorSize(const DrmWrapper& drm);
 

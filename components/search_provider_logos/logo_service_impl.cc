@@ -20,6 +20,7 @@
 #include "base/time/default_clock.h"
 #include "build/build_config.h"
 #include "components/image_fetcher/core/image_decoder.h"
+#include "components/omnibox/common/omnibox_features.h"
 #include "components/search_engines/search_terms_data.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/search_provider_logos/fixed_logo_api.h"
@@ -27,6 +28,7 @@
 #include "components/search_provider_logos/logo_cache.h"
 #include "components/search_provider_logos/logo_observer.h"
 #include "components/search_provider_logos/switches.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "services/network/public/cpp/resource_request.h"
@@ -237,11 +239,14 @@ void LogoServiceImpl::GetLogo(LogoCallbacks callbacks, bool for_webui_ntp) {
     logo_url = GURL(
         command_line->GetSwitchValueASCII(switches::kSearchProviderLogoURL));
   } else {
+    // Non-Google DSE logos are only enabled on some platforms.
 #if BUILDFLAG(IS_ANDROID)
-    // Non-Google default search engine logos are currently enabled only on
-    // Android (https://crbug.com/737283).
     logo_url = template_url->logo_url();
-#endif
+#elif BUILDFLAG(IS_IOS)
+    if (base::FeatureList::IsEnabled(omnibox::kOmniboxMobileParityUpdateV3)) {
+      logo_url = template_url->logo_url();
+    }
+#endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   }
 
   GURL base_url;

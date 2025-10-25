@@ -11,8 +11,7 @@
 #include <vector>
 
 #include "base/check.h"
-#include "base/check_is_test.h"
-#include "base/debug/dump_without_crashing.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/metrics/histogram_functions.h"
@@ -30,17 +29,20 @@
 #include "chrome/browser/preloading/prerender/prerender_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "components/embedder_support/user_agent_utils.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url_service.h"
 #include "content/public/browser/client_hints.h"
 #include "content/public/browser/frame_accept_header.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/preloading.h"
 #include "content/public/browser/preloading_data.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/url_loader_throttles.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/content_constants.h"
 #include "net/cookies/site_for_cookies.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
@@ -49,7 +51,9 @@
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
 #include "third_party/blink/public/common/navigation/preloading_headers.h"
+#include "third_party/blink/public/common/user_agent/user_agent_metadata.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 #include "url/origin.h"
 
 #if BUILDFLAG(IS_ANDROID)
@@ -88,7 +92,22 @@ class CheckForCancelledOrPausedDelegate
 };
 
 // Computes the user agent value that should set for the User-Agent header.
-std::string GetUserAgentValue(const net::HttpRequestHeaders& headers) {
+std::string GetUserAgentValue(const GURL& request_url,
+                              content::WebContents& web_contents) {
+  if (web_contents.GetDelegate() &&
+      base::FeatureList::IsEnabled(
+          features::kRespectUserAgentOverrideInSearchPrefetch)) {
+    blink::UserAgentOverride ua_override = web_contents.GetUserAgentOverride();
+    if (!ua_override.ua_string_override.empty()) {
+      const content::NavigationController::UserAgentOverrideOption option =
+          web_contents.GetDelegate()->ShouldOverrideUserAgentForPreloading(
+              request_url);
+      if (web_contents.GetController().ShouldOverrideUserAgentInNextNavigation(
+              option)) {
+        return ua_override.ua_string_override;
+      }
+    }
+  }
   return embedder_support::GetUserAgent();
 }
 
@@ -120,37 +139,16 @@ void MaybeRecordTraceFromSearchPrefetchRequestStartToNavigationIntercepted(
   const auto trace_id =
       TRACE_ID_WITH_SCOPE(kSearchPrefetchRequestStartToNavigationIntercepted,
                           TRACE_ID_LOCAL(search_prefetch_request));
-  TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP0(
-      "navigation", kSearchPrefetchRequestStartToNavigationIntercepted,
-      trace_id, time_start_prefetch_request);
-  TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
-      "navigation", kSearchPrefetchRequestStartToNavigationIntercepted,
-      trace_id, base::TimeTicks::Now());
-}
-
-// TODO(crbug.com/413557424): remove this block.
-bool is_test = false;
-// Restrict per-client to report one check failure.
-bool has_reported = false;
-bool CheckPrefetchParameterExistence(const GURL& url) {
-  std::string_view query_piece = url.query_piece();
-  url::Component query(0, url.query_piece().length());
-  url::Component key, value;
-  while (url::ExtractQueryKeyValue(query_piece, &query, &key, &value)) {
-    if (query_piece.substr(key.begin, key.len) == "pf" && !value.is_empty()) {
-      return true;
-    }
-  }
-  return false;
+  TRACE_EVENT_BEGIN("navigation",
+                    kSearchPrefetchRequestStartToNavigationIntercepted,
+                    perfetto::Track::FromPointer(search_prefetch_request),
+                    time_start_prefetch_request);
+  TRACE_EVENT_END("navigation",
+                  perfetto::Track::FromPointer(search_prefetch_request),
+                  base::TimeTicks::Now());
 }
 
 }  // namespace
-
-// static
-void SearchPrefetchRequest::SetIsTest() {
-  CHECK_IS_TEST();
-  is_test = true;
-}
 
 SearchPrefetchRequest::SearchPrefetchRequest(
     const GURL& canonical_search_url,
@@ -221,7 +219,9 @@ SearchPrefetchRequest::NetworkAnnotationForPrefetch() {
         })");
 }
 
-bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
+bool SearchPrefetchRequest::StartPrefetchRequest(
+    Profile* profile,
+    content::WebContents& web_contents) {
   TRACE_EVENT0("loading", "SearchPrefetchRequest::StartPrefetchRequest");
   time_start_prefetch_request_ = base::TimeTicks::Now();
 
@@ -260,7 +260,7 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
   AddClientHintsHeadersToPrefetchNavigation(
       prefetch_origin, &(resource_request->headers), profile,
       profile->GetClientHintsControllerDelegate(),
-      /*is_ua_override_on=*/false);
+      /*is_ua_override_on=*/false, /*ftn_for_devtools_override=*/nullptr);
 
   // Tack an 'Upgrade-Insecure-Requests' header to outgoing navigational
   // requests, as described in
@@ -269,7 +269,7 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
 
   resource_request->headers.SetHeader(
       net::HttpRequestHeaders::kUserAgent,
-      GetUserAgentValue(resource_request->headers));
+      GetUserAgentValue(prefetch_url_, web_contents));
   if (!base::FeatureList::IsEnabled(
           blink::features::kRemovePurposeHeaderForPrefetch)) {
     resource_request->headers.SetHeader(blink::kPurposeHeaderName,
@@ -344,14 +344,6 @@ bool SearchPrefetchRequest::StartPrefetchRequest(Profile* profile) {
   }
 
   prefetch_url_ = resource_request->url;
-
-  // It is quite common that a test does not specify the parameter.
-  if (!has_reported &&
-      !CheckPrefetchParameterExistence(resource_request->url) && !is_test) {
-    has_reported = true;
-    base::debug::DumpWithoutCrashing();
-  }
-
   SetSearchPrefetchStatus(SearchPrefetchStatus::kCanBeServed);
   streaming_url_loader_ =
       base::MakeRefCounted<StreamingSearchPrefetchURLLoader>(

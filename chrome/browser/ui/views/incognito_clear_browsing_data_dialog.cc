@@ -6,7 +6,6 @@
 
 #include "base/metrics/histogram_functions.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/views/accessibility/theme_tracking_non_accessible_image_view.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
@@ -76,6 +75,7 @@ void IncognitoClearBrowsingDataDialog::SetDialogForDefaultBubbleType() {
           .SetFontList(typography_provider.GetFont(
               views::style::CONTEXT_LABEL, views::style::STYLE_EMPHASIZED))
           .SetHorizontalAlignment(gfx::ALIGN_LEFT)
+          .SetMultiLine(true)
           .Build());
 
   AddChildView(
@@ -85,6 +85,7 @@ void IncognitoClearBrowsingDataDialog::SetDialogForDefaultBubbleType() {
           .SetFontList(typography_provider.GetFont(
               views::style::CONTEXT_LABEL, views::style::STYLE_SECONDARY))
           .SetHorizontalAlignment(gfx::ALIGN_LEFT)
+          .SetMultiLine(true)
           .Build());
 
   // Buttons

@@ -56,9 +56,6 @@ constexpr int kDefaultRichCardWidth = 360;
 constexpr int kMinimumRichCardHeight = 120;
 constexpr int kMaximumRichCardHeight = 464;
 
-// View dimensions.
-constexpr auto kMainViewInsets = gfx::Insets::TLBR(20, 20, 16, 20);
-
 // Buttons view.
 constexpr int kSettingsButtonSizeDip = 20;
 
@@ -316,7 +313,7 @@ void RichAnswersView::OnGoogleSearchLinkClicked() {
 }
 
 void RichAnswersView::UpdateBounds() {
-  auto display_bounds = display::Screen::GetScreen()
+  auto display_bounds = display::Screen::Get()
                             ->GetDisplayMatching(anchor_view_bounds_)
                             .work_area();
   int preferred_height = GetPreferredSize().height();

@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_UI_TABS_TAB_STRIP_API_ADAPTERS_TREE_BUILDER_WALKER_FACTORY_H_
 #define CHROME_BROWSER_UI_TABS_TAB_STRIP_API_ADAPTERS_TREE_BUILDER_WALKER_FACTORY_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/types/pass_key.h"
 #include "chrome/browser/ui/tabs/tab_strip_api/adapters/tree_builder/tab_collection_walker.h"
 #include "chrome/browser/ui/tabs/tab_strip_api/adapters/tree_builder/tab_walker.h"
-#include "chrome/browser/ui/tabs/tab_strip_api/tab_strip_api.mojom.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 
 namespace tabs_api {

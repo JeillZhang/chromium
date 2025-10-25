@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "base/auto_reset.h"
+#include "base/base64.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -24,6 +25,7 @@
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/metrics/field_trial_params.h"
 #include "base/no_destructor.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
@@ -81,9 +83,11 @@
 #include "net/storage_access_api/status.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/embedded_test_server/controllable_http_response.h"
+#include "net/test/embedded_test_server/default_handlers.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_connection.h"
 #include "net/test/embedded_test_server/http_response.h"
+#include "net/test/embedded_test_server/register_basic_auth_handler.h"
 #include "net/test/gtest_util.h"
 #include "net/test/quic_simple_test_server.h"
 #include "net/test/test_data_directory.h"
@@ -99,6 +103,8 @@
 #include "net/url_request/url_request_test_job.h"
 #include "net/url_request/url_request_test_util.h"
 #include "services/network/cookie_settings.h"
+#include "services/network/devtools_durable_msg_accounting_delegate.h"
+#include "services/network/devtools_durable_msg_collector.h"
 #include "services/network/file_opener_for_upload.h"
 #include "services/network/observer_wrapper.h"
 #include "services/network/public/cpp/cors/origin_access_list.h"
@@ -106,15 +112,16 @@
 #include "services/network/public/cpp/ip_address_space_util.h"
 #include "services/network/public/cpp/loading_params.h"
 #include "services/network/public/cpp/resource_request.h"
-#include "services/network/public/mojom/cookie_access_observer.mojom-forward.h"
 #include "services/network/public/mojom/cookie_access_observer.mojom.h"
 #include "services/network/public/mojom/early_hints.mojom.h"
 #include "services/network/public/mojom/http_raw_headers.mojom.h"
-#include "services/network/public/mojom/ip_address_space.mojom-shared.h"
+#include "services/network/public/mojom/integrity_algorithm.mojom.h"
+#include "services/network/public/mojom/integrity_metadata.mojom.h"
 #include "services/network/public/mojom/ip_address_space.mojom.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
 #include "services/network/public/mojom/trust_tokens.mojom-shared.h"
+#include "services/network/public/mojom/unencoded_digest.mojom.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
 #include "services/network/resource_scheduler/resource_scheduler_client.h"
 #include "services/network/shared_dictionary/shared_dictionary_access_checker.h"
@@ -137,6 +144,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+#include "url/scheme_host_port.h"
 
 namespace network {
 
@@ -653,6 +661,25 @@ MATCHER_P2(CookieOrLine, string, type, "") {
                                      result_listener);
 }
 
+// Mock implementation of durable message accounting delegate.
+class MockDurableMessageAccountingDelegate
+    : public DevtoolsDurableMessageAccountingDelegate {
+ public:
+  void WillAddBytes(DevtoolsDurableMessage& message,
+                    int64_t chunk_size) override {
+    size_ += chunk_size;
+  }
+
+  void WillRemoveBytes(DevtoolsDurableMessage& message) override {
+    size_ -= message.encoded_byte_size();
+  }
+
+  int64_t size() { return size_; }
+
+ private:
+  int64_t size_ = 0;
+};
+
 // Permits simply constructing a URLLoader object specifying only those options
 // which are non-default.
 // Replace:
@@ -689,7 +716,7 @@ struct URLLoaderOptions {
         ObserverWrapper(std::move(devtools_observer)),
         ObserverWrapper(std::move(device_bound_session_observer)),
         std::move(accept_ch_frame_observer), shared_storage_writable_eligible,
-        *shared_resource_checker);
+        *shared_resource_checker, std::move(maybe_durable_message));
   }
 
   int32_t options = mojom::kURLLoadOptionNone;
@@ -717,6 +744,7 @@ struct URLLoaderOptions {
   bool shared_storage_writable_eligible = false;
   CookieSettings cookie_settings;
   std::unique_ptr<SharedResourceChecker> shared_resource_checker;
+  base::WeakPtr<DevtoolsDurableMessage> maybe_durable_message;
 
  private:
   bool used = false;
@@ -784,8 +812,8 @@ class URLLoaderTest : public testing::Test {
     net::HttpNetworkSessionParams params;
     auto quic_context = std::make_unique<net::QuicContext>();
     quic_context->params()->origins_to_force_quic_on.insert(
-        net::HostPortPair(net::QuicSimpleTestServer::GetHost(),
-                          net::QuicSimpleTestServer::GetPort()));
+        url::SchemeHostPort("https", net::QuicSimpleTestServer::GetHost(),
+                            net::QuicSimpleTestServer::GetPort()));
     params.enable_quic = true;
     net::URLRequestContextBuilder context_builder;
     context_builder.set_http_network_session_params(params);
@@ -848,6 +876,8 @@ class URLLoaderTest : public testing::Test {
     request.trusted_params->client_security_state.Swap(
         &request_client_security_state_);
 
+    request.trusted_params->enabled_client_hints.swap(enabled_client_hints_);
+
     request.headers.MergeFrom(additional_headers_);
 
     request.target_ip_address_space = target_ip_address_space_;
@@ -902,6 +932,7 @@ class URLLoaderTest : public testing::Test {
     url_loader_options.accept_ch_frame_observer =
         accept_ch_frame_observer_ ? accept_ch_frame_observer_->Bind()
                                   : mojo::NullRemote();
+    url_loader_options.maybe_durable_message = std::move(durable_message_);
     url_loader = url_loader_options.MakeURLLoader(
         context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
         loader.BindNewPipeAndPassReceiver(), request, client_.CreateRemote());
@@ -1125,9 +1156,18 @@ class URLLoaderTest : public testing::Test {
       MockAcceptCHFrameObserver* observer) {
     accept_ch_frame_observer_ = observer;
   }
+  void set_enabled_client_hints_for_next_request(
+      std::optional<network::ResourceRequest::TrustedParams::EnabledClientHints>
+          enabled_client_hints) {
+    enabled_client_hints_.swap(enabled_client_hints);
+  }
   void set_cookie_setting_overrides(
       const net::CookieSettingOverrides& overrides) {
     cookie_setting_overrides_ = overrides;
+  }
+  void set_durable_message(
+      base::WeakPtr<DevtoolsDurableMessage> durable_message) {
+    durable_message_ = std::move(durable_message);
   }
 
   // Convenience methods after calling Load();
@@ -1274,6 +1314,7 @@ class URLLoaderTest : public testing::Test {
       mojom::IPAddressSpace::kUnknown;
   net::CookieSettingOverrides cookie_setting_overrides_;
   std::optional<int> partial_decoder_decoding_buffer_size_;
+  base::WeakPtr<DevtoolsDurableMessage> durable_message_;
 
   bool orb_enabled_ = false;
 
@@ -1284,6 +1325,8 @@ class URLLoaderTest : public testing::Test {
   TestURLLoaderClient client_;
 
   raw_ptr<MockAcceptCHFrameObserver> accept_ch_frame_observer_ = nullptr;
+  std::optional<network::ResourceRequest::TrustedParams::EnabledClientHints>
+      enabled_client_hints_;
 };
 
 class URLLoaderMockSocketTest : public URLLoaderTest {
@@ -1382,7 +1425,7 @@ TEST_F(URLLoaderTest, MatchingTargetIPAddressSpaceIsOk) {
   set_factory_client_security_state(std::move(client_security_state));
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
-  request.target_ip_address_space = mojom::IPAddressSpace::kLocal;
+  request.target_ip_address_space = mojom::IPAddressSpace::kLoopback;
 
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
@@ -1398,7 +1441,7 @@ TEST_F(URLLoaderTest, MismatchingTargetIPAddressSpaceWarnIsNotBlocked) {
   set_factory_client_security_state(std::move(client_security_state));
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
-  request.target_ip_address_space = mojom::IPAddressSpace::kPrivate;
+  request.target_ip_address_space = mojom::IPAddressSpace::kLocal;
 
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
@@ -1414,14 +1457,14 @@ TEST_F(URLLoaderTest, MismatchingTargetIPAddressSpaceIsBlocked) {
   set_factory_client_security_state(std::move(client_security_state));
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
-  request.target_ip_address_space = mojom::IPAddressSpace::kPrivate;
+  request.target_ip_address_space = mojom::IPAddressSpace::kLocal;
 
   EXPECT_EQ(net::ERR_FAILED, LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(mojom::CorsError::kInvalidPrivateNetworkAccess,
-                               mojom::IPAddressSpace::kPrivate,
-                               mojom::IPAddressSpace::kLocal)));
+                               mojom::IPAddressSpace::kLocal,
+                               mojom::IPAddressSpace::kLoopback)));
 }
 
 // This test verifies that when the request's `target_ip_address_space` does not
@@ -1452,14 +1495,14 @@ TEST_F(URLLoaderTest, MismatchingTargetIPAddressSpaceErrorCode) {
   ResourceRequest request = CreateResourceRequest("GET", url);
   request.request_initiator =
       url::Origin::Create(GURL("http://other-origin.test/"));
-  request.target_ip_address_space = mojom::IPAddressSpace::kPrivate;
+  request.target_ip_address_space = mojom::IPAddressSpace::kLocal;
 
   EXPECT_EQ(net::ERR_FAILED, LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(mojom::CorsError::kInvalidPrivateNetworkAccess,
-                               mojom::IPAddressSpace::kPrivate,
-                               mojom::IPAddressSpace::kLocal)));
+                               mojom::IPAddressSpace::kLocal,
+                               mojom::IPAddressSpace::kLoopback)));
 
   EXPECT_THAT(connected_callback_result_observer.results(),
               ElementsAre(IsError(net::ERR_INCONSISTENT_IP_ADDRESS_SPACE)));
@@ -1535,7 +1578,7 @@ TEST_F(URLLoaderTest, InconsistentIPAddressSpaceIsBlocked) {
                                // TODO(crbug.com/40208529): Expect
                                // `kPublic` here instead, for better debugging.
                                mojom::IPAddressSpace::kUnknown,
-                               mojom::IPAddressSpace::kLocal)));
+                               mojom::IPAddressSpace::kLoopback)));
 
   // The first connection was fine, but the second was inconsistent.
   EXPECT_THAT(connected_callback_result_observer.results(),
@@ -1544,8 +1587,8 @@ TEST_F(URLLoaderTest, InconsistentIPAddressSpaceIsBlocked) {
 }
 
 // These tests verify that requests from both secure and non-secure contexts to
-// an IP in the `kLocal` address space are only blocked when the policy is
-// `kBlock` and the initiator's address space is not `kLocal`.
+// an IP in the `kLoopback` address space are only blocked when the policy is
+// `kBlock` and the initiator's address space is not `kLoopback`.
 //
 // NOTE: These tests exercise the same codepath as
 // URLLoaderFakeTransportInfoTest below, except they use real URLRequestJob and
@@ -1553,7 +1596,7 @@ TEST_F(URLLoaderTest, InconsistentIPAddressSpaceIsBlocked) {
 // the whole stack. OTOH, using an embedded test server prevents us from mocking
 // out the endpoint IP address.
 
-TEST_F(URLLoaderTest, SecureUnknownToLocalBlock) {
+TEST_F(URLLoaderTest, SecureUnknownToLoopbackBlock) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kUnknown;
@@ -1561,14 +1604,14 @@ TEST_F(URLLoaderTest, SecureUnknownToLocalBlock) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(client()->completion_status().cors_error_status,
               Optional(InsecurePrivateNetworkCorsErrorStatus(
-                  mojom::IPAddressSpace::kLocal)));
+                  mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, SecureUnknownToLocalWarn) {
+TEST_F(URLLoaderTest, SecureUnknownToLoopbackWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kUnknown;
@@ -1581,7 +1624,7 @@ TEST_F(URLLoaderTest, SecureUnknownToLocalWarn) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecureUnknownToLocalAllow) {
+TEST_F(URLLoaderTest, SecureUnknownToLoopbackAllow) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kUnknown;
@@ -1594,7 +1637,7 @@ TEST_F(URLLoaderTest, SecureUnknownToLocalAllow) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecureUnknownToLocalPreflightWarn) {
+TEST_F(URLLoaderTest, SecureUnknownToLoopbackPreflightWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kUnknown;
@@ -1604,16 +1647,16 @@ TEST_F(URLLoaderTest, SecureUnknownToLocalPreflightWarn) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(
           mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
+          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, SecureUnknownToLocalPreflightBlock) {
+TEST_F(URLLoaderTest, SecureUnknownToLoopbackPreflightBlock) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kUnknown;
@@ -1623,30 +1666,30 @@ TEST_F(URLLoaderTest, SecureUnknownToLocalPreflightBlock) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(
           mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
+          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, NonSecureUnknownToLocalBlock) {
+TEST_F(URLLoaderTest, NonSecureUnknownToLoopbackBlock) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kUnknown;
   set_factory_client_security_state(std::move(client_security_state));
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(client()->completion_status().cors_error_status,
               Optional(InsecurePrivateNetworkCorsErrorStatus(
-                  mojom::IPAddressSpace::kLocal)));
+                  mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, NonSecureUnknownToLocalWarn) {
+TEST_F(URLLoaderTest, NonSecureUnknownToLoopbackWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kUnknown;
   client_security_state->private_network_request_policy =
@@ -1658,7 +1701,7 @@ TEST_F(URLLoaderTest, NonSecureUnknownToLocalWarn) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, NonSecureUnknownToLocalAllow) {
+TEST_F(URLLoaderTest, NonSecureUnknownToLoopbackAllow) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kUnknown;
   client_security_state->private_network_request_policy =
@@ -1670,7 +1713,7 @@ TEST_F(URLLoaderTest, NonSecureUnknownToLocalAllow) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, NonSecureUnknownToLocalPreflightWarn) {
+TEST_F(URLLoaderTest, NonSecureUnknownToLoopbackPreflightWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kUnknown;
   client_security_state->private_network_request_policy =
@@ -1679,16 +1722,16 @@ TEST_F(URLLoaderTest, NonSecureUnknownToLocalPreflightWarn) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(
           mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
+          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, NonSecureUnknownToLocalPreflightBlock) {
+TEST_F(URLLoaderTest, NonSecureUnknownToLoopbackPreflightBlock) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kUnknown;
   client_security_state->private_network_request_policy =
@@ -1697,16 +1740,16 @@ TEST_F(URLLoaderTest, NonSecureUnknownToLocalPreflightBlock) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(
           mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
+          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, SecurePublicToLocalBlock) {
+TEST_F(URLLoaderTest, SecurePublicToLoopbackBlock) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
@@ -1714,14 +1757,14 @@ TEST_F(URLLoaderTest, SecurePublicToLocalBlock) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(client()->completion_status().cors_error_status,
               Optional(InsecurePrivateNetworkCorsErrorStatus(
-                  mojom::IPAddressSpace::kLocal)));
+                  mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, SecurePublicToLocalWarn) {
+TEST_F(URLLoaderTest, SecurePublicToLoopbackWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
@@ -1734,7 +1777,7 @@ TEST_F(URLLoaderTest, SecurePublicToLocalWarn) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecurePublicToLocalAllow) {
+TEST_F(URLLoaderTest, SecurePublicToLoopbackAllow) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
@@ -1747,7 +1790,7 @@ TEST_F(URLLoaderTest, SecurePublicToLocalAllow) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecurePublicToLocalPreflightWarn) {
+TEST_F(URLLoaderTest, SecurePublicToLoopbackPreflightWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
@@ -1757,16 +1800,16 @@ TEST_F(URLLoaderTest, SecurePublicToLocalPreflightWarn) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(
           mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
+          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, SecurePublicToLocalPreflightBlock) {
+TEST_F(URLLoaderTest, SecurePublicToLoopbackPreflightBlock) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
@@ -1776,30 +1819,30 @@ TEST_F(URLLoaderTest, SecurePublicToLocalPreflightBlock) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(
           mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
+          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, NonSecurePublicToLocalBlock) {
+TEST_F(URLLoaderTest, NonSecurePublicToLoopbackBlock) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
   set_factory_client_security_state(std::move(client_security_state));
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(client()->completion_status().cors_error_status,
               Optional(InsecurePrivateNetworkCorsErrorStatus(
-                  mojom::IPAddressSpace::kLocal)));
+                  mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, NonSecurePublicToLocalWarn) {
+TEST_F(URLLoaderTest, NonSecurePublicToLoopbackWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
   client_security_state->private_network_request_policy =
@@ -1811,7 +1854,7 @@ TEST_F(URLLoaderTest, NonSecurePublicToLocalWarn) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, NonSecurePublicToLocalAllow) {
+TEST_F(URLLoaderTest, NonSecurePublicToLoopbackAllow) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
   client_security_state->private_network_request_policy =
@@ -1823,7 +1866,7 @@ TEST_F(URLLoaderTest, NonSecurePublicToLocalAllow) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, NonSecurePublicToLocalPreflightWarn) {
+TEST_F(URLLoaderTest, NonSecurePublicToLoopbackPreflightWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
   client_security_state->private_network_request_policy =
@@ -1832,16 +1875,16 @@ TEST_F(URLLoaderTest, NonSecurePublicToLocalPreflightWarn) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(
           mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
+          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, NonSecurePublicToLocalPreflightBlock) {
+TEST_F(URLLoaderTest, NonSecurePublicToLoopbackPreflightBlock) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
   client_security_state->private_network_request_policy =
@@ -1850,169 +1893,20 @@ TEST_F(URLLoaderTest, NonSecurePublicToLocalPreflightBlock) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(
           mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
+          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, SecurePrivateToLocalBlock) {
-  auto client_security_state = NewSecurityState();
-  client_security_state->is_web_secure_context = true;
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
-  set_factory_client_security_state(std::move(client_security_state));
+TEST_F(URLLoaderTest, SecureLocalToLoopbackDefault) {
+  // This test presumes that LNA enforcement is enabled.
+  base::test::ScopedFeatureList feature_list(
+      features::kLocalNetworkAccessChecks);
 
-  ResourceRequest request = CreateCrossOriginResourceRequest();
-
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
-            LoadRequest(request));
-  EXPECT_THAT(client()->completion_status().cors_error_status,
-              Optional(InsecurePrivateNetworkCorsErrorStatus(
-                  mojom::IPAddressSpace::kLocal)));
-}
-
-TEST_F(URLLoaderTest, SecurePrivateToLocalWarn) {
-  auto client_security_state = NewSecurityState();
-  client_security_state->is_web_secure_context = true;
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
-  client_security_state->private_network_request_policy =
-      mojom::PrivateNetworkRequestPolicy::kWarn;
-  set_factory_client_security_state(std::move(client_security_state));
-
-  ResourceRequest request = CreateCrossOriginResourceRequest();
-
-  EXPECT_EQ(net::OK, LoadRequest(request));
-}
-
-TEST_F(URLLoaderTest, SecurePrivateToLocalAllow) {
-  auto client_security_state = NewSecurityState();
-  client_security_state->is_web_secure_context = true;
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
-  client_security_state->private_network_request_policy =
-      mojom::PrivateNetworkRequestPolicy::kAllow;
-  set_factory_client_security_state(std::move(client_security_state));
-
-  ResourceRequest request = CreateCrossOriginResourceRequest();
-
-  EXPECT_EQ(net::OK, LoadRequest(request));
-}
-
-TEST_F(URLLoaderTest, SecurePrivateToLocalPreflightBlock) {
-  auto client_security_state = NewSecurityState();
-  client_security_state->is_web_secure_context = true;
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
-  client_security_state->private_network_request_policy =
-      mojom::PrivateNetworkRequestPolicy::kPreflightBlock;
-  set_factory_client_security_state(std::move(client_security_state));
-
-  ResourceRequest request = CreateCrossOriginResourceRequest();
-
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
-            LoadRequest(request));
-  EXPECT_THAT(
-      client()->completion_status().cors_error_status,
-      Optional(CorsErrorStatus(
-          mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
-}
-
-TEST_F(URLLoaderTest, SecurePrivateToLocalPreflightWarn) {
-  auto client_security_state = NewSecurityState();
-  client_security_state->is_web_secure_context = true;
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
-  client_security_state->private_network_request_policy =
-      mojom::PrivateNetworkRequestPolicy::kPreflightWarn;
-  set_factory_client_security_state(std::move(client_security_state));
-
-  ResourceRequest request = CreateCrossOriginResourceRequest();
-
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
-            LoadRequest(request));
-  EXPECT_THAT(
-      client()->completion_status().cors_error_status,
-      Optional(CorsErrorStatus(
-          mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
-}
-
-TEST_F(URLLoaderTest, NonSecurePrivateToLocalBlock) {
-  auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
-  set_factory_client_security_state(std::move(client_security_state));
-
-  ResourceRequest request = CreateCrossOriginResourceRequest();
-
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
-            LoadRequest(request));
-  EXPECT_THAT(client()->completion_status().cors_error_status,
-              Optional(InsecurePrivateNetworkCorsErrorStatus(
-                  mojom::IPAddressSpace::kLocal)));
-}
-
-TEST_F(URLLoaderTest, NonSecurePrivateToLocalWarn) {
-  auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
-  client_security_state->private_network_request_policy =
-      mojom::PrivateNetworkRequestPolicy::kWarn;
-  set_factory_client_security_state(std::move(client_security_state));
-
-  ResourceRequest request = CreateCrossOriginResourceRequest();
-
-  EXPECT_EQ(net::OK, LoadRequest(request));
-}
-
-TEST_F(URLLoaderTest, NonSecurePrivateToLocalAllow) {
-  auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
-  client_security_state->private_network_request_policy =
-      mojom::PrivateNetworkRequestPolicy::kAllow;
-  set_factory_client_security_state(std::move(client_security_state));
-
-  ResourceRequest request = CreateCrossOriginResourceRequest();
-
-  EXPECT_EQ(net::OK, LoadRequest(request));
-}
-
-TEST_F(URLLoaderTest, NonSecurePrivateToLocalPreflightBlock) {
-  auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
-  client_security_state->private_network_request_policy =
-      mojom::PrivateNetworkRequestPolicy::kPreflightBlock;
-  set_factory_client_security_state(std::move(client_security_state));
-
-  ResourceRequest request = CreateCrossOriginResourceRequest();
-
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
-            LoadRequest(request));
-  EXPECT_THAT(
-      client()->completion_status().cors_error_status,
-      Optional(CorsErrorStatus(
-          mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
-}
-
-TEST_F(URLLoaderTest, NonSecurePrivateToLocalPreflightWarn) {
-  auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
-  client_security_state->private_network_request_policy =
-      mojom::PrivateNetworkRequestPolicy::kPreflightWarn;
-  set_factory_client_security_state(std::move(client_security_state));
-
-  ResourceRequest request = CreateCrossOriginResourceRequest();
-
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
-            LoadRequest(request));
-  EXPECT_THAT(
-      client()->completion_status().cors_error_status,
-      Optional(CorsErrorStatus(
-          mojom::CorsError::kUnexpectedPrivateNetworkAccess,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
-}
-
-TEST_F(URLLoaderTest, SecureLocalToLocalBlock) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
@@ -2020,10 +1914,12 @@ TEST_F(URLLoaderTest, SecureLocalToLocalBlock) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
+  // Local and Loopback are currently merged and LNA checks are not
+  // enforced.
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecureLocalToLocalWarn) {
+TEST_F(URLLoaderTest, SecureLocalToLoopbackWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
@@ -2036,7 +1932,7 @@ TEST_F(URLLoaderTest, SecureLocalToLocalWarn) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecureLocalToLocalAllow) {
+TEST_F(URLLoaderTest, SecureLocalToLoopbackAllow) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
   client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
@@ -2049,10 +1945,87 @@ TEST_F(URLLoaderTest, SecureLocalToLocalAllow) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecureLocalToLocalPreflightBlock) {
+TEST_F(URLLoaderTest, NonSecureLocalToLoopbackDefault) {
+  // This test presumes that LNA enforcement is enabled.
+  base::test::ScopedFeatureList feature_list(
+      features::kLocalNetworkAccessChecks);
+
+  auto client_security_state = NewSecurityState();
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  set_factory_client_security_state(std::move(client_security_state));
+
+  ResourceRequest request = CreateCrossOriginResourceRequest();
+
+  // Local and Loopback are currently merged and LNA checks are not
+  // enforced.
+  EXPECT_EQ(net::OK, LoadRequest(request));
+}
+
+TEST_F(URLLoaderTest, NonSecureLocalToLoopbackWarn) {
+  auto client_security_state = NewSecurityState();
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->private_network_request_policy =
+      mojom::PrivateNetworkRequestPolicy::kWarn;
+  set_factory_client_security_state(std::move(client_security_state));
+
+  ResourceRequest request = CreateCrossOriginResourceRequest();
+
+  EXPECT_EQ(net::OK, LoadRequest(request));
+}
+
+TEST_F(URLLoaderTest, NonSecureLocalToLoopbackAllow) {
+  auto client_security_state = NewSecurityState();
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->private_network_request_policy =
+      mojom::PrivateNetworkRequestPolicy::kAllow;
+  set_factory_client_security_state(std::move(client_security_state));
+
+  ResourceRequest request = CreateCrossOriginResourceRequest();
+
+  EXPECT_EQ(net::OK, LoadRequest(request));
+}
+
+TEST_F(URLLoaderTest, SecureLoopbackToLoopbackBlock) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
+  set_factory_client_security_state(std::move(client_security_state));
+
+  ResourceRequest request = CreateCrossOriginResourceRequest();
+
+  EXPECT_EQ(net::OK, LoadRequest(request));
+}
+
+TEST_F(URLLoaderTest, SecureLoopbackToLoopbackWarn) {
+  auto client_security_state = NewSecurityState();
+  client_security_state->is_web_secure_context = true;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
+  client_security_state->private_network_request_policy =
+      mojom::PrivateNetworkRequestPolicy::kWarn;
+  set_factory_client_security_state(std::move(client_security_state));
+
+  ResourceRequest request = CreateCrossOriginResourceRequest();
+
+  EXPECT_EQ(net::OK, LoadRequest(request));
+}
+
+TEST_F(URLLoaderTest, SecureLoopbackToLoopbackAllow) {
+  auto client_security_state = NewSecurityState();
+  client_security_state->is_web_secure_context = true;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
+  client_security_state->private_network_request_policy =
+      mojom::PrivateNetworkRequestPolicy::kAllow;
+  set_factory_client_security_state(std::move(client_security_state));
+
+  ResourceRequest request = CreateCrossOriginResourceRequest();
+
+  EXPECT_EQ(net::OK, LoadRequest(request));
+}
+
+TEST_F(URLLoaderTest, SecureLoopbackToLoopbackPreflightBlock) {
+  auto client_security_state = NewSecurityState();
+  client_security_state->is_web_secure_context = true;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
   client_security_state->private_network_request_policy =
       mojom::PrivateNetworkRequestPolicy::kPreflightBlock;
   set_factory_client_security_state(std::move(client_security_state));
@@ -2062,10 +2035,10 @@ TEST_F(URLLoaderTest, SecureLocalToLocalPreflightBlock) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecureLocalToLocalPreflightWarn) {
+TEST_F(URLLoaderTest, SecureLoopbackToLoopbackPreflightWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->is_web_secure_context = true;
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
   client_security_state->private_network_request_policy =
       mojom::PrivateNetworkRequestPolicy::kPreflightWarn;
   set_factory_client_security_state(std::move(client_security_state));
@@ -2075,9 +2048,9 @@ TEST_F(URLLoaderTest, SecureLocalToLocalPreflightWarn) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, NonSecureLocalToLocalBlock) {
+TEST_F(URLLoaderTest, NonSecureLoopbackToLoopbackBlock) {
   auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
   set_factory_client_security_state(std::move(client_security_state));
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
@@ -2085,9 +2058,9 @@ TEST_F(URLLoaderTest, NonSecureLocalToLocalBlock) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, NonSecureLocalToLocalWarn) {
+TEST_F(URLLoaderTest, NonSecureLoopbackToLoopbackWarn) {
   auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
   client_security_state->private_network_request_policy =
       mojom::PrivateNetworkRequestPolicy::kWarn;
   set_factory_client_security_state(std::move(client_security_state));
@@ -2097,9 +2070,9 @@ TEST_F(URLLoaderTest, NonSecureLocalToLocalWarn) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, NonSecureLocalToLocalAllow) {
+TEST_F(URLLoaderTest, NonSecureLoopbackToLoopbackAllow) {
   auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
   client_security_state->private_network_request_policy =
       mojom::PrivateNetworkRequestPolicy::kAllow;
   set_factory_client_security_state(std::move(client_security_state));
@@ -2109,9 +2082,9 @@ TEST_F(URLLoaderTest, NonSecureLocalToLocalAllow) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, NonSecureLocalToLocalPreflightBlock) {
+TEST_F(URLLoaderTest, NonSecureLoopbackToLoopbackPreflightBlock) {
   auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
   client_security_state->private_network_request_policy =
       mojom::PrivateNetworkRequestPolicy::kPreflightBlock;
   set_factory_client_security_state(std::move(client_security_state));
@@ -2121,9 +2094,9 @@ TEST_F(URLLoaderTest, NonSecureLocalToLocalPreflightBlock) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, NonSecureLocalToLocalPreflightWarn) {
+TEST_F(URLLoaderTest, NonSecureLoopbackToLoopbackPreflightWarn) {
   auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
   client_security_state->private_network_request_policy =
       mojom::PrivateNetworkRequestPolicy::kPreflightWarn;
   set_factory_client_security_state(std::move(client_security_state));
@@ -2135,7 +2108,7 @@ TEST_F(URLLoaderTest, NonSecureLocalToLocalPreflightWarn) {
 
 TEST_F(URLLoaderTest, AddsNetLogEntryForPrivateNetworkAccessCheckSuccess) {
   auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
   set_factory_client_security_state(std::move(client_security_state));
 
   net::RecordingNetLogObserver net_log_observer;
@@ -2151,10 +2124,11 @@ TEST_F(URLLoaderTest, AddsNetLogEntryForPrivateNetworkAccessCheckSuccess) {
 
   const base::Value::Dict& params = entries[0].params;
 
-  EXPECT_THAT(params.FindString("client_address_space"), Pointee(Eq("local")));
+  EXPECT_THAT(params.FindString("client_address_space"),
+              Pointee(Eq("loopback")));
 
   EXPECT_THAT(params.FindString("resource_address_space"),
-              Pointee(Eq("local")));
+              Pointee(Eq("loopback")));
 
   EXPECT_THAT(params.FindString("result"),
               Pointee(Eq("allowed-no-less-public")));
@@ -2183,7 +2157,7 @@ TEST_F(URLLoaderTest, AddsNetLogEntryForPrivateNetworkAccessCheckFailure) {
   EXPECT_THAT(params.FindString("client_address_space"), Pointee(Eq("public")));
 
   EXPECT_THAT(params.FindString("resource_address_space"),
-              Pointee(Eq("local")));
+              Pointee(Eq("loopback")));
 
   EXPECT_THAT(params.FindString("result"),
               Pointee(Eq("blocked-by-policy-preflight-block")));
@@ -2214,7 +2188,7 @@ TEST_F(URLLoaderTest, AddsNetLogEntryForPrivateNetworkAccessCheckSameOrigin) {
   EXPECT_THAT(params.FindString("client_address_space"), Pointee(Eq("public")));
 
   EXPECT_THAT(params.FindString("resource_address_space"),
-              Pointee(Eq("local")));
+              Pointee(Eq("loopback")));
 
   EXPECT_THAT(params.FindString("result"),
               Pointee(Eq("allowed-potentially-trustworthy-same-origin")));
@@ -2240,7 +2214,7 @@ class TestLNAPermissionURLLoaderNetworkObserver
   bool called_ = false;
 };
 
-TEST_F(URLLoaderTest, SecurePublicToLocalPermissionDenied) {
+TEST_F(URLLoaderTest, SecurePublicToLoopbackPermissionDenied) {
   base::test::ScopedFeatureList feature_list(
       features::kLocalNetworkAccessChecks);
   auto client_security_state = NewSecurityState();
@@ -2256,16 +2230,16 @@ TEST_F(URLLoaderTest, SecurePublicToLocalPermissionDenied) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(
           mojom::CorsError::kLocalNetworkAccessPermissionDenied,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
+          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, SecurePublicToLocalPermissionGranted) {
+TEST_F(URLLoaderTest, SecurePublicToLoopbackPermissionGranted) {
   base::test::ScopedFeatureList feature_list(
       features::kLocalNetworkAccessChecks);
   auto client_security_state = NewSecurityState();
@@ -2286,14 +2260,18 @@ TEST_F(URLLoaderTest, SecurePublicToLocalPermissionGranted) {
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(
           mojom::CorsError::kLocalNetworkAccessPermissionDenied,
-          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLocal)));
+          mojom::IPAddressSpace::kUnknown, mojom::IPAddressSpace::kLoopback)));
 }
 
-TEST_F(URLLoaderTest, SecurePrivateToLocalLNAPermissionNotRequired) {
-  base::test::ScopedFeatureList feature_list(
-      features::kLocalNetworkAccessChecks);
+TEST_F(URLLoaderTest, SecureLocalToLoopbackLNAPermissionNotRequired) {
+  base::test::ScopedFeatureList feature_list;
+  base::FieldTrialParams params;
+  params["LocalNetworkAccessChecksWarn"] = "false";
+  feature_list.InitAndEnableFeatureWithParameters(
+      features::kLocalNetworkAccessChecks, params);
+
   auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
   client_security_state->private_network_request_policy =
       mojom::PrivateNetworkRequestPolicy::kPermissionBlock;
   set_factory_client_security_state(std::move(client_security_state));
@@ -2305,15 +2283,16 @@ TEST_F(URLLoaderTest, SecurePrivateToLocalLNAPermissionNotRequired) {
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
 
-  // Request not blocked because private -> local is not current an LNA request.
+  // Request not blocked because private -> loopback is not current an LNA
+  // request.
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecureLocalToLocalPermission) {
+TEST_F(URLLoaderTest, SecureLoopbackToLoopbackPermission) {
   base::test::ScopedFeatureList feature_list(
       features::kLocalNetworkAccessChecks);
   auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLoopback;
   client_security_state->private_network_request_policy =
       mojom::PrivateNetworkRequestPolicy::kPermissionBlock;
   set_factory_client_security_state(std::move(client_security_state));
@@ -2323,7 +2302,7 @@ TEST_F(URLLoaderTest, SecureLocalToLocalPermission) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecurePublicToLocalPermissionWarn) {
+TEST_F(URLLoaderTest, SecurePublicToLoopbackPermissionWarn) {
   auto client_security_state = NewSecurityState();
   client_security_state->ip_address_space = mojom::IPAddressSpace::kPublic;
   client_security_state->private_network_request_policy =
@@ -2335,9 +2314,9 @@ TEST_F(URLLoaderTest, SecurePublicToLocalPermissionWarn) {
   EXPECT_EQ(net::OK, LoadRequest(request));
 }
 
-TEST_F(URLLoaderTest, SecurePrivateToLocalPermissionWarn) {
+TEST_F(URLLoaderTest, SecureLocalToLoopbackPermissionWarn) {
   auto client_security_state = NewSecurityState();
-  client_security_state->ip_address_space = mojom::IPAddressSpace::kPrivate;
+  client_security_state->ip_address_space = mojom::IPAddressSpace::kLocal;
   client_security_state->private_network_request_policy =
       mojom::PrivateNetworkRequestPolicy::kPermissionWarn;
   set_factory_client_security_state(std::move(client_security_state));
@@ -2378,7 +2357,7 @@ TEST_F(URLLoaderTest, LocalNetworkAccessRequestWarning) {
             mojom::PrivateNetworkRequestPolicy::kPermissionWarn);
   EXPECT_EQ(state->is_web_secure_context, false);
   EXPECT_EQ(state->ip_address_space, mojom::IPAddressSpace::kPublic);
-  EXPECT_EQ(params.resource_address_space, mojom::IPAddressSpace::kLocal);
+  EXPECT_EQ(params.resource_address_space, mojom::IPAddressSpace::kLoopback);
   EXPECT_EQ(params.devtools_request_id, "fake-id");
   EXPECT_TRUE(params.is_warning);
   EXPECT_THAT(params.url.spec(), testing::HasSubstr("simple_page.html"));
@@ -2433,9 +2412,9 @@ class URLLoaderFakeTransportInfoTest
         return net::IPAddress();
       case mojom::IPAddressSpace::kPublic:
         return net::IPAddress(42, 0, 1, 2);
-      case mojom::IPAddressSpace::kPrivate:
-        return net::IPAddress(10, 0, 1, 2);
       case mojom::IPAddressSpace::kLocal:
+        return net::IPAddress(10, 0, 1, 2);
+      case mojom::IPAddressSpace::kLoopback:
         return net::IPAddress::IPv4Localhost();
     }
   }
@@ -2459,7 +2438,11 @@ class URLLoaderFakeTransportInfoTest
 // appropriately when they go from a less-private address space to a
 // more-private address space or not. The test is parameterized by
 // (client address space, server address space, expected result) tuple.
-TEST_P(URLLoaderFakeTransportInfoTest, PrivateNetworkRequestLoadsCorrectly) {
+TEST_P(URLLoaderFakeTransportInfoTest, LocalNetworkRequestLoadsCorrectly) {
+  // This test presumes that LNA enforcement is enabled.
+  base::test::ScopedFeatureList feature_list(
+      features::kLocalNetworkAccessChecks);
+
   const auto params = GetParam();
 
   auto client_security_state = NewSecurityState();
@@ -2477,7 +2460,7 @@ TEST_P(URLLoaderFakeTransportInfoTest, PrivateNetworkRequestLoadsCorrectly) {
   if (params.expected_result != net::OK) {
     if (params.expected_result !=
         net::
-            ERR_CACHED_IP_ADDRESS_SPACE_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_POLICY) {
+            ERR_CACHED_IP_ADDRESS_SPACE_BLOCKED_BY_LOCAL_NETWORK_ACCESS_POLICY) {
       // CORS error status shouldn't be set when the cache entry was blocked by
       // private network access policy because we'll retry fetching from the
       // network.
@@ -2506,7 +2489,7 @@ TEST_F(URLLoaderTest, PrivateNetworkRequestPolicyOnRequest) {
       mojom::PrivateNetworkRequestPolicy::kPreflightBlock;
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
-  request.target_ip_address_space = mojom::IPAddressSpace::kPrivate;
+  request.target_ip_address_space = mojom::IPAddressSpace::kLocal;
   request.trusted_params.emplace();
   request.trusted_params->client_security_state =
       std::move(client_security_state);
@@ -2515,8 +2498,8 @@ TEST_F(URLLoaderTest, PrivateNetworkRequestPolicyOnRequest) {
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(mojom::CorsError::kInvalidPrivateNetworkAccess,
-                               mojom::IPAddressSpace::kPrivate,
-                               mojom::IPAddressSpace::kLocal)));
+                               mojom::IPAddressSpace::kLocal,
+                               mojom::IPAddressSpace::kLoopback)));
 }
 
 // Test the case where a PrivateNetworkRequestPolicy is set on the request via
@@ -2537,7 +2520,7 @@ TEST_F(URLLoaderTest, PrivateNetworkRequestPolicyOnRequestAndFactory) {
       mojom::PrivateNetworkRequestPolicy::kPreflightBlock;
 
   ResourceRequest request = CreateCrossOriginResourceRequest();
-  request.target_ip_address_space = mojom::IPAddressSpace::kPrivate;
+  request.target_ip_address_space = mojom::IPAddressSpace::kLocal;
   request.trusted_params.emplace();
   request.trusted_params->client_security_state =
       std::move(client_security_state);
@@ -2548,8 +2531,8 @@ TEST_F(URLLoaderTest, PrivateNetworkRequestPolicyOnRequestAndFactory) {
   EXPECT_THAT(
       client()->completion_status().cors_error_status,
       Optional(CorsErrorStatus(mojom::CorsError::kInvalidPrivateNetworkAccess,
-                               mojom::IPAddressSpace::kPrivate,
-                               mojom::IPAddressSpace::kLocal)));
+                               mojom::IPAddressSpace::kLocal,
+                               mojom::IPAddressSpace::kLoopback)));
 }
 
 // Lists all combinations we want to test in URLLoaderFakeTransportInfoTest.
@@ -2570,15 +2553,15 @@ constexpr URLLoaderFakeTransportInfoTestParams
         },
         {
             mojom::IPAddressSpace::kUnknown,
-            mojom::IPAddressSpace::kPrivate,
+            mojom::IPAddressSpace::kLocal,
             net::TransportType::kDirect,
-            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+            net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
         },
         {
             mojom::IPAddressSpace::kUnknown,
-            mojom::IPAddressSpace::kLocal,
+            mojom::IPAddressSpace::kLoopback,
             net::TransportType::kDirect,
-            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+            net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
         },
         // Client: kPublic
         {
@@ -2595,40 +2578,15 @@ constexpr URLLoaderFakeTransportInfoTestParams
         },
         {
             mojom::IPAddressSpace::kPublic,
-            mojom::IPAddressSpace::kPrivate,
+            mojom::IPAddressSpace::kLocal,
             net::TransportType::kDirect,
-            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+            net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
         },
         {
             mojom::IPAddressSpace::kPublic,
-            mojom::IPAddressSpace::kLocal,
+            mojom::IPAddressSpace::kLoopback,
             net::TransportType::kDirect,
-            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
-        },
-        // Client: kPrivate
-        {
-            mojom::IPAddressSpace::kPrivate,
-            mojom::IPAddressSpace::kUnknown,
-            net::TransportType::kDirect,
-            net::OK,
-        },
-        {
-            mojom::IPAddressSpace::kPrivate,
-            mojom::IPAddressSpace::kPublic,
-            net::TransportType::kDirect,
-            net::OK,
-        },
-        {
-            mojom::IPAddressSpace::kPrivate,
-            mojom::IPAddressSpace::kPrivate,
-            net::TransportType::kDirect,
-            net::OK,
-        },
-        {
-            mojom::IPAddressSpace::kPrivate,
-            mojom::IPAddressSpace::kLocal,
-            net::TransportType::kDirect,
-            net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+            net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
         },
         // Client: kLocal
         {
@@ -2645,20 +2603,53 @@ constexpr URLLoaderFakeTransportInfoTestParams
         },
         {
             mojom::IPAddressSpace::kLocal,
-            mojom::IPAddressSpace::kPrivate,
+            mojom::IPAddressSpace::kLocal,
             net::TransportType::kDirect,
             net::OK,
         },
         {
             mojom::IPAddressSpace::kLocal,
+            mojom::IPAddressSpace::kLoopback,
+            net::TransportType::kDirect,
+            // Local and Loopback are currently merged and LNA checks are not
+            // enforced.
+            net::OK,
+        },
+        // Client: kLoopback
+        {
+            mojom::IPAddressSpace::kLoopback,
+            mojom::IPAddressSpace::kUnknown,
+            net::TransportType::kDirect,
+            net::OK,
+        },
+        {
+            mojom::IPAddressSpace::kLoopback,
+            mojom::IPAddressSpace::kPublic,
+            net::TransportType::kDirect,
+            net::OK,
+        },
+        {
+            mojom::IPAddressSpace::kLoopback,
             mojom::IPAddressSpace::kLocal,
+            net::TransportType::kDirect,
+            net::OK,
+        },
+        {
+            mojom::IPAddressSpace::kLoopback,
+            mojom::IPAddressSpace::kLoopback,
             net::TransportType::kDirect,
             net::OK,
         },
         // TransportType: kProxied
         {
             mojom::IPAddressSpace::kUnknown,
-            mojom::IPAddressSpace::kLocal,
+            mojom::IPAddressSpace::kLoopback,
+            net::TransportType::kProxied,
+            net::OK,
+        },
+        {
+            mojom::IPAddressSpace::kPublic,
+            mojom::IPAddressSpace::kLoopback,
             net::TransportType::kProxied,
             net::OK,
         },
@@ -2669,21 +2660,21 @@ constexpr URLLoaderFakeTransportInfoTestParams
             net::OK,
         },
         {
-            mojom::IPAddressSpace::kPublic,
-            mojom::IPAddressSpace::kPrivate,
-            net::TransportType::kProxied,
-            net::OK,
-        },
-        {
-            mojom::IPAddressSpace::kPrivate,
             mojom::IPAddressSpace::kLocal,
+            mojom::IPAddressSpace::kLoopback,
             net::TransportType::kProxied,
             net::OK,
         },
         // TransportType: kCachedFromProxy
         {
             mojom::IPAddressSpace::kUnknown,
-            mojom::IPAddressSpace::kLocal,
+            mojom::IPAddressSpace::kLoopback,
+            net::TransportType::kCachedFromProxy,
+            net::OK,
+        },
+        {
+            mojom::IPAddressSpace::kPublic,
+            mojom::IPAddressSpace::kLoopback,
             net::TransportType::kCachedFromProxy,
             net::OK,
         },
@@ -2694,42 +2685,37 @@ constexpr URLLoaderFakeTransportInfoTestParams
             net::OK,
         },
         {
-            mojom::IPAddressSpace::kPublic,
-            mojom::IPAddressSpace::kPrivate,
-            net::TransportType::kCachedFromProxy,
-            net::OK,
-        },
-        {
-            mojom::IPAddressSpace::kPrivate,
             mojom::IPAddressSpace::kLocal,
+            mojom::IPAddressSpace::kLoopback,
             net::TransportType::kCachedFromProxy,
             net::OK,
         },
-        // TransportType: kCached. We only test a local target for brevity.
+        // TransportType: kCached. We only test a loopback target for brevity.
         {
             mojom::IPAddressSpace::kUnknown,
-            mojom::IPAddressSpace::kLocal,
+            mojom::IPAddressSpace::kLoopback,
             net::TransportType::kCached,
             net::
-                ERR_CACHED_IP_ADDRESS_SPACE_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_POLICY,
+                ERR_CACHED_IP_ADDRESS_SPACE_BLOCKED_BY_LOCAL_NETWORK_ACCESS_POLICY,
         },
         {
             mojom::IPAddressSpace::kPublic,
-            mojom::IPAddressSpace::kLocal,
+            mojom::IPAddressSpace::kLoopback,
             net::TransportType::kCached,
             net::
-                ERR_CACHED_IP_ADDRESS_SPACE_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_POLICY,
-        },
-        {
-            mojom::IPAddressSpace::kPrivate,
-            mojom::IPAddressSpace::kLocal,
-            net::TransportType::kCached,
-            net::
-                ERR_CACHED_IP_ADDRESS_SPACE_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_POLICY,
+                ERR_CACHED_IP_ADDRESS_SPACE_BLOCKED_BY_LOCAL_NETWORK_ACCESS_POLICY,
         },
         {
             mojom::IPAddressSpace::kLocal,
-            mojom::IPAddressSpace::kLocal,
+            mojom::IPAddressSpace::kLoopback,
+            net::TransportType::kCached,
+            // Local and Loopback are currently merged and LNA checks are not
+            // enforced.
+            net::OK,
+        },
+        {
+            mojom::IPAddressSpace::kLoopback,
+            mojom::IPAddressSpace::kLoopback,
             net::TransportType::kCached,
             net::OK,
         },
@@ -2978,6 +2964,232 @@ TEST_F(URLLoaderTest, CompressedResponseSniffMimeClienteSideDecoding) {
   EXPECT_THAT(client()->response_head()->client_side_content_decoding_types,
               ElementsAre(net::SourceStreamType::kGzip));
   EXPECT_EQ(body, ReadTestFile("content-sniffer-test0.html.gz"));
+}
+
+// Tests that URLLoader writes into given DurableMessage object when configured.
+TEST_F(URLLoaderTest, WritesToDurableMessage) {
+  MockDurableMessageAccountingDelegate accounting_delegate;
+  DevtoolsDurableMessage durable_message("test", accounting_delegate);
+  set_durable_message(durable_message.GetWeakPtr());
+  std::string body;
+  constexpr int kGzippedBodyLength = 60;
+  EXPECT_EQ(net::OK, Load(test_server()->GetURL("/hello.html.gz"), &body));
+  EXPECT_EQ(body, ReadTestFile("hello.html"));
+  EXPECT_TRUE(durable_message.is_complete());
+  ASSERT_EQ(accounting_delegate.size(), kGzippedBodyLength);
+  ASSERT_EQ(durable_message.encoded_byte_size(),
+            static_cast<size_t>(kGzippedBodyLength));
+  ASSERT_EQ(durable_message.byte_size_for_testing(), body.size());
+  // Retrieve the stored body and verify that it is accurate.
+  EXPECT_EQ(durable_message.Retrieve(), base::as_byte_span(body));
+}
+
+TEST_F(URLLoaderTest, DurableMessageWorksWithMimeSniffing) {
+  MockDurableMessageAccountingDelegate accounting_delegate;
+  DevtoolsDurableMessage durable_message("test", accounting_delegate);
+  set_durable_message(durable_message.GetWeakPtr());
+  constexpr int kGzippedBodyLength = 142;
+  set_sniff();
+  set_client_side_content_decoding_enabled();
+  std::string encoded_body;
+  EXPECT_EQ(net::OK,
+            Load(test_server()->GetURL("/content-sniffer-test0.html.gz"),
+                 &encoded_body));
+  EXPECT_THAT(client()->response_head()->client_side_content_decoding_types,
+              ElementsAre(net::SourceStreamType::kGzip));
+  EXPECT_TRUE(did_mime_sniff());
+  EXPECT_THAT(durable_message.GetClientDecodingTypesForTesting(),
+              ElementsAre(net::SourceStreamType::kGzip));
+  EXPECT_EQ(encoded_body, ReadTestFile("content-sniffer-test0.html.gz"));
+  EXPECT_TRUE(durable_message.is_complete());
+  ASSERT_EQ(accounting_delegate.size(), kGzippedBodyLength);
+  ASSERT_EQ(durable_message.encoded_byte_size(),
+            static_cast<size_t>(kGzippedBodyLength));
+  ASSERT_EQ(durable_message.byte_size_for_testing(), encoded_body.size());
+  // Retrieve the stored body and verify that it is accurate and contents are in
+  // decoded form.
+  mojo_base::BigBuffer buffer = durable_message.Retrieve();
+  auto decoded_body = ReadTestFile("content-sniffer-test0.html");
+  EXPECT_EQ(buffer.size(), decoded_body.size());
+  EXPECT_EQ(buffer, base::as_byte_span(decoded_body));
+}
+
+// Tests a large response body, which would result in multiple asynchronous
+// chunks being written into the configured durable message.
+TEST_F(URLLoaderMockSocketTest, DurableMessageWorksWithLotsOfData) {
+  std::string response_body;
+  constexpr int kReadSize = 1024;
+  response_body.reserve(5 * kReadSize * kReadSize);
+  // Using a repeating patter with a length that's prime is more likely to spot
+  // out of order or repeated chunks of data.
+  while (response_body.size() < 5 * kReadSize * kReadSize) {
+    response_body.append("foppity");
+  }
+  const auto compressed = net::CompressGzip(response_body);
+  int seq = 1;
+  std::vector<net::MockRead> reads;
+  reads.emplace_back(net::ASYNC, /*seq=*/seq++,
+                     "HTTP/1.1 200 OK\r\n"
+                     "Content-Encoding: gzip\r\n\r\n");
+  for (size_t i = 0; i < compressed.size(); i += kReadSize) {
+    reads.emplace_back(net::ASYNC,
+                       base::as_string_view(compressed).substr(i, kReadSize),
+                       /*result=*/0, /*seq=*/seq++);
+  }
+  reads.emplace_back(net::ASYNC, net::OK, /*seq=*/seq);
+  net::SequencedSocketData socket_data_connect(kAsyncMockConnect, {}, {});
+  net::SequencedSocketData socket_data_reads_writes(reads, kOriginTestWrites);
+  socket_data_reads_writes.set_receive_buffer_size(1);
+  socket_factory_.AddSocketDataProvider(&socket_data_connect);
+  socket_factory_.AddSocketDataProvider(&socket_data_reads_writes);
+  ResourceRequest request =
+      CreateResourceRequest("GET", GURL("http://origin.test/"));
+
+  MockDurableMessageAccountingDelegate accounting_delegate;
+  DevtoolsDurableMessage durable_message("test", accounting_delegate);
+  set_durable_message(durable_message.GetWeakPtr());
+  set_sniff();
+  // Set the flag for ClientSideContentDecoding.
+  request.client_side_content_decoding_enabled = true;
+
+  std::string body;
+  EXPECT_EQ(net::OK, LoadRequest(request, &body));
+  EXPECT_TRUE(did_mime_sniff());
+  EXPECT_EQ(mime_type(), "text/plain");
+  EXPECT_THAT(body, base::as_string_view(compressed));
+  EXPECT_THAT(client()->response_head()->client_side_content_decoding_types,
+              ElementsAre(net::SourceStreamType::kGzip));
+  EXPECT_TRUE(durable_message.is_complete());
+  size_t compressed_size = compressed.size();
+  ASSERT_EQ(accounting_delegate.size(), static_cast<int64_t>(compressed_size));
+  ASSERT_EQ(durable_message.encoded_byte_size(), compressed_size);
+  ASSERT_EQ(durable_message.byte_size_for_testing(), compressed_size);
+  EXPECT_EQ(durable_message.Retrieve(), base::as_byte_span(response_body));
+}
+
+// Tests that client side decoding types are written into DurableMessage and the
+// body is decoded on retrieval.
+TEST_F(URLLoaderTest, DurableMessagePerformsClientSideDecodingGzip) {
+  MockDurableMessageAccountingDelegate accounting_delegate;
+  DevtoolsDurableMessage durable_message("test", accounting_delegate);
+  set_durable_message(durable_message.GetWeakPtr());
+  constexpr size_t kGzippedBodyLength = 60;
+  set_sniff();
+  set_client_side_content_decoding_enabled();
+  std::string encoded_body;
+  EXPECT_EQ(net::OK,
+            Load(test_server()->GetURL("/hello.html.gz"), &encoded_body));
+  EXPECT_THAT(client()->response_head()->client_side_content_decoding_types,
+              ElementsAre(net::SourceStreamType::kGzip));
+  EXPECT_THAT(durable_message.GetClientDecodingTypesForTesting(),
+              ElementsAre(net::SourceStreamType::kGzip));
+  EXPECT_TRUE(durable_message.is_complete());
+  ASSERT_EQ(accounting_delegate.size(),
+            static_cast<int64_t>(kGzippedBodyLength));
+  ASSERT_EQ(durable_message.encoded_byte_size(), kGzippedBodyLength);
+  // Retrieve the stored body and verify that it is accurate and contents are in
+  // decoded form.
+  mojo_base::BigBuffer buffer = durable_message.Retrieve();
+  auto decoded_body = ReadTestFile("hello.html");
+  EXPECT_EQ(buffer.size(), decoded_body.size());
+  EXPECT_EQ(buffer, base::as_byte_span(decoded_body));
+}
+
+// Tests that URLLoader still completes the load without errors/crashing, but
+// does not write into the DurableMessage object when the original message has
+// been evicted.
+TEST_F(URLLoaderTest, DoesNotWriteToDurableMessageWithEvictedMessage) {
+  MockDurableMessageAccountingDelegate accounting_delegate;
+  std::unique_ptr<DevtoolsDurableMessage> durable_message =
+      std::make_unique<DevtoolsDurableMessage>("test", accounting_delegate);
+  set_durable_message(durable_message->GetWeakPtr());
+
+  // Simulate eviction of the durable message.
+  durable_message.reset();
+
+  std::string body;
+  EXPECT_EQ(net::OK, Load(test_server()->GetURL("/hello.html.gz"), &body));
+  EXPECT_EQ(body, ReadTestFile("hello.html"));
+  ASSERT_EQ(accounting_delegate.size(), 0);
+}
+
+// Tests Durable Message incomplete read scenarios.
+
+TEST_F(URLLoaderTest, ErrorBeforeHeadersWritesIncompleteDurableMessage) {
+  MockDurableMessageAccountingDelegate accounting_delegate;
+  DevtoolsDurableMessage durable_message("test", accounting_delegate);
+  set_durable_message(durable_message.GetWeakPtr());
+  EXPECT_EQ(net::ERR_EMPTY_RESPONSE,
+            Load(test_server()->GetURL("/close-socket"), nullptr));
+  EXPECT_FALSE(client()->response_body().is_valid());
+  EXPECT_FALSE(durable_message.is_complete());
+  ASSERT_EQ(accounting_delegate.size(), 0);
+}
+
+TEST_F(URLLoaderTest, SyncErrorWhileReadingBodyWritesDurableMessage) {
+  MockDurableMessageAccountingDelegate accounting_delegate;
+  DevtoolsDurableMessage durable_message("test", accounting_delegate);
+  set_durable_message(durable_message.GetWeakPtr());
+  std::string body;
+  EXPECT_EQ(net::ERR_FAILED,
+            Load(net::URLRequestFailedJob::GetMockHttpUrlWithFailurePhase(
+                     net::URLRequestFailedJob::READ_SYNC, net::ERR_FAILED),
+                 &body));
+  EXPECT_EQ("", body);
+  EXPECT_TRUE(durable_message.is_complete());
+  ASSERT_EQ(accounting_delegate.size(), 0);
+}
+
+TEST_F(URLLoaderTest, AsyncErrorWhileReadingBodyWritesDurableMessage) {
+  MockDurableMessageAccountingDelegate accounting_delegate;
+  DevtoolsDurableMessage durable_message("test", accounting_delegate);
+  set_durable_message(durable_message.GetWeakPtr());
+  std::string body;
+  EXPECT_EQ(net::ERR_FAILED,
+            Load(net::URLRequestFailedJob::GetMockHttpUrlWithFailurePhase(
+                     net::URLRequestFailedJob::READ_ASYNC, net::ERR_FAILED),
+                 &body));
+  EXPECT_EQ("", body);
+  EXPECT_TRUE(durable_message.is_complete());
+  ASSERT_EQ(accounting_delegate.size(), 0);
+}
+
+TEST_F(URLLoaderTest,
+       SyncErrorWhileReadingBodyAfterBytesReceivedWritesDurableMessage) {
+  MockDurableMessageAccountingDelegate accounting_delegate;
+  DevtoolsDurableMessage durable_message("test", accounting_delegate);
+  set_durable_message(durable_message.GetWeakPtr());
+
+  const std::string response_body("Foo.");
+  std::list<std::string> packets = {response_body};
+  AddMultipleWritesInterceptor(packets, net::ERR_ACCESS_DENIED,
+                               false /*async_reads*/);
+  std::string body_readback;
+  EXPECT_EQ(net::ERR_ACCESS_DENIED,
+            Load(MultipleWritesInterceptor::GetURL(), &body_readback));
+  EXPECT_EQ(response_body, body_readback);
+  EXPECT_TRUE(durable_message.is_complete());
+  ASSERT_GT(accounting_delegate.size(), 0);
+}
+
+TEST_F(
+    URLLoaderTest,
+    AsyncErrorWhileReadingBodyAfterBytesReceivedWritesIncompleteDurableMessage) {
+  MockDurableMessageAccountingDelegate accounting_delegate;
+  DevtoolsDurableMessage durable_message("test", accounting_delegate);
+  set_durable_message(durable_message.GetWeakPtr());
+  const std::string kBody("Foo.");
+
+  std::list<std::string> packets;
+  packets.push_back(kBody);
+  AddMultipleWritesInterceptor(packets, net::ERR_ACCESS_DENIED,
+                               true /*async_reads*/);
+  std::string body;
+  EXPECT_EQ(net::ERR_ACCESS_DENIED,
+            Load(MultipleWritesInterceptor::GetURL(), &body));
+  EXPECT_EQ(kBody, body);
+  EXPECT_TRUE(durable_message.is_complete());
+  ASSERT_GT(accounting_delegate.size(), 0);
 }
 
 class NeverFinishedBodyHttpResponse : public net::test_server::HttpResponse {
@@ -3483,7 +3695,8 @@ TEST_F(URLLoaderTest, UploadChunkedDataPipeNotAllowHTTP1) {
       ResourceRequestBody::ReadOnlyOnce(false));
   set_request_body(std::move(resource_request_body));
 
-  EXPECT_EQ(net::ERR_H2_OR_QUIC_REQUIRED, Load(test_server()->GetURL("/echo")));
+  EXPECT_EQ(net::ERR_ALPN_NEGOTIATION_FAILED,
+            Load(test_server()->GetURL("/echo")));
 }
 
 // Tests a request body with ReadOnceStream.
@@ -4329,11 +4542,12 @@ MATCHER_P3(MatchesTrustTokenDetails, origin, issuer, blocked, "") {
       arg, result_listener);
 }
 
-// Responds certificate request with previously set responses.
-class ClientCertAuthObserver : public TestURLLoaderNetworkObserver {
+// Responds certificate request with previously set responses and to HTTP auth
+// challenges as well.
+class ClientCertAndHttpAuthObserver : public TestURLLoaderNetworkObserver {
  public:
-  ClientCertAuthObserver() = default;
-  ~ClientCertAuthObserver() override = default;
+  ClientCertAndHttpAuthObserver() = default;
+  ~ClientCertAndHttpAuthObserver() override = default;
 
   enum class CertificateResponse {
     INVALID = -1,
@@ -4349,6 +4563,7 @@ class ClientCertAuthObserver : public TestURLLoaderNetworkObserver {
     NO_CREDENTIALS,
     CORRECT_CREDENTIALS,
     INCORRECT_CREDENTIALS_THEN_CORRECT_ONES,
+    CORRECT_PROXY_CREDENTIALS,
   };
   void OnAuthRequired(
       const std::optional<base::UnguessableToken>& window_id,
@@ -4364,11 +4579,16 @@ class ClientCertAuthObserver : public TestURLLoaderNetworkObserver {
         auth_credentials_ = std::nullopt;
         break;
       case CredentialsResponse::CORRECT_CREDENTIALS:
+        ASSERT_FALSE(auth_info.is_proxy);
         auth_credentials_ = net::AuthCredentials(u"USER", u"PASS");
         break;
       case CredentialsResponse::INCORRECT_CREDENTIALS_THEN_CORRECT_ONES:
         auth_credentials_ = net::AuthCredentials(u"USER", u"FAIL");
         credentials_response_ = CredentialsResponse::CORRECT_CREDENTIALS;
+        break;
+      case CredentialsResponse::CORRECT_PROXY_CREDENTIALS:
+        ASSERT_TRUE(auth_info.is_proxy);
+        auth_credentials_ = net::AuthCredentials(u"PROXY_USER", u"PROXY_PASS");
         break;
     }
     mojo::Remote<mojom::AuthChallengeResponder> auth_challenge_responder_remote(
@@ -4464,9 +4684,9 @@ class ClientCertAuthObserver : public TestURLLoaderNetworkObserver {
 };
 
 TEST_F(URLLoaderTest, SetAuth) {
-  ClientCertAuthObserver client_auth_observer;
+  ClientCertAndHttpAuthObserver client_auth_observer;
   client_auth_observer.set_credentials_response(
-      ClientCertAuthObserver::CredentialsResponse::CORRECT_CREDENTIALS);
+      ClientCertAndHttpAuthObserver::CredentialsResponse::CORRECT_CREDENTIALS);
 
   ResourceRequest request =
       CreateResourceRequest("GET", test_server()->GetURL(kTestAuthURL));
@@ -4501,9 +4721,9 @@ TEST_F(URLLoaderTest, SetAuth) {
 }
 
 TEST_F(URLLoaderTest, CancelAuth) {
-  ClientCertAuthObserver client_auth_observer;
+  ClientCertAndHttpAuthObserver client_auth_observer;
   client_auth_observer.set_credentials_response(
-      ClientCertAuthObserver::CredentialsResponse::NO_CREDENTIALS);
+      ClientCertAndHttpAuthObserver::CredentialsResponse::NO_CREDENTIALS);
 
   ResourceRequest request =
       CreateResourceRequest("GET", test_server()->GetURL(kTestAuthURL));
@@ -4537,9 +4757,9 @@ TEST_F(URLLoaderTest, CancelAuth) {
 }
 
 TEST_F(URLLoaderTest, TwoChallenges) {
-  ClientCertAuthObserver client_auth_observer;
+  ClientCertAndHttpAuthObserver client_auth_observer;
   client_auth_observer.set_credentials_response(
-      ClientCertAuthObserver::CredentialsResponse::
+      ClientCertAndHttpAuthObserver::CredentialsResponse::
           INCORRECT_CREDENTIALS_THEN_CORRECT_ONES);
 
   ResourceRequest request =
@@ -4576,9 +4796,9 @@ TEST_F(URLLoaderTest, TwoChallenges) {
 TEST_F(URLLoaderTest, NoAuthRequiredForFavicon) {
   constexpr char kFaviconTestPage[] = "/has_favicon.html";
 
-  ClientCertAuthObserver client_auth_observer;
+  ClientCertAndHttpAuthObserver client_auth_observer;
   client_auth_observer.set_credentials_response(
-      ClientCertAuthObserver::CredentialsResponse::CORRECT_CREDENTIALS);
+      ClientCertAndHttpAuthObserver::CredentialsResponse::CORRECT_CREDENTIALS);
 
   ResourceRequest request =
       CreateResourceRequest("GET", test_server()->GetURL(kFaviconTestPage));
@@ -4613,9 +4833,9 @@ TEST_F(URLLoaderTest, NoAuthRequiredForFavicon) {
 }
 
 TEST_F(URLLoaderTest, HttpAuthResponseHeadersAvailable) {
-  ClientCertAuthObserver client_auth_observer;
+  ClientCertAndHttpAuthObserver client_auth_observer;
   client_auth_observer.set_credentials_response(
-      ClientCertAuthObserver::CredentialsResponse::CORRECT_CREDENTIALS);
+      ClientCertAndHttpAuthObserver::CredentialsResponse::CORRECT_CREDENTIALS);
 
   ResourceRequest request =
       CreateResourceRequest("GET", test_server()->GetURL(kTestAuthURL));
@@ -4642,6 +4862,124 @@ TEST_F(URLLoaderTest, HttpAuthResponseHeadersAvailable) {
       client_auth_observer.last_seen_response_headers();
   ASSERT_TRUE(auth_required_headers);
   EXPECT_EQ(auth_required_headers->response_code(), 401);
+}
+
+// Tests that `did_use_server_http_auth` is present on the response when a
+// request receives and responds to an authentication challenge.
+TEST_F(URLLoaderTest, ServerHttpAuthFlagSet) {
+  ClientCertAndHttpAuthObserver client_auth_observer;
+  client_auth_observer.set_credentials_response(
+      ClientCertAndHttpAuthObserver::CredentialsResponse::CORRECT_CREDENTIALS);
+
+  ResourceRequest request =
+      CreateResourceRequest("GET", test_server()->GetURL(kTestAuthURL));
+  base::RunLoop delete_run_loop;
+  mojo::Remote<mojom::URLLoader> loader;
+  context().mutable_factory_params().process_id = kProcessId;
+  context().mutable_factory_params().is_orb_enabled = false;
+  URLLoaderOptions url_loader_options;
+  url_loader_options.url_loader_network_observer = client_auth_observer.Bind();
+  std::unique_ptr<URLLoader> url_loader = url_loader_options.MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.BindNewPipeAndPassReceiver(), request, client()->CreateRemote());
+
+  client()->RunUntilResponseBodyArrived();
+  EXPECT_TRUE(client()->has_received_response());
+  EXPECT_FALSE(client()->has_received_completion());
+  EXPECT_TRUE(client()->response_head()->did_use_server_http_auth);
+
+  // Spin the message loop until the delete callback is invoked, and then delete
+  // the URLLoader.
+  delete_run_loop.Run();
+
+  client()->RunUntilComplete();
+  EXPECT_TRUE(client()->has_received_completion());
+  scoped_refptr<net::HttpResponseHeaders> headers =
+      client()->response_head()->headers;
+  ASSERT_TRUE(headers);
+  EXPECT_EQ(200, headers->response_code());
+  EXPECT_EQ(1, client_auth_observer.on_auth_required_call_counter());
+  ASSERT_FALSE(url_loader);
+}
+
+// Tests that `did_use_server_http_auth` is not present on the response when a
+// request does not use an authentication challenge.
+TEST_F(URLLoaderTest, ServerHttpAuthFlagNotSet) {
+  ResourceRequest request =
+      CreateResourceRequest("GET", test_server()->GetURL("/simple_page.html"));
+  base::RunLoop delete_run_loop;
+  mojo::Remote<mojom::URLLoader> loader;
+  context().mutable_factory_params().process_id = kProcessId;
+  context().mutable_factory_params().is_orb_enabled = false;
+  URLLoaderOptions url_loader_options;
+  std::unique_ptr<URLLoader> url_loader = url_loader_options.MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.BindNewPipeAndPassReceiver(), request, client()->CreateRemote());
+
+  client()->RunUntilResponseBodyArrived();
+  EXPECT_TRUE(client()->has_received_response());
+  EXPECT_FALSE(client()->has_received_completion());
+  EXPECT_FALSE(client()->response_head()->did_use_server_http_auth);
+
+  // Spin the message loop until the delete callback is invoked, and then delete
+  // the URLLoader.
+  delete_run_loop.Run();
+
+  client()->RunUntilComplete();
+  EXPECT_TRUE(client()->has_received_completion());
+  scoped_refptr<net::HttpResponseHeaders> headers =
+      client()->response_head()->headers;
+  ASSERT_TRUE(headers);
+  EXPECT_EQ(200, headers->response_code());
+  ASSERT_FALSE(url_loader);
+}
+
+// Tests that `did_use_server_http_auth` is not present on the response when a
+// request receives and responds to a proxy authentication challenge.
+TEST_F(URLLoaderTest, ServerHttpAuthFlagNotSetForProxy) {
+  net::EmbeddedTestServer proxy_server(net::EmbeddedTestServer::TYPE_HTTP);
+  net::test_server::RegisterProxyBasicAuthHandler(proxy_server, "PROXY_USER",
+                                                  "PROXY_PASS");
+  proxy_server.AddDefaultHandlers(
+      base::FilePath(FILE_PATH_LITERAL("services/test/data")));
+  ASSERT_TRUE(proxy_server.Start());
+
+  net::URLRequestContextBuilder context_builder;
+  context_builder.set_proxy_resolution_service(
+      net::ConfiguredProxyResolutionService::CreateFixedFromPacResultForTest(
+          "PROXY " + proxy_server.host_port_pair().ToString(),
+          TRAFFIC_ANNOTATION_FOR_TESTS));
+  auto test_network_delegate = std::make_unique<net::TestNetworkDelegate>();
+  unowned_test_network_delegate_ = test_network_delegate.get();
+  context_builder.set_network_delegate(std::move(test_network_delegate));
+  context_builder.set_client_socket_factory_for_testing(GetSocketFactory());
+  context().set_url_request_context(nullptr);
+  url_request_context_ = context_builder.Build();
+  context().set_url_request_context(url_request_context_.get());
+
+  ClientCertAndHttpAuthObserver client_auth_observer;
+  client_auth_observer.set_credentials_response(
+      ClientCertAndHttpAuthObserver::CredentialsResponse::
+          CORRECT_PROXY_CREDENTIALS);
+
+  ResourceRequest request = CreateResourceRequest(
+      "GET", test_server()->GetURL(kHostnameWithAliases, "/hello.html"));
+  base::RunLoop delete_run_loop;
+  mojo::Remote<mojom::URLLoader> loader;
+  context().mutable_factory_params().process_id = kProcessId;
+  context().mutable_factory_params().is_orb_enabled = false;
+  URLLoaderOptions url_loader_options;
+  url_loader_options.url_loader_network_observer = client_auth_observer.Bind();
+  std::unique_ptr<URLLoader> url_loader = url_loader_options.MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.BindNewPipeAndPassReceiver(), request, client()->CreateRemote());
+
+  client()->RunUntilComplete();
+  delete_run_loop.Run();
+
+  // This should be false as we do not set the flag for proxy auth.
+  EXPECT_FALSE(client()->response_head()->did_use_server_http_auth);
+  ASSERT_FALSE(url_loader);
 }
 
 // Make sure the client can't call FollowRedirect if there's no pending
@@ -4735,9 +5073,10 @@ TEST_F(URLLoaderTest, ClientAuthRespondTwice) {
   scoped_refptr<TestSSLPrivateKey> private_key =
       base::MakeRefCounted<TestSSLPrivateKey>(identity->ssl_private_key());
 
-  ClientCertAuthObserver client_cert_observer;
+  ClientCertAndHttpAuthObserver client_cert_observer;
   client_cert_observer.set_certificate_response(
-      ClientCertAuthObserver::CertificateResponse::VALID_CERTIFICATE_SIGNATURE);
+      ClientCertAndHttpAuthObserver::CertificateResponse::
+          VALID_CERTIFICATE_SIGNATURE);
   client_cert_observer.set_private_key(private_key);
   client_cert_observer.set_certificate(identity->certificate());
 
@@ -4788,9 +5127,9 @@ TEST_F(URLLoaderTest, ClientAuthDestroyResponder) {
       base::FilePath(FILE_PATH_LITERAL("services/test/data")));
   ASSERT_TRUE(test_server.Start());
 
-  ClientCertAuthObserver client_cert_observer;
+  ClientCertAndHttpAuthObserver client_cert_observer;
   client_cert_observer.set_certificate_response(
-      ClientCertAuthObserver::CertificateResponse::
+      ClientCertAndHttpAuthObserver::CertificateResponse::
           DESTROY_CLIENT_CERT_RESPONDER);
 
   ResourceRequest request =
@@ -4822,9 +5161,9 @@ TEST_F(URLLoaderTest, ClientAuthCancelConnection) {
       base::FilePath(FILE_PATH_LITERAL("services/test/data")));
   ASSERT_TRUE(test_server.Start());
 
-  ClientCertAuthObserver client_cert_observer;
+  ClientCertAndHttpAuthObserver client_cert_observer;
   client_cert_observer.set_certificate_response(
-      ClientCertAuthObserver::CertificateResponse::
+      ClientCertAndHttpAuthObserver::CertificateResponse::
           URL_LOADER_REQUEST_CANCELLED);
 
   ResourceRequest request =
@@ -4855,9 +5194,9 @@ TEST_F(URLLoaderTest, ClientAuthCancelCertificateSelection) {
       base::FilePath(FILE_PATH_LITERAL("services/test/data")));
   ASSERT_TRUE(test_server.Start());
 
-  ClientCertAuthObserver client_cert_observer;
+  ClientCertAndHttpAuthObserver client_cert_observer;
   client_cert_observer.set_certificate_response(
-      ClientCertAuthObserver::CertificateResponse::
+      ClientCertAndHttpAuthObserver::CertificateResponse::
           CANCEL_CERTIFICATE_SELECTION);
 
   ResourceRequest request =
@@ -4897,9 +5236,9 @@ TEST_F(URLLoaderTest, ClientAuthNoCertificate) {
       base::FilePath(FILE_PATH_LITERAL("services/test/data")));
   ASSERT_TRUE(test_server.Start());
 
-  ClientCertAuthObserver client_cert_observer;
+  ClientCertAndHttpAuthObserver client_cert_observer;
   client_cert_observer.set_certificate_response(
-      ClientCertAuthObserver::CertificateResponse::NULL_CERTIFICATE);
+      ClientCertAndHttpAuthObserver::CertificateResponse::NULL_CERTIFICATE);
 
   ResourceRequest request =
       CreateResourceRequest("GET", test_server.GetURL("/defaultresponse"));
@@ -4938,9 +5277,10 @@ TEST_F(URLLoaderTest, ClientAuthCertificateWithValidSignature) {
       base::FilePath(FILE_PATH_LITERAL("services/test/data")));
   ASSERT_TRUE(test_server.Start());
 
-  ClientCertAuthObserver client_cert_observer;
+  ClientCertAndHttpAuthObserver client_cert_observer;
   client_cert_observer.set_certificate_response(
-      ClientCertAuthObserver::CertificateResponse::VALID_CERTIFICATE_SIGNATURE);
+      ClientCertAndHttpAuthObserver::CertificateResponse::
+          VALID_CERTIFICATE_SIGNATURE);
   client_cert_observer.set_private_key(private_key);
   scoped_refptr<net::X509Certificate> certificate =
       test_server.GetCertificate();
@@ -4984,9 +5324,10 @@ TEST_F(URLLoaderTest, ClientAuthCertificateWithInvalidSignature) {
       base::FilePath(FILE_PATH_LITERAL("services/test/data")));
   ASSERT_TRUE(test_server.Start());
 
-  ClientCertAuthObserver client_cert_observer;
+  ClientCertAndHttpAuthObserver client_cert_observer;
   client_cert_observer.set_certificate_response(
-      ClientCertAuthObserver::CertificateResponse::VALID_CERTIFICATE_SIGNATURE);
+      ClientCertAndHttpAuthObserver::CertificateResponse::
+          VALID_CERTIFICATE_SIGNATURE);
   client_cert_observer.set_private_key(private_key);
   scoped_refptr<net::X509Certificate> certificate =
       test_server.GetCertificate();
@@ -5117,12 +5458,12 @@ class StorageAccessHeaderURLLoaderTest : public URLLoaderTest {
   std::unique_ptr<net::test_server::HttpResponse>
   HandleLoadWithStorageAccessRequest(
       const net::test_server::HttpRequest& request) {
-    if (!base::StartsWith(request.GetURL().path(),
+    if (!base::StartsWith(request.GetURL().GetPath(),
                           kStorageAccessRedirectLoadPath)) {
       return nullptr;
     }
     std::string destination =
-        base::UnescapeBinaryURLComponent(request.GetURL().query_piece());
+        base::UnescapeBinaryURLComponent(request.GetURL().query());
     auto http_response =
         std::make_unique<net::test_server::BasicHttpResponse>();
     http_response->set_content_type("text/plain");
@@ -5707,6 +6048,64 @@ INSTANTIATE_TEST_SUITE_P(
                     TestMode::kCredentialsModeOmitWorkaround,
                     TestMode::kCredentialsModeOmitWithFeatureFix));
 
+TEST_F(URLLoaderTest, AcceptCHFrameNotAllowedHintWithFeature) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeatureWithParameters(
+      features::kOffloadAcceptCHFrameCheck,
+      {{"AcceptCHFrameOffloadNotAllowedHints", "true"}});
+
+  net::TransportInfo info = net::DefaultTransportInfo();
+  info.accept_ch_frame = "Sec-CH-UA-Platform";
+
+  const GURL url("http://accept-ch.test/");
+  net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
+      url, std::make_unique<FakeTransportInfoInterceptor>(info));
+
+  MockAcceptCHFrameObserver observer;
+  set_accept_ch_frame_observer_for_next_request(&observer);
+
+  network::ResourceRequest::TrustedParams::EnabledClientHints enabled_hints;
+  enabled_hints.origin = url::Origin::Create(url);
+  enabled_hints.is_outermost_main_frame = true;
+  enabled_hints.hints = {network::mojom::WebClientHintsType::kUAArch};
+  enabled_hints.not_allowed_hints = {
+      network::mojom::WebClientHintsType::kUAPlatform};
+  set_enabled_client_hints_for_next_request(std::move(enabled_hints));
+
+  EXPECT_THAT(Load(url), IsOk());
+  EXPECT_FALSE(observer.called());
+}
+
+TEST_F(URLLoaderTest, AcceptCHFrameNotAllowedHintWithoutFeature) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeatureWithParameters(
+      features::kOffloadAcceptCHFrameCheck,
+      {{"AcceptCHFrameOffloadNotAllowedHints", "false"}});
+
+  net::TransportInfo info = net::DefaultTransportInfo();
+  info.accept_ch_frame = "Sec-CH-UA-Platform";
+
+  const GURL url("http://accept-ch.test/");
+  net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
+      url, std::make_unique<FakeTransportInfoInterceptor>(info));
+
+  MockAcceptCHFrameObserver observer;
+  set_accept_ch_frame_observer_for_next_request(&observer);
+
+  network::ResourceRequest::TrustedParams::EnabledClientHints enabled_hints;
+  enabled_hints.origin = url::Origin::Create(url);
+  enabled_hints.is_outermost_main_frame = true;
+  enabled_hints.hints = {network::mojom::WebClientHintsType::kUAArch};
+  enabled_hints.not_allowed_hints = {
+      network::mojom::WebClientHintsType::kUAPlatform};
+  set_enabled_client_hints_for_next_request(std::move(enabled_hints));
+
+  EXPECT_THAT(Load(url), IsOk());
+  EXPECT_TRUE(observer.called());
+  EXPECT_THAT(observer.accept_ch_frame(),
+              ElementsAre(network::mojom::WebClientHintsType::kUAPlatform));
+}
+
 // Tests that a request with CredentialsMode::kOmit still sends client
 // certificates when features::kOmitCorsClientCert is disabled, and when the
 // feature is enabled client certificates are not sent. Also test that when
@@ -5731,9 +6130,10 @@ TEST_P(URLLoaderParameterTest, CredentialsModeOmitRequireClientCert) {
   scoped_refptr<TestSSLPrivateKey> private_key =
       base::MakeRefCounted<TestSSLPrivateKey>(identity->ssl_private_key());
 
-  ClientCertAuthObserver client_cert_observer;
+  ClientCertAndHttpAuthObserver client_cert_observer;
   client_cert_observer.set_certificate_response(
-      ClientCertAuthObserver::CertificateResponse::VALID_CERTIFICATE_SIGNATURE);
+      ClientCertAndHttpAuthObserver::CertificateResponse::
+          VALID_CERTIFICATE_SIGNATURE);
   client_cert_observer.set_private_key(private_key);
   client_cert_observer.set_certificate(identity->certificate());
 
@@ -5791,9 +6191,10 @@ TEST_P(URLLoaderParameterTest, CredentialsModeOmitOptionalClientCert) {
   scoped_refptr<TestSSLPrivateKey> private_key =
       base::MakeRefCounted<TestSSLPrivateKey>(identity->ssl_private_key());
 
-  ClientCertAuthObserver client_cert_observer;
+  ClientCertAndHttpAuthObserver client_cert_observer;
   client_cert_observer.set_certificate_response(
-      ClientCertAuthObserver::CertificateResponse::VALID_CERTIFICATE_SIGNATURE);
+      ClientCertAndHttpAuthObserver::CertificateResponse::
+          VALID_CERTIFICATE_SIGNATURE);
   client_cert_observer.set_private_key(private_key);
   client_cert_observer.set_certificate(identity->certificate());
 
@@ -5931,10 +6332,11 @@ TEST_F(URLLoaderTest, CookieReportingRedirect) {
 
 TEST_F(URLLoaderTest, CookieReportingAuth) {
   for (auto mode :
-       {ClientCertAuthObserver::CredentialsResponse::NO_CREDENTIALS,
-        ClientCertAuthObserver::CredentialsResponse::CORRECT_CREDENTIALS}) {
+       {ClientCertAndHttpAuthObserver::CredentialsResponse::NO_CREDENTIALS,
+        ClientCertAndHttpAuthObserver::CredentialsResponse::
+            CORRECT_CREDENTIALS}) {
     MockCookieObserver cookie_observer(CookieAccessType::kChange);
-    ClientCertAuthObserver client_auth_observer;
+    ClientCertAndHttpAuthObserver client_auth_observer;
     client_auth_observer.set_credentials_response(mode);
 
     GURL url = test_server()->GetURL(
@@ -6227,9 +6629,9 @@ TEST_F(URLLoaderTest, RawResponseCookiesAuth) {
   // Check a valid cookie
   {
     MockDevToolsObserver devtools_observer;
-    ClientCertAuthObserver client_auth_observer;
+    ClientCertAndHttpAuthObserver client_auth_observer;
     client_auth_observer.set_credentials_response(
-        ClientCertAuthObserver::CredentialsResponse::NO_CREDENTIALS);
+        ClientCertAndHttpAuthObserver::CredentialsResponse::NO_CREDENTIALS);
 
     GURL url = test_server()->GetURL(
         "a.test", "/auth-basic?set-cookie-if-challenged&password=PASS");
@@ -6268,9 +6670,9 @@ TEST_F(URLLoaderTest, RawResponseCookiesAuth) {
   // Check a flagged cookie (secure cookie from insecure connection)
   {
     MockDevToolsObserver devtools_observer;
-    ClientCertAuthObserver client_auth_observer;
+    ClientCertAndHttpAuthObserver client_auth_observer;
     client_auth_observer.set_credentials_response(
-        ClientCertAuthObserver::CredentialsResponse::NO_CREDENTIALS);
+        ClientCertAndHttpAuthObserver::CredentialsResponse::NO_CREDENTIALS);
 
     GURL url = test_server()->GetURL(
         "a.test", "/auth-basic?set-secure-cookie-if-challenged&password=PASS");
@@ -7255,7 +7657,7 @@ TEST_F(URLLoaderTest, OnRawResponseIPAddressSpace) {
 
   devtools_observer.WaitUntilRawResponse(0);
   ASSERT_EQ(devtools_observer.resource_address_space(),
-            mojom::IPAddressSpace::kLocal);
+            mojom::IPAddressSpace::kLoopback);
 }
 
 TEST_F(URLLoaderMockSocketTest, OrbDoesNotCloseSocketsWhenResourcesNotBlocked) {
@@ -7441,7 +7843,7 @@ TEST_P(URLLoaderMockSocketAuctionOnlyTest,
       "Content-Length: 23\r\n\r\n",
       GetParam().c_str());
   const net::MockRead kReads[] = {
-      net::MockRead(net::SYNCHRONOUS, 1, first_read.c_str()),
+      net::MockRead(net::SYNCHRONOUS, 1, first_read),
       net::MockRead(net::SYNCHRONOUS, 2, "This should not be read"),
   };
 
@@ -7479,7 +7881,7 @@ TEST_P(URLLoaderMockSocketAuctionOnlyTest,
       "Content-Length: 23\r\n\r\n",
       GetParam().c_str());
   const net::MockRead kReads[] = {
-      net::MockRead(net::SYNCHRONOUS, 1, first_read.c_str()),
+      net::MockRead(net::SYNCHRONOUS, 1, first_read),
       net::MockRead(net::SYNCHRONOUS, 2, "This should not be read"),
   };
 
@@ -7528,7 +7930,7 @@ TEST_F(URLLoaderMockSocketTest, PrivateNetworkRequestPolicyDoesNotCloseSocket) {
   ResourceRequest request = CreateResourceRequest("GET", url);
   request.mode = mojom::RequestMode::kNoCors;
   request.request_initiator = initiator;
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
 
   // Socket should not be closed, since it can be reused.
@@ -7869,7 +8271,7 @@ TEST_F(URLLoaderMockSocketTest,
       "Content-Length: %zu\r\n\r\n",
       compressed.size());
   const net::MockRead kReads[] = {
-      net::MockRead(net::SYNCHRONOUS, 1, first_read.c_str()),
+      net::MockRead(net::SYNCHRONOUS, 1, first_read),
       net::MockRead(net::SYNCHRONOUS, base::as_string_view(compressed),
                     /*result=*/0,
                     /*seq=*/2)};
@@ -7924,7 +8326,7 @@ TEST_F(URLLoaderMockSocketTest,
       "Content-Length: %zu\r\n\r\n",
       compressed.size());
   const net::MockRead kReads[] = {
-      net::MockRead(net::SYNCHRONOUS, 1, first_read.c_str()),
+      net::MockRead(net::SYNCHRONOUS, 1, first_read),
       net::MockRead(net::SYNCHRONOUS, base::as_string_view(compressed),
                     /*result=*/0,
                     /*seq=*/2)};
@@ -7964,7 +8366,7 @@ TEST_F(URLLoaderMockSocketTest,
       "Content-Length: %zu\r\n\r\n",
       compressed.size());
   const net::MockRead kReads[] = {
-      net::MockRead(net::SYNCHRONOUS, 1, first_read.c_str()),
+      net::MockRead(net::SYNCHRONOUS, 1, first_read),
       net::MockRead(net::SYNCHRONOUS, base::as_string_view(compressed),
                     /*result=*/0,
                     /*seq=*/2)};
@@ -8037,7 +8439,7 @@ TEST_F(URLLoaderTest,
             mojom::PrivateNetworkRequestPolicy::kWarn);
   EXPECT_EQ(state->is_web_secure_context, false);
   EXPECT_EQ(state->ip_address_space, mojom::IPAddressSpace::kPublic);
-  EXPECT_EQ(params.resource_address_space, mojom::IPAddressSpace::kLocal);
+  EXPECT_EQ(params.resource_address_space, mojom::IPAddressSpace::kLoopback);
   EXPECT_EQ(params.devtools_request_id, "fake-id");
   EXPECT_TRUE(params.is_warning);
   EXPECT_THAT(params.url.spec(), testing::HasSubstr("simple_page.html"));
@@ -8064,7 +8466,7 @@ TEST_F(URLLoaderTest,
   MockDevToolsObserver devtools_observer;
   set_devtools_observer_for_next_request(&devtools_observer);
 
-  EXPECT_EQ(net::ERR_BLOCKED_BY_PRIVATE_NETWORK_ACCESS_CHECKS,
+  EXPECT_EQ(net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS,
             LoadRequest(request));
 
   devtools_observer.WaitUntilPrivateNetworkRequest();
@@ -8076,7 +8478,7 @@ TEST_F(URLLoaderTest,
             mojom::PrivateNetworkRequestPolicy::kBlock);
   EXPECT_EQ(state->is_web_secure_context, false);
   EXPECT_EQ(state->ip_address_space, mojom::IPAddressSpace::kPublic);
-  EXPECT_EQ(params.resource_address_space, mojom::IPAddressSpace::kLocal);
+  EXPECT_EQ(params.resource_address_space, mojom::IPAddressSpace::kLoopback);
   EXPECT_EQ(params.devtools_request_id, "fake-id");
   EXPECT_FALSE(params.is_warning);
   EXPECT_THAT(params.url.spec(), testing::HasSubstr("simple_page.html"));
@@ -8319,6 +8721,68 @@ TEST_F(URLLoaderTest, DoNotSetLoadTimingInternalInfoForUntrustedLoaders) {
 
   client()->RunUntilResponseBodyArrived();
   EXPECT_FALSE(client()->response_head()->load_timing_internal_info);
+}
+
+TEST_F(URLLoaderTest, AcceptCHFrameHintsAlreadyEnabledSkipsObserver) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kOffloadAcceptCHFrameCheck);
+
+  // 1. Prepare TransportInfo with the ACCEPT_CH frame.
+  net::TransportInfo info = net::DefaultTransportInfo();
+  info.accept_ch_frame = "Sec-CH-UA-Platform";
+
+  const GURL url("https://fake-endpoint");
+  net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
+      url, std::make_unique<FakeTransportInfoInterceptor>(info));
+
+  // 2. Set up MockAcceptCHFrameObserver.
+  MockAcceptCHFrameObserver accept_ch_frame_observer;
+  set_accept_ch_frame_observer_for_next_request(&accept_ch_frame_observer);
+
+  // 3. Set enabled_client_hints.
+  network::ResourceRequest::TrustedParams::EnabledClientHints
+      enabled_client_hints;
+  enabled_client_hints.origin = url::Origin::Create(url);
+  enabled_client_hints.is_outermost_main_frame = true;
+  enabled_client_hints.hints = std::vector<mojom::WebClientHintsType>{
+      mojom::WebClientHintsType::kUAPlatform};
+  set_enabled_client_hints_for_next_request(enabled_client_hints);
+
+  // 4. Load, expecting net::OK.
+  EXPECT_THAT(Load(url), IsOk());
+
+  // 5. the observer should not be called because NeedsObserverCheck() returns
+  // false.
+  EXPECT_FALSE(accept_ch_frame_observer.called());
+}
+
+TEST_F(URLLoaderTest, AcceptCHFrameNewHintsCallsObserver) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(features::kOffloadAcceptCHFrameCheck);
+
+  net::TransportInfo info = net::DefaultTransportInfo();
+  info.accept_ch_frame = "Sec-CH-UA-Platform";
+
+  const GURL url("https://fake-endpoint");
+  net::URLRequestFilter::GetInstance()->AddUrlInterceptor(
+      url, std::make_unique<FakeTransportInfoInterceptor>(info));
+
+  MockAcceptCHFrameObserver accept_ch_frame_observer;
+  set_accept_ch_frame_observer_for_next_request(&accept_ch_frame_observer);
+
+  // Ensure the client hints is an empty, and not hitting the hints.
+  network::ResourceRequest::TrustedParams::EnabledClientHints
+      enabled_client_hints;
+  enabled_client_hints.origin = url::Origin::Create(url);
+  set_enabled_client_hints_for_next_request(enabled_client_hints);
+
+  EXPECT_THAT(Load(url), IsOk());
+
+  // The observer should not be called because `NeedsObserverCheck()`
+  // returns true.
+  EXPECT_TRUE(accept_ch_frame_observer.called());
+  EXPECT_THAT(accept_ch_frame_observer.accept_ch_frame(),
+              testing::ElementsAre(mojom::WebClientHintsType::kUAPlatform));
 }
 
 class SharedStorageRequestHelperURLLoaderTest : public URLLoaderTest {
@@ -8634,5 +9098,35 @@ TEST_F(URLLoaderTest, SocketTaggingWorks) {
   EXPECT_GT(net::GetTaggedBytes(tag_val), old_traffic);
 }
 #endif
+
+TEST_F(URLLoaderTest, ParseUnencodedDigest) {
+  base::RunLoop delete_run_loop;
+  ResourceRequest request = CreateResourceRequest(
+      "GET", test_server_.GetURL(
+                 "/set-header?" +
+                 base::EscapeQueryParamValue(
+                     "Unencoded-Digest: "
+                     "sha-256=:uU0nuZNNPgilLlLX2n2r+sSE7+N6U4DukIj3rOLvzek=:",
+                     /*use_plus=*/false)));
+
+  mojo::PendingRemote<mojom::URLLoader> loader;
+  std::unique_ptr<URLLoader> url_loader;
+  url_loader = URLLoaderOptions().MakeURLLoader(
+      context(), DeleteLoaderCallback(&delete_run_loop, &url_loader),
+      loader.InitWithNewPipeAndPassReceiver(), request,
+      client()->CreateRemote());
+
+  client()->RunUntilComplete();
+  delete_run_loop.Run();
+
+  ASSERT_TRUE(client()->response_head()->unencoded_digests->issues.empty());
+  ASSERT_FALSE(client()->response_head()->unencoded_digests->digests.empty());
+  std::optional<IntegrityMetadata> expected =
+      IntegrityMetadata::CreateFromBase64(
+          network::mojom::IntegrityAlgorithm::kSha256,
+          "uU0nuZNNPgilLlLX2n2r+sSE7+N6U4DukIj3rOLvzek=");
+  ASSERT_TRUE(expected);
+  EXPECT_EQ(expected, client()->response_head()->unencoded_digests->digests[0]);
+}
 
 }  // namespace network

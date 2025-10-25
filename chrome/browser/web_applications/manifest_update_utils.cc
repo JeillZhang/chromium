@@ -17,6 +17,7 @@
 #include "chrome/browser/web_applications/web_app_registrar.h"
 #include "chrome/common/chrome_features.h"
 #include "components/webapps/common/web_app_id.h"
+#include "content/public/common/url_constants.h"
 #include "third_party/blink/public/common/features.h"
 #include "ui/gfx/skia_util.h"
 
@@ -71,8 +72,6 @@ std::ostream& operator<<(std::ostream& os, ManifestUpdateCheckStage stage) {
       return os << "kDownloadingNewManifestData";
     case ManifestUpdateCheckStage::kLoadingExistingManifestData:
       return os << "kLoadingExistingManifestData";
-    case ManifestUpdateCheckStage::kDownloadingChangedIconUrlBitmaps:
-      return os << "kDownloadingChangedIconUrlBitmaps";
     case ManifestUpdateCheckStage::kComparingManifestData:
       return os << "kComparingManifestData";
     case ManifestUpdateCheckStage::kResolvingIdentityChanges:
@@ -166,21 +165,13 @@ std::optional<AppIconIdentityChange> CompareIdentityIconBitmaps(
   return std::nullopt;
 }
 
-void RecordIconDownloadMetrics(IconsDownloadedResult result,
-                               DownloadedIconsHttpResults icons_http_results) {
-  // TODO(crbug.com/40193545): Report `result` and `icons_http_results` in
-  // internals.
-  base::UmaHistogramEnumeration("WebApp.Icon.DownloadedResultOnUpdate", result);
-  RecordDownloadedIconHttpStatusCodes(
-      "WebApp.Icon.DownloadedHttpStatusCodeOnUpdate", icons_http_results);
-  RecordDownloadedIconsHttpResultsCodeClass(
-      "WebApp.Icon.HttpStatusCodeClassOnUpdate", result, icons_http_results);
-}
-
 bool CanWebAppSilentlyUpdateIdentity(const WebApp& web_app) {
   if (web_app.IsPolicyInstalledApp() &&
       base::FeatureList::IsEnabled(
           features::kWebAppManifestPolicyAppIdentityUpdate)) {
+    return true;
+  }
+  if (web_app.scope().SchemeIs(content::kChromeUIScheme)) {
     return true;
   }
 
@@ -282,9 +273,6 @@ ManifestDataChanges GetManifestDataChanges(
     }
     if (existing_web_app.note_taking_new_note_url() !=
         new_install_info.note_taking_new_note_url) {
-      return true;
-    }
-    if (existing_web_app.capture_links() != new_install_info.capture_links) {
       return true;
     }
     if (existing_web_app.file_handlers() != new_install_info.file_handlers) {

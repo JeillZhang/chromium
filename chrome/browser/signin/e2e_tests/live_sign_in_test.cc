@@ -5,11 +5,15 @@
 #include <optional>
 
 #include "base/strings/stringprintf.h"
+#include "base/task/current_thread.h"
 #include "base/test/bind.h"
 #include "base/test/test_future.h"
+#include "base/test/with_feature_override.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/signin/dice_web_signin_interceptor.h"
+#include "chrome/browser/signin/dice_web_signin_interceptor_factory.h"
 #include "chrome/browser/signin/e2e_tests/account_capabilities_observer.h"
 #include "chrome/browser/signin/e2e_tests/accounts_removed_waiter.h"
 #include "chrome/browser/signin/e2e_tests/live_test.h"
@@ -20,15 +24,18 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/profiles/profile_picker.h"
 #include "chrome/browser/ui/profiles/profile_ui_test_utils.h"
+#include "chrome/browser/ui/views/profiles/dice_web_signin_interception_bubble_view.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
 #include "chrome/browser/ui/webui/signin/login_ui_test_utils.h"
 #include "chrome/browser/ui/webui/signin/signin_email_confirmation_dialog.h"
 #include "chrome/browser/ui/webui/signin/signin_url_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "chrome/test/interaction/interactive_browser_test.h"
 #include "components/signin/core/browser/account_reconcilor.h"
 #include "components/signin/public/base/consent_level.h"
 #include "components/signin/public/base/signin_buildflags.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/accounts_in_cookie_jar_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
@@ -42,6 +49,7 @@
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/base/page_transition_types.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/views/controls/webview/webview.h"
 
@@ -145,8 +153,8 @@ IN_PROC_BROWSER_TEST_F(LiveSignInTest, MANUAL_WebSignOut) {
       identity_manager()->HasAccountWithRefreshTokenInPersistentErrorState(
           primary_account.account_id));
 #if !BUILDFLAG(IS_CHROMEOS)
-  EXPECT_EQ(GetAvatarSyncErrorType(browser()->profile()),
-            AvatarSyncErrorType::kSyncPaused);
+  EXPECT_EQ(sync_service()->GetUserActionableError(),
+            syncer::SyncService::UserActionableError::kSignInNeedsUpdate);
 #endif  // !BUILDFLAG(IS_CHROMEOS)
 }
 
@@ -550,7 +558,6 @@ IN_PROC_BROWSER_TEST_F(LiveSignInTest,
 
 IN_PROC_BROWSER_TEST_F(LiveSignInTest,
                        MANUAL_AccountCapabilities_FetchedOnSignIn) {
-
   // Test primary adult account.
   {
     AccountCapabilitiesObserver capabilities_observer(identity_manager());
@@ -604,6 +611,7 @@ IN_PROC_BROWSER_TEST_F(LiveSignInTest,
 
 #if BUILDFLAG(ENABLE_DICE_SUPPORT)
 IN_PROC_BROWSER_TEST_F(LiveSignInTest, MANUAL_CreateSignedInProfile) {
+  base::HistogramTester histogram_tester;
   std::optional<TestAccountSigninCredentials> test_account =
       GetTestAccounts()->GetAccount("TEST_ACCOUNT_1");
   CHECK(test_account.has_value());
@@ -621,7 +629,7 @@ IN_PROC_BROWSER_TEST_F(LiveSignInTest, MANUAL_CreateSignedInProfile) {
 
   // Simulate a click on the signin button.
   base::test::TestFuture<bool> proceed_future;
-  ProfilePicker::SwitchToDiceSignIn(SK_ColorRED, proceed_future.GetCallback());
+  ProfilePicker::SwitchToSignIn(SK_ColorRED, proceed_future.GetCallback());
   EXPECT_TRUE(proceed_future.Get());
 
   // Signin on Gaia.
@@ -637,26 +645,71 @@ IN_PROC_BROWSER_TEST_F(LiveSignInTest, MANUAL_CreateSignedInProfile) {
   // User is signed in, but Sync is off.
   signin::IdentityManager* identity_manager =
       IdentityManagerFactory::GetForProfile(new_profile);
-  EXPECT_EQ(GetPrimaryAccountConsentLevel(identity_manager),
-            signin::ConsentLevel::kSignin);
+  base::test::RunUntil([&identity_manager]() {
+    return GetPrimaryAccountConsentLevel(identity_manager) ==
+           signin::ConsentLevel::kSignin;
+  });
 
   // Confirm Sync.
-  ui_test_utils::BrowserChangeObserver browser_added_observer(
-      nullptr, ui_test_utils::BrowserChangeObserver::ChangeType::kAdded);
-  GURL sync_confirmation_url = AppendSyncConfirmationQueryParams(
-      GURL("chrome://sync-confirmation/"), SyncConfirmationStyle::kWindow,
-      /*is_sync_promo=*/true);
+  ui_test_utils::BrowserCreatedObserver browser_created_observer;
+  GURL sync_confirmation_url =
+      AppendSyncConfirmationQueryParams(GURL("chrome://sync-confirmation/"),
+                                        SyncConfirmationStyle::kWindow, true);
   profiles::testing::WaitForPickerLoadStop(sync_confirmation_url);
   LoginUIServiceFactory::GetForProfile(new_profile)
       ->SyncConfirmationUIClosed(LoginUIService::SYNC_WITH_DEFAULT_SETTINGS);
 
   // Wait for browser to open.
   profiles::testing::WaitForPickerClosed();
-  Browser* new_browser = browser_added_observer.Wait();
+  Browser* new_browser = browser_created_observer.Wait();
   EXPECT_EQ(new_browser->profile(), new_profile);
   EXPECT_EQ(GetPrimaryAccountConsentLevel(identity_manager),
             signin::ConsentLevel::kSync);
+
+  // Both LST and Sync Header are received so their time difference must be
+  // recorded.
+  histogram_tester.ExpectTotalCount(
+      "Signin.SigninManager.SyncHeaderArrivalTimeWindowAfterLst", 1);
 }
+
+using LiveSignInGaiaIntegrationTest =
+    InteractiveBrowserTestMixin<LiveSignInTest>;
+
+// Regression test for crbug.com/420635510.
+// Tests that a doing a web signin from a tab that was previously opened for
+// a browser signin, does not sign in the user in the browser.
+IN_PROC_BROWSER_TEST_F(LiveSignInGaiaIntegrationTest,
+                       MANUAL_WebSignInFromExistingChromeSignInTab) {
+  base::HistogramTester histogram_tester;
+  sign_in_functions.StartSignInFromSettings();
+  int current_tab_count = browser()->tab_strip_model()->GetTabCount();
+
+  std::optional<TestAccountSigninCredentials> test_account =
+      GetTestAccounts()->GetAccount("TEST_ACCOUNT_1");
+  CHECK(test_account.has_value());
+  // Use the same tab for a web sign-in.
+  content::OpenURLParams params(
+      GaiaUrls::GetInstance()->add_account_url(), content::Referrer(),
+      WindowOpenDisposition::CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false);
+  browser()->tab_strip_model()->GetActiveWebContents()->OpenURL(
+      params, /*navigation_handle_callback=*/{});
+  ASSERT_EQ(current_tab_count, browser()->tab_strip_model()->GetTabCount());
+
+  sign_in_functions.SignInFromCurrentPage(
+      browser()->tab_strip_model()->GetActiveWebContents(), *test_account, 0);
+  ASSERT_EQ(current_tab_count, browser()->tab_strip_model()->GetTabCount());
+
+  // The user should not be signed-in in the browser.
+  EXPECT_FALSE(identity_manager()->HasPrimaryAccount(ConsentLevel::kSignin));
+
+  RunTestSequence(WaitForShow(
+      DiceWebSigninInterceptionBubbleView::kDiceWebSigninInterceptionBubble));
+
+  histogram_tester.ExpectBucketCount(
+      "Signin.Intercept.HeuristicOutcome",
+      SigninInterceptionHeuristicOutcome::kInterceptChromeSignin, 1);
+}
+
 #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
 }  // namespace

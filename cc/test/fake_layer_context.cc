@@ -4,21 +4,26 @@
 
 #include "cc/test/fake_layer_context.h"
 
+#include "base/time/time.h"
+
 namespace cc {
 
 void FakeLayerContext::SetVisible(bool visible) {}
 
-void FakeLayerContext::UpdateDisplayTreeFrom(
+base::TimeTicks FakeLayerContext::UpdateDisplayTreeFrom(
     LayerTreeImpl& tree,
     viz::ClientResourceProvider& resource_provider,
-    viz::RasterContextProvider& context_provider,
-    const gfx::Rect& viewport_damage_rect) {}
+    gpu::SharedImageInterface* shared_image_interface,
+    const gfx::Rect& viewport_damage_rect,
+    const viz::LocalSurfaceId& target_local_surface_id) {
+  return base::TimeTicks::Now();
+}
 
 void FakeLayerContext::UpdateDisplayTile(
     PictureLayerImpl& layer,
     const Tile& tile,
     viz::ClientResourceProvider& resource_provider,
-    viz::RasterContextProvider& context_provider,
+    gpu::SharedImageInterface* shared_image_interface,
     bool update_damage) {}
 
 }  // namespace cc

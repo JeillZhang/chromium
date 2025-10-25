@@ -120,8 +120,7 @@ ArcScreenCaptureSession::Initialize(content::DesktopMediaID desktop_id,
   context_provider->AddObserver(this);
 
   display::Display display =
-      display::Screen::GetScreen()->GetDisplayNearestWindow(
-          display_root_window_);
+      display::Screen::Get()->GetDisplayNearestWindow(display_root_window_);
   display_id_ = display.id();
 
   display_root_window_->GetHost()->compositor()->AddAnimationObserver(this);
@@ -304,7 +303,7 @@ void ArcScreenCaptureSession::OnDesktopCaptured(
 
   DCHECK_EQ(result->format(), viz::CopyOutputResult::Format::RGBA);
   DCHECK_EQ(result->destination(),
-            viz::CopyOutputResult::Destination::kNativeTextures);
+            viz::CopyOutputResult::Destination::kSharedImage);
 
   auto* ri = GetContextProvider()->RasterInterface();
   if (!ri) {
@@ -313,16 +312,15 @@ void ArcScreenCaptureSession::OnDesktopCaptured(
   }
   // Get the source texture - RGBA format is guaranteed to have 1 valid texture
   // if the CopyOutputRequest succeeded:
-  gpu::Mailbox result_mailbox = result->GetTextureResult()->mailbox;
+  gpu::Mailbox result_mailbox = result->GetSharedImage()->mailbox();
   CHECK(!result_mailbox.IsZero());
 
-  viz::CopyOutputResult::ReleaseCallbacks release_callbacks =
-      result->TakeTextureOwnership();
-  CHECK_EQ(1u, release_callbacks.size());
+  viz::ReleaseCallback release_callback = result->TakeSharedImageOwnership();
+  CHECK(release_callback);
 
   std::unique_ptr<DesktopTexture> desktop_texture =
       std::make_unique<DesktopTexture>(result_mailbox,
-                                       std::move(release_callbacks[0]));
+                                       std::move(release_callback));
   if (buffer_queue_.empty()) {
     // We don't have a GPU buffer to render to, so put this in a queue to use
     // when we have one.
@@ -394,7 +392,7 @@ void ArcScreenCaptureSession::OnAnimationStep(base::TimeTicks timestamp) {
   std::unique_ptr<viz::CopyOutputRequest> request =
       std::make_unique<viz::CopyOutputRequest>(
           viz::CopyOutputRequest::ResultFormat::RGBA,
-          viz::CopyOutputRequest::ResultDestination::kNativeTextures,
+          viz::CopyOutputRequest::ResultDestination::kSharedImage,
           base::BindOnce(&ArcScreenCaptureSession::OnDesktopCaptured,
                          weak_ptr_factory_.GetWeakPtr()));
   // Clip the requested area to the desktop area. See b/118675936.

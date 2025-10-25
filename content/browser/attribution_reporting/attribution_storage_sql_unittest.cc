@@ -64,7 +64,6 @@
 #include "sql/database.h"
 #include "sql/meta_table.h"
 #include "sql/recovery.h"
-#include "sql/sql_features.h"
 #include "sql/statement.h"
 #include "sql/test/scoped_error_expecter.h"
 #include "sql/test/test_helpers.h"
@@ -298,6 +297,13 @@ class AttributionStorageSqlTest : public testing::Test {
   void AddReportToStorage() {
     storage_->StoreSource(SourceBuilder().Build());
     storage_->MaybeCreateAndStoreReport(DefaultTrigger());
+  }
+
+  void AddEventAndAggregatableReportsToStorage() {
+    storage_->StoreSource(
+        TestAggregatableSourceProvider().GetBuilder().Build());
+    storage_->MaybeCreateAndStoreReport(
+        DefaultAggregatableTriggerBuilder().Build());
   }
 
   void ExpectAllTablesEmpty() {
@@ -1073,14 +1079,7 @@ TEST_F(AttributionStorageSqlTest, ExpiredImpressionWithSentConversion_Deleted) {
 TEST_F(AttributionStorageSqlTest, DeleteAggregatableAttributionReport) {
   OpenDatabase();
 
-  storage()->StoreSource(TestAggregatableSourceProvider().GetBuilder().Build());
-
-  EXPECT_THAT(storage()->MaybeCreateAndStoreReport(
-                  DefaultAggregatableTriggerBuilder().Build()),
-              AllOf(CreateReportEventLevelStatusIs(
-                        AttributionTrigger::EventLevelResult::kSuccess),
-                    CreateReportAggregatableStatusIs(
-                        AttributionTrigger::AggregatableResult::kSuccess)));
+  AddEventAndAggregatableReportsToStorage();
 
   std::vector<AttributionReport> reports =
       storage()->GetAttributionReports(base::Time::Max());
@@ -1098,54 +1097,11 @@ TEST_F(AttributionStorageSqlTest, DeleteAggregatableAttributionReport) {
   CloseDatabase();
 }
 
-TEST_F(AttributionStorageSqlTest, NegativeTriggerMoment_HistogramRecorded) {
-  const char sql[] = "UPDATE sources SET source_time=?";
-  base::HistogramTester histograms;
-
-  OpenDatabase();
-
-  storage()->StoreSource(TestAggregatableSourceProvider().GetBuilder().Build());
-
-  CloseDatabase();
-
-  {
-    sql::Database raw_db(sql::test::kTestTag);
-    ASSERT_TRUE(raw_db.Open(db_path()));
-
-    sql::Statement statement(raw_db.GetUniqueStatement(sql));
-    statement.BindTime(0, base::Time::Now() + base::Hours(1));
-    ASSERT_TRUE(statement.Run());
-  }
-
-  OpenDatabase();
-
-  EXPECT_THAT(storage()->MaybeCreateAndStoreReport(
-                  DefaultAggregatableTriggerBuilder().Build()),
-              AllOf(CreateReportEventLevelStatusIs(
-                        AttributionTrigger::EventLevelResult::kSuccess),
-                    CreateReportAggregatableStatusIs(
-                        AttributionTrigger::AggregatableResult::kSuccess)));
-  histograms.ExpectUniqueSample("Conversions.TriggerTimeLessThanSourceTime", 1,
-                                1);
-
-  CloseDatabase();
-}
-
 TEST_F(AttributionStorageSqlTest,
        ExpiredSourceWithPendingAggregatableAttribution_NotDeleted) {
   OpenDatabase();
 
-  storage()->StoreSource(TestAggregatableSourceProvider()
-                             .GetBuilder()
-                             .SetExpiry(base::Milliseconds(3))
-                             .Build());
-
-  EXPECT_THAT(storage()->MaybeCreateAndStoreReport(
-                  DefaultAggregatableTriggerBuilder().Build()),
-              AllOf(CreateReportEventLevelStatusIs(
-                        AttributionTrigger::EventLevelResult::kSuccess),
-                    CreateReportAggregatableStatusIs(
-                        AttributionTrigger::AggregatableResult::kSuccess)));
+  AddEventAndAggregatableReportsToStorage();
 
   std::vector<AttributionReport> reports =
       storage()->GetAttributionReports(base::Time::Max());
@@ -2809,6 +2765,68 @@ TEST_F(AttributionStorageSqlTest, UniqueReportingOriginsCounted) {
   CloseDatabase();
 
   histograms.ExpectUniqueSample("Conversions.DistinctReportingOrigins", 3, 1);
+}
+
+class AttributionStorageSqlNavigationRetryTest
+    : public AttributionStorageSqlTest {
+ public:
+  AttributionStorageSqlNavigationRetryTest() {
+    scoped_feature_list_.InitAndEnableFeature(
+        kAttributionReportNavigationBasedRetry);
+  }
+
+ protected:
+  base::test::ScopedFeatureList scoped_feature_list_;
+};
+
+TEST_F(AttributionStorageSqlNavigationRetryTest,
+       AdjustNavigationRetryEventReportTimes) {
+  const char sql[] = "UPDATE reports SET failed_send_attempts=?";
+  base::HistogramTester histograms;
+
+  OpenDatabase();
+
+  delegate()->use_realistic_report_times();
+  delegate()->set_report_delay(base::Minutes(5));
+  AddEventAndAggregatableReportsToStorage();
+
+  CloseDatabase();
+
+  {
+    sql::Database raw_db(sql::test::kTestTag);
+    ASSERT_TRUE(raw_db.Open(db_path()));
+
+    sql::Statement statement(raw_db.GetUniqueStatement(sql));
+    statement.BindInt(
+        0, static_cast<int>(kAttributionReportNavigationRetryAttempt.Get()));
+    ASSERT_TRUE(statement.Run());
+  }
+
+  OpenDatabase();
+  delegate()->set_offline_report_delay_config(
+      AttributionResolverDelegate::OfflineReportDelayConfig{
+          .min = base::Minutes(1), .max = base::Minutes(1)});
+
+  EXPECT_TRUE(storage()->AdjustNavigationRetryReportTimes().has_value());
+
+  EXPECT_THAT(
+      storage()->GetAttributionReports(base::Time::Max()),
+      UnorderedElementsAre(
+          AllOf(ReportTypeIs(AttributionReport::Type::kEventLevel),
+                ReportTimeIs(base::Time::Now() + base::Minutes(1)),
+                FailedSendAttemptsIs(3)),
+          AllOf(ReportTypeIs(AttributionReport::Type::kAggregatableAttribution),
+                ReportTimeIs(base::Time::Now() + base::Minutes(1)),
+                FailedSendAttemptsIs(3))));
+
+  storage()->ClearData(base::Time::Min(), base::Time::Max(),
+                       base::NullCallback(),
+                       /*delete_rate_limit_data=*/false);
+  CloseDatabase();
+  histograms.ExpectUniqueSample(
+      "Conversions.ReportsAdjustedOnNavigationRetryAttempt.Event", 1, 1);
+  histograms.ExpectUniqueSample(
+      "Conversions.ReportsAdjustedOnNavigationRetryAttempt.Aggregatable", 1, 1);
 }
 
 }  // namespace

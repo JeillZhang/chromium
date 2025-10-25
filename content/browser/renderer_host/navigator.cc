@@ -403,8 +403,9 @@ bool Navigator::CheckWebUIRendererDoesNotDisplayNormalURL(
 
     // Check whether the process must be locked and if so that the process lock
     // is indeed in place.
-    if (should_lock_process && !process_lock.is_locked_to_site())
+    if (should_lock_process && !process_lock.IsLockedToSite()) {
       return false;
+    }
 
     // There must be a WebUI on the frame.
     if (!render_frame_host->web_ui())
@@ -517,6 +518,7 @@ void Navigator::DidNavigate(
     was_within_same_document = false;
   }
 
+#if BUILDFLAG(IS_ANDROID)
   // This is the last point where the browser still embeds the `viz::Surface` of
   // the old page. The next `WebContentsImpl::DidNavigateMainFramePreCommit()`
   // will hide the old View, and the
@@ -527,6 +529,7 @@ void Navigator::DidNavigate(
         CaptureNavigationEntryScreenshotForCrossDocumentNavigations(
             *navigation_request, /*did_receive_commit_ack=*/true);
   }
+#endif  // BUILDFLAG(IS_ANDROID)
 
   if (ui::PageTransitionIsMainFrame(params.transition)) {
     // Run tasks that must execute just before the commit.
@@ -629,24 +632,31 @@ void Navigator::DidNavigate(
   // proxies, including the proxy created in DidNavigateFrame() to replace the
   // old frame in cross-process navigation cases. Note that the origin-related
   // bits are set separately, through `SetLastCommittedOrigin()`.
-  render_frame_host->browsing_context_state()->SetInsecureRequestPolicy(
-      params.insecure_request_policy);
-  render_frame_host->browsing_context_state()->SetInsecureNavigationsSet(
-      params.insecure_navigations_set);
+  if (!was_within_same_document ||
+      !::features::IsEnforceSameDocumentOriginInvariantsEnabled()) {
+    render_frame_host->browsing_context_state()->SetInsecureRequestPolicy(
+        params.insecure_request_policy);
+    render_frame_host->browsing_context_state()->SetInsecureNavigationsSet(
+        params.insecure_navigations_set);
+  }
 
   // If the committing URL requires the SiteInstance's site to be assigned,
   // that site assignment should've already happened at ReadyToCommit time. We
   // should never get here with a SiteInstance that doesn't have a site
   // assigned in that case.
   SiteInstanceImpl* site_instance = render_frame_host->GetSiteInstance();
-  const UrlInfo& url_info = navigation_request->GetUrlInfo();
-  if (!site_instance->HasSite() &&
-      SiteInstanceImpl::ShouldAssignSiteForUrlInfo(url_info)) {
-    // TODO(alexmos): convert this to a CHECK and remove the fallback call to
-    // ConvertToDefaultOrSetSite() after verifying that this doesn't happen in
-    // practice.
-    NOTREACHED() << "SiteInstance should have already set a site: "
-                 << params.url;
+  {
+    // We don't want the url_info to live to the end of this function because
+    // that could let it outlive the `navigation_request`.
+    const UrlInfo& url_info = navigation_request->GetUrlInfo();
+    if (!site_instance->HasSite() &&
+        SiteInstanceImpl::ShouldAssignSiteForUrlInfo(url_info)) {
+      // TODO(alexmos): convert this to a CHECK and remove the fallback call to
+      // ConvertToDefaultOrSetSite() after verifying that this doesn't happen in
+      // practice.
+      NOTREACHED() << "SiteInstance should have already set a site: "
+                   << params.url;
+    }
   }
 
   // Need to update MIME type here because it's referred to in
@@ -842,9 +852,9 @@ void Navigator::Navigate(std::unique_ptr<NavigationRequest> request,
   bool is_duplicate_navigation = false;
   base::TimeDelta nav_start_diff;
   if (ongoing_navigation_request &&
-      request->common_params().navigation_start -
-              ongoing_navigation_request->common_params().navigation_start <=
-          features::kDuplicateNavThreshold.Get() &&
+      ongoing_navigation_request->HasCookieChangeListener() &&
+      !ongoing_navigation_request->DidCookiesChangeAfterStart(
+          /*exclude_http_only=*/false) &&
       ongoing_navigation_request->IsRendererInitiated() ==
           request->IsRendererInitiated() &&
       request->GetURL() == ongoing_navigation_request->GetURL() &&
@@ -869,9 +879,12 @@ void Navigator::Navigate(std::unique_ptr<NavigationRequest> request,
       request->common_params().transition ==
           ongoing_navigation_request->common_params().transition) {
     is_duplicate_navigation = true;
+    nav_start_diff =
+        (request->common_params().navigation_start -
+         ongoing_navigation_request->common_params().navigation_start);
   }
   base::UmaHistogramBoolean(
-      "Navigation.BrowserInitiated.IsDuplicateWithoutThresholdCheck",
+      "Navigation.BrowserInitiated.IsDuplicateWithoutThresholdCheck2",
       is_duplicate_navigation);
   if (is_duplicate_navigation) {
     // The navigation is similar to a previous navigation. Check if it's started
@@ -880,15 +893,19 @@ void Navigator::Navigate(std::unique_ptr<NavigationRequest> request,
     bool start_diff_under_threshold =
         (nav_start_diff <= features::kDuplicateNavThreshold.Get());
     base::UmaHistogramBoolean(
-        "Navigation.BrowserInitiated.DuplicateNavIsUnderThreshold",
+        "Navigation.BrowserInitiated.DuplicateNavIsUnderThreshold2",
         start_diff_under_threshold);
     base::UmaHistogramTimes(
-        "Navigation.BrowserInitiated.DuplicateNavStartTimeDiff",
+        "Navigation.BrowserInitiated.DuplicateNavStartTimeDiff2",
         nav_start_diff);
     if (start_diff_under_threshold &&
-        base::FeatureList::IsEnabled(features::kIgnoreDuplicateNavs)) {
+        GetContentClient()->ShouldIgnoreDuplicateNavs()) {
       request->set_navigation_discard_reason(
           NavigationDiscardReason::kNeverStarted);
+      DVLOG(0) << "Ignoring duplicate navigation to "
+               << request->common_params().url
+               << " due to the short interval since the previous one.";
+
       return;
     } else {
       ongoing_navigation_request->set_navigation_discard_reason(

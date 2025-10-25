@@ -6,6 +6,7 @@
 
 #include "base/metrics/histogram_functions.h"
 #include "base/strings/stringprintf.h"
+#include "base/trace_event/trace_event.h"
 #include "components/optimization_guide/core/model_execution/model_execution_util.h"
 #include "components/optimization_guide/core/model_execution/multimodal_message.h"
 #include "components/optimization_guide/core/model_execution/repetition_checker.h"
@@ -18,47 +19,6 @@ namespace {
 using google::protobuf::RepeatedPtrField;
 using ModelExecutionError =
     OptimizationGuideModelExecutionError::ModelExecutionError;
-
-void LogRequest(OptimizationGuideLogger* logger,
-                const proto::OnDeviceModelServiceRequest& logged_request) {
-  if (logger && logger->ShouldEnableDebugLogs()) {
-    OPTIMIZATION_GUIDE_LOGGER(
-        optimization_guide_common::mojom::LogSource::MODEL_EXECUTION, logger)
-        << "Executing model "
-        << (logged_request.input_context_string().empty()
-                ? ""
-                : base::StringPrintf(
-                      "with input context of %d tokens:\n%s\n",
-                      logged_request.input_context_num_tokens_processed(),
-                      logged_request.input_context_string().c_str()))
-        << "with string:\n"
-        << logged_request.execution_string();
-  }
-}
-
-void LogRawResponse(OptimizationGuideLogger* logger,
-                    ModelBasedCapabilityKey feature,
-                    const std::string& raw_response) {
-  if (logger && logger->ShouldEnableDebugLogs()) {
-    OPTIMIZATION_GUIDE_LOGGER(
-        optimization_guide_common::mojom::LogSource::MODEL_EXECUTION, logger)
-        << "Model generates raw response with "
-        << std::string(GetStringNameForModelExecutionFeature(feature)) << ":\n"
-        << raw_response;
-  }
-}
-
-void LogRepeatedResponse(OptimizationGuideLogger* logger,
-                         ModelBasedCapabilityKey feature,
-                         const std::string& repeated_response) {
-  if (logger && logger->ShouldEnableDebugLogs()) {
-    OPTIMIZATION_GUIDE_LOGGER(
-        optimization_guide_common::mojom::LogSource::MODEL_EXECUTION, logger)
-        << "Model generates repeated response with "
-        << std::string(GetStringNameForModelExecutionFeature(feature)) << ":\n"
-        << repeated_response;
-  }
-}
 
 void LogResponseHasRepeats(ModelBasedCapabilityKey feature, bool has_repeats) {
   base::UmaHistogramBoolean(
@@ -86,16 +46,34 @@ void LogResponseCompleteTokens(ModelBasedCapabilityKey feature,
       tokens);
 }
 
+void LogResponseTimeToNextToken(ModelBasedCapabilityKey feature,
+                                uint32_t tokens,
+                                base::TimeDelta token_time) {
+  if (tokens == 0) {
+    return;
+  }
+  base::UmaHistogramTimes(
+      base::StrCat({"OptimizationGuide.ModelExecution."
+                    "OnDeviceResponseTokensTimeToNextToken.",
+                    GetStringNameForModelExecutionFeature(feature)}),
+      token_time / tokens);
+}
+
 std::string GenerateExecutionId() {
   return "on-device:" + base::Uuid::GenerateRandomV4().AsLowercaseString();
 }
 
+bool GetOnDeviceModelWithholdNewlines() {
+  static const base::FeatureParam<bool> kOnDeviceModelWitholdNewlines{
+      &features::kOptimizationGuideOnDeviceModel,
+      "on_device_model_withhold_newlines", true};
+  return kOnDeviceModelWitholdNewlines.Get();
+}
 }  // namespace
 
 OnDeviceExecution::OnDeviceExecution(
     ModelBasedCapabilityKey feature,
     OnDeviceOptions opts,
-    ExecuteRemoteFn execute_remote_fn,
     MultimodalMessage message,
     on_device_model::mojom::ResponseConstraintPtr constraint,
     std::unique_ptr<ResultLogger> logger,
@@ -103,7 +81,6 @@ OnDeviceExecution::OnDeviceExecution(
     base::OnceCallback<void(bool)> cleanup_callback)
     : feature_(feature),
       opts_(std::move(opts)),
-      execute_remote_fn_(execute_remote_fn),
       last_message_(std::move(message)),
       constraint_(std::move(constraint)),
       histogram_logger_(std::move(logger)),
@@ -162,10 +139,12 @@ void OnDeviceExecution::Cancel() {
 }
 
 void OnDeviceExecution::BeginExecution(OnDeviceContext& context) {
+  TRACE_EVENT("optimization_guide", "OnDeviceExecution::BeginExecution",
+              "feature", base::ToString(feature_));
   auto input = opts_.adapter->ConstructInputString(
       last_message_.read(), /*want_input_context=*/false);
   if (!input) {
-    FallbackToRemote(Result::kFailedConstructingMessage);
+    CancelPendingResponse(Result::kFailedConstructingMessage);
     return;
   }
 
@@ -176,7 +155,6 @@ void OnDeviceExecution::BeginExecution(OnDeviceContext& context) {
                        input->should_ignore_input_context);
 
   logged_request->set_execution_string(input->ToString());
-  LogRequest(opts_.logger.get(), *logged_request);
 
   if (input->input->pieces.size() > 0) {
     auto append_options = on_device_model::mojom::AppendOptions::New();
@@ -200,8 +178,10 @@ void OnDeviceExecution::BeginExecution(OnDeviceContext& context) {
 void OnDeviceExecution::OnRequestSafetyResult(
     on_device_model::mojom::GenerateOptionsPtr options,
     SafetyChecker::Result safety_result) {
+  TRACE_EVENT("optimization_guide", "OnDeviceExecution::OnRequestSafetyResult",
+              "feature", base::ToString(feature_));
   if (safety_result.failed_to_run) {
-    FallbackToRemote(Result::kFailedConstructingMessage);
+    CancelPendingResponse(Result::kFailedConstructingMessage);
     return;
   }
   // Log the check executions.
@@ -233,11 +213,14 @@ void OnDeviceExecution::BeginRequestExecution(
 // on_device_model::mojom::StreamingResponder:
 void OnDeviceExecution::OnResponse(
     on_device_model::mojom::ResponseChunkPtr chunk) {
+  TRACE_EVENT("optimization_guide.debug", "OnDeviceExecution::OnResponse",
+              "feature", base::ToString(feature_));
   proto::OnDeviceModelServiceResponse* logged_response =
       MutableLoggedResponse();
 
   if (current_response_.empty()) {
-    base::TimeDelta time_to_first_response = base::TimeTicks::Now() - start_;
+    first_response_time_ = base::TimeTicks::Now();
+    base::TimeDelta time_to_first_response = first_response_time_ - start_;
     base::UmaHistogramMediumTimes(
         base::StrCat(
             {"OptimizationGuide.ModelExecution.OnDeviceFirstResponseTime.",
@@ -247,16 +230,25 @@ void OnDeviceExecution::OnResponse(
         time_to_first_response.InMilliseconds());
   }
 
-  current_response_ += chunk->text;
-  num_unchecked_response_tokens_++;
-  num_response_tokens_++;
+  if (GetOnDeviceModelWithholdNewlines()) {
+    NewlineBuffer::Chunk trimmed_chunk = newline_buffer_.Append(chunk->text);
+    if (trimmed_chunk.text.empty()) {
+      return;
+    }
+    current_response_ += trimmed_chunk.text;
+    num_unchecked_response_tokens_ += trimmed_chunk.num_tokens;
+    num_response_tokens_ += trimmed_chunk.num_tokens;
+  } else {
+    current_response_ += chunk->text;
+    num_unchecked_response_tokens_++;
+    num_response_tokens_++;
+  }
 
   if (HasRepeatingSuffix(current_response_)) {
     // If a repeat is detected, halt the response, and cancel/finish early.
     receiver_.reset();
     logged_response->set_has_repeats(true);
     if (features::GetOnDeviceModelRetractRepeats()) {
-      LogRepeatedResponse(opts_.logger.get(), feature_, current_response_);
       logged_response->set_status(
           proto::ON_DEVICE_MODEL_SERVICE_RESPONSE_STATUS_RETRACTED);
       CancelPendingResponse(Result::kResponseHadRepeats,
@@ -281,14 +273,19 @@ void OnDeviceExecution::OnResponse(
 
 void OnDeviceExecution::OnComplete(
     on_device_model::mojom::ResponseSummaryPtr summary) {
+  TRACE_EVENT("optimization_guide", "OnDeviceExecution::OnComplete", "feature",
+              base::ToString(feature_));
+  base::TimeTicks completion_time = base::TimeTicks::Now();
+  base::TimeDelta time_to_completion = completion_time - start_;
   receiver_.reset();  // Suppress expected disconnect
 
   bool has_repeats = MutableLoggedResponse()->has_repeats();
 
   LogResponseHasRepeats(feature_, has_repeats);
   LogResponseCompleteTokens(feature_, num_response_tokens_);
-  base::TimeDelta time_to_completion = base::TimeTicks::Now() - start_;
   LogResponseCompleteTime(feature_, time_to_completion);
+  LogResponseTimeToNextToken(feature_, num_response_tokens_,
+                             completion_time - first_response_time_);
   MutableLoggedResponse()->set_time_to_completion_millis(
       time_to_completion.InMilliseconds());
 
@@ -300,19 +297,20 @@ void OnDeviceExecution::OnComplete(
 }
 
 void OnDeviceExecution::OnComplete(uint32_t tokens_processed) {
+  TRACE_EVENT("optimization_guide",
+              "OnDeviceExecution::[ContextClient]::OnComplete", "feature",
+              base::ToString(feature_));
   execute_input_token_count_ = tokens_processed;
   MutableLoggedRequest()->set_execution_num_tokens_processed(tokens_processed);
 }
 
 void OnDeviceExecution::OnResponderDisconnect() {
+  TRACE_EVENT("optimization_guide", "OnDeviceExecution::OnResponse", "feature",
+              base::ToString(feature_));
   // OnComplete resets the receiver, so this implies that the response is
   // incomplete and there was either a service crash or model eviction.
   receiver_.reset();
-  if (features::GetOnDeviceFallbackToServerOnDisconnect()) {
-    FallbackToRemote(Result::kDisconnectAndMaybeFallback);
-  } else {
-    CancelPendingResponse(Result::kDisconnectAndCancel);
-  }
+  CancelPendingResponse(Result::kDisconnectAndCancel);
 }
 
 void OnDeviceExecution::RunRawOutputSafetyCheck(
@@ -328,8 +326,11 @@ void OnDeviceExecution::OnRawOutputSafetyResult(
     size_t raw_output_size,
     ResponseCompleteness completeness,
     SafetyChecker::Result safety_result) {
+  TRACE_EVENT("optimization_guide.debug",
+              "OnDeviceExecution::OnRawOutputSafetyResult", "feature",
+              base::ToString(feature_));
   if (safety_result.failed_to_run) {
-    FallbackToRemote(Result::kFailedConstructingMessage);
+    CancelPendingResponse(Result::kFailedConstructingMessage);
     return;
   }
   if (safety_result.is_unsafe || safety_result.is_unsupported_language) {
@@ -365,7 +366,6 @@ void OnDeviceExecution::MaybeParseResponse(ResponseCompleteness completeness) {
 
   std::string safe_response =
       current_response_.substr(0, latest_safe_raw_output_.length);
-  LogRawResponse(opts_.logger.get(), feature_, safe_response);
   MutableLoggedResponse()->set_output_string(safe_response);
   size_t previous_response_pos = latest_response_pos_;
   latest_response_pos_ = latest_safe_raw_output_.length;
@@ -378,6 +378,8 @@ void OnDeviceExecution::MaybeParseResponse(ResponseCompleteness completeness) {
 void OnDeviceExecution::OnParsedResponse(
     ResponseCompleteness completeness,
     base::expected<proto::Any, ResponseParsingError> output) {
+  TRACE_EVENT("optimization_guide.debug", "OnDeviceExecution::OnParsedResponse",
+              "feature", base::ToString(feature_));
   if (!output.has_value()) {
     switch (output.error()) {
       case ResponseParsingError::kRejectedPii:
@@ -403,8 +405,11 @@ void OnDeviceExecution::OnResponseSafetyResult(
     ResponseCompleteness completeness,
     proto::Any output,
     SafetyChecker::Result safety_result) {
+  TRACE_EVENT("optimization_guide.debug",
+              "OnDeviceExecution::OnResponseSafetyResult", "feature",
+              base::ToString(feature_));
   if (safety_result.failed_to_run) {
-    FallbackToRemote(Result::kFailedConstructingMessage);
+    CancelPendingResponse(Result::kFailedConstructingMessage);
     return;
   }
   if (completeness == ResponseCompleteness::kComplete ||
@@ -437,26 +442,10 @@ void OnDeviceExecution::OnResponseSafetyResult(
   SendSuccessCompletionCallback(output);
 }
 
-void OnDeviceExecution::FallbackToRemote(Result result) {
-  if (histogram_logger_) {
-    histogram_logger_->set_result(result);
-  }
-  auto self = weak_ptr_factory_.GetWeakPtr();
-  // TODO: crbug.com/372535824 - Simplify remote fallback logging.
-  auto log = std::make_unique<proto::LogAiDataRequest>();
-  *log->mutable_model_execution_info() = std::move(exec_log_);
-  exec_log_.Clear();
-  execute_remote_fn_.Run(
-      feature_, last_message_.BuildProtoMessage(), std::nullopt, std::move(log),
-      base::BindOnce(&InvokeStreamingCallbackWithRemoteResult,
-                     std::move(callback_)));
-  if (self) {
-    self->Cleanup(/*healthy=*/false);
-  }
-}
-
 void OnDeviceExecution::CancelPendingResponse(Result result,
                                               ModelExecutionError error) {
+  TRACE_EVENT("optimization_guide", "OnDeviceExecution::CancelPendingResponse",
+              "feature", base::ToString(feature_));
   if (!callback_) {
     return;
   }
@@ -486,6 +475,9 @@ void OnDeviceExecution::CancelPendingResponse(Result result,
 
 void OnDeviceExecution::SendPartialResponseCallback(
     const proto::Any& success_response_metadata) {
+  TRACE_EVENT("optimization_guide.debug",
+              "OnDeviceExecution::SendPartialResponseCallback", "feature",
+              base::ToString(feature_));
   callback_.Run(OptimizationGuideModelStreamingExecutionResult(
       base::ok(StreamingResponse{.response = success_response_metadata,
                                  .is_complete = false}),
@@ -494,6 +486,9 @@ void OnDeviceExecution::SendPartialResponseCallback(
 
 void OnDeviceExecution::SendSuccessCompletionCallback(
     const proto::Any& success_response_metadata) {
+  TRACE_EVENT("optimization_guide",
+              "OnDeviceExecution::SendSuccessCompletionCallback", "feature",
+              base::ToString(feature_));
   // Complete the log entry and promise it to the ModelQualityUploaderService.
   std::unique_ptr<ModelQualityLogEntry> log_entry;
   MutableLoggedResponse()->set_status(

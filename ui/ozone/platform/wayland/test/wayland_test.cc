@@ -2,15 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "ui/ozone/platform/wayland/test/wayland_test.h"
 
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/run_loop.h"
 #include "ui/base/ui_base_features.h"
 #include "ui/events/devices/device_data_manager.h"
@@ -34,7 +30,6 @@
 #endif
 
 using ::testing::_;
-using ::testing::Mock;
 using ::testing::SaveArg;
 
 namespace ui {
@@ -42,7 +37,9 @@ namespace ui {
 WaylandTestBase::WaylandTestBase(wl::ServerConfig config)
     : task_environment_(base::test::TaskEnvironment::MainThreadType::UI,
                         base::test::TaskEnvironment::TimeSource::MOCK_TIME),
-      server_(config) {
+      server_(config),
+      connection_(std::make_unique<WaylandConnection>()),
+      delegate_(connection_.get()) {
 #if BUILDFLAG(USE_XKBCOMMON)
   auto keyboard_layout_engine =
       std::make_unique<XkbKeyboardLayoutEngine>(xkb_evdev_code_converter_);
@@ -51,7 +48,6 @@ WaylandTestBase::WaylandTestBase(wl::ServerConfig config)
 #endif
   scoped_keyboard_layout_engine_ = std::make_unique<ScopedKeyboardLayoutEngine>(
       std::move(keyboard_layout_engine));
-  connection_ = std::make_unique<WaylandConnection>();
   buffer_manager_gpu_ = std::make_unique<WaylandBufferManagerGpu>();
   surface_factory_ = std::make_unique<WaylandSurfaceFactory>(
       connection_.get(), buffer_manager_gpu_.get());
@@ -89,10 +85,9 @@ void WaylandTestBase::SetUp() {
 
   // Wait for the client to flush all pending requests from initialization.
   SyncDisplay();
-  Mock::VerifyAndClearExpectations(&delegate_);
 
   // The surface must be activated before buffers are attached.
-  ActivateSurface(delegate_);
+  ActivateSurface(window_->root_surface()->get_surface_id());
 
   EXPECT_EQ(0u,
             DeviceDataManager::GetInstance()->GetTouchscreenDevices().size());
@@ -186,58 +181,10 @@ void WaylandTestBase::SendConfigureEvent(uint32_t surface_id,
       });
 }
 
-void WaylandTestBase::ActivateSurface(
-    MockWaylandPlatformWindowDelegate& window_delegate,
-    std::optional<uint32_t> serial) {
-  WaylandWindow* window = window_delegate.window();
-  CHECK(window_delegate.window());
-
-  ASSERT_FALSE(window->IsSurfaceConfigured());
-  EXPECT_CALL(window_delegate,
-              OnWindowStateChanged(PlatformWindowState::kUnknown,
-                                   PlatformWindowState::kNormal));
-
+void WaylandTestBase::ActivateSurface(uint32_t surface_id,
+                                      std::optional<uint32_t> serial) {
   wl::ScopedWlArray state({XDG_TOPLEVEL_STATE_ACTIVATED});
-  SendConfigureEvent(window->root_surface()->get_surface_id(), gfx::Size(0, 0),
-                     state, serial);
-
-  Mock::VerifyAndClearExpectations(&window_delegate);
-  EXPECT_NE(PlatformWindowState::kUnknown, window->GetPlatformWindowState());
-  EXPECT_FALSE(window->IsSurfaceConfigured());
-}
-
-void WaylandTestBase::MapSurface(
-    MockWaylandPlatformWindowDelegate& window_delegate) {
-  CHECK(window_delegate.window());
-  SyncDisplay();
-
-  WaylandWindow* window = window_delegate.window();
-  ASSERT_FALSE(window->IsSurfaceConfigured());
-  ASSERT_NE(PlatformWindowState::kUnknown, window->GetPlatformWindowState());
-  ASSERT_EQ(0U, window->root_surface()->buffer_id());
-
-  uint32_t surface_id = window->root_surface()->get_surface_id();
-  PostToServerAndWait([surface_id, geometry = window->GetBoundsInDIP()](
-                          wl::TestWaylandServerThread* server) {
-    auto* surface = server->GetObject<wl::MockSurface>(surface_id);
-    ASSERT_TRUE(surface);
-    ASSERT_TRUE(surface->xdg_surface());
-    EXPECT_CALL(*surface->xdg_surface(), SetWindowGeometry(geometry));
-    EXPECT_CALL(*surface->xdg_surface(), AckConfigure(_));
-  });
-
-  // This emulates a buffer attachment to `window` by simply triggering
-  // OnSequencePoint, which is the entry point in WaylandWindow for it.
-  // In production, it's called by frame manager, just before attaching the
-  // buffer.
-  window->OnSequencePoint(window_delegate.viz_seq());
-
-  Mock::VerifyAndClearExpectations(&window_delegate);
-  ASSERT_TRUE(window->IsSurfaceConfigured());
-  PostToServerAndWait([surface_id](wl::TestWaylandServerThread* server) {
-    auto* surface = server->GetObject<wl::MockSurface>(surface_id);
-    Mock::VerifyAndClearExpectations(surface->xdg_surface());
-  });
+  SendConfigureEvent(surface_id, {0, 0}, state, serial);
 }
 
 void WaylandTestBase::MaybeSetUpXkb() {
@@ -266,7 +213,8 @@ void WaylandTestBase::MaybeSetUpXkb() {
             std::move(shared_keymap_region));
     ASSERT_TRUE(shared_keymap.IsValid());
 
-    memcpy(shared_keymap.memory(), keymap_string.get(), keymap_size);
+    UNSAFE_TODO(
+        memcpy(shared_keymap.memory(), keymap_string.get(), keymap_size));
 
     auto* const keyboard = server->seat()->keyboard()->resource();
     ASSERT_TRUE(keyboard);
@@ -302,7 +250,8 @@ std::unique_ptr<WaylandWindow> WaylandTestBase::CreateWaylandWindowWithParams(
     PlatformWindowType type,
     const gfx::Rect bounds,
     MockWaylandPlatformWindowDelegate* delegate,
-    gfx::AcceleratedWidget parent_widget) {
+    gfx::AcceleratedWidget parent_widget,
+    bool inactive) {
   PlatformWindowInitProperties properties;
   properties.bounds = bounds;
   properties.type = type;
@@ -311,7 +260,7 @@ std::unique_ptr<WaylandWindow> WaylandTestBase::CreateWaylandWindowWithParams(
   auto window =
       delegate->CreateWaylandWindow(connection_.get(), std::move(properties));
   if (window)
-    window->Show(false);
+    window->Show(inactive);
   return window;
 }
 

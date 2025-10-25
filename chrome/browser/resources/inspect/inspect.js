@@ -26,6 +26,7 @@ let HOST_CHROME_VERSION;
 const queryParamsObject = {};
 let browserInspector = 'chrome://tracing';
 let browserInspectorTitle = 'trace';
+let staleDataCounter = 0;
 
 (function() {
 const queryParams = window.location.search;
@@ -95,6 +96,7 @@ function onload() {
   onHashChange();
   initSettings();
   sendCommand('init-ui');
+  initStaleDataWatch();
 }
 
 function onHashChange() {
@@ -234,6 +236,10 @@ function updateUsernameVisibility(deviceSection) {
 }
 
 function populateRemoteTargets(devices) {
+  staleDataCounter = 0;
+  $('devices-stale').hidden = true;
+  $('devices-not-responding').hidden = true;
+
   if (!devices) {
     return;
   }
@@ -331,9 +337,10 @@ function populateRemoteTargets(devices) {
 
     deviceSection.querySelector('.device-name').textContent = device.adbModel;
     deviceSection.querySelector('.device-auth').textContent =
-        device.adbConnected ? '' :
+        device.adbConnected ? '' : device.adbUnauthorized ?
                               'Pending authentication: please accept ' +
-            'debugging session on the device.';
+            'debugging session on the device.' : device.adbLocked ?
+            'Device is locked.' : 'Device is not responding.';
 
     const browserList = deviceSection.querySelector('.browsers');
     const newBrowserIds = device.browsers.map(function(b) {
@@ -471,12 +478,11 @@ function populateRemoteTargets(devices) {
                 row, 'close', sendTargetCommand.bind(null, 'close', page),
                 false);
           }
-          if (browserNeedsFallback) {
-            addActionLink(
-                row, 'inspect fallback',
-                sendTargetCommand.bind(null, 'inspect-fallback', page),
-                page.hasNoUniqueId || page.adbAttachedForeign);
-          }
+          addActionLink(
+              row, 'inspect fallback',
+              sendTargetCommand.bind(null, 'inspect-fallback', page),
+              page.hasNoUniqueId || page.adbAttachedForeign,
+              'Best-effort fallback to debug the target using this browser instance\'s potentially mismatching DevTools version.');
         }
       }
       updateBrowserVisibility(browserSection);
@@ -520,6 +526,31 @@ function addGuestViews(row, guests) {
 function addToWorkersList(data) {
   const row =
       addTargetToList(data, $('workers-list'), ['name', 'description', 'url']);
+
+  let description;
+  try {
+    description = JSON.parse(data.description);
+  } catch (e) {
+    // Not a JSON description, ignore and proceed.
+  }
+
+  if (description && description.extendedLifetime) {
+    const nameElement = row.querySelector('.name');
+    if (nameElement) {
+      const label = document.createElement('span');
+      label.className = 'extended-lifetime-label';
+      label.textContent = 'Extended Lifetime';
+      nameElement.appendChild(document.createTextNode(' '));
+      nameElement.appendChild(label);
+    }
+
+    // Hide the raw JSON description.
+    const descriptionElement = row.querySelector('.description');
+    if (descriptionElement) {
+      descriptionElement.style.display = 'none';
+    }
+  }
+
   addActionLink(
       row, 'terminate', sendTargetCommand.bind(null, 'close', data), false);
 }
@@ -712,10 +743,13 @@ function addTargetToList(data, list, properties) {
   return row;
 }
 
-function addActionLink(row, text, handler, opt_disabled) {
+function addActionLink(row, text, handler, opt_disabled, opt_title) {
   const link = document.createElement('span');
   link.classList.add('action');
   link.setAttribute('tabindex', 1);
+  if (opt_title) {
+    link.title = opt_title;
+  }
   if (opt_disabled) {
     link.classList.add('disabled');
   } else {
@@ -753,6 +787,31 @@ function initSettings() {
   });
   $('node-frontend')
       .addEventListener('click', sendCommand.bind(null, 'open-node-frontend'));
+}
+
+function initStaleDataWatch() {
+  let lastFocus = true;
+
+  setInterval(() => {
+    const newFocus = document.hasFocus();
+    if (newFocus !== lastFocus) {
+      lastFocus = newFocus;
+      sendCommand('set-focus', newFocus);
+      staleDataCounter = 0;
+    } else {
+      staleDataCounter++;
+      if (staleDataCounter > 3) {
+        // Unhide appropriate message.
+        if (newFocus) {
+          $('devices-stale').hidden = true;
+          $('devices-not-responding').hidden = false;
+        } else {
+          $('devices-stale').hidden = false;
+          $('devices-not-responding').hidden = true;
+        }
+      }
+    }
+  }, 5000);
 }
 
 function checkboxHandler(command, event) {

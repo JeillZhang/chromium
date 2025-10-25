@@ -14,7 +14,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/location.h"
-#include "base/notreached.h"
+#include "base/notimplemented.h"
 #include "base/process/process_handle.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/time/time.h"
@@ -279,13 +279,6 @@ bool MockRenderProcessHost::IsReady() {
   return is_ready_;
 }
 
-bool MockRenderProcessHost::Send(IPC::Message* msg) {
-  // Save the message in the sink.
-  sink_.OnMessageReceived(*msg);
-  delete msg;
-  return true;
-}
-
 ChildProcessId MockRenderProcessHost::GetID() const {
   return id_;
 }
@@ -324,6 +317,10 @@ void MockRenderProcessHost::Cleanup() {
     return;
   }
   delayed_cleanup_ = false;
+
+  if (pending_reuse_ref_count_ > 0) {
+    return;
+  }
 
   if (listeners_.IsEmpty() && !deletion_callback_called_ &&
       !pending_view_count_) {
@@ -377,7 +374,7 @@ bool MockRenderProcessHost::HasPriorityOverride() {
 void MockRenderProcessHost::ClearPriorityOverride() {}
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-void MockRenderProcessHost::SetHasSpareRendererPriority(bool) {}
+void MockRenderProcessHost::GraduateSpareToNormalRendererPriority() {}
 
 #if BUILDFLAG(IS_ANDROID)
 ChildProcessImportance MockRenderProcessHost::GetEffectiveImportance() {
@@ -396,10 +393,6 @@ void MockRenderProcessHost::DumpProcessStack() {}
 
 void MockRenderProcessHost::SetSuddenTerminationAllowed(bool allowed) {}
 
-bool MockRenderProcessHost::SuddenTerminationAllowed() {
-  return true;
-}
-
 BrowserContext* MockRenderProcessHost::GetBrowserContext() {
   return browser_context_;
 }
@@ -412,10 +405,6 @@ bool MockRenderProcessHost::InSameStoragePartition(
 IPC::ChannelProxy* MockRenderProcessHost::GetChannel() {
   return nullptr;
 }
-
-#if BUILDFLAG(CONTENT_ENABLE_LEGACY_IPC)
-void MockRenderProcessHost::AddFilter(BrowserMessageFilter* filter) {}
-#endif
 
 base::TimeDelta MockRenderProcessHost::GetChildProcessIdleTime() {
   return base::Milliseconds(0);
@@ -581,7 +570,7 @@ ProcessLock MockRenderProcessHost::GetProcessLock() const {
 }
 
 bool MockRenderProcessHost::IsProcessLockedToSiteForTesting() {
-  return GetProcessLock().is_locked_to_site();
+  return GetProcessLock().IsLockedToSite();
 }
 
 void MockRenderProcessHost::BindCacheStorage(
@@ -649,13 +638,6 @@ MockRenderProcessHost::StartRtpDump(bool incoming,
   return base::NullCallback();
 }
 
-bool MockRenderProcessHost::OnMessageReceived(const IPC::Message& msg) {
-  IPC::Listener* listener = listeners_.Lookup(msg.routing_id());
-  if (listener)
-    return listener->OnMessageReceived(msg);
-  return false;
-}
-
 void MockRenderProcessHost::OnChannelConnected(int32_t peer_pid) {}
 
 void MockRenderProcessHost::OverrideBinderForTesting(
@@ -677,13 +659,7 @@ MockRenderProcessHostFactory::~MockRenderProcessHostFactory() = default;
 RenderProcessHost* MockRenderProcessHostFactory::CreateRenderProcessHost(
     BrowserContext* browser_context,
     SiteInstance* site_instance) {
-  const bool is_for_guests_only = site_instance && site_instance->IsGuest();
-  StoragePartitionConfig storage_partition_config =
-      GetOrCreateStoragePartitionConfig(browser_context, site_instance);
-  std::unique_ptr<MockRenderProcessHost> host =
-      std::make_unique<MockRenderProcessHost>(
-          browser_context, storage_partition_config, is_for_guests_only);
-  processes_.push_back(std::move(host));
+  processes_.push_back(BuildRenderProcessHost(browser_context, site_instance));
   return processes_.back().get();
 }
 
@@ -694,6 +670,17 @@ void MockRenderProcessHostFactory::Remove(MockRenderProcessHost* host) const {
       break;
     }
   }
+}
+
+std::unique_ptr<MockRenderProcessHost>
+MockRenderProcessHostFactory::BuildRenderProcessHost(
+    BrowserContext* browser_context,
+    SiteInstance* site_instance) {
+  const bool is_for_guests_only = site_instance && site_instance->IsGuest();
+  StoragePartitionConfig storage_partition_config =
+      GetOrCreateStoragePartitionConfig(browser_context, site_instance);
+  return std::make_unique<MockRenderProcessHost>(
+      browser_context, storage_partition_config, is_for_guests_only);
 }
 
 }  // namespace content

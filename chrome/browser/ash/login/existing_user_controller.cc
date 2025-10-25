@@ -44,7 +44,6 @@
 #include "chrome/browser/ash/customization/customization_document.h"
 #include "chrome/browser/ash/login/auth/chrome_login_performer.h"
 #include "chrome/browser/ash/login/demo_mode/demo_login_controller.h"
-#include "chrome/browser/ash/login/enterprise_user_session_metrics.h"
 #include "chrome/browser/ash/login/helper.h"
 #include "chrome/browser/ash/login/profile_auth_data.h"
 #include "chrome/browser/ash/login/quick_unlock/pin_salt_storage.h"
@@ -85,7 +84,6 @@
 #include "chrome/browser/ui/webui/ash/login/l10n_util.h"
 #include "chrome/browser/ui/webui/ash/login/tpm_error_screen_handler.h"
 #include "chrome/browser/ui/webui/ash/login/update_required_screen_handler.h"
-#include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
@@ -512,6 +510,7 @@ void ExistingUserController::CompleteLogin(const UserContext& user_context) {
   is_login_in_progress_ = true;
 
   user_has_empty_password_.reset();
+  user_has_challenge_response_keys_.reset();
 
   ContinueLoginIfDeviceNotDisabled(
       base::BindOnce(&ExistingUserController::DoCompleteLogin,
@@ -533,6 +532,7 @@ void ExistingUserController::Login(const UserContext& user_context,
 
   is_login_in_progress_ = true;
   user_has_empty_password_.reset();
+  user_has_challenge_response_keys_.reset();
 
   if (user_context.GetUserType() != user_manager::UserType::kRegular &&
       user_manager::UserManager::Get()->IsUserLoggedIn()) {
@@ -576,6 +576,8 @@ void ExistingUserController::PerformLogin(
   }
 
   user_has_empty_password_ = new_user_context.GetKey()->GetSecret().empty();
+  user_has_challenge_response_keys_ =
+      !new_user_context.GetChallengeResponseKeys().empty();
 
   if (new_user_context.IsUsingPin()) {
     std::optional<Key> key =
@@ -834,10 +836,6 @@ void ExistingUserController::OnAuthSuccess(const UserContext& user_context) {
       ShowAutoLaunchManagedGuestSessionNotification();
     }
   }
-  if (is_enterprise_managed) {
-    enterprise_user_session_metrics::RecordSignInEvent(
-        user_context, last_login_attempt_was_auto_login_);
-  }
 }
 
 void ExistingUserController::ShowAutoLaunchManagedGuestSessionNotification() {
@@ -902,7 +900,8 @@ void ExistingUserController::OnProfilePrepared(Profile* profile,
 
   if (is_enterprise_managed &&
       user_context.GetUserType() == user_manager::UserType::kRegular &&
-      user_has_empty_password_.value_or(false)) {
+      user_has_empty_password_.value_or(false) &&
+      !user_has_challenge_response_keys_.value_or(false)) {
     // ERROR: Enterprise-managed regular user lacks an online password.
     // This scenario is unsupported.
     SYSLOG(ERROR) << "Authentication failed: Enterprise-managed user lacks an "
@@ -1622,6 +1621,11 @@ void ExistingUserController::DoLogin(const UserContext& user_context,
 
   if (user_context.GetUserType() == user_manager::UserType::kKioskIWA) {
     LoginAsKioskApp(KioskAppId::ForIsolatedWebApp(user_context.GetAccountId()));
+    return;
+  }
+
+  if (user_context.GetUserType() == user_manager::UserType::kKioskArcvmApp) {
+    LoginAsKioskApp(KioskAppId::ForArcvmApp(user_context.GetAccountId()));
     return;
   }
 

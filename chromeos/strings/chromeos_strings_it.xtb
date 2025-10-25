@@ -221,7 +221,6 @@
 <translation id="181434555916624618">Per il momento, i risultati con persone non verranno mostrati. Prova con un altro prompt.</translation>
 <translation id="1815850098929213707">Il tasto selezionato è <ph name="KEYS" />. Tocca il pulsante per modificare il controllo</translation>
 <translation id="1818174214124933000">Se selezioni Invia, il feedback e i contenuti (mostrati di seguito) verranno inviati a Google, esaminati da revisori e utilizzati per addestrare o migliorare i nostri prodotti e servizi, nel rispetto delle <ph name="LINK_POLICY_BEGIN" />Norme sulla privacy<ph name="LINK_POLICY_END" /> e dei <ph name="LINK_TERMS_OF_SERVICE_BEGIN" />Termini di servizio di Google<ph name="LINK_TERMS_OF_SERVICE_END" />.</translation>
-<translation id="1821075635029692203">Il tuo insegnante ha inviato una risorsa non supportata. Faglielo sapere.</translation>
 <translation id="1823120442877418684">Soggetti</translation>
 <translation id="1827738518074806965">Galleria d'arte</translation>
 <translation id="183287940576828840">Contenuti offensivi/non sicuri</translation>
@@ -319,7 +318,7 @@
 <translation id="2215920961700443347">Nessuna connessione a internet. Connettiti a internet e riprova.</translation>
 <translation id="2217935453350629363">Velocità attuale</translation>
 <translation id="221994303562837085">Interrompi registrazione</translation>
-<translation id="2224337661447660594">Nessuna connessione a Internet</translation>
+<translation id="2224337661447660594">Nessuna connessione a internet</translation>
 <translation id="222447520299472966">Deve essere selezionato almeno un album Galleria d'arte</translation>
 <translation id="2230005943220647148">Celsius</translation>
 <translation id="2230051135190148440">CHAP</translation>
@@ -328,6 +327,7 @@
 <translation id="2240366984605217732">Cambio di layout</translation>
 <translation id="224421911978987610">esposizione lunga</translation>
 <translation id="2244834438220057800">verde</translation>
+<translation id="2248689665683494517">Natura morta minimal di alcuni fiori di papavero comune in un vaso di vetro su sfondo nero.</translation>
 <translation id="225692081236532131">Stato attivazione</translation>
 <translation id="2267285889943769271">Aggiungi screenshot</translation>
 <translation id="2268044343513325586">Perfeziona</translation>
@@ -335,7 +335,7 @@
 <translation id="2276999893457278469">Contenuti Help principali</translation>
 <translation id="2277631741861284101">Registra e condividi facilmente il tuo audio</translation>
 <translation id="2279051792571591988">Ripristina predefinite</translation>
-<translation id="2286454467119466181">Semplice</translation>
+<translation id="2286454467119466181">Simple</translation>
 <translation id="2287186687001756809">Nessuna immagine disponibile. Per aggiungere foto, visita la pagina <ph name="LINK" />.</translation>
 <translation id="2294577623958216786">La programmazione corrente è impostata su <ph name="SUNRISE" />-<ph name="SUNSET" />. Per aggiornare automaticamente la programmazione del tramonto e dell'alba, attiva l'accesso alla posizione del sistema.</translation>
 <translation id="2305172810646967500">nero</translation>
@@ -756,8 +756,10 @@
 <translation id="4300073214558989"><ph name="IMAGE_COUNT" /> immagini</translation>
 <translation id="4300272766492248925">Apri app</translation>
 <translation id="430786093962686457">chiffon</translation>
+<translation id="4309762678330556039">Crea automaticamente trascrizioni e cerca l'audio. Puoi creare registrazioni anche quando non disponi di una connessione a internet.</translation>
 <translation id="4310735698903592804">Sfondi recenti IA di Google integrata</translation>
 <translation id="4320904097188876154">rosa neon</translation>
+<translation id="432961742358282111">Fai clic con il tasto destro del mouse o tieni premuto per ottenere definizioni, traduzioni o conversioni di unità. Utilizza i tasti Freccia destra o Freccia sinistra per gestire la funzionalità.</translation>
 <translation id="4333390807948134856">Tasto <ph name="KEY_NAME" /> premuto</translation>
 <translation id="4334293042716981313">Puoi anche <ph name="BEGIN_LINK_FREEFORM_SUBPAGE" />scrivere il tuo prompt<ph name="END_LINK_FREEFORM_SUBPAGE" /></translation>
 <translation id="4354430579665871434">chiave</translation>
@@ -949,7 +951,7 @@
 <translation id="5145331109270917438">Data modifica</translation>
 <translation id="5154917547274118687">Memoria</translation>
 <translation id="5160857336552977725">Accedi al tuo dispositivo <ph name="DEVICE_TYPE" /></translation>
-<translation id="5168185087976003268">Condizioni batteria</translation>
+<translation id="5168185087976003268">Stato della batteria</translation>
 <translation id="5170568018924773124">Mostra nella cartella</translation>
 <translation id="517075088756846356">Scollega e ricollega il cavo di alimentazione di <ph name="DEVICE_NAME" /> per continuare il processo di aggiornamento</translation>
 <translation id="5180108905184566358">baobab</translation>
@@ -1437,7 +1439,6 @@
 <translation id="7302860742311162920">ICCID</translation>
 <translation id="7305884605064981971">EDGE</translation>
 <translation id="7308203371573257315">Fai domande agli esperti nel forum di assistenza di Chromebook</translation>
-<translation id="7309823890857024809">Natura morta minimal di alcuni steli di papavero comune in un vaso di vetro su sfondo nero.</translation>
 <translation id="7311368985037279727">colore tastiera</translation>
 <translation id="7317831949569936035">Registrazione per uso scolastico</translation>
 <translation id="7319430975418800333">A3</translation>
@@ -1472,6 +1473,7 @@ Scarica il modello di trascrizione (fino a 100 MB) per ottenere queste trascrizi
 <translation id="7425832472614771259">Avanzamento download modello di trascrizione <ph name="LANGUAGE_NAME" />: <ph name="PROGRESS_PERCENTAGE" />%</translation>
 <translation id="7427315641433634153">MSCHAP</translation>
 <translation id="7438298994385592770">Impossibile disattivare o rimuovere questo APN. Assicurati che gli APN <ph name="ATTACH" /> abilitati siano disattivati o rimossi.</translation>
+<translation id="7458359366992324037">Display remoto</translation>
 <translation id="7458970041932198923">Connettiti a una rete e ricarica la pagina per visualizzare e impostare gli avatar.</translation>
 <translation id="7469648432129124067">Portale rilevato</translation>
 <translation id="7481312909269577407">Avanti</translation>

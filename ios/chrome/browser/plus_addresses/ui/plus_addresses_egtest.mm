@@ -7,14 +7,13 @@
 #import "base/strings/sys_string_conversions.h"
 #import "components/autofill/core/common/autofill_features.h"
 #import "components/feature_engagement/public/feature_constants.h"
-#import "components/plus_addresses/features.h"
-#import "components/plus_addresses/grit/plus_addresses_strings.h"
-#import "components/plus_addresses/metrics/plus_address_metrics.h"
-#import "components/plus_addresses/plus_address_test_utils.h"
+#import "components/plus_addresses/core/browser/grit/plus_addresses_strings.h"
+#import "components/plus_addresses/core/browser/metrics/plus_address_metrics.h"
+#import "components/plus_addresses/core/browser/plus_address_test_utils.h"
+#import "components/plus_addresses/core/common/features.h"
 #import "components/strings/grit/components_strings.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
-#import "ios/chrome/browser/autofill/ui_bundled/autofill_app_interface.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_ui_test_util.h"
 #import "ios/chrome/browser/metrics/model/metrics_app_interface.h"
 #import "ios/chrome/browser/plus_addresses/ui/plus_address_app_interface.h"
 #import "ios/chrome/browser/plus_addresses/ui/plus_address_bottom_sheet_constants.h"
@@ -27,6 +26,7 @@
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/web_http_server_chrome_test_case.h"
+#import "ios/chrome/test/scoped_eg_synchronization_disabler.h"
 #import "ios/testing/earl_grey/app_launch_manager.h"
 #import "ios/testing/earl_grey/earl_grey_test.h"
 #import "ios/testing/earl_grey/matchers.h"
@@ -149,12 +149,8 @@ void ExpectModalTimeSample(
       l10n_util::GetNSString(IDS_PLUS_ADDRESS_CREATE_SUGGESTION_MAIN_TEXT);
   NSString* suggestionSubLabel =
       l10n_util::GetNSString(IDS_PLUS_ADDRESS_CREATE_SUGGESTION_SECONDARY_TEXT);
-  id<GREYMatcher> userChip =
-      [AutofillAppInterface isKeyboardAccessoryUpgradeEnabled]
-          ? grey_accessibilityLabel(
-                [NSString stringWithFormat:@"%@, %@", suggestionLabel,
-                                           suggestionSubLabel])
-          : grey_text(suggestionLabel);
+  id<GREYMatcher> userChip = grey_accessibilityLabel([NSString
+      stringWithFormat:@"%@, %@", suggestionLabel, suggestionSubLabel]);
 
   // Ensure the plus_address suggestion appears.
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:userChip];
@@ -293,6 +289,11 @@ id<GREYMatcher> GetMatcherForPlusAddressLabel(NSString* labelText) {
 - (void)testCreatePlusAddressIPH {
   [PlusAddressAppInterface setShouldOfferPlusAddressCreation:YES];
 
+  // Synchronization off because the tap on element 'kEmailFieldId' completes
+  // only after the IPH has already disappeared. This leads to a subsequent
+  // error when trying to verify that the IPH appeared.
+  ScopedSynchronizationDisabler disabler;
+
   // Tap an element that is eligible for plus_address autofilling.
   [[EarlGrey selectElementWithMatcher:chrome_test_util::WebViewMatcher()]
       performAction:chrome_test_util::TapWebElementWithId(kEmailFieldId)];
@@ -328,9 +329,9 @@ id<GREYMatcher> GetMatcherForPlusAddressLabel(NSString* labelText) {
   // Ensure the error alert is shown.
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:error_alert];
 
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_OK)] performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::AlertItemWithAccessibilityLabelId(IDS_OK)]
+      performAction:grey_tap()];
 }
 
 // Tests that the alert is shown and filled when an affiliated site contains the
@@ -451,9 +452,9 @@ id<GREYMatcher> GetMatcherForPlusAddressLabel(NSString* labelText) {
   // Ensure the error alert is shown.
   [ChromeEarlGrey waitForUIElementToAppearWithMatcher:error_alert];
 
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_OK)] performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::AlertItemWithAccessibilityLabelId(IDS_OK)]
+      performAction:grey_tap()];
 }
 
 // Tests that a timeout alert is shown when the plus address is failed to

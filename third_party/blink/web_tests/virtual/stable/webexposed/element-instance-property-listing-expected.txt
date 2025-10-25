@@ -60,6 +60,7 @@ namespace http://www.w3.org/1999/xhtml
     property ariaModal
     property ariaMultiLine
     property ariaMultiSelectable
+    property ariaNotify
     property ariaOrientation
     property ariaPlaceholder
     property ariaPosInSet
@@ -356,6 +357,7 @@ html element a
     property href
     property hrefTranslate
     property hreflang
+    property interestForElement
     property name
     property origin
     property password
@@ -385,6 +387,7 @@ html element area
     property host
     property hostname
     property href
+    property interestForElement
     property noHref
     property origin
     property password
@@ -472,6 +475,8 @@ html element body
     property onafterprint
     property onbeforeprint
     property onbeforeunload
+    property ongamepadconnected
+    property ongamepaddisconnected
     property onhashchange
     property onlanguagechange
     property onmessage
@@ -500,6 +505,7 @@ html element button
     property formMethod
     property formNoValidate
     property formTarget
+    property interestForElement
     property labels
     property name
     property popoverTargetAction
@@ -634,6 +640,8 @@ html element frameset
     property onafterprint
     property onbeforeprint
     property onbeforeunload
+    property ongamepadconnected
+    property ongamepaddisconnected
     property onhashchange
     property onlanguagechange
     property onmessage
@@ -1301,6 +1309,7 @@ namespace http://www.w3.org/2000/svg
     property ariaModal
     property ariaMultiLine
     property ariaMultiSelectable
+    property ariaNotify
     property ariaOrientation
     property ariaPlaceholder
     property ariaPosInSet
@@ -1559,11 +1568,13 @@ namespace http://www.w3.org/2000/svg
     property webkitRequestFullscreen
     property when
 svg element a
+    property download
     property farthestViewportElement
     property getBBox
     property getCTM
     property getScreenCTM
     property href
+    property interestForElement
     property nearestViewportElement
     property rel
     property relList
@@ -2157,6 +2168,7 @@ svg element rect
     property x
     property y
 svg element script
+    property async
     property href
     property type
 svg element set

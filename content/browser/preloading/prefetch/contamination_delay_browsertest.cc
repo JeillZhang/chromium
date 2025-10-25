@@ -18,8 +18,8 @@
 #include "content/browser/renderer_host/browsing_context_group_swap.h"
 #include "content/browser/renderer_host/navigation_request.h"
 #include "content/public/browser/prefetch_service_delegate.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/content_features.h"
 #include "content/public/common/referrer.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -94,7 +94,7 @@ class ContaminationDelayBrowserTest : public ContentBrowserTest {
     auto candidate = blink::mojom::SpeculationCandidate::New();
     candidate->url = url;
     candidate->action = blink::mojom::SpeculationAction::kPrefetch;
-    candidate->eagerness = blink::mojom::SpeculationEagerness::kEager;
+    candidate->eagerness = blink::mojom::SpeculationEagerness::kImmediate;
     candidate->referrer = Referrer::SanitizeForRequest(
         url, blink::mojom::Referrer(
                  shell()->web_contents()->GetURL(),
@@ -115,11 +115,11 @@ class ContaminationDelayBrowserTest : public ContentBrowserTest {
   std::unique_ptr<net::test_server::HttpResponse> MaybeServeRequest(
       const net::test_server::HttpRequest& request) {
     GURL url = request.GetURL();
-    if (url.path_piece() == "/delayed") {
+    if (url.path() == "/delayed") {
       return std::make_unique<net::test_server::DelayedHttpResponse>(
           response_delay());
     }
-    if (url.path_piece() == "/redirect-cross-site") {
+    if (url.path() == "/redirect-cross-site") {
       auto response = std::make_unique<net::test_server::DelayedHttpResponse>(
           response_delay());
       response->set_code(net::HTTP_TEMPORARY_REDIRECT);
@@ -204,7 +204,8 @@ IN_PROC_BROWSER_TEST_F(ContaminationDelayBrowserTest, IgnoresIfExempt) {
   auto* prefetch_service = PrefetchService::GetFromFrameTreeNodeId(
       shell()->web_contents()->GetPrimaryMainFrame()->GetFrameTreeNodeId());
   auto owned_delegate = std::make_unique<MockPrefetchServiceDelegate>();
-  EXPECT_CALL(*owned_delegate, IsContaminationExempt(referrer_url))
+  EXPECT_CALL(*owned_delegate,
+              IsContaminationExempt(url::Origin::Create(referrer_url)))
       .WillRepeatedly(testing::Return(true));
   prefetch_service->SetPrefetchServiceDelegateForTesting(
       std::move(owned_delegate));
@@ -245,7 +246,7 @@ IN_PROC_BROWSER_TEST_F(ContaminationDelayBrowserTest,
   // is actually triggered.
   auto owned_delegate = std::make_unique<MockPrefetchServiceDelegate>(
       /*num_on_prefetch_likely_calls=*/0);
-  EXPECT_CALL(*owned_delegate, IsContaminationExemptPerOrigin(referring_origin))
+  EXPECT_CALL(*owned_delegate, IsContaminationExempt(referring_origin))
       .WillRepeatedly(testing::Return(true));
   prefetch_service->SetPrefetchServiceDelegateForTesting(
       std::move(owned_delegate));
@@ -256,9 +257,12 @@ IN_PROC_BROWSER_TEST_F(ContaminationDelayBrowserTest,
       test::kPreloadingEmbedderHistgramSuffixForTesting,
       blink::mojom::Referrer(), referring_origin,
       /*no_vary_search_hint=*/std::nullopt,
+      /*priority=*/std::nullopt,
       PreloadPipelineInfo::Create(
           /*planned_max_preloading_type=*/PreloadingType::kPrefetch),
-      /*attempt=*/nullptr, /*holdback_status_override=*/std::nullopt);
+      /*attempt=*/nullptr,
+      /*holdback_status_override=*/PreloadingHoldbackStatus::kUnspecified,
+      /*ttl=*/std::nullopt);
   test_prefetch_watcher->WaitUntilPrefetchResponseCompleted(std::nullopt,
                                                             prefetch_url);
 

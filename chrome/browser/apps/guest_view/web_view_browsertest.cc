@@ -151,7 +151,6 @@
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/test_data_directory.h"
 #include "pdf/buildflags.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "services/device/public/cpp/test/fake_hid_manager.h"
 #include "services/device/public/cpp/test/fake_serial_port_manager.h"
 #include "services/device/public/cpp/test/fake_usb_device_manager.h"
@@ -183,10 +182,6 @@
 #include "ui/aura/env.h"
 #include "ui/aura/env_observer.h"
 #include "ui/aura/window.h"
-#endif
-
-#if BUILDFLAG(ENABLE_PPAPI)
-#include "content/public/test/ppapi_test_utils.h"
 #endif
 
 #if BUILDFLAG(ENABLE_PDF)
@@ -3221,24 +3216,11 @@ IN_PROC_BROWSER_TEST_P(WebViewTest, TestContextMenu) {
   auto* guest_main_frame =
       GetGuestViewManager()->WaitForSingleGuestRenderFrameHostCreated();
   ASSERT_TRUE(guest_main_frame);
-
-  auto close_menu_and_stop_run_loop = [](base::OnceClosure closure,
-                                         RenderViewContextMenu* context_menu) {
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(&RenderViewContextMenuBase::Cancel,
-                                  base::Unretained(context_menu)));
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, std::move(closure));
-  };
-
-  base::RunLoop run_loop;
-  RenderViewContextMenu::RegisterMenuShownCallbackForTesting(
-      base::BindOnce(close_menu_and_stop_run_loop, run_loop.QuitClosure()));
-
+  ContextMenuShownObserver context_menu_shown_observer =
+      ContextMenuShownObserver();
   OpenContextMenu(guest_main_frame);
-
-  // Wait for the context menu to be visible.
-  run_loop.Run();
+  context_menu_shown_observer.Wait();
+  EXPECT_EQ(true, context_menu_shown_observer.shown());
 }
 
 IN_PROC_BROWSER_TEST_P(WebViewTest, MediaAccessAPIAllow_TestAllow) {
@@ -3436,13 +3418,12 @@ class MockHidDelegate : public ChromeHidDelegate {
     chooser_controller_->set_view(mock_chooser_view_.get());
 
     EXPECT_CALL(*mock_chooser_view_.get(), OnOptionsInitialized)
-        .WillOnce(
-            testing::Invoke([this] { chooser_controller_->Select({0}); }));
+        .WillOnce([this] { chooser_controller_->Select({0}); });
   }
 
  private:
-  std::unique_ptr<HidChooserController> chooser_controller_;
   std::unique_ptr<permissions::MockChooserControllerView> mock_chooser_view_;
+  std::unique_ptr<HidChooserController> chooser_controller_;
 };
 
 class WebHidWebViewTest : public WebViewTest {
@@ -3841,7 +3822,7 @@ std::unique_ptr<net::test_server::HttpResponse> HandleDownloadRequestWithCookie(
     return nullptr;
   }
 
-  std::string cookie_to_expect = request.GetURL().query();
+  std::string cookie_to_expect = request.GetURL().GetQuery();
   const auto cookie_header_it = request.headers.find("cookie");
   std::unique_ptr<net::test_server::BasicHttpResponse> response;
 
@@ -3977,7 +3958,7 @@ IN_PROC_BROWSER_TEST_P(WebViewTest, DownloadCookieIsolation) {
     ASSERT_TRUE(
         base::ReadFileToString(download->GetTargetFilePath(), &content));
     // Note that the contents of the file is the value of the cookie.
-    EXPECT_EQ(content, download->GetURL().query());
+    EXPECT_EQ(content, download->GetURL().GetQuery());
     cookies.insert(content);
   }
 
@@ -5083,7 +5064,7 @@ IN_PROC_BROWSER_TEST_P(WebViewTest, NavigateGuestToWebviewAccessibleResource) {
   extensions::ExtensionRegistry* registry =
       extensions::ExtensionRegistry::Get(browser()->profile());
   const extensions::Extension* extension =
-      registry->enabled_extensions().GetByID(guest_url.host());
+      registry->enabled_extensions().GetByID(guest_url.GetHost());
   EXPECT_EQ(extensions::mojom::ContextType::kUnprivilegedExtension,
             process_map->GetMostLikelyContextType(
                 extension, guest_process->GetDeprecatedID(), &guest_url));
@@ -6205,6 +6186,14 @@ class LocalNetworkAccessWebViewTest : public WebViewTest {
                                             std::move(disabled_features));
   }
 
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    WebViewTest::SetUpCommandLine(command_line);
+    // Clear default from InProcessBrowserTest as test doesn't want 127.0.0.1 in
+    // the public address space
+    command_line->AppendSwitchASCII(network::switches::kIpAddressSpaceOverrides,
+                                    "");
+  }
+
  private:
   base::test::ScopedFeatureList features_;
 };
@@ -6259,8 +6248,7 @@ IN_PROC_BROWSER_TEST_P(WebViewTest, LoadDisallowedExtensionURLInSubframe) {
   const extensions::Extension* extension = LoadExtension(
       test_data_dir_.AppendASCII("web_accessible_resources/subframe"));
   ASSERT_TRUE(extension);
-  GURL extension_url =
-      extension->ResolveExtensionURL("web_accessible_page.html");
+  GURL extension_url = extension->GetResourceURL("web_accessible_page.html");
 
   GURL iframe_url(embedded_test_server()->GetURL("/title1.html"));
 
@@ -6421,29 +6409,6 @@ IN_PROC_BROWSER_TEST_P(WebViewTest, PreserveNameAcrossNavigationsAndCrashes) {
   load_observer.Wait();
   EXPECT_EQ("foo", content::EvalJs(GetGuestRenderFrameHost(), "window.name"));
 }
-
-#if BUILDFLAG(ENABLE_PPAPI)
-class WebViewPPAPITest : public WebViewTest {
- protected:
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    WebViewTest::SetUpCommandLine(command_line);
-    ASSERT_TRUE(ppapi::RegisterTestPlugin(command_line));
-  }
-};
-
-INSTANTIATE_TEST_SUITE_P(/* no prefix */,
-                         WebViewPPAPITest,
-                         testing::Bool(),
-                         WebViewPPAPITest::DescribeParams);
-
-IN_PROC_BROWSER_TEST_P(WebViewPPAPITest, Shim_TestPlugin) {
-  TestHelper("testPlugin", "web_view/shim", NO_TEST_SERVER);
-}
-
-IN_PROC_BROWSER_TEST_P(WebViewPPAPITest, Shim_TestPluginLoadPermission) {
-  TestHelper("testPluginLoadPermission", "web_view/shim", NO_TEST_SERVER);
-}
-#endif  // BUILDFLAG(ENABLE_PPAPI)
 
 // Domain which the Webstore hosted app is associated with in production.
 constexpr char kWebstoreURL[] = "https://chrome.google.com/";
@@ -6645,8 +6610,9 @@ IN_PROC_BROWSER_TEST_P(SitePerProcessWebViewTest, SimpleNavigations) {
       starting_instance->IsRelatedSiteInstance(main_frame->GetSiteInstance()));
   EXPECT_EQ(starting_instance->GetStoragePartitionConfig(),
             main_frame->GetSiteInstance()->GetStoragePartitionConfig());
-  EXPECT_EQ(starting_instance->GetOrCreateProcess()->GetStoragePartition(),
-            main_frame->GetProcess()->GetStoragePartition());
+  EXPECT_EQ(
+      starting_instance->GetOrCreateProcessForTesting()->GetStoragePartition(),
+      main_frame->GetProcess()->GetStoragePartition());
 
   // Ensure the guest SiteInstance reflects the proper site and actually uses
   // site isolation.
@@ -6851,8 +6817,9 @@ IN_PROC_BROWSER_TEST_P(SitePerProcessWebViewTest, BrowsingInstanceSwap) {
   EXPECT_FALSE(first_instance->IsRelatedSiteInstance(second_instance.get()));
   EXPECT_EQ(first_instance->GetStoragePartitionConfig(),
             second_instance->GetStoragePartitionConfig());
-  EXPECT_EQ(first_instance->GetOrCreateProcess()->GetStoragePartition(),
-            second_instance->GetProcess()->GetStoragePartition());
+  EXPECT_EQ(
+      first_instance->GetOrCreateProcessForTesting()->GetStoragePartition(),
+      second_instance->GetProcess()->GetStoragePartition());
 }
 
 // Helper class to count the number of guest processes created.
@@ -6940,8 +6907,9 @@ IN_PROC_BROWSER_TEST_P(SitePerProcessWebViewTest, NavigateToAboutBlank) {
   EXPECT_FALSE(first_instance->IsRelatedSiteInstance(third_instance.get()));
   EXPECT_EQ(first_instance->GetStoragePartitionConfig(),
             third_instance->GetStoragePartitionConfig());
-  EXPECT_EQ(first_instance->GetOrCreateProcess()->GetStoragePartition(),
-            third_instance->GetProcess()->GetStoragePartition());
+  EXPECT_EQ(
+      first_instance->GetOrCreateProcessForTesting()->GetStoragePartition(),
+      third_instance->GetProcess()->GetStoragePartition());
 
   // Ask embedder to navigate the webview back to about:blank.  This should
   // stay in the same SiteInstance.
@@ -7509,8 +7477,16 @@ IN_PROC_BROWSER_TEST_P(WebViewFencedFrameTest, ZoomFencedFrame) {
                    content::GetPendingZoomLevel(embedder_rwh));
 }
 
+// TODO(crbug.com/432394750): Flaky on linux.
+#if BUILDFLAG(IS_LINUX)
+#define MAYBE_FencedFrameInGuestHasGuestSiteInstance \
+  DISABLED_FencedFrameInGuestHasGuestSiteInstance
+#else
+#define MAYBE_FencedFrameInGuestHasGuestSiteInstance \
+  FencedFrameInGuestHasGuestSiteInstance
+#endif
 IN_PROC_BROWSER_TEST_P(WebViewFencedFrameTest,
-                       FencedFrameInGuestHasGuestSiteInstance) {
+                       MAYBE_FencedFrameInGuestHasGuestSiteInstance) {
   SKIP_FOR_MPARCH();  // TODO(crbug.com/40202416): Enable test for MPArch.
 
   TestHelper("testAddFencedFrame", "web_view/shim", NEEDS_TEST_SERVER);

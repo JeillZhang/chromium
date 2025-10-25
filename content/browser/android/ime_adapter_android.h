@@ -53,7 +53,6 @@ class CONTENT_EXPORT ImeAdapterAndroid : public RenderWidgetHostConnector {
   // Called from java -> native
   bool SendKeyEvent(
       JNIEnv* env,
-      const base::android::JavaParamRef<jobject>&,
       const base::android::JavaParamRef<jobject>& original_key_event,
       int type,
       int modifiers,
@@ -72,34 +71,21 @@ class CONTENT_EXPORT ImeAdapterAndroid : public RenderWidgetHostConnector {
                   const base::android::JavaParamRef<jobject>& text,
                   const base::android::JavaParamRef<jstring>& text_str,
                   int relative_cursor_pos);
-  void FinishComposingText(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>&);
-  void SetEditableSelectionOffsets(JNIEnv*,
-                                   const base::android::JavaParamRef<jobject>&,
-                                   int start,
-                                   int end);
-  void SetComposingRegion(JNIEnv*,
-                          const base::android::JavaParamRef<jobject>&,
-                          int start,
-                          int end);
-  void DeleteSurroundingText(JNIEnv*,
-                             const base::android::JavaParamRef<jobject>&,
-                             int before,
-                             int after);
-  void DeleteSurroundingTextInCodePoints(
-      JNIEnv*,
-      const base::android::JavaParamRef<jobject>&,
-      int before,
-      int after);
-  void RequestCursorUpdate(JNIEnv*,
-                           const base::android::JavaParamRef<jobject>&,
-                           bool immediateRequest,
-                           bool monitorRequest);
-  bool RequestTextInputStateUpdate(JNIEnv*,
-                                   const base::android::JavaParamRef<jobject>&);
+  void ReplaceText(JNIEnv* env,
+                   const base::android::JavaParamRef<jobject>& obj,
+                   int start,
+                   int end,
+                   const base::android::JavaParamRef<jstring>& text,
+                   int relative_cursor_pos);
+  void FinishComposingText(JNIEnv* env);
+  void SetEditableSelectionOffsets(JNIEnv*, int start, int end);
+  void SetComposingRegion(JNIEnv*, int start, int end);
+  void DeleteSurroundingText(JNIEnv*, int before, int after);
+  void DeleteSurroundingTextInCodePoints(JNIEnv*, int before, int after);
+  void RequestCursorUpdate(JNIEnv*, bool immediateRequest, bool monitorRequest);
+  bool RequestTextInputStateUpdate(JNIEnv*);
   void HandleStylusWritingGestureAction(
       JNIEnv*,
-      const base::android::JavaParamRef<jobject>&,
       const jint,
       const base::android::JavaParamRef<jobject>&);
 
@@ -130,6 +116,10 @@ class CONTENT_EXPORT ImeAdapterAndroid : public RenderWidgetHostConnector {
       const gfx::Rect& focused_edit_bounds,
       const gfx::Rect& caret_bounds);
 
+  bool InsertMediaFromURL(JNIEnv* env,
+                          const base::android::JavaParamRef<jobject>& obj,
+                          const base::android::JavaParamRef<jstring>& url);
+
   base::android::ScopedJavaLocalRef<jobject> java_ime_adapter_for_testing(
       JNIEnv* env) {
     return java_ime_adapter_.get(env);
@@ -138,9 +128,10 @@ class CONTENT_EXPORT ImeAdapterAndroid : public RenderWidgetHostConnector {
   void UpdateState(const ui::mojom::TextInputState& state);
   void UpdateOnTouchDown();
 
-  void AdvanceFocusForIME(JNIEnv*,
-                          const base::android::JavaParamRef<jobject>&,
-                          jint);
+  void AdvanceFocusForIME(JNIEnv*, jint);
+
+  base::android::ScopedJavaLocalRef<jobjectArray> GetSupportedMimeTypes(
+      JNIEnv*);
 
  private:
   RenderWidgetHostImpl* GetFocusedWidget();

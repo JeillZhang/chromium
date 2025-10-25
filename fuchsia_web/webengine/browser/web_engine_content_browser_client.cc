@@ -6,6 +6,7 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/functional/callback.h"
@@ -13,7 +14,9 @@
 #include "base/memory/raw_ptr.h"
 #include "base/strings/string_split.h"
 #include "build/chromecast_buildflags.h"
+#include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/embedder_support/user_agent_utils.h"
+#include "components/policy/content/safe_search_service.h"
 #include "components/policy/content/safe_sites_navigation_throttle.h"
 #include "components/site_isolation/features.h"
 #include "components/site_isolation/preloaded_isolated_origins.h"
@@ -46,7 +49,6 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/network_service.mojom.h"
-#include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/public/mojom/webpreferences/web_preferences.mojom.h"
 #include "third_party/widevine/cdm/buildflags.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -117,7 +119,6 @@ std::vector<std::string> GetCorsExemptHeaders() {
 }
 
 static constexpr char const* kRendererSwitchesToCopy[] = {
-    blink::switches::kSharedArrayBufferAllowedOrigins,
     switches::kCorsExemptHeaders,
     switches::kEnableCastStreamingReceiver,
     switches::kEnableProtectedVideoBuffers,
@@ -148,10 +149,23 @@ static constexpr char const* kAllProcessSwitchesToCopy[] = {
     switches::kEnableContentDirectories,
 };
 
+std::vector<ContentSettingsPattern> GetProtectedServiceWorkers() {
+  const auto tokens = base::SplitString(
+      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+          switches::kProtectedServiceWorkers),
+      ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
+  std::vector<ContentSettingsPattern> patterns;
+  for (const auto& token : tokens) {
+    patterns.push_back(ContentSettingsPattern::FromString(token));
+  }
+  return patterns;
+}
+
 }  // namespace
 
 WebEngineContentBrowserClient::WebEngineContentBrowserClient()
-    : cors_exempt_headers_(GetCorsExemptHeaders()) {
+    : cors_exempt_headers_(GetCorsExemptHeaders()),
+      protected_service_workers_(GetProtectedServiceWorkers()) {
   // Logging in this class ensures this is logged once per web_instance.
   LogComponentStartWithVersion("WebEngine web_instance");
 }
@@ -195,7 +209,6 @@ void WebEngineContentBrowserClient::OverrideWebPreferences(
     content::WebContents* web_contents,
     content::SiteInstance& main_frame_site,
     blink::web_pref::WebPreferences* web_prefs) {
-
   // TODO(crbug.com/40245916): Remove once supported in WebEngine.
   web_prefs->disable_webauthn = true;
 
@@ -295,6 +308,19 @@ std::string WebEngineContentBrowserClient::GetAcceptLangs(
   return l10n_util::GetStringUTF8(IDS_ACCEPT_LANGUAGES);
 }
 
+// TODO(crbug.com/434764000): May revise if service workers should be allowed
+// in incognito mode at all.
+bool WebEngineContentBrowserClient::MayDeleteServiceWorkerRegistration(
+    const GURL& scope,
+    content::BrowserContext*) {
+  for (const auto& pattern : protected_service_workers_) {
+    if (pattern.Matches(scope)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 base::OnceClosure WebEngineContentBrowserClient::SelectClientCertificate(
     content::BrowserContext* browser_context,
     int process_id,
@@ -325,9 +351,10 @@ void WebEngineContentBrowserClient::CreateThrottlesForNavigation(
       frame_impl->explicit_sites_filter_error_page();
 
   if (explicit_sites_filter_error_page) {
+    content::BrowserContext* context =
+        navigation_handle.GetWebContents()->GetBrowserContext();
     registry.AddThrottle(std::make_unique<SafeSitesNavigationThrottle>(
-        registry,
-        navigation_handle.GetWebContents()->GetBrowserContext(),
+        registry, SafeSearchFactory::GetForBrowserContext(context),
         *explicit_sites_filter_error_page));
   }
 }

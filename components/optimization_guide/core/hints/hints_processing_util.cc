@@ -141,6 +141,14 @@ std::string GetStringNameForOptimizationType(
       return "BuyNowPayLaterAllowlistAffirm";
     case proto::OptimizationType::BUY_NOW_PAY_LATER_ALLOWLIST_ZIP:
       return "BuyNowPayLaterAllowlistZip";
+    case proto::OptimizationType::BUY_NOW_PAY_LATER_ALLOWLIST_KLARNA:
+      return "BuyNowPayLaterAllowlistKlarna";
+    case proto::OptimizationType::BUY_NOW_PAY_LATER_BLOCKLIST_AFFIRM:
+      return "BuyNowPayLaterBlocklistAffirm";
+    case proto::OptimizationType::BUY_NOW_PAY_LATER_BLOCKLIST_ZIP:
+      return "BuyNowPayLaterBlocklistZip";
+    case proto::OptimizationType::BUY_NOW_PAY_LATER_BLOCKLIST_KLARNA:
+      return "BuyNowPayLaterBlocklistKlarna";
     case proto::OptimizationType::SAVED_TAB_GROUP:
       return "SavedTabGroup";
     case proto::OptimizationType::TEXT_CLASSIFIER_ENTITY_DETECTION:
@@ -181,10 +189,21 @@ std::string GetStringNameForOptimizationType(
       return "GlicActionPageBlock";
     case proto::OptimizationType::FEDCM_CLICKTHROUGH_RATE:
       return "FedCmClickthroughRate";
-    case proto::OptimizationType::GLIC_PAGE_CONTEXT_ELIGIBILITY:
-      return "GlicPageContextEligibility";
     case proto::OptimizationType::DIGITAL_CREDENTIALS_LOW_FRICTION:
       return "DigitalCredentialsLowFriction";
+    case proto::OptimizationType::A2A_MERCHANT_ALLOWLIST:
+      return "A2AMerchantAllowlist";
+    case proto::OptimizationType::
+        SHARED_CREDIT_CARD_FLAT_RATE_BENEFITS_BLOCKLIST:
+      return "SharedCreditCardFlatRateBenefitBlocklist";
+    case proto::OptimizationType::WALLETABLE_PASS_DETECTION_ALLOWLIST:
+      return "WalletablePassDetectionAllowlist";
+    case proto::OptimizationType::LENS_OVERLAY_EDU_ACTION_CHIP_BLOCKLIST:
+      return "LensOverlayEduActionChipBlocklist";
+    case proto::OptimizationType::LENS_OVERLAY_EDU_ACTION_CHIP_ALLOWLIST:
+      return "LensOverlayEduActionChipAllowlist";
+    case proto::OptimizationType::WALLETABLE_PASS_DETECTION_LOYALTY_ALLOWLIST:
+      return "WalletablePassDetectionLoyaltyAllowlist";
   }
 
   // The returned string is used to record histograms for the optimization type.

@@ -54,7 +54,7 @@ import org.chromium.components.browser_ui.site_settings.Website;
 import org.chromium.components.browser_ui.site_settings.WebsiteAddress;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridge;
 import org.chromium.components.browser_ui.site_settings.WebsitePreferenceBridgeJni;
-import org.chromium.components.content_settings.ContentSettingValues;
+import org.chromium.components.content_settings.ContentSetting;
 import org.chromium.components.content_settings.ContentSettingsType;
 import org.chromium.components.content_settings.ProviderType;
 import org.chromium.components.privacy_sandbox.WebsiteExceptionRowPreference.WebsiteExceptionDeletedCallback;
@@ -79,6 +79,8 @@ public class WebsiteExceptionRowPreferenceTest {
     @Mock private SiteSettingsDelegate mSiteSettingsDelegate;
 
     @Mock private WebsiteExceptionDeletedCallback mCallback;
+
+    private static final String TEST_URL_WITH_WILDCARD = "https://[*.]test.com";
 
     @BeforeClass
     public static void setupSuite() {
@@ -117,6 +119,58 @@ public class WebsiteExceptionRowPreferenceTest {
 
     @Test
     @SmallTest
+    public void createExceptionWithSecondaryPattern_displayedCorrectly() {
+        Website site =
+                new Website(
+                        WebsiteAddress.create("*"), WebsiteAddress.create(TEST_URL_WITH_WILDCARD));
+        site.setContentSettingException(
+                ContentSettingsType.COOKIES,
+                new ContentSettingException(
+                        ContentSettingsType.COOKIES,
+                        /* primaryPattern */ "*",
+                        TEST_URL_WITH_WILDCARD,
+                        ContentSetting.ALLOW,
+                        ProviderType.PREF_PROVIDER,
+                        /* expirationInDays= */ null,
+                        /* isEmbargoed= */ false));
+        mPreference = new WebsiteExceptionRowPreference(mActivity, site, mDelegate, mCallback);
+        mPreferenceScreen.addPreference(mPreference);
+        // Check the title, summary, and the delete button.
+        onViewWaiting(withId(android.R.id.title))
+                .check(matches(allOf(withText(TEST_URL_WITH_WILDCARD), isDisplayed())));
+        onView(withId(android.R.id.summary))
+                .check(matches(allOf(withText("Does not expire"), isDisplayed())));
+        onView(withId(R.id.image_view_widget)).check(matches(isDisplayed()));
+    }
+
+    @Test
+    @SmallTest
+    public void createExceptionWithPrimaryPattern_displayedCorrectly() {
+        Website site =
+                new Website(
+                        WebsiteAddress.create(TEST_URL_WITH_WILDCARD), WebsiteAddress.create("*"));
+        site.setContentSettingException(
+                ContentSettingsType.COOKIES,
+                new ContentSettingException(
+                        ContentSettingsType.COOKIES,
+                        TEST_URL_WITH_WILDCARD,
+                        /* secondaryPattern */ "*",
+                        ContentSetting.ALLOW,
+                        ProviderType.PREF_PROVIDER,
+                        /* expirationInDays= */ null,
+                        /* isEmbargoed= */ false));
+        mPreference = new WebsiteExceptionRowPreference(mActivity, site, mDelegate, mCallback);
+        mPreferenceScreen.addPreference(mPreference);
+        // Check the title, summary, and the delete button.
+        onViewWaiting(withId(android.R.id.title))
+                .check(matches(allOf(withText(TEST_URL_WITH_WILDCARD), isDisplayed())));
+        onView(withId(android.R.id.summary))
+                .check(matches(allOf(withText("Does not expire"), isDisplayed())));
+        onView(withId(R.id.image_view_widget)).check(matches(isDisplayed()));
+    }
+
+    @Test
+    @SmallTest
     public void createExceptionWithExpiration_displayedCorrectly() {
         Website site = new Website(WebsiteAddress.create("https://test.com"), null);
         site.setContentSettingException(
@@ -125,7 +179,7 @@ public class WebsiteExceptionRowPreferenceTest {
                         ContentSettingsType.COOKIES,
                         site.getAddress().getOrigin(),
                         /* secondaryPattern= */ "*",
-                        ContentSettingValues.ALLOW,
+                        ContentSetting.ALLOW,
                         ProviderType.PREF_PROVIDER,
                         /* expirationInDays= */ 66,
                         /* isEmbargoed= */ false));
@@ -149,7 +203,7 @@ public class WebsiteExceptionRowPreferenceTest {
                         ContentSettingsType.COOKIES,
                         site.getAddress().getOrigin(),
                         /* secondaryPattern= */ "*",
-                        ContentSettingValues.ALLOW,
+                        ContentSetting.ALLOW,
                         ProviderType.PREF_PROVIDER,
                         /* expirationInDays= */ 0,
                         /* isEmbargoed= */ false));
@@ -172,7 +226,7 @@ public class WebsiteExceptionRowPreferenceTest {
                         ContentSettingsType.COOKIES,
                         site.getAddress().getOrigin(),
                         /* secondaryPattern= */ "*",
-                        ContentSettingValues.ALLOW,
+                        ContentSetting.ALLOW,
                         ProviderType.PREF_PROVIDER,
                         /* expirationInDays= */ null,
                         /* isEmbargoed= */ false);
@@ -187,7 +241,7 @@ public class WebsiteExceptionRowPreferenceTest {
                         Mockito.eq(ContentSettingsType.COOKIES),
                         Mockito.eq(site.getAddress().getOrigin()),
                         /* secondaryPattern= */ Mockito.eq("*"),
-                        Mockito.eq(ContentSettingValues.DEFAULT));
+                        Mockito.eq(ContentSetting.DEFAULT));
         // Check the refresh callback is triggered.
         verify(mCallback).refreshBlockingExceptions();
     }

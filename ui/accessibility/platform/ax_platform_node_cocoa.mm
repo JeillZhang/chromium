@@ -13,6 +13,7 @@
 #include "base/mac/mac_util.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/no_destructor.h"
+#include "base/notimplemented.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "skia/ext/skia_utils_mac.h"
@@ -537,14 +538,6 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   return _node != nullptr;
 }
 
-- (BOOL)isIncludedInPlatformTree {
-  // TODO(accessibility): Do we really need to have invisible objects in
-  // the platform tree?
-  return [self instanceActive] &&
-         ![[self AXRole] isEqualToString:NSAccessibilityUnknownRole] &&
-         !_node->IsInvisibleOrIgnored();
-}
-
 - (id)titleUIElement {
   // True only if it's a control, if there's a single label, and the label has
   // nonempty text.
@@ -835,8 +828,6 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
       return NSAccessibilityButtonRole;
     case ax::mojom::Role::kCanvas:
       return NSAccessibilityImageRole;
-    case ax::mojom::Role::kCaret:
-      return NSAccessibilityUnknownRole;
     case ax::mojom::Role::kCell:
       return @"AXCell";
     case ax::mojom::Role::kCheckBox:
@@ -893,14 +884,10 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
       return @"AXHeading";
     case ax::mojom::Role::kImage:
       return NSAccessibilityImageRole;
-    case ax::mojom::Role::kImeCandidate:
-      return NSAccessibilityUnknownRole;
     case ax::mojom::Role::kInlineTextBox:
       return NSAccessibilityStaticTextRole;
     case ax::mojom::Role::kInputTime:
       return @"AXTimeField";
-    case ax::mojom::Role::kKeyboard:
-      return NSAccessibilityUnknownRole;
     case ax::mojom::Role::kLink:
       return NSAccessibilityLinkRole;
     case ax::mojom::Role::kList:
@@ -922,6 +909,8 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
     case ax::mojom::Role::kMenuItemCheckBox:
       return NSAccessibilityMenuItemRole;
     case ax::mojom::Role::kMenuItemRadio:
+      return NSAccessibilityMenuItemRole;
+    case ax::mojom::Role::kMenuItemSeparator:
       return NSAccessibilityMenuItemRole;
     case ax::mojom::Role::kMenuListOption:
       return NSAccessibilityMenuItemRole;
@@ -945,8 +934,6 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
       return NSAccessibilityRowRole;
     case ax::mojom::Role::kRowHeader:
       return @"AXCell";
-    case ax::mojom::Role::kRubyAnnotation:
-      return NSAccessibilityUnknownRole;
     case ax::mojom::Role::kScrollBar:
       return NSAccessibilityScrollBarRole;
     case ax::mojom::Role::kScrollView:
@@ -986,19 +973,26 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
     case ax::mojom::Role::kTreeItem:
       return NSAccessibilityRowRole;
     case ax::mojom::Role::kUnknown:
-      return NSAccessibilityUnknownRole;
+      // This occurs in the case where a View has no widget, and while this will
+      // not be exposed to users, it allows isAccessibilityElement() to have
+      // fewer rules.
+      return NSAccessibilityGroupRole;
     case ax::mojom::Role::kWindow:
       // Use the group role as the BrowserNativeWidgetWindow already provides
       // a kWindow role, and having extra window roles, which are treated
       // specially by screen readers, can break their ability to find the
       // content window. See http://crbug.com/875843 for more information.
       return NSAccessibilityGroupRole;
+    case ax::mojom::Role::kCaret:
     case ax::mojom::Role::kDescriptionListTermDeprecated:
     case ax::mojom::Role::kDescriptionListDetailDeprecated:
     case ax::mojom::Role::kDirectoryDeprecated:
+    case ax::mojom::Role::kImeCandidate:
+    case ax::mojom::Role::kKeyboard:
     case ax::mojom::Role::kPreDeprecated:
     case ax::mojom::Role::kPortalDeprecated:
-      NOTREACHED();
+    case ax::mojom::Role::kRubyAnnotation:
+      NOTREACHED() << "The following role should not be present: " << role;
   }
 }
 
@@ -1052,19 +1046,15 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 }
 
 - (ax::mojom::Role)internalRole {
-  if ([self instanceActive]) {
-    ax::mojom::Role role = static_cast<ax::mojom::Role>(_node->GetRole());
-    // Make sure to use Role::kPopupButton instead of Role::kButton for all
-    // values of kHasPopup. This is normally already true, but the default
-    // implementation does not use kPopupButton if aria-haspopup="dialog".
-    if (role == ax::mojom::Role::kButton &&
-        _node->HasIntAttribute(ax::mojom::IntAttribute::kHasPopup)) {
-      return ax::mojom::Role::kPopUpButton;
-    }
-    return role;
+  ax::mojom::Role role = static_cast<ax::mojom::Role>(_node->GetRole());
+  // Make sure to use Role::kPopupButton instead of Role::kButton for all
+  // values of kHasPopup. This is normally already true, but the default
+  // implementation does not use kPopupButton if aria-haspopup="dialog".
+  if (role == ax::mojom::Role::kButton &&
+      _node->HasIntAttribute(ax::mojom::IntAttribute::kHasPopup)) {
+    return ax::mojom::Role::kPopUpButton;
   }
-
-  return ax::mojom::Role::kUnknown;
+  return role;
 }
 
 - (BOOL)hasAction:(ax::mojom::Action)action {
@@ -1095,8 +1085,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   bool has_image_semantics =
       ui::IsImage(_node->GetRole()) &&
       !_node->GetBoolAttribute(ax::mojom::BoolAttribute::kCanvasHasFallback) &&
-      !_node->GetChildCount() &&
-      _node->GetNameFrom() != ax::mojom::NameFrom::kAttributeExplicitlyEmpty;
+      !_node->GetChildCount();
 #if DCHECK_IS_ON()
   bool is_native_image =
       [[self accessibilityRole] isEqualToString:NSAccessibilityImageRole];
@@ -1138,14 +1127,32 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
     ui::AXNode* anchor = leafTextRange.focus()->GetAnchor();
     DCHECK(anchor) << "A non-null position should have a non-null anchor node.";
 
+    // Document markers are stored on the static text parent of an inline text
+    // box. If this node is an inline text box, create equivalent positions in
+    // its parent static text node so that the markers can be retrieved.
+    AXRange markersTextRange(leafTextRange.anchor()->Clone(),
+                             leafTextRange.focus()->Clone());
+    ui::AXNode* markers_anchor = leafTextRange.anchor()->GetAnchor();
+    if (leafTextRange.focus()->GetAnchor()->GetRole() ==
+        ax::mojom::Role::kInlineTextBox) {
+      markersTextRange = AXRange(leafTextRange.anchor()->CreateParentPosition(),
+                                 leafTextRange.focus()->CreateParentPosition());
+      markers_anchor = markersTextRange.anchor()->GetAnchor();
+
+      DCHECK(markersTextRange.anchor()->GetAnchor() ==
+             markersTextRange.focus()->GetAnchor());
+      DCHECK(markers_anchor) << "Markers anchor should not be null.";
+      DCHECK(markers_anchor->GetRole() == ax::mojom::Role::kStaticText);
+    }
+
     // Add misspelling information
     const std::vector<int32_t>& markerTypes =
-        anchor->GetIntListAttribute(ax::mojom::IntListAttribute::kMarkerTypes);
-    const std::vector<int>& markerStarts =
-        anchor->GetIntListAttribute(ax::mojom::IntListAttribute::kMarkerStarts);
-    const std::vector<int>& markerEnds =
-        anchor->GetIntListAttribute(ax::mojom::IntListAttribute::kMarkerEnds);
-
+        markers_anchor->GetIntListAttribute(
+            ax::mojom::IntListAttribute::kMarkerTypes);
+    const std::vector<int>& markerStarts = markers_anchor->GetIntListAttribute(
+        ax::mojom::IntListAttribute::kMarkerStarts);
+    const std::vector<int>& markerEnds = markers_anchor->GetIntListAttribute(
+        ax::mojom::IntListAttribute::kMarkerEnds);
     DCHECK_EQ(markerTypes.size(), markerStarts.size());
     DCHECK_EQ(markerTypes.size(), markerEnds.size());
 
@@ -1155,16 +1162,30 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
         continue;
       }
 
-      int misspellingStart = anchorStartOffset + markerStarts[i];
-      int misspellingEnd = anchorStartOffset + markerEnds[i];
-      int misspellingLength = misspellingEnd - misspellingStart;
-      DCHECK_LE(static_cast<unsigned long>(misspellingEnd),
-                [attributedString length]);
-      DCHECK_GT(misspellingLength, 0);
+      // Calculate the intersection of the marker range and the current text
+      // range. These offsets are relative to the static text node, not the leaf
+      // inline text.
+      int markerStartOffset =
+          std::max(markerStarts[i], markersTextRange.anchor()->text_offset());
+      int markerEndOffset =
+          std::min(markerEnds[i], markersTextRange.focus()->text_offset());
+      if (markerEndOffset <= markerStartOffset) {
+        continue;
+      }
+
+      // Convert the intersection so it's relative to the text range of the
+      // attributed string we're building.
+      int rangeStart = markerStartOffset -
+                       markersTextRange.anchor()->text_offset() +
+                       anchorStartOffset;
+      int rangeEnd = markerEndOffset -
+                     markersTextRange.anchor()->text_offset() +
+                     anchorStartOffset;
+      int rangeLength = rangeEnd - rangeStart;
       [attributedString
           addAttribute:NSAccessibilityMarkedMisspelledTextAttribute
                  value:@YES
-                 range:NSMakeRange(misspellingStart, misspellingLength)];
+                 range:NSMakeRange(rangeStart, rangeLength)];
     }
 
     CollectAncestorRoles(*anchor, ancestor_roles);
@@ -1737,6 +1758,21 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
                "AXPlatformNodeCocoa::accessibilityAttributeNames",
                "role=", ui::ToString([self internalRole]));
 
+  if (![self instanceActive]) {
+    LOG(ERROR) << "Stale object in tree, no AXPlatformNode.";
+    return @[];
+  }
+
+  if (!_node->GetDelegate()) {
+    LOG(ERROR) << "Stale object in tree, no delegate.";
+    return @[];
+  }
+
+  // No need to compute attribute names for ignored nodes.
+  if (![self isAccessibilityElement]) {
+    return @[];
+  }
+
   // Exclude attributes available through the new accessibility API.
   NSMutableArray* attributes = [self internalAccessibilityAttributeNames];
   if (features::IsMacAccessibilityAPIMigrationEnabled()) {
@@ -2282,8 +2318,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 }
 
 - (NSNumber*)AXEnabled {
-  return
-      @(_node->GetData().GetRestriction() != ax::mojom::Restriction::kDisabled);
+  return @([self isAccessibilityEnabled]);
 }
 
 - (BOOL)isAccessibilityExpanded {
@@ -2339,14 +2374,7 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
   for (auto child_iterator_ptr = _node->GetDelegate()->ChildrenBegin();
        *child_iterator_ptr != *_node->GetDelegate()->ChildrenEnd();
        ++(*child_iterator_ptr)) {
-    ui::AXPlatformNodeDelegate* child = child_iterator_ptr->get();
-    if (child && child->IsInvisibleOrIgnored()) {
-      [children
-          addObjectsFromArray:[child_iterator_ptr->GetNativeViewAccessible()
-                                      .Get() accessibilityChildren]];
-    } else {
-      [children addObject:child_iterator_ptr->GetNativeViewAccessible().Get()];
-    }
+    [children addObject:child_iterator_ptr->GetNativeViewAccessible().Get()];
   }
   return NSAccessibilityUnignoredChildren(children);
 }
@@ -2618,17 +2646,38 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
 
 // NSAccessibility: Configuring Accessibility.
 - (BOOL)isAccessibilityElement {
-  if (![self instanceActive])
+  if (!_node) {
     return NO;
+  }
+  DCHECK(_node->GetDelegate());
+  DCHECK([self instanceActive]);
 
-  return (![[[self class] nativeRoleFromAXRole:_node->GetRole()]
-              isEqualToString:NSAccessibilityUnknownRole] &&
-          !_node->GetDelegate()->IsIgnored());
+  // After ViewsAX lands, we should be able to add this DCHECK.
+  // DCHECK(!_node->GetDelegate()->IsIgnored())
+  //     << "Ignored nodes should be removed by PlatformGet*() methods:"
+  //     << _node->GetDelegate()->ToString();
+
+  if (_node->GetDelegate()->IsInvisibleOrIgnored()) {
+    return NO;
+  }
+
+  if ([self internalRole] == ax::mojom::Role::kImage &&
+      _node->GetData().GetNameFrom() ==
+          ax::mojom::NameFrom::kAttributeExplicitlyEmpty) {
+    return NO;
+  }
+  return YES;
 }
 
 - (BOOL)isAccessibilityEnabled {
   if (!_node)
     return NO;
+
+  // Native menus expose separators as disabled menu items. Chromium mirrors
+  // this behavior.
+  if (_node->GetRole() == ax::mojom::Role::kMenuItemSeparator) {
+    return NO;
+  }
 
   return _node->GetData().GetRestriction() != ax::mojom::Restriction::kDisabled;
 }
@@ -3509,10 +3558,11 @@ const ui::CocoaActionList& GetCocoaActionListForTesting() {
     return nil;
 
   std::string url;
-  if ([[self accessibilityRole] isEqualToString:NSAccessibilityWebAreaRole])
+  if ([[self accessibilityRole] isEqualToString:NSAccessibilityWebAreaRole]) {
     url = _node->GetDelegate()->GetTreeData().url;
-  else
+  } else {
     url = _node->GetStringAttribute(ax::mojom::StringAttribute::kUrl);
+  }
 
   if (url.empty())
     return nil;

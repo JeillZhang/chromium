@@ -6,7 +6,10 @@
 
 #include "base/android/feature_map.h"
 #include "base/no_destructor.h"
+#include "components/content_settings/core/common/features.h"
 #include "components/permissions/features.h"
+#include "media/base/media_switches.h"
+#include "third_party/blink/public/common/features_generated.h"
 
 // Must come after all headers that specialize FromJniType() / ToJniType().
 #include "components/permissions/android/core_jni/PermissionsAndroidFeatureMap_jni.h"
@@ -22,7 +25,12 @@ namespace {
 const base::Feature* const kFeaturesExposedToJava[] = {
     &kAndroidCancelPermissionPromptOnTouchOutside,
     &features::kOsAdditionalSecurityPermissionKillSwitch,
-    &features::kApproximateGeolocationPermission,
+    &features::kPermissionHeuristicAutoGrant,
+    &content_settings::features::kApproximateGeolocationPermission,
+    &media::kAutoPictureInPictureAndroid,
+    &blink::features::kPermissionElement,
+    &blink::features::kBypassPepcSecurityForTesting,
+    &blink::features::kGeolocationElement,
 };
 
 // static
@@ -37,7 +45,6 @@ base::android::FeatureMap* GetFeatureMap() {
 // Enables tapping outside the permission prompt scrim to dismiss a permission
 // prompt. Do not remove flag (killswitch).
 BASE_FEATURE(kAndroidCancelPermissionPromptOnTouchOutside,
-             "AndroidCancelPermissionPromptOnTouchOutside",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
 static jlong JNI_PermissionsAndroidFeatureMap_GetNativeMap(JNIEnv* env) {

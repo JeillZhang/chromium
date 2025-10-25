@@ -35,7 +35,7 @@ testing::AssertionResult IsCJKIdeographOrSymbolWithMessage(UChar32 codepoint) {
 // These functions may need to be adjusted if Unicode changes.
 TEST(CharacterTest, Derived) {
   StringBuilder builder;
-  for (UChar32 ch = 0; ch < kMaxCodepoint; ++ch) {
+  for (UChar32 ch = 0; ch < uchar::kMaxCodepoint; ++ch) {
     if (Character::IsEmojiEmojiDefault(ch)) {
       EXPECT_TRUE(IsCJKIdeographOrSymbolWithMessage(ch));
     }
@@ -273,11 +273,11 @@ TEST(CharacterTest, HanKerning) {
     UChar32 ch;
     HanKerningCharType type;
   } data_list[] = {
-      {kLeftDoubleQuotationMarkCharacter, HanKerningCharType::kOpenQuote},
-      {kRightDoubleQuotationMarkCharacter, HanKerningCharType::kCloseQuote},
-      {kMiddleDotCharacter, HanKerningCharType::kMiddle},
-      {kIdeographicSpaceCharacter, HanKerningCharType::kMiddle},
-      {kFullwidthComma, HanKerningCharType::kDot},
+      {uchar::kLeftDoubleQuotationMark, HanKerningCharType::kOpenQuote},
+      {uchar::kRightDoubleQuotationMark, HanKerningCharType::kCloseQuote},
+      {uchar::kMiddleDot, HanKerningCharType::kMiddle},
+      {uchar::kIdeographicSpace, HanKerningCharType::kMiddle},
+      {uchar::kFullwidthComma, HanKerningCharType::kDot},
       {0x3008, HanKerningCharType::kOpen},
       {0xFF5F, HanKerningCharType::kOpen},
       {0x3009, HanKerningCharType::kClose},
@@ -373,6 +373,15 @@ TEST(CharacterTest, TestEmoji40Data) {
   EXPECT_TRUE(Character::IsEmojiModifierBase(0x1F933));
 }
 
+TEST(CharacterTest, EmojiReserved) {
+#if U_ICU_VERSION_MAJOR_NUM >= 78
+  EXPECT_TRUE(Character::IsEmoji(0x1FAEF));
+#else
+  EXPECT_TRUE(Character::IsEmojiReserved(0x1FAEF));
+#endif
+  EXPECT_TRUE(Character::IsEmojiReserved(0x1FFFD));
+}
+
 TEST(CharacterTest, LineBreakAndQuoteNotEmoji) {
   EXPECT_FALSE(Character::IsEmojiTextDefault('\n'));
   EXPECT_FALSE(Character::IsEmojiTextDefault('"'));
@@ -382,20 +391,20 @@ TEST(CharacterTest, Truncation) {
   const UChar32 kBase = 0x90000;
   UChar32 test_char = 0;
 
-  test_char = kBase + kSpaceCharacter;
+  test_char = kBase + uchar::kSpace;
   EXPECT_FALSE(Character::TreatAsSpace(test_char));
-  test_char = kBase + kNoBreakSpaceCharacter;
+  test_char = kBase + uchar::kNoBreakSpace;
   EXPECT_FALSE(Character::TreatAsSpace(test_char));
 
-  test_char = kBase + kZeroWidthNonJoinerCharacter;
+  test_char = kBase + uchar::kZeroWidthNonJoiner;
   EXPECT_FALSE(Character::TreatAsZeroWidthSpace(test_char));
-  test_char = kBase + kZeroWidthJoinerCharacter;
+  test_char = kBase + uchar::kZeroWidthJoiner;
   EXPECT_FALSE(Character::TreatAsZeroWidthSpace(test_char));
 
   test_char = kBase + 0x12;
   EXPECT_FALSE(Character::TreatAsZeroWidthSpaceInComplexScript(test_char));
   EXPECT_FALSE(Character::TreatAsZeroWidthSpaceInComplexScript(test_char));
-  test_char = kBase + kObjectReplacementCharacter;
+  test_char = kBase + uchar::kObjectReplacementCharacter;
   EXPECT_FALSE(Character::TreatAsZeroWidthSpaceInComplexScript(test_char));
 
   test_char = kBase + 0xA;
@@ -493,10 +502,10 @@ TEST(CharacterTest, IsVerticalMathCharacter) {
       0x290F, 0x2910, 0x294E, 0x2950, 0x2952, 0x2953, 0x2956, 0x2957, 0x295A,
       0x295B, 0x295E, 0x295F, 0x2B45, 0x2B46, 0xFE35, 0xFE36, 0xFE37, 0xFE38};
 
-  for (UChar32 test_char = 0; test_char < kMaxCodepoint; test_char++) {
-    if (test_char == kArabicMathematicalOperatorMeemWithHahWithTatweel) {
+  for (UChar32 test_char = 0; test_char < uchar::kMaxCodepoint; test_char++) {
+    if (test_char == uchar::kArabicMathematicalOperatorMeemWithHahWithTatweel) {
       EXPECT_FALSE(Character::IsVerticalMathCharacter(test_char));
-    } else if (test_char == kArabicMathematicalOperatorHahWithDal) {
+    } else if (test_char == uchar::kArabicMathematicalOperatorHahWithDal) {
       EXPECT_FALSE(Character::IsVerticalMathCharacter(test_char));
     } else {
       bool in_vertical = !std::binary_search(
@@ -537,7 +546,7 @@ TEST(CharacterTest, EmojiComponents) {
 // skipping any other categories that would be computed for the same cursor
 // position and codepoint.
 TEST(CharacterTest, MaybeEmojiPresentationNoIllegalShortcut) {
-  for (UChar32 ch = 0; ch < kMaxCodepoint; ++ch) {
+  for (UChar32 ch = 0; ch < uchar::kMaxCodepoint; ++ch) {
     const EmojiSegmentationCategory emoji = GetEmojiSegmentationCategory(ch);
     if (IsEmojiPresentationCategory(emoji)) {
       EXPECT_TRUE(Character::MaybeEmojiPresentation(ch));
@@ -689,7 +698,7 @@ bool ShouldBeNarrow(UChar32 test_char, UEastAsianWidth east_asian_width) {
 
 // Check the property based on https://www.unicode.org/reports/tr59/#data.
 TEST(CharacterTest, TestEastAsianSpacingPropertyRule) {
-  for (UChar32 test_char = 0; test_char < kMaxCodepoint; test_char++) {
+  for (UChar32 test_char = 0; test_char < uchar::kMaxCodepoint; test_char++) {
     if (U_GC_CN_MASK & U_GET_GC_MASK(test_char)) {
       continue;
     }
@@ -736,6 +745,68 @@ TEST(CharacterTest, TestEastAsianSpacingPropertyRule) {
         break;
     }
   }
+}
+
+static struct CanReceiveTextEmphasisTestData {
+  const UChar32 character;
+  bool expected;
+} can_receive_text_emphasis_test_data[] = {
+    {u'0', true},
+    {u'a', true},
+    {u'人', true},
+    {u'한', true},
+    // Additional word-separator characters.
+    {uchar::kEthiopicWordspace, false},
+    {uchar::kAegeanWordSeparatorLine, false},
+    {uchar::kAegeanWordSeparatorDot, false},
+    {uchar::kUgariticWordDivider, false},
+    {uchar::kTibetanMarkIntersyllabicTsheg, false},
+    {uchar::kTibetanMarkDelimiterTshegBstar, false},
+    // Punctuation.
+    {u'(', false},
+    {u']', false},
+    {u'!', false},
+    {u' ', false},
+    {u'，', false},
+    // A set of exceptions for punctuation.
+    {uchar::kNumberSign, true},
+    {uchar::kPercentSign, true},
+    {uchar::kAmpersand, true},
+    {uchar::kCommercialAt, true},
+    {uchar::kSectionSign, true},
+    {uchar::kPilcrowSign, true},
+    {uchar::kArabicIndicPerMilleSign, true},
+    {uchar::kArabicIndicPerTenThousandSign, true},
+    {uchar::kArabicPercentSign, true},
+    {uchar::kPerMilleSign, true},
+    {uchar::kPerTenThousandSign, true},
+    {uchar::kTironianSignEt, true},
+    {uchar::kReversedPilcrowSign, true},
+    {uchar::kSwungDash, true},
+    {uchar::kPartAlternationMark, true},
+    // Characters with NFKD equivalence to the above.
+    {uchar::kSmallNumberSign, true},
+    {uchar::kSmallAmpersand, true},
+    {uchar::kSmallPercentSign, true},
+    {uchar::kSmallCommercialAt, true},
+    {uchar::kFullwidthNumberSign, true},
+    {uchar::kFullwidthPercentSign, true},
+    {uchar::kFullwidthAmpersand, true},
+    {uchar::kFullwidthCommercialAt, true},
+};
+
+class CanReceiveTextEmphasisTest
+    : public testing::Test,
+      public testing::WithParamInterface<CanReceiveTextEmphasisTestData> {};
+
+INSTANTIATE_TEST_SUITE_P(
+    CanReceiveTextEmphasisTest,
+    CanReceiveTextEmphasisTest,
+    testing::ValuesIn(can_receive_text_emphasis_test_data));
+
+TEST_P(CanReceiveTextEmphasisTest, ToLowerWithoutOffset) {
+  const auto data = GetParam();
+  EXPECT_EQ(Character::CanReceiveTextEmphasis(data.character), data.expected);
 }
 
 }  // namespace blink

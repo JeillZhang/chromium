@@ -73,7 +73,9 @@ using chrome_test_util::TabGroupCreationView;
       assertWithMatcher:grey_not(grey_enabled())];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::TabGridDoneButton()]
       assertWithMatcher:grey_not(grey_enabled())];
-  [[EarlGrey selectElementWithMatcher:chrome_test_util::TabGridEditButton()]
+  [[EarlGrey
+      selectElementWithMatcher:grey_allOf(chrome_test_util::TabGridEditButton(),
+                                          grey_sufficientlyVisible(), nil)]
       assertWithMatcher:grey_not(grey_enabled())];
   [[EarlGrey selectElementWithMatcher:chrome_test_util::TabGridCellAtIndex(0)]
       assertWithMatcher:grey_notVisible()];
@@ -145,11 +147,6 @@ using chrome_test_util::TabGroupCreationView;
 // Tests that the tab group creation view is dismissed when the blocking UI is
 // shown.
 - (void)testTabGroupCreationDismissedBeforeReauthScreen {
-  if (@available(iOS 17, *)) {
-  } else if ([ChromeEarlGrey isIPadIdiom]) {
-    EARL_GREY_TEST_SKIPPED(@"Only available on iOS 17+ on iPad.");
-  }
-
   // Open the Incognito tab grid with a new Incognito tab.
   [ChromeEarlGrey openNewIncognitoTab];
   [ChromeEarlGreyUI openTabGrid];
@@ -182,11 +179,6 @@ using chrome_test_util::TabGroupCreationView;
 
 // Tests that the tab group view is dismissed when the blocking UI is shown.
 - (void)testTabGroupViewDismissedBeforeReauthScreen {
-  if (@available(iOS 17, *)) {
-  } else if ([ChromeEarlGrey isIPadIdiom]) {
-    EARL_GREY_TEST_SKIPPED(@"Only available on iOS 17+ on iPad.");
-  }
-
   // Open the Incognito tab grid with a new Incognito tab.
   [ChromeEarlGrey openNewIncognitoTab];
   [ChromeEarlGreyUI openTabGrid];

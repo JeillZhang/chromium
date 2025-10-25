@@ -16,8 +16,10 @@
 #include "components/permissions/permission_request_id.h"
 #include "components/permissions/permission_request_manager.h"
 #include "components/permissions/permission_util.h"
+#include "components/permissions/resolvers/content_setting_permission_resolver.h"
 #include "components/permissions/test/mock_permission_prompt_factory.h"
 #include "content/public/browser/permission_descriptor_util.h"
+#include "content/public/browser/permission_result.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/test/navigation_simulator.h"
@@ -77,18 +79,19 @@ class TopLevelStorageAccessPermissionContextTest
     first_party_sets_handler_.SetGlobalSets(net::GlobalFirstPartySets());
   }
 
-  ContentSetting DecidePermissionSync(
+  PermissionStatus DecidePermissionSync(
       TopLevelStorageAccessPermissionContext* permission_context,
       bool user_gesture,
       const GURL& requester_url,
       const GURL& embedding_url) {
-    base::test::TestFuture<ContentSetting> future;
+    base::test::TestFuture<content::PermissionResult> future;
     permission_context->DecidePermissionForTesting(
         std::make_unique<permissions::PermissionRequestData>(
-            permission_context, CreateFakeID(), user_gesture, requester_url,
-            embedding_url),
+            std::make_unique<permissions::ContentSettingPermissionResolver>(
+                ContentSettingsType::TOP_LEVEL_STORAGE_ACCESS),
+            CreateFakeID(), user_gesture, requester_url, embedding_url),
         future.GetCallback());
-    return future.Get();
+    return future.Get().status;
   }
 
   void TearDown() override {
@@ -135,7 +138,7 @@ TEST_F(TopLevelStorageAccessPermissionContextTest,
 
   EXPECT_EQ(DecidePermissionSync(&permission_context, /*user_gesture=*/false,
                                  GetRequesterURL(), GetTopLevelURL()),
-            CONTENT_SETTING_BLOCK);
+            PermissionStatus::DENIED);
 
   EXPECT_EQ(histogram_tester().GetBucketCount(
                 kRequestOutcomeHistogram,
@@ -178,7 +181,7 @@ TEST_F(TopLevelStorageAccessPermissionContextTest,
 
   EXPECT_EQ(DecidePermissionSync(&permission_context, /*user_gesture=*/true,
                                  GetRequesterURL(), GetDummyEmbeddingUrl()),
-            CONTENT_SETTING_BLOCK);
+            PermissionStatus::DENIED);
 
   // Check the `SessionModel::DURABLE` settings with
   // `decided_by_related_website_sets`. None were granted, and implicit denials
@@ -243,7 +246,7 @@ TEST_F(TopLevelStorageAccessPermissionContextAPIWithFirstPartySetsTest,
 
   EXPECT_EQ(DecidePermissionSync(&permission_context, /*user_gesture=*/true,
                                  GetRequesterURL(), GetTopLevelURL()),
-            CONTENT_SETTING_ALLOW);
+            PermissionStatus::GRANTED);
   EXPECT_EQ(histogram_tester().GetBucketCount(
                 kRequestOutcomeHistogram,
                 TopLevelStorageAccessRequestOutcome::kGrantedByFirstPartySet),
@@ -275,7 +278,7 @@ TEST_F(TopLevelStorageAccessPermissionContextAPIWithFirstPartySetsTest,
 
   EXPECT_EQ(DecidePermissionSync(&permission_context, /*user_gesture=*/true,
                                  GetRequesterURL(), GetTopLevelURL()),
-            CONTENT_SETTING_ALLOW);
+            PermissionStatus::GRANTED);
 
   // Check the `SessionModel::DURABLE` setting with
   // `decided_by_related_website_sets` granted by FPS.
@@ -324,7 +327,7 @@ TEST_F(TopLevelStorageAccessPermissionContextAPIWithFirstPartySetsTest,
 
   EXPECT_EQ(DecidePermissionSync(&permission_context, /*user_gesture=*/true,
                                  GetRequesterURL(), GetDummyEmbeddingUrl()),
-            CONTENT_SETTING_BLOCK);
+            PermissionStatus::DENIED);
   EXPECT_EQ(histogram_tester().GetBucketCount(
                 kRequestOutcomeHistogram,
                 TopLevelStorageAccessRequestOutcome::kDeniedByFirstPartySet),
@@ -357,7 +360,7 @@ TEST_F(TopLevelStorageAccessPermissionContextAPIWithFirstPartySetsTest,
 
   EXPECT_EQ(DecidePermissionSync(&permission_context, /*user_gesture=*/true,
                                  GetRequesterURL(), GetDummyEmbeddingUrl()),
-            CONTENT_SETTING_BLOCK);
+            PermissionStatus::DENIED);
 
   // Check the `SessionModel::DURABLE` setting with
   // `decided_by_related_website_sets`. None were granted, and implicit denials

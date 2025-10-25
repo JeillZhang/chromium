@@ -51,6 +51,8 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.Token;
 import org.chromium.base.test.BaseRobolectricTestRunner;
 import org.chromium.base.test.util.Features.EnableFeatures;
+import org.chromium.base.test.util.HistogramWatcher;
+import org.chromium.base.test.util.UserActionTester;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabManager;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.hub.PaneId;
@@ -77,7 +79,6 @@ import org.chromium.components.tab_group_sync.SavedTabGroupTab;
 import org.chromium.components.tab_group_sync.SyncedGroupTestHelper;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 import org.chromium.components.tab_group_sync.TabGroupUiActionHandler;
-import org.chromium.ui.modaldialog.ModalDialogManager;
 import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.url.GURL;
 import org.chromium.url.JUnitTestGURLs;
@@ -104,7 +105,6 @@ public class TabGroupRowMediatorUnitTest {
     @Mock private ServiceStatus mServiceStatus;
     @Mock private PaneManager mPaneManager;
     @Mock private TabGroupUiActionHandler mTabGroupUiActionHandler;
-    @Mock private ModalDialogManager mModalDialogManager;
     @Mock private ActionConfirmationManager mActionConfirmationManager;
     @Mock private FaviconResolver mFaviconResolver;
     @Mock private Supplier<@GroupWindowState Integer> mFetchGroupState;
@@ -169,7 +169,6 @@ public class TabGroupRowMediatorUnitTest {
             when(tab.getTabGroupId()).thenReturn(GROUP_ID1);
             tabList.add(tab);
         }
-        when(mTabGroupModelFilter.getRootIdFromTabGroupId(GROUP_ID1)).thenReturn(mRootId);
         when(mTabGroupModelFilter.getTabsInGroup(GROUP_ID1)).thenReturn(tabList);
 
         TabGroupRowMediator mediator =
@@ -326,12 +325,24 @@ public class TabGroupRowMediatorUnitTest {
                 .openTabGroup(SYNC_GROUP_ID1);
         when(mFetchGroupState.get()).thenReturn(GroupWindowState.HIDDEN);
         PropertyModel propertyModel = buildTestModel(/* isShared= */ true, mUrl1);
+        UserActionTester userActionTester = new UserActionTester();
+        HistogramWatcher histograms =
+                HistogramWatcher.newBuilder()
+                        .expectIntRecord(
+                                "TabGroups.RestoreFromTabGroupPane.TabCount",
+                                mSyncGroup.savedTabs.size())
+                        .build();
+
         mSyncGroup.localId = null;
+        mSyncGroup.archivalTimeMs = 1L;
 
         propertyModel.get(OPEN_RUNNABLE).run();
         verify(mTabGroupUiActionHandler).openTabGroup(SYNC_GROUP_ID1);
         verify(mPaneManager).focusPane(PaneId.TAB_SWITCHER);
         verify(mTabSwitcherPaneBase).requestOpenTabGroupDialog(mRootId);
+        assertEquals(1, userActionTester.getActionCount("TabGroups.RestoreFromTabGroupPane"));
+        histograms.assertExpected();
+        userActionTester.tearDown();
     }
 
     @Test
@@ -339,12 +350,21 @@ public class TabGroupRowMediatorUnitTest {
         when(mFetchGroupState.get()).thenReturn(GroupWindowState.HIDDEN);
         when(mTabGroupSyncService.getGroup(SYNC_GROUP_ID1)).thenReturn(null);
         PropertyModel propertyModel = buildTestModel(/* isShared= */ true, mUrl1);
+        UserActionTester userActionTester = new UserActionTester();
+        HistogramWatcher histograms =
+                HistogramWatcher.newBuilder()
+                        .expectNoRecords("TabGroups.RestoreFromTabGroupPane.TabCount")
+                        .build();
+
         mSyncGroup.localId = null;
 
         propertyModel.get(OPEN_RUNNABLE).run();
         verify(mTabGroupUiActionHandler).openTabGroup(SYNC_GROUP_ID1);
         verifyNoInteractions(mPaneManager);
         verifyNoInteractions(mTabSwitcherPaneBase);
+        assertEquals(0, userActionTester.getActionCount("TabGroups.RestoreFromTabGroupPane"));
+        histograms.assertExpected();
+        userActionTester.tearDown();
     }
 
     @Test

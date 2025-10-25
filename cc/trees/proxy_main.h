@@ -73,7 +73,6 @@ class CC_EXPORT ProxyMain : public Proxy {
   void DidObserveFirstScrollDelay(int source_frame_number,
                                   base::TimeDelta first_scroll_delay,
                                   base::TimeTicks first_scroll_timestamp);
-  void SetSpeculativeDecodeRequestInFlight(bool value);
   void NotifyImageDecodeRequestFinished(int request_id, bool decode_succeeded);
   void NotifyTransitionRequestFinished(
       uint32_t sequence_id,
@@ -118,7 +117,6 @@ class CC_EXPORT ProxyMain : public Proxy {
   void QueueImageDecode(int request_id,
                         const DrawImage& image,
                         bool speculative) override;
-  bool SpeculativeDecodeRequestInFlight() const override;
   void SetMutator(std::unique_ptr<LayerTreeMutator> mutator) override;
   void SetPaintWorkletLayerPainter(
       std::unique_ptr<PaintWorkletLayerPainter> painter) override;
@@ -132,8 +130,6 @@ class CC_EXPORT ProxyMain : public Proxy {
           offset_tag_modifications) override;
   void RequestBeginMainFrameNotExpected(bool new_state) override;
   void SetSourceURL(ukm::SourceId source_id, const GURL& url) override;
-  void SetUkmSmoothnessDestination(
-      base::WritableSharedMemoryMapping ukm_smoothness_data) override;
   void SetUkmDroppedFramesDestination(
       base::WritableSharedMemoryMapping ukm_dropped_frames_data) override;
   void SetRenderFrameObserver(
@@ -141,7 +137,7 @@ class CC_EXPORT ProxyMain : public Proxy {
   void CompositeImmediatelyForTest(base::TimeTicks frame_begin_time,
                                    bool raster,
                                    base::OnceClosure callback) override;
-  double GetPercentDroppedFrames() const override;
+  double GetAverageThroughput() const override;
   bool IsRenderingPaused() const override;
   void NotifyNewLocalSurfaceIdExpectedWhilePaused() override;
 

@@ -91,7 +91,7 @@ public class DiscountsBottomSheetContentMediatorTest {
 
     @Test
     public void testRequestShowContent_emptyInfoList() {
-        setShoppingServiceGetDiscountInfoForUrl(new ArrayList<DiscountInfo>());
+        setShoppingServiceGetDiscountInfoForUrl(new ArrayList<>());
         mMediator.requestShowContent(mMockCallback);
         verify(mMockCallback).onResult(false);
     }
@@ -106,8 +106,7 @@ public class DiscountsBottomSheetContentMediatorTest {
         verify(mMockCallback).onResult(true);
 
         for (int i = 0; i < infoList.size(); i++) {
-            assertEquals(
-                    mModelList.get(i).model.get(DISCOUNT_CODE), infoList.get(i).discountCode.get());
+            assertEquals(mModelList.get(i).model.get(DISCOUNT_CODE), infoList.get(i).discountCode);
             assertEquals(
                     mModelList.get(i).model.get(DESCRIPTION_DETAIL),
                     infoList.get(i).descriptionDetail);

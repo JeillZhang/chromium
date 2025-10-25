@@ -28,7 +28,6 @@
 #include "chrome/browser/keyboard_accessory/android/manual_filling_controller.h"
 #include "chrome/browser/keyboard_accessory/android/manual_filling_utils.h"
 #include "chrome/browser/keyboard_accessory/android/password_accessory_controller.h"
-#include "chrome/browser/password_manager/android/access_loss/password_access_loss_warning_bridge_impl.h"
 #include "chrome/browser/password_manager/android/all_passwords_bottom_sheet_controller.h"
 #include "chrome/browser/password_manager/android/grouped_affiliations/acknowledge_grouped_credential_sheet_controller.h"
 #include "chrome/browser/password_manager/android/password_generation_controller.h"
@@ -58,9 +57,9 @@
 #include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/browser/password_store/password_store_backend_error.h"
 #include "components/password_manager/core/browser/webauthn_credentials_delegate.h"
-#include "components/plus_addresses/grit/plus_addresses_strings.h"
-#include "components/plus_addresses/plus_address_service.h"
-#include "components/plus_addresses/plus_address_types.h"
+#include "components/plus_addresses/core/browser/grit/plus_addresses_strings.h"
+#include "components/plus_addresses/core/browser/plus_address_service.h"
+#include "components/plus_addresses/core/browser/plus_address_types.h"
 #include "components/resources/android/theme_resources.h"
 #include "components/sync/service/sync_service_utils.h"
 #include "components/url_formatter/elide_url.h"
@@ -389,7 +388,6 @@ void PasswordAccessoryControllerImpl::CreateForWebContents(
             ChromePasswordManagerClient::FromWebContents(web_contents),
             base::BindRepeating(GetPasswordManagerDriver),
             std::make_unique<AcknowledgeGroupedCredentialSheetController>(),
-            std::make_unique<PasswordAccessLossWarningBridgeImpl>(),
             std::make_unique<PasswordManagerErrorMessageHelperBridgeImpl>())));
   }
 }
@@ -403,7 +401,6 @@ void PasswordAccessoryControllerImpl::CreateForWebContentsForTesting(
     PasswordDriverSupplierForFocusedFrame driver_supplier,
     std::unique_ptr<AcknowledgeGroupedCredentialSheetController>
         grouped_credential_sheet_controller,
-    std::unique_ptr<PasswordAccessLossWarningBridge> access_loss_warning_bridge,
     std::unique_ptr<PasswordManagerErrorMessageHelperBridge>
         password_manager_error_message_helper_bridge) {
   DCHECK(web_contents) << "Need valid WebContents to attach controller to!";
@@ -417,7 +414,6 @@ void PasswordAccessoryControllerImpl::CreateForWebContentsForTesting(
           web_contents, credential_cache, std::move(manual_filling_controller),
           password_client, std::move(driver_supplier),
           std::move(grouped_credential_sheet_controller),
-          std::move(access_loss_warning_bridge),
           std::move(password_manager_error_message_helper_bridge))));
 }
 
@@ -630,7 +626,6 @@ PasswordAccessoryControllerImpl::PasswordAccessoryControllerImpl(
     PasswordDriverSupplierForFocusedFrame driver_supplier,
     std::unique_ptr<AcknowledgeGroupedCredentialSheetController>
         grouped_credential_sheet_controller,
-    std::unique_ptr<PasswordAccessLossWarningBridge> access_loss_warning_bridge,
     std::unique_ptr<PasswordManagerErrorMessageHelperBridge>
         password_manager_error_message_helper_bridge)
     : content::WebContentsObserver(web_contents),
@@ -644,7 +639,6 @@ PasswordAccessoryControllerImpl::PasswordAccessoryControllerImpl(
           std::move(password_manager_error_message_helper_bridge)),
       grouped_credential_sheet_controller_(
           std::move(grouped_credential_sheet_controller)),
-      access_loss_warning_bridge_(std::move(access_loss_warning_bridge)),
       plus_address_service_(PlusAddressServiceFactory::GetForBrowserContext(
           GetWebContents().GetBrowserContext())) {}
 
@@ -920,17 +914,6 @@ void PasswordAccessoryControllerImpl::FillSelection(
           plus_addresses::hats::SurveyType::kFilledPlusAddressViaManualFallack);
     }
   }
-
-  Profile* profile =
-      Profile::FromBrowserContext(GetWebContents().GetBrowserContext());
-  if (profile && access_loss_warning_bridge_->ShouldShowAccessLossNoticeSheet(
-                     profile->GetPrefs(), /*called_at_startup=*/false)) {
-    access_loss_warning_bridge_->MaybeShowAccessLossNoticeSheet(
-        profile->GetPrefs(), GetWebContents().GetTopLevelNativeWindow(),
-        profile, /*called_at_startup=*/false,
-        password_manager_android_util::PasswordAccessLossWarningTriggers::
-            kKeyboardAcessorySheet);
-  }
 }
 
 void PasswordAccessoryControllerImpl::AllPasswordsSheetDismissed() {
@@ -970,6 +953,21 @@ void PasswordAccessoryControllerImpl::RefreshSuggestions() {
   }
 
   bool sheet_provides_value = last_focus_info_->is_generation_allowed_in_frame;
+
+  if (base::FeatureList::IsEnabled(
+          password_manager::features::
+              kRetrieveTrustedVaultKeyKeyboardAccessoryAction)) {
+    ShouldShowAction show_unlock_password(
+        (last_focus_info_->focused_field_type ==
+             FocusedFieldType::kFillableUsernameField ||
+         last_focus_info_->focused_field_type ==
+             FocusedFieldType::kFillablePasswordField) &&
+        RequiresTrustedVaultRetrieval(credential_cache_->backend_error()));
+    sheet_provides_value |= show_unlock_password.value();
+    GetManualFillingController()->OnAccessoryActionAvailabilityChanged(
+        show_unlock_password,
+        autofill::AccessoryAction::RETRIEVE_TRUSTED_VAULT_KEY);
+  }
 
   all_passwords_helper_.ClearUpdateCallback();
   if (!all_passwords_helper_.available_credentials().has_value()) {
@@ -1030,6 +1028,13 @@ void PasswordAccessoryControllerImpl::EnsureAcknowledgementBeforeFilling(
       credential_cache_->GetCredentialStore(origin).GetCredentials();
   base::span<const UiCredential>::iterator cred =
       GetUiCredentialForSelection(matching_creds, selection);
+
+  if (cred != matching_creds.end() && cred->is_backup_credential()) {
+    password_manager::metrics_util::LogPasswordDropdownItemSelected(
+        password_manager::metrics_util::PasswordDropdownSelectedOption::
+            kBackupPassword);
+  }
+
   if (selection.is_obfuscated() && cred != matching_creds.end() &&
       cred->match_type() == GetLoginMatchType::kGrouped) {
     // Use `cred->display_name()` instead of origin here to correctly display

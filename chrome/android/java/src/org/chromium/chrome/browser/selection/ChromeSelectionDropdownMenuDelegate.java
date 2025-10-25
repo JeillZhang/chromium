@@ -18,7 +18,7 @@ import org.chromium.chrome.R;
 import org.chromium.components.browser_ui.widget.BrowserUiListMenuUtils;
 import org.chromium.content_public.browser.selection.SelectionDropdownMenuDelegate;
 import org.chromium.ui.listmenu.BasicListMenu;
-import org.chromium.ui.listmenu.BasicListMenu.ListMenuItemType;
+import org.chromium.ui.listmenu.ListItemType;
 import org.chromium.ui.listmenu.ListMenuItemProperties;
 import org.chromium.ui.listmenu.ListSectionDividerProperties;
 import org.chromium.ui.modelutil.MVCListAdapter;
@@ -47,7 +47,8 @@ public class ChromeSelectionDropdownMenuDelegate implements SelectionDropdownMen
 
         Rect dropdownRect = new Rect(x, y, x + 1, y + 1);
         BasicListMenu menu =
-                BrowserUiListMenuUtils.getBasicListMenu(context, items, clickListener::onItemClick);
+                BrowserUiListMenuUtils.getBasicListMenu(
+                        context, items, (model, view) -> clickListener.onItemClick(model));
 
         mPopupWindow =
                 new AnchoredPopupWindow(
@@ -55,8 +56,7 @@ public class ChromeSelectionDropdownMenuDelegate implements SelectionDropdownMen
                         rootView,
                         new ColorDrawable(Color.TRANSPARENT),
                         menu.getContentView(),
-                        new RectProvider(dropdownRect),
-                        null);
+                        new RectProvider(dropdownRect));
         // Create a local alias for mPopupWindow to be used in the lambda.
         AnchoredPopupWindow popupWindow = mPopupWindow;
         AnchoredPopupWindow.LayoutObserver layoutObserver =
@@ -85,29 +85,6 @@ public class ChromeSelectionDropdownMenuDelegate implements SelectionDropdownMen
     }
 
     @Override
-    public int getGroupId(PropertyModel itemModel) {
-        return PropertyModel.getFromModelOrDefault(itemModel, ListMenuItemProperties.GROUP_ID, 0);
-    }
-
-    @Override
-    public int getItemId(PropertyModel itemModel) {
-        return PropertyModel.getFromModelOrDefault(
-                itemModel, ListMenuItemProperties.MENU_ITEM_ID, 0);
-    }
-
-    @Override
-    public @Nullable Intent getItemIntent(PropertyModel itemModel) {
-        return PropertyModel.<@Nullable Intent>getFromModelOrDefault(
-                itemModel, ListMenuItemProperties.INTENT, null);
-    }
-
-    @Override
-    public View.@Nullable OnClickListener getClickListener(PropertyModel itemModel) {
-        return PropertyModel.<View.@Nullable OnClickListener>getFromModelOrDefault(
-                itemModel, ListMenuItemProperties.CLICK_LISTENER, null);
-    }
-
-    @Override
     public ListItem getDivider() {
         PropertyModel.Builder builder =
                 new PropertyModel.Builder(ListSectionDividerProperties.ALL_KEYS)
@@ -117,7 +94,7 @@ public class ChromeSelectionDropdownMenuDelegate implements SelectionDropdownMen
                         .with(
                                 ListSectionDividerProperties.RIGHT_PADDING_DIMEN_ID,
                                 R.dimen.list_menu_item_horizontal_padding);
-        return new ListItem(ListMenuItemType.DIVIDER, builder.build());
+        return new ListItem(ListItemType.DIVIDER, builder.build());
     }
 
     @Override
@@ -130,8 +107,8 @@ public class ChromeSelectionDropdownMenuDelegate implements SelectionDropdownMen
             boolean isIconTintable,
             boolean groupContainsIcon,
             boolean enabled,
-            View.@Nullable OnClickListener clickListener,
-            @Nullable Intent intent) {
+            @Nullable Intent intent,
+            int order) {
         PropertyModel.Builder modelBuilder =
                 new PropertyModel.Builder(ListMenuItemProperties.ALL_KEYS)
                         .with(ListMenuItemProperties.TITLE, title)
@@ -140,19 +117,19 @@ public class ChromeSelectionDropdownMenuDelegate implements SelectionDropdownMen
                         .with(ListMenuItemProperties.MENU_ITEM_ID, id)
                         .with(ListMenuItemProperties.START_ICON_DRAWABLE, startIcon)
                         .with(ListMenuItemProperties.ENABLED, enabled)
-                        .with(ListMenuItemProperties.CLICK_LISTENER, clickListener)
                         .with(ListMenuItemProperties.INTENT, intent)
                         .with(
                                 ListMenuItemProperties.KEEP_START_ICON_SPACING_WHEN_HIDDEN,
                                 groupContainsIcon)
                         .with(
                                 ListMenuItemProperties.TEXT_APPEARANCE_ID,
-                                BrowserUiListMenuUtils.getDefaultTextAppearanceStyle());
+                                BrowserUiListMenuUtils.getDefaultTextAppearanceStyle())
+                        .with(ListMenuItemProperties.ORDER, order);
         if (isIconTintable) {
             modelBuilder.with(
                     ListMenuItemProperties.ICON_TINT_COLOR_STATE_LIST_ID,
                     BrowserUiListMenuUtils.getDefaultIconTintColorStateListId());
         }
-        return new ListItem(ListMenuItemType.MENU_ITEM, modelBuilder.build());
+        return new ListItem(ListItemType.MENU_ITEM, modelBuilder.build());
     }
 }

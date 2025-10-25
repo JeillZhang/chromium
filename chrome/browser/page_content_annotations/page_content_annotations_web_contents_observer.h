@@ -50,6 +50,7 @@ class PageContentAnnotationsWebContentsObserver
   friend class content::WebContentsUserData<
       PageContentAnnotationsWebContentsObserver>;
   friend class PageContentAnnotationsWebContentsObserverTest;
+  friend class PageContentExtractionService;
 
   // content::WebContentsObserver:
   void DocumentOnLoadCompletedInPrimaryMainFrame() override;
@@ -58,6 +59,7 @@ class PageContentAnnotationsWebContentsObserver
   void OnFirstContentfulPaintInPrimaryMainFrame() override;
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
+  void OnVisibilityChanged(content::Visibility visibility) override;
 
   // Invoked when related searches have been extracted for |visit|.
   void OnRelatedSearchesExtracted(

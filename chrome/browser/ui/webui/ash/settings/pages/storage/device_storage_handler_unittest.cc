@@ -11,6 +11,7 @@
 
 #include "ash/constants/ash_features.h"
 #include "ash/public/cpp/test/test_new_window_delegate.h"
+#include "base/byte_count.h"
 #include "base/containers/adapters.h"
 #include "base/files/file.h"
 #include "base/files/file_util.h"
@@ -324,7 +325,8 @@ TEST_F(StorageHandlerTest, RoundByteSize) {
 
   for (auto& c : cases) {
     int64_t rounded_bytes = RoundByteSize(c.bytes);
-    EXPECT_EQ(base::ASCIIToUTF16(c.expected), ui::FormatBytes(rounded_bytes));
+    EXPECT_EQ(base::ASCIIToUTF16(c.expected),
+              ui::FormatBytes(base::ByteCount(rounded_bytes)));
   }
 }
 
@@ -332,8 +334,10 @@ TEST_F(StorageHandlerTest, GlobalSizeStat) {
   // Get local filesystem storage statistics.
   const base::FilePath mount_path =
       file_manager::util::GetMyFilesFolderForProfile(profile_);
-  int64_t total_size = base::SysInfo::AmountOfTotalDiskSpace(mount_path);
-  int64_t available_size = base::SysInfo::AmountOfFreeDiskSpace(mount_path);
+  int64_t total_size =
+      base::SysInfo::AmountOfTotalDiskSpace(mount_path).value_or(-1);
+  int64_t available_size =
+      base::SysInfo::AmountOfFreeDiskSpace(mount_path).value_or(-1);
 
   // Round the total size.
   int64_t rounded_total_size = RoundByteSize(total_size);
@@ -356,9 +360,9 @@ TEST_F(StorageHandlerTest, GlobalSizeStat) {
       *dictionary.FindString("usedSize");
   double storage_handler_used_ratio = *dictionary.FindDouble("usedRatio");
 
-  EXPECT_EQ(ui::FormatBytes(available_size),
+  EXPECT_EQ(ui::FormatBytes(base::ByteCount(available_size)),
             base::ASCIIToUTF16(storage_handler_available_size));
-  EXPECT_EQ(ui::FormatBytes(used_size),
+  EXPECT_EQ(ui::FormatBytes(base::ByteCount(used_size)),
             base::ASCIIToUTF16(storage_handler_used_size));
   double diff = used_ratio > storage_handler_used_ratio
                     ? used_ratio - storage_handler_used_ratio

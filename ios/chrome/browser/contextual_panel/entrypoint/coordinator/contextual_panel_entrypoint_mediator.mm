@@ -23,6 +23,8 @@
 #import "ios/chrome/browser/infobars/model/infobar_badge_tab_helper.h"
 #import "ios/chrome/browser/infobars/model/infobar_badge_tab_helper_observer.h"
 #import "ios/chrome/browser/infobars/model/infobar_badge_tab_helper_observer_bridge.h"
+#import "ios/chrome/browser/intelligence/bwg/model/bwg_tab_helper.h"
+#import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list_observer_bridge.h"
 #import "ios/chrome/browser/shared/public/commands/contextual_panel_entrypoint_iph_commands.h"
 #import "ios/chrome/browser/shared/public/commands/contextual_sheet_commands.h"
@@ -183,6 +185,21 @@
                                                   centered:centered];
 }
 
+- (void)didCompleteTransitionToSmallEntrypoint {
+  web::WebState* activeWebState = _webStateList->GetActiveWebState();
+  if (!activeWebState || activeWebState->IsBeingDestroyed()) {
+    return;
+  }
+  // Notify the configuration item that it transitioned to a small entrypoint.
+  ContextualPanelTabHelper* contextualPanelTabHelper =
+      ContextualPanelTabHelper::FromWebState(activeWebState);
+  ContextualPanelItemConfiguration* config =
+      contextualPanelTabHelper->GetFirstCachedConfig().get();
+  if (config) {
+    config->DidTransitionToSmallEntrypoint();
+  }
+}
+
 #pragma mark - ContextualPanelTabHelperObserving
 
 - (void)contextualPanel:(ContextualPanelTabHelper*)tabHelper
@@ -294,7 +311,7 @@
   _transitionToEntrypointLoudMomentTimer = nullptr;
   _transitionToDefaultEntrypointTimer = nullptr;
   [self dismissEntrypointIPHAnimated:animated];
-  [self.delegate enableFullscreen];
+  [self cleanupAndTransitionToSmallEntrypoint];
 }
 
 // Updates the entrypoint state whenever the active tab changes or new data is
@@ -305,6 +322,18 @@
   if (!config) {
     [self.consumer hideEntrypoint];
     return;
+  }
+
+  // Prevents entrypoint from showing while the Gemini promo is showing.
+  if (IsPageActionMenuEnabled()) {
+    BwgTabHelper* BWGTabHelper =
+        BwgTabHelper::FromWebState(_webStateList->GetActiveWebState());
+    if (BWGTabHelper) {
+      if (BWGTabHelper->ShouldPreventContextualPanelEntryPoint()) {
+        [self.consumer hideEntrypoint];
+        return;
+      }
+    }
   }
 
   ContextualPanelTabHelper* contextualPanelTabHelper =

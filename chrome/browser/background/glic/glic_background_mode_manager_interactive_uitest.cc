@@ -12,9 +12,9 @@
 #include "chrome/browser/background/startup_launch_manager.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/glic/fre/glic_fre_controller.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
-#include "chrome/browser/glic/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/glic_pref_names.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/test_support/glic_test_util.h"
 #include "chrome/browser/glic/test_support/interactive_glic_test.h"
 #include "chrome/browser/global_features.h"
@@ -268,7 +268,7 @@ IN_PROC_BROWSER_TEST_F(GlicBackgroundModeManagerUiTest, DeleteEligibleProfile) {
   GlicKeyedService* const second_keyed_service =
       GlicKeyedServiceFactory::GetGlicKeyedService(second_browser->profile());
   EXPECT_FALSE(second_keyed_service->enabling().HasConsented());
-  second_keyed_service->window_controller().fre_controller()->AcceptFre();
+  second_keyed_service->fre_controller().AcceptFre();
   EXPECT_TRUE(second_keyed_service->enabling().HasConsented());
   EXPECT_TRUE(background_mode_manager->IsInBackgroundModeForTesting());
 }

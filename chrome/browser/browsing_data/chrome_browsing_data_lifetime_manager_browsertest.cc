@@ -68,6 +68,7 @@
 #if !BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "chrome/test/base/ui_test_utils.h"
 #else
 #include "chrome/browser/android/tab_android.h"
@@ -135,8 +136,9 @@ class ChromeBrowsingDataLifetimeManagerTest
     // triggered even if the same pref value is set twice in a row.
     GetProfile()->GetPrefs()->ClearPref(
         browsing_data::prefs::kBrowsingDataLifetime);
-    GetProfile()->GetPrefs()->Set(browsing_data::prefs::kBrowsingDataLifetime,
-                                  *base::JSONReader::Read(pref));
+    GetProfile()->GetPrefs()->Set(
+        browsing_data::prefs::kBrowsingDataLifetime,
+        *base::JSONReader::Read(pref, base::JSON_PARSE_CHROMIUM_EXTENSIONS));
 
     completion_observer.BlockUntilCompletion();
   }
@@ -484,10 +486,15 @@ IN_PROC_BROWSER_TEST_P(ChromeBrowsingDataLifetimeManagerScheduledRemovalTest,
 
   EXPECT_EQ(BrowserList::GetInstance()->size(), 2u);
   content::WebContents* new_tab = nullptr;
-  for (Browser* b : *BrowserList::GetInstance()) {
-    if (b != browser())
-      new_tab = b->tab_strip_model()->GetActiveWebContents();
-  }
+  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+      [this, &new_tab](BrowserWindowInterface* browser_window_interface) {
+        if (browser_window_interface != browser()) {
+          new_tab = browser_window_interface->GetTabStripModel()
+                        ->GetActiveWebContents();
+          return false;
+        }
+        return true;
+      });
 
   ASSERT_TRUE(new_tab);
   ASSERT_NE(new_tab, GetActiveWebContents());
@@ -530,7 +537,7 @@ IN_PROC_BROWSER_TEST_P(ChromeBrowsingDataLifetimeManagerScheduledRemovalTest,
   autofill::AutofillProfile profile(
       "01234567-89ab-cdef-fedc-ba9876543210",
       autofill::AutofillProfile::RecordType::kLocalOrSyncable,
-      AddressCountryCode("US"));
+      autofill::AddressCountryCode("US"));
   autofill::test::SetProfileInfo(
       &profile, "Marion", "Mitchell", "Morrison", "johnwayne@me.xyz", "Fox",
       "123 Zoo St.", "unit 5", "Hollywood", "CA", "91601", "US", "12345678910");
@@ -615,7 +622,7 @@ IN_PROC_BROWSER_TEST_P(ChromeBrowsingDataLifetimeManagerShutdownTest,
   static constexpr char kPref[] = R"([])";
   GetProfile()->GetPrefs()->Set(
       browsing_data::prefs::kClearBrowsingDataOnExitList,
-      *base::JSONReader::Read(kPref));
+      *base::JSONReader::Read(kPref, base::JSON_PARSE_CHROMIUM_EXTENSIONS));
   base::RunLoop().RunUntilIdle();
 }
 
@@ -651,7 +658,7 @@ IN_PROC_BROWSER_TEST_P(ChromeBrowsingDataLifetimeManagerShutdownTest,
       "hosted_app_data"])";
   GetProfile()->GetPrefs()->Set(
       browsing_data::prefs::kClearBrowsingDataOnExitList,
-      *base::JSONReader::Read(kPref));
+      *base::JSONReader::Read(kPref, base::JSON_PARSE_CHROMIUM_EXTENSIONS));
   base::RunLoop().RunUntilIdle();
 }
 

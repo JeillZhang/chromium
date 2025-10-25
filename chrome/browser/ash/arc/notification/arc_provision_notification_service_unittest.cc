@@ -16,7 +16,6 @@
 #include "chrome/browser/ash/arc/session/arc_provisioning_result.h"
 #include "chrome/browser/ash/arc/session/arc_session_manager.h"
 #include "chrome/browser/ash/arc/test/test_arc_session_manager.h"
-#include "chrome/browser/notifications/notification_display_service_tester.h"
 #include "chrome/browser/ui/ash/login/fake_login_display_host.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "chrome/test/base/testing_profile.h"
@@ -30,6 +29,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/session_manager/core/session_manager.h"
 #include "components/sync_preferences/testing_pref_service_syncable.h"
+#include "ui/message_center/message_center.h"
 #include "ui/message_center/public/cpp/notification.h"
 
 namespace arc {
@@ -47,10 +47,6 @@ class ArcProvisionNotificationServiceTest : public BrowserWithTestWindowTest {
       const ArcProvisionNotificationServiceTest&) = delete;
 
   void SetUp() override {
-    SetUpInternal(/*should_create_session_manager=*/true);
-  }
-
-  void SetUpInternal(bool should_create_session_manager) {
     ash::ConciergeClient::InitializeFake(/*fake_cicerone_client=*/nullptr);
 
     SetArcAvailableCommandLineForTesting(
@@ -62,18 +58,10 @@ class ArcProvisionNotificationServiceTest : public BrowserWithTestWindowTest {
         CreateTestArcSessionManager(std::make_unique<ArcSessionRunner>(
             base::BindRepeating(FakeArcSession::Create)));
 
-    if (should_create_session_manager) {
-      // SessionManager is created by
-      // |AshTestHelper::bluetooth_config_test_helper()|.
-      session_manager_ = session_manager::SessionManager::Get();
-    }
-
     // This creates |profile()|, so it has to come after the arc managers.
     BrowserWithTestWindowTest::SetUp();
 
     arc_service_manager_->set_browser_context(profile());
-    display_service_ =
-        std::make_unique<NotificationDisplayServiceTester>(profile());
     // Create the service (normally handled by ArcServiceLauncher).
     ArcProvisionNotificationService::GetForBrowserContext(profile());
 
@@ -87,19 +75,19 @@ class ArcProvisionNotificationServiceTest : public BrowserWithTestWindowTest {
     // it stops observing prefs, but can't be reset completely because some
     // profile keyed services call into it.
     arc_session_manager_->Shutdown();
-    display_service_.reset();
     arc_service_manager_->set_browser_context(nullptr);
     BrowserWithTestWindowTest::TearDown();
     arc_session_manager_.reset();
     arc_service_manager_.reset();
-
     ash::ConciergeClient::Shutdown();
+  }
+
+  static session_manager::SessionManager* session_manager() {
+    return session_manager::SessionManager::Get();
   }
 
   std::unique_ptr<ArcServiceManager> arc_service_manager_;
   std::unique_ptr<ArcSessionManager> arc_session_manager_;
-  std::unique_ptr<NotificationDisplayServiceTester> display_service_;
-  raw_ptr<session_manager::SessionManager> session_manager_;
 
  private:
   TestingPrefServiceSimple local_state_;
@@ -123,15 +111,16 @@ TEST_F(ArcProvisionNotificationServiceTest,
   arc_session_manager_->Initialize();
 
   // Trigger opt-in flow. The notification gets shown when session starts.
-  session_manager_->SetSessionState(
+  session_manager()->SetSessionState(
       session_manager::SessionState::LOGIN_PRIMARY);
   arc_session_manager_->RequestEnable();
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 
-  session_manager_->SetSessionState(session_manager::SessionState::ACTIVE);
-  EXPECT_TRUE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+  session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
+  EXPECT_TRUE(message_center::MessageCenter::Get()->FindVisibleNotificationById(
+      kArcManagedProvisionNotificationId));
   EXPECT_EQ(ArcSessionManager::State::CHECKING_REQUIREMENTS,
             arc_session_manager_->state());
   arc_session_manager_->StartArcForTesting();
@@ -144,7 +133,8 @@ TEST_F(ArcProvisionNotificationServiceTest,
   arc_session_manager_->OnProvisioningFinished(
       ArcProvisioningResult(std::move(result)));
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 }
 
 // The managed provision notification is not displayed after the restart if the
@@ -169,17 +159,19 @@ TEST_F(ArcProvisionNotificationServiceTest,
 
   // Enable ARC. The opt-in flow doesn't take place, and no notification is
   // shown when session starts.
-  session_manager_->SetSessionState(
+  session_manager()->SetSessionState(
       session_manager::SessionState::LOGIN_PRIMARY);
   arc_session_manager_->AllowActivation(
       ArcSessionManager::AllowActivationReason::kImmediateActivation);
   arc_session_manager_->RequestEnable();
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 
-  session_manager_->SetSessionState(session_manager::SessionState::ACTIVE);
+  session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
   EXPECT_EQ(ArcSessionManager::State::ACTIVE, arc_session_manager_->state());
   arc::mojom::ArcSignInResultPtr result =
       arc::mojom::ArcSignInResult::NewSuccess(
@@ -187,7 +179,8 @@ TEST_F(ArcProvisionNotificationServiceTest,
   arc_session_manager_->OnProvisioningFinished(
       ArcProvisioningResult(std::move(result)));
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 }
 
 // The managed provision notification is displayed from the beginning of the
@@ -206,15 +199,16 @@ TEST_F(ArcProvisionNotificationServiceTest,
   arc_session_manager_->Initialize();
 
   // Trigger opt-in flow. The notification gets shown when session starts.
-  session_manager_->SetSessionState(
+  session_manager()->SetSessionState(
       session_manager::SessionState::LOGIN_PRIMARY);
   arc_session_manager_->RequestEnable();
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 
-  session_manager_->SetSessionState(session_manager::SessionState::ACTIVE);
-  EXPECT_TRUE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+  session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
+  EXPECT_TRUE(message_center::MessageCenter::Get()->FindVisibleNotificationById(
+      kArcManagedProvisionNotificationId));
   EXPECT_EQ(ArcSessionManager::State::CHECKING_REQUIREMENTS,
             arc_session_manager_->state());
   arc_session_manager_->StartArcForTesting();
@@ -228,7 +222,8 @@ TEST_F(ArcProvisionNotificationServiceTest,
   arc_session_manager_->OnProvisioningFinished(
       ArcProvisioningResult(std::move(result)));
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 }
 
 // The managed provision notification is displayed from the beginning of the
@@ -247,15 +242,16 @@ TEST_F(ArcProvisionNotificationServiceTest,
   arc_session_manager_->Initialize();
 
   // Trigger opt-in flow. The notification gets shown when session starts.
-  session_manager_->SetSessionState(
+  session_manager()->SetSessionState(
       session_manager::SessionState::LOGIN_PRIMARY);
   arc_session_manager_->RequestEnable();
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 
-  session_manager_->SetSessionState(session_manager::SessionState::ACTIVE);
-  EXPECT_TRUE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+  session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
+  EXPECT_TRUE(message_center::MessageCenter::Get()->FindVisibleNotificationById(
+      kArcManagedProvisionNotificationId));
   EXPECT_EQ(ArcSessionManager::State::CHECKING_REQUIREMENTS,
             arc_session_manager_->state());
   arc_session_manager_->StartArcForTesting();
@@ -269,7 +265,8 @@ TEST_F(ArcProvisionNotificationServiceTest,
   arc_session_manager_->OnProvisioningFinished(
       ArcProvisioningResult(std::move(result)));
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 }
 
 // The unmanaged provision notification is not displayed.
@@ -284,15 +281,17 @@ TEST_F(ArcProvisionNotificationServiceTest,
   arc_session_manager_->Initialize();
 
   // Trigger opt-in flow. The notification is not shown when session starts.
-  session_manager_->SetSessionState(
+  session_manager()->SetSessionState(
       session_manager::SessionState::LOGIN_PRIMARY);
   arc_session_manager_->RequestEnable();
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 
-  session_manager_->SetSessionState(session_manager::SessionState::ACTIVE);
+  session_manager()->SetSessionState(session_manager::SessionState::ACTIVE);
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
   EXPECT_EQ(ArcSessionManager::State::CHECKING_REQUIREMENTS,
             arc_session_manager_->state());
 
@@ -302,14 +301,16 @@ TEST_F(ArcProvisionNotificationServiceTest,
 
   // Emulate successful provisioning.
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
   arc::mojom::ArcSignInResultPtr result =
       arc::mojom::ArcSignInResult::NewSuccess(
           arc::mojom::ArcSignInSuccess::SUCCESS);
   arc_session_manager_->OnProvisioningFinished(
       ArcProvisioningResult(std::move(result)));
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 }
 
 class ArcProvisionNotificationServiceOobeTest
@@ -323,21 +324,13 @@ class ArcProvisionNotificationServiceOobeTest
       const ArcProvisionNotificationServiceOobeTest&) = delete;
 
   void SetUp() override {
-    // SessionManager is created in FakeLoginDisplayHost. We should not create
-    // another one here.
-    ArcProvisionNotificationServiceTest::SetUpInternal(
-        /*should_create_session_manager=*/false);
-
-    CreateLoginDisplayHost();
+    ArcProvisionNotificationServiceTest::SetUp();
+    fake_login_display_host_ = std::make_unique<ash::FakeLoginDisplayHost>();
   }
 
   void TearDown() override {
     fake_login_display_host_.reset();
     ArcProvisionNotificationServiceTest::TearDown();
-  }
-
-  void CreateLoginDisplayHost() {
-    fake_login_display_host_ = std::make_unique<ash::FakeLoginDisplayHost>();
   }
 
  private:
@@ -363,7 +356,8 @@ TEST_F(ArcProvisionNotificationServiceOobeTest,
   // Trigger opt-in flow. The notification is not shown.
   arc_session_manager_->RequestEnable();
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
   EXPECT_EQ(ArcSessionManager::State::CHECKING_REQUIREMENTS,
             arc_session_manager_->state());
 
@@ -373,14 +367,16 @@ TEST_F(ArcProvisionNotificationServiceOobeTest,
 
   // Emulate successful provisioning.
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
   arc::mojom::ArcSignInResultPtr result =
       arc::mojom::ArcSignInResult::NewSuccess(
           arc::mojom::ArcSignInSuccess::SUCCESS);
   arc_session_manager_->OnProvisioningFinished(
       ArcProvisioningResult(std::move(result)));
   EXPECT_FALSE(
-      display_service_->GetNotification(kArcManagedProvisionNotificationId));
+      message_center::MessageCenter::Get()->FindVisibleNotificationById(
+          kArcManagedProvisionNotificationId));
 }
 
 }  // namespace arc

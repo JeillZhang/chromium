@@ -24,6 +24,7 @@ import "services/viz/public/mojom/compositing/resource_id.mojom";
 import "services/viz/public/mojom/compositing/subtree_capture_id.mojom";
 import "services/viz/public/mojom/compositing/transferable_resource.mojom";
 import "services/viz/public/mojom/compositing/view_transition_element_resource_id.mojom";
+import "ui/gfx/mojom/display_color_spaces.mojom";
 import "ui/gfx/mojom/transform.mojom";
 
 // Some properties on the Layer are rarely set, and so are bundled
@@ -92,6 +93,40 @@ struct TextureLayerExtra {
   gfx.mojom.PointF uv_top_left;
   gfx.mojom.PointF uv_bottom_right;
   TransferableResource? transferable_resource;
+};
+
+// Extra fields in a cc::UIResourceLayerImpl that has been added to a tree or
+// modified in some interesting way since a prior tree update.
+struct UIResourceLayerExtra {
+  cc.mojom.UIResourceId ui_resource_id;
+  gfx.mojom.Size image_bounds;
+  gfx.mojom.PointF uv_top_left;
+  gfx.mojom.PointF uv_bottom_right;
+};
+
+// Extra fields in a cc::TileDisplayLayerImpl that has been added to a tree or
+// modified in some interesting way since a prior tree update.
+struct TileDisplayLayerExtra {
+  // Optional field that will be set if this Layer is a PictureLayer that is
+  // actually a solid color.
+  skia.mojom.SkColor4f? solid_color;
+
+  // Will be set to true for PictureLayers that are backdrop filter masks.
+  bool is_backdrop_filter_mask;
+
+  // Will be set to true for PictureLayers that are directly composited images.
+  bool is_directly_composited_image;
+
+  // Will be set to true for PictureLayers that use nearest neighbor filtering.
+  bool nearest_neighbor;
+
+  // The color usage of the layer's content.
+  gfx.mojom.ContentColorUsage content_color_usage;
+
+  // Valid rectangle in which anything is recorded and can be rastered from.
+  // This is also used during AppendQuads to decide if a quad needs to be
+  // drawn.
+  gfx.mojom.Rect recorded_bounds;
 };
 
 // Extra fields in a cc::ScrollbarLayerImplBase that has been added
@@ -173,6 +208,22 @@ struct ViewTransitionContentLayerExtra {
   gfx.mojom.RectF max_extents_rect;
 };
 
+// Extra fields in a cc::NinePatchLayerImpl that has been added to a tree or
+// modified in some interesting way since a prior tree update.
+struct NinePatchLayerExtra {
+  // From NinePatchLayer quad_generator_ properties
+  gfx.mojom.Rect image_aperture;
+  gfx.mojom.Rect border;
+  gfx.mojom.Rect layer_occlusion;
+  bool fill_center;
+
+  // From UIResourceLayer properties
+  cc.mojom.UIResourceId ui_resource_id;
+  gfx.mojom.Size image_bounds;
+  gfx.mojom.PointF uv_top_left;
+  gfx.mojom.PointF uv_bottom_right;
+};
+
 
 // Extra properties that are specific to a LayerImpl type.
 union LayerExtra {
@@ -188,8 +239,14 @@ union LayerExtra {
   SurfaceLayerExtra surface_layer_extra;
   // Extra properties that are specific to TextureLayerImpl.
   TextureLayerExtra texture_layer_extra;
+  // Extra properties that are specific to UIResourceLayerImpl.
+  UIResourceLayerExtra ui_resource_layer_extra;
+  // Extra properties that are specific to TileDisplayLayerImpl.
+  TileDisplayLayerExtra tile_display_layer_extra;
   // Extra properties that are specific to ViewTransitionContentLayerImpl.
   ViewTransitionContentLayerExtra view_transition_content_layer_extra;
+  // Extra properties that are specific to NinePatchLayerImpl.
+  NinePatchLayerExtra nine_patch_layer_extra;
 };
 
 // Details about a cc::LayerImpl that has been added to a tree or modified in
@@ -230,13 +287,6 @@ struct Layer {
   // See comments for equivalent fields on cc::Layer.
   skia.mojom.SkColor4f background_color;
   skia.mojom.SkColor4f safe_opaque_background_color;
-
-  // Optional field that will be set if this Layer is a PictureLayer that is
-  // actually a solid color.
-  skia.mojom.SkColor4f? solid_color;
-
-  // Will be set to true for PictureLayers that are backdrop filter masks.
-  bool is_backdrop_filter_mask;
 
   // Optional stable identifier that may be referenced in property trees and
   // animations. Identifies a client-side object which can be represented by
@@ -362,6 +412,12 @@ struct TransformNode {
   bool transform_changed;
   bool delegates_to_parent_for_backface;
   bool will_change_transform;
+  float maximum_animation_scale;
+  bool node_and_ancestors_are_animated_or_invertible;
+  bool is_invertible;
+  bool ancestors_are_invertible;
+  bool node_and_ancestors_are_flat;
+  bool node_or_ancestors_will_change_transform;
 
   // The stable ElementId of the client-side object (e.g. document, in Blink)
   // corresponding to this node, if this node corresponds to the root of a
@@ -522,6 +578,7 @@ struct EffectNode {
 struct ScrollTreeUpdate {
   map<cc.mojom.ElementId, cc.mojom.SyncedScrollOffset> synced_scroll_offsets;
   map<cc.mojom.ElementId, gfx.mojom.Rect> scrolling_contents_cull_rects;
+  map<cc.mojom.ElementId, gfx.mojom.Vector2dF> elastic_overscroll;
 };
 
 // Details about a new or updated node within a scroll property tree.

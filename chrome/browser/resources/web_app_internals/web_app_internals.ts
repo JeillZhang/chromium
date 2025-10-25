@@ -235,6 +235,13 @@ async function iwaDevFetchUpdateManifest() {
   const installButton = getRequiredElement<HTMLButtonElement>(
       'iwa-update-manifest-dialog-install');
 
+  const closeButton =
+      getRequiredElement<HTMLButtonElement>('iwa-update-manifest-dialog-close');
+
+  closeButton.addEventListener('click', () => {
+    iwaDevUpdateManifestDialog.close();
+  }, {once: true});
+
   const installEventListener = async () => {
     installButton.removeEventListener('click', installEventListener);
 
@@ -495,8 +502,8 @@ async function refreshDevModeAppList() {
     devModeUpdatesMessage.innerText = 'None';
   } else {
     devModeUpdatesMessage.innerText = '';
-    for (const {appId, name, location, installedVersion, updateInfo} of
-             devModeApps) {
+    for (const {appId, webBundleId, name, location,
+      installedVersion, updateInfo} of devModeApps) {
       const li = document.createElement('li');
       li.innerText =
           describeIsolatedWebApp(name, installedVersion, location, updateInfo);
@@ -504,7 +511,7 @@ async function refreshDevModeAppList() {
 
 
       const {updateMsg, buttonsSection} =
-          prepareAppButtons(appId, name, location, updateInfo);
+          prepareAppButtons(appId, webBundleId, name, location, updateInfo);
 
       li.appendChild(buttonsSection);
       li.appendChild(updateMsg);
@@ -516,6 +523,7 @@ async function refreshDevModeAppList() {
 
 function prepareAppButtons(
     appId: string,
+    webBundleId: string,
     name: string,
     location: IwaDevModeLocation,
     updateInfo: UpdateInfo|null,
@@ -556,6 +564,40 @@ function prepareAppButtons(
     }
   };
   buttonsSection.appendChild(updateBtn);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.innerText = 'Delete IWA';
+  deleteBtn.onclick = async () => {
+
+    const oldText = deleteBtn.innerText;
+    try {
+      deleteBtn.disabled = true;
+      deleteBtn.innerText = 'Deleting IWA...';
+      const {success} =
+          await webAppInternalsHandler.deleteIsolatedWebApp(appId);
+
+      if (success) {
+        await refreshDevModeAppList();
+        setDevInstallMessageText(`Successfully uninstalled ${name} \
+          (${webBundleId})`);
+      } else {
+        updateMsg.innerText =
+            `Could not uninstall Isolated Web App "${name}" (${webBundleId})`;
+        deleteBtn.disabled = false;
+      }
+    } catch (e) {
+      updateMsg.innerText =
+          `An error occurred during deletion of isolated Web App "${name}" \
+          (${webBundleId})`;
+      deleteBtn.disabled = false;
+      console.error(e);
+    } finally {
+      if (!deleteBtn.disabled) {
+          deleteBtn.innerText = oldText;
+      }
+    }
+  };
+  buttonsSection.appendChild(deleteBtn);
 
   if (updateInfo) {
     const switchChannelBtn = document.createElement('button');

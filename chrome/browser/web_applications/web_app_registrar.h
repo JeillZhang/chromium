@@ -23,6 +23,7 @@
 #include "base/observer_list.h"
 #include "base/scoped_observation.h"
 #include "base/types/strong_alias.h"
+#include "base/values.h"
 #include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_url_info.h"
 #include "chrome/browser/web_applications/mojom/user_display_mode.mojom.h"
 #include "chrome/browser/web_applications/proto/web_app_os_integration_state.pb.h"
@@ -32,6 +33,7 @@
 #include "chrome/browser/web_applications/web_app_filter.h"
 #include "chrome/browser/web_applications/web_app_install_info.h"
 #include "chrome/browser/web_applications/web_app_management_type.h"
+#include "chrome/browser/web_applications/web_app_scope.h"
 #include "components/services/app_service/public/cpp/file_handler.h"
 #include "components/services/app_service/public/cpp/protocol_handler_info.h"
 #include "components/webapps/common/web_app_id.h"
@@ -61,9 +63,14 @@ enum InstallState : int;
 }
 
 class IsolatedWebAppUrlInfo;
-class WebAppRegistrarObserver;
 class WebApp;
 class WebAppProvider;
+class WebAppRegistrarObserver;
+class WebAppScope;
+class AppLock;
+class ManifestSilentUpdateCommand;
+class FetchManifestAndUpdateCommand;
+class ApplyPendingManifestUpdateCommand;
 
 using Registry = std::map<webapps::AppId, std::unique_ptr<WebApp>>;
 
@@ -77,6 +84,11 @@ using DiyAppCount = base::StrongAlias<class DiyAppCountTag, int>;
 using InstallableAppCount =
     base::StrongAlias<class InstallableAppCountTag, int>;
 using NonSyncingAppCount = base::StrongAlias<class NonSyncingAppCountTag, int>;
+
+using AppsHavingNoTrustedIconsCount =
+    base::StrongAlias<class AppsHavingNoTrustedIconsCountTag, int>;
+using AppsHavingTrustedIconsCount =
+    base::StrongAlias<class AppsHavingTrustedIconsCountTag, int>;
 
 // Enabling this will force all apps that are exclusively preinstalled and open
 // in a browser tab to have the default navigation capturing setting be 'on'.
@@ -164,7 +176,8 @@ class WebAppRegistrar {
   //        url, WebAppFilter::OpensInBrowserTab());
   std::optional<webapps::AppId> FindBestAppWithUrlInScope(
       const GURL& url,
-      const WebAppFilter& filter) const;
+      const WebAppFilter& filter,
+      WebAppScopeScoreOptions scope_score_options = {}) const;
 
   // Finds all apps that have scopes that are nested within the given
   // `outer_scope`, and match the specified filter.
@@ -350,8 +363,10 @@ class WebAppRegistrar {
   std::vector<apps::IconInfo> GetAppIconInfos(
       const webapps::AppId& app_id) const;
 
-  // Represents which icon sizes we successfully downloaded from the IconInfos.
-  SortedSizesPx GetAppDownloadedIconSizesAny(
+  // Represents which icon sizes of trusted icons exist on the disk. If trusted
+  // icons do not exist, fallbacks to returning sizes of icons of purpose `ANY`
+  // as per the fallback mechanism.
+  SortedSizesPx GetAppTrustedIconSizesFallbackToUntrusted(
       const webapps::AppId& app_id) const;
 
   // Returns the "shortcuts" field from the app manifest, use
@@ -377,28 +392,37 @@ class WebAppRegistrar {
   // apps are queried for their parent.
   base::flat_map<webapps::AppId, webapps::AppId> GetSubAppToParentMap() const;
 
-  // Returns the "scope" field from the app manifest, or infers a scope from the
   // "start_url" field if unavailable. Returns an invalid GURL iff the |app_id|
   // does not refer to an installed web app.
+  // Deprecated: Prefer using `GetEffectiveScope` to make in-scope decisions.
   GURL GetAppScope(const webapps::AppId& app_id) const;
 
+  // Returns a WebAppScope object for the given app_id. If no app exists for the
+  // app_id, then std::nullopt is returned.
+  std::optional<WebAppScope> GetEffectiveScope(
+      const webapps::AppId& app_id) const;
+
   // Returns whether |url| is in the scope of |app_id|.
+  // Deprecated: Prefer using `GetEffectiveScope` to make in-scope decisions.
   bool IsUrlInAppScope(const GURL& url, const webapps::AppId& app_id) const;
 
   // Returns whether |url| is in scope or scope_extensions of |app_id|.
   // Only checks scope if scope_extensions is disabled.
+  // Deprecated: Prefer using `GetEffectiveScope` to make in-scope decisions.
   bool IsUrlInAppExtendedScope(const GURL& url,
                                const webapps::AppId& app_id) const;
 
   // Returns the strength of matching |url| to the scope and scope_extensions of
   // |app_id|. Returns 0 if not in either.
   // Only checks scope if scope_extensions is disabled.
+  // Deprecated: Prefer using `GetEffectiveScope` to make in-scope decisions.
   int GetAppExtendedScopeScore(const GURL& url,
                                const webapps::AppId& app_id) const;
 
-  // Returns the strength of matching |url_spec| to the scope of |app_id|,
-  // returns 0 if not in scope.
-  int GetUrlInAppScopeScore(const std::string& url_spec,
+  // Returns the strength of matching |url| to the scope of |app_id|,
+  // returns 0 if not in scope. This does NOT check scope extensions.
+  // Deprecated: Prefer using `GetEffectiveScope` to make in-scope decisions.
+  int GetUrlInAppScopeScore(const GURL& url,
                             const webapps::AppId& app_id) const;
 
   // Returns whether the app is pending successful navigation in order to
@@ -431,7 +455,7 @@ class WebAppRegistrar {
   // Returns whether the app should be opened in tabbed window mode.
   bool IsTabbedWindowModeEnabled(const webapps::AppId& app_id) const;
 
-  GURL GetAppNewTabUrl(const webapps::AppId& app_id) const;
+  const GURL& GetAppNewTabUrl(const webapps::AppId& app_id) const;
 
   // Returns the URL of the pinned home tab for tabbed apps which have this
   // enabled, otherwise returns nullopt.
@@ -519,10 +543,25 @@ class WebAppRegistrar {
   // Returns whether the DIY app's icons are marked as masked on Mac.
   bool IsDiyAppIconsMarkedMaskedOnMac(const webapps::AppId& app_id) const;
 
+  // Returns the trusted icon metadata stored in the web app. If the
+  // `trusted_icons` field in the web_app is empty, fallback to using the
+  // `manifest_icons` instead. This can happen for web apps that are installed
+  // from a trusted source, like policy.
+  std::vector<apps::IconInfo> GetTrustedAppIconsMetadata(
+      const webapps::AppId& app_id) const;
+
+  // Returns the icon metadata for a single trusted icon to be used in security
+  // sensitive surfaces that interact with the web_applications/ system. This
+  // relies on the output of `GetTrustedAppIconsMetadata()` to choose a single
+  // icon based on the size being passed to it.
+  std::optional<apps::IconInfo> GetSingleTrustedAppIconForSecuritySurfaces(
+      const webapps::AppId& app_id,
+      const SquareSizePx input_size);
+
   void AddObserver(WebAppRegistrarObserver* observer);
   void RemoveObserver(WebAppRegistrarObserver* observer);
 
-  void NotifyWebAppProtocolSettingsChanged();
+  void NotifyWebAppProtocolSettingsChanged(const webapps::AppId& app_id);
   void NotifyWebAppFileHandlerApprovalStateChanged(
       const webapps::AppId& app_id);
   void NotifyWebAppsWillBeUpdatedFromSync(
@@ -543,12 +582,29 @@ class WebAppRegistrar {
       const webapps::AppId& app_id,
       RunOnOsLoginMode run_on_os_login_mode);
   void NotifyWebAppSettingsPolicyChanged();
+  void NotifyWebAppEffectiveScopeChanged(const webapps::AppId& app_id);
 
 #if !BUILDFLAG(IS_CHROMEOS)
   void NotifyWebAppUserLinkCapturingPreferencesChanged(
       const webapps::AppId& app_id,
       bool is_preferred);
 #endif  // !BUILDFLAG(IS_CHROMEOS)
+
+  // Mimic base::PassKey<T> to ensure only certain call sites have the privilege
+  // of triggering a pending update info change.
+  class PendingUpdateInfoChangePassKey {
+    friend class ManifestSilentUpdateCommand;
+    friend class FetchManifestAndUpdateCommand;
+    friend void SetWebAppPendingUpdateAsIgnored(const webapps::AppId&,
+                                                AppLock& lock,
+                                                base::Value::Dict& debug_value);
+    friend class ApplyPendingManifestUpdateCommand;
+    PendingUpdateInfoChangePassKey() = default;
+  };
+
+  void NotifyPendingUpdateInfoChanged(const webapps::AppId& app_id,
+                                      bool pending_update_available,
+                                      PendingUpdateInfoChangePassKey);
 
   // A filter must return false to skip the |web_app|.
   using Filter = bool (*)(const WebApp& web_app);
@@ -659,6 +715,11 @@ class WebAppRegistrar {
   // Requires app registry to be in a ready state.
   std::tuple<DiyAppCount, InstallableAppCount, NonSyncingAppCount>
   CountTotalUserInstalledAppsIncludingDiy() const;
+
+  // Count number of apps that are installed and have trusted icons populated or
+  // not populated.
+  std::tuple<AppsHavingNoTrustedIconsCount, AppsHavingTrustedIconsCount>
+  CountAppsHavingTrustedIcons() const;
 
   const raw_ptr<Profile> profile_;
   raw_ptr<WebAppProvider> provider_ = nullptr;

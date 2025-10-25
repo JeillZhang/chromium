@@ -16,6 +16,7 @@
 #import "components/signin/public/browser/web_signin_tracker.h"
 #import "components/signin/public/identity_manager/account_info.h"
 #import "components/signin/public/identity_manager/identity_manager.h"
+#import "google_apis/gaia/gaia_id.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_flow/authentication_flow.h"
 #import "ios/chrome/browser/authentication/ui_bundled/authentication_ui_util.h"
 #import "ios/chrome/browser/authentication/ui_bundled/continuation.h"
@@ -26,7 +27,7 @@
 #import "ios/chrome/browser/authentication/ui_bundled/signin/consistency_promo_signin/consistency_sheet/consistency_sheet_navigation_controller.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/consistency_promo_signin/consistency_sheet/consistency_sheet_presentation_controller.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/consistency_promo_signin/consistency_sheet/consistency_sheet_slide_transition_animator.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin/reauth/reauth_coordinator.h"
+#import "ios/chrome/browser/authentication/ui_bundled/signin/reauth/signin_reauth_coordinator.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_constants.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_coordinator+protected.h"
 #import "ios/chrome/browser/authentication/ui_bundled/signin/signin_utils.h"
@@ -53,7 +54,7 @@
     ConsistencyDefaultAccountCoordinatorDelegate,
     ConsistencyPromoSigninMediatorDelegate,
     ConsistencyLayoutDelegate,
-    ReauthCoordinatorDelegate,
+    SigninReauthCoordinatorDelegate,
     UINavigationControllerDelegate,
     UIViewControllerTransitioningDelegate>
 
@@ -73,7 +74,7 @@
 // Coordinator to add an account to the device.
 @property(nonatomic, strong) SigninCoordinator* addAccountCoordinator;
 // Coordinator to show a reauth screen.
-@property(nonatomic, strong) ReauthCoordinator* reauthCoordinator;
+@property(nonatomic, strong) SigninReauthCoordinator* reauthCoordinator;
 
 @property(nonatomic, strong)
     ConsistencyPromoSigninMediator* consistencyPromoSigninMediator;
@@ -137,6 +138,16 @@
                      accessPoint:accessPoint
             prepareChangeProfile:prepareChangeProfile
             continuationProvider:continuationProvider];
+}
+
+- (void)dealloc {
+  CHECK(!self.navigationController, base::NotFatalUntil::M142);
+  CHECK(!self.defaultAccountCoordinator, base::NotFatalUntil::M142);
+  CHECK(!self.alertCoordinator, base::NotFatalUntil::M142);
+  CHECK(!self.accountChooserCoordinator, base::NotFatalUntil::M142);
+  CHECK(!self.addAccountCoordinator, base::NotFatalUntil::M142);
+  CHECK(!self.reauthCoordinator, base::NotFatalUntil::M142);
+  CHECK(!self.consistencyPromoSigninMediator, base::NotFatalUntil::M142);
 }
 
 #pragma mark - ChromeCoordinator
@@ -225,7 +236,14 @@
                     completionIdentity:completionIdentity];
 }
 
-#pragma mark - StopAnimatedSigninCoordinator
+#pragma mark - BuggyAuthenticationViewOwner
+
+- (BOOL)viewWillPersist {
+  // The navigation controller is always presented.
+  return YES;
+}
+
+#pragma mark - AnimatedCoordinator
 
 - (void)stopAnimated:(BOOL)animated {
   [self stopAlertCoordinator];
@@ -242,6 +260,7 @@
   // nothing.
   [self disconnectMediatorWithResult:SigninCoordinatorResultInterrupted];
   [self stopAccountChooserCoordinator];
+  [self stopReauthCoordinator];
   [super stopAnimated:animated];
 }
 
@@ -271,13 +290,18 @@
 - (void)startReauthFlowWithIdentity:(id<SystemIdentity>)identity {
   // TODO(crbug.com/391342053): Add logging.
   CoreAccountInfo account;
-  account.gaia = GaiaId(identity.gaiaID);
+  account.gaia = identity.gaiaId;
   account.email = base::SysNSStringToUTF8(identity.userEmail);
-  self.reauthCoordinator = [[ReauthCoordinator alloc]
+  if (self.reauthCoordinator.viewWillPersist) {
+    // In case of double tap, let the first reauth proceed.
+    return;
+  }
+  [self.reauthCoordinator stop];
+  self.reauthCoordinator = [[SigninReauthCoordinator alloc]
       initWithBaseViewController:self.navigationController
                          browser:self.browser
                          account:account
-                     accessPoint:self.accessPoint];
+               signinAccessPoint:self.accessPoint];
   self.reauthCoordinator.delegate = self;
   [self.reauthCoordinator start];
 }
@@ -307,6 +331,7 @@
 }
 
 - (void)stopReauthCoordinator {
+  self.reauthCoordinator.delegate = nil;
   [self.reauthCoordinator stop];
   self.reauthCoordinator = nil;
 }
@@ -350,6 +375,10 @@
 // If `hasAccounts == NO`, the added account will be used to sign in to Chrome
 // directly after the AddAccountSigninCoordinator finishes.
 - (void)openAddAccountCoordinatorWithHasAccounts:(BOOL)hasAccounts {
+  // In case of double-tap, we must stop the already started coordinator. This
+  // may occur because, up to iOS 18, the view may have disappeared without
+  // calling the signin completion. See crbug.com/395959814
+  [self.addAccountCoordinator stop];
   if (hasAccounts) {
     RecordConsistencyPromoUserAction(
         signin_metrics::AccountConsistencyPromoAction::ADD_ACCOUNT_STARTED,
@@ -360,12 +389,12 @@
             ADD_ACCOUNT_STARTED_WITH_NO_DEVICE_ACCOUNT,
         self.accessPoint);
   }
-  DCHECK(!self.addAccountCoordinator);
   self.addAccountCoordinator = [SigninCoordinator
       addAccountCoordinatorWithBaseViewController:self.navigationController
                                           browser:self.browser
                                      contextStyle:self.contextStyle
                                       accessPoint:self.accessPoint
+                                   prefilledEmail:nil
                              continuationProvider:_continuationProvider];
   __weak ConsistencyPromoSigninCoordinator* weakSelf = self;
   self.addAccountCoordinator.signinCompletion =
@@ -380,15 +409,16 @@
 
 // Starts the sign-in flow.
 - (void)startSignIn {
-  AuthenticationFlow* authenticationFlow =
-      [[AuthenticationFlow alloc] initWithBrowser:self.browser
-                                         identity:self.selectedIdentity
-                                      accessPoint:self.accessPoint
-                             precedingHistorySync:YES
-                                postSignInActions:PostSignInActionSet()
-                         presentingViewController:self.navigationController
-                                       anchorView:nil
-                                       anchorRect:CGRectNull];
+  AuthenticationFlow* authenticationFlow = [[AuthenticationFlow alloc]
+               initWithBrowser:self.browser
+                      identity:self.selectedIdentity
+                   accessPoint:self.accessPoint
+          precedingHistorySync:YES
+             postSignInActions:
+                 {PostSignInAction::kShowIdentityConfirmationSnackbar}
+      presentingViewController:self.navigationController
+                    anchorView:nil
+                    anchorRect:CGRectNull];
   [self.consistencyPromoSigninMediator
       signinWithAuthenticationFlow:authenticationFlow];
 }
@@ -406,6 +436,14 @@
 - (void)consistencyAccountChooserCoordinatorOpenAddAccount:
     (ConsistencyAccountChooserCoordinator*)coordinator {
   [self openAddAccountCoordinatorWithHasAccounts:YES];
+}
+
+- (void)consistencyAccountChooserCoordinatorWantsToBeStopped:
+    (ConsistencyAccountChooserCoordinator*)coordinator {
+  CHECK_EQ(coordinator, self.accountChooserCoordinator,
+           base::NotFatalUntil::M140);
+  [self stopAccountChooserCoordinator];
+  [self.navigationController popViewControllerAnimated:YES];
 }
 
 #pragma mark - ConsistencyDefaultAccountCoordinatorDelegate
@@ -428,14 +466,18 @@
 
 - (void)consistencyDefaultAccountCoordinatorOpenIdentityChooser:
     (ConsistencyDefaultAccountCoordinator*)coordinator {
+  if (self.accountChooserCoordinator) {
+    // This can occur if the user double tap on the button.
+    return;
+  }
   self.accountChooserCoordinator = [[ConsistencyAccountChooserCoordinator alloc]
       initWithBaseViewController:self.navigationController
-                         browser:self.browser];
+                         browser:self.browser
+                selectedIdentity:self.defaultAccountCoordinator
+                                     .selectedIdentity];
   self.accountChooserCoordinator.delegate = self;
   self.accountChooserCoordinator.layoutDelegate = self;
-  [self.accountChooserCoordinator
-      startWithSelectedIdentity:self.defaultAccountCoordinator
-                                    .selectedIdentity];
+  [self.accountChooserCoordinator start];
   [self.navigationController
       pushViewController:self.accountChooserCoordinator.viewController
                 animated:YES];
@@ -463,12 +505,21 @@
   return self.navigationController.displayStyle;
 }
 
-#pragma mark - ReauthCoordinatorDelegate
+#pragma mark - SigninReauthCoordinatorDelegate
 
-- (void)reauthFinishedWithResult:(ReauthResult)result {
+- (void)reauthFinishedWithResult:(ReauthResult)result
+                          gaiaID:(const GaiaId*)gaiaID {
   [self stopReauthCoordinator];
   if (result == ReauthResult::kSuccess) {
-    [self startSignIn];
+    ChromeAccountManagerService* accountManagerService =
+        ChromeAccountManagerServiceFactory::GetForProfile(self.profile);
+    BOOL identityValid =
+        accountManagerService->IsValidIdentity(self.selectedIdentity);
+    BOOL identityEqual =
+        self.defaultAccountCoordinator.selectedIdentity.gaiaId == *gaiaID;
+    if (identityValid && identityEqual && result == ReauthResult::kSuccess) {
+      [self startSignIn];
+    }
   }
 }
 
@@ -514,6 +565,8 @@
   if (self.navigationController.viewControllers.count == 1 &&
       self.accountChooserCoordinator) {
     // AccountChooserCoordinator has been removed by "Back" button.
+    base::RecordAction(base::UserMetricsAction(
+        "Signin_BottomSheet_IdentityChooser_ClosedByUser"));
     [self stopAccountChooserCoordinator];
   }
 }
@@ -547,6 +600,15 @@
   [self dismissViewControllerAnimated:YES];
   [self runCompletionWithSigninResult:SigninCoordinatorResultSuccess
                    completionIdentity:completionIdentity];
+}
+
+- (void)consistencyPromoSigninMediatorSignInIsImpossible:
+    (ConsistencyPromoSigninMediator*)mediator {
+  CHECK_EQ(self.consistencyPromoSigninMediator, mediator,
+           base::NotFatalUntil::M143);
+  [self dismissViewControllerAnimated:YES];
+  [self runCompletionWithSigninResult:SigninCoordinatorResultInterrupted
+                   completionIdentity:nil];
 }
 
 - (void)consistencyPromoSigninMediatorSignInCancelled:

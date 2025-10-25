@@ -52,6 +52,9 @@ DEFINE_UI_CLASS_PROPERTY_KEY(bool, kShouldHaveHighlightBorderOverlay, false)
 
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kSupportsFloatedStateKey, true)
 
+// TODO(crbug.com/429215055): Rename to a more appropriate name.
+DEFINE_UI_CLASS_PROPERTY_KEY(bool, kUseImmersiveInTrustedPinned, false)
+
 DEFINE_UI_CLASS_PROPERTY_KEY(bool, kWindowManagerManagesOpacityKey, false)
 
 DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::u16string, kWindowOverviewTitleKey)
@@ -59,5 +62,7 @@ DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(std::u16string, kWindowOverviewTitleKey)
 DEFINE_UI_CLASS_PROPERTY_KEY(WindowStateType,
                              kWindowStateTypeKey,
                              WindowStateType::kDefault)
+
+DEFINE_UI_CLASS_PROPERTY_KEY(bool, kWindowHasRoundedCornersKey, true)
 
 }  // namespace chromeos

@@ -21,7 +21,7 @@
 #include "chrome/browser/webauthn/authenticator_request_dialog_model.h"
 #include "chrome/browser/webauthn/authenticator_transport.h"
 #include "chrome/browser/webauthn/observable_authenticator_list.h"
-#include "chrome/browser/webauthn/password_credential_controller.h"
+#include "chrome/browser/webauthn/password_credential_fetcher.h"
 #include "components/webauthn/core/browser/passkey_model.h"
 #include "components/webauthn/core/browser/passkey_model_change.h"
 #include "content/public/browser/authenticator_request_client_delegate.h"
@@ -80,7 +80,6 @@ class AuthenticatorRequestDialogController
   void EnclaveEnabledStatusChanged(EnclaveEnabledStatus status) override;
   void OnAccountSelected(size_t index) override;
   void OnAccountPreselectedIndex(size_t index) override;
-  void ContactPriorityPhone() override;
   void OnBioEnrollmentDone() override;
   void OnUserConfirmedPriorityMechanism() override;
 
@@ -108,7 +107,7 @@ class AuthenticatorRequestDialogController
   // Valid action when at step: kNotStarted.
   void StartFlow(device::FidoRequestHandlerBase::TransportAvailabilityInfo
                      transport_availability,
-                 PasswordCredentialController::PasswordCredentials passwords);
+                 PasswordCredentialFetcher::PasswordCredentials passwords);
 
   // Starts a modal WebAuthn flow (i.e. what you normally get if you call
   // WebAuthn with no mediation parameter) from a conditional request.
@@ -124,6 +123,9 @@ class AuthenticatorRequestDialogController
   // Valid action when at step: kNotStarted.
   void StartGuidedFlowForMostLikelyTransportOrShowMechanismSelection();
 
+  // Starts a flow for `transport`. Returns `true` if it started a flow, `false`
+  // if it didn't and the mechanism selection screen should be shown instead.
+  // This should only be called if `priority_mechanism_index_` is unset.
   bool StartGuidedFlowForHint(AuthenticatorTransport transport);
 
   // Proceeds straight to the platform authenticator prompt. If `type` is
@@ -132,19 +134,12 @@ class AuthenticatorRequestDialogController
   void HideDialogAndDispatchToPlatformAuthenticator(
       std::optional<device::AuthenticatorType> type = std::nullopt);
 
-  // Called when an attempt to contact a phone failed.
-  void OnPhoneContactFailed(const std::string& name);
-
   // Called when some caBLE event (e.g. receiving a BLE message, connecting to
   // the tunnel server, etc) happens.
   void OnCableEvent(device::cablev2::Event event);
 
   // Called when `cable_connecting_sheet_timer_` completes.
   void OnCableConnectingTimerComplete();
-
-  // StartPhonePairing triggers the display of a QR code for pairing a new
-  // phone.
-  void StartPhonePairing();
 
   // Ensures that the Bluetooth adapter is powered before executing |action|.
   //  -- If the adapter is powered, run |action| directly.
@@ -283,15 +278,6 @@ class AuthenticatorRequestDialogController
 
   void SetSelectedAuthenticatorForTesting(AuthenticatorReference authenticator);
 
-  // ContactPhoneForTesting triggers a contact for a phone with the given name.
-  // Only for unittests. UI should use |mechanisms()| to enumerate the
-  // user-visible mechanisms and use the callbacks therein.
-  void ContactPhoneForTesting(const std::string& name);
-
-  // Sets `priority_phone_index_` and updates the name of the priority phone in
-  // `model_` accordingly.
-  void SetPriorityPhoneIndex(std::optional<size_t> index);
-
   // StartTransportFlowForTesting moves the UI to focus on the given transport.
   // UI should use |mechanisms()| to enumerate the user-visible mechanisms and
   // use the callbacks therein.
@@ -337,9 +323,6 @@ class AuthenticatorRequestDialogController
 
   void set_cable_transport_info(
       std::optional<bool> extension_is_v2,
-      std::vector<std::unique_ptr<device::cablev2::Pairing>> paired_phones,
-      base::RepeatingCallback<void(std::unique_ptr<device::cablev2::Pairing>)>
-          contact_phone_callback,
       const std::optional<std::string>& cable_qr_string);
 
   bool win_native_api_enabled() const {
@@ -420,8 +403,9 @@ class AuthenticatorRequestDialogController
   // kCableActivate.
   void StartGuidedFlowForTransport(AuthenticatorTransport transport);
 
-  // Starts the flow for adding an unlisted phone by showing a QR code.
-  void StartGuidedFlowForAddPhone();
+  // Starts the hybrid flow. This flow starts with showing a QR code. In some
+  // cases it can also display the user a message to insert a security key.
+  void StartHybridFlow();
 
   // Displays a resident-key warning if needed and then calls
   // |HideDialogAndDispatchToNativeWindowsApi|.
@@ -433,21 +417,10 @@ class AuthenticatorRequestDialogController
   // Triggers gaia account reauth to restore sync to working order.
   void ReauthForSyncRestore();
 
-  // Contacts a paired phone. The phone is specified by name.
-  void ContactPhone(const std::string& name);
-  void ContactPhoneAfterOffTheRecordInterstitial(std::string name);
-  void ContactPhoneAfterBleIsPowered(std::string name);
-
   void StartAutofillRequest();
   void StartPasskeyUpgradeRequest();
 
   void DispatchRequestAsync(AuthenticatorReference* authenticator);
-
-  void ContactNextPhoneByName(const std::string& name);
-
-  // Returns the index (into `paired_phones_`) of a phone that has been paired
-  // through Chrome Sync, or std::nullopt if there isn't one.
-  std::optional<size_t> GetIndexOfMostRecentlyUsedPhoneFromSync() const;
 
   // SortRecognizedCredentials sorts
   // `transport_availability_.recognized_credentials` into username order.
@@ -518,7 +491,7 @@ class AuthenticatorRequestDialogController
   device::FidoRequestHandlerBase::TransportAvailabilityInfo
       transport_availability_;
 
-  PasswordCredentialController::PasswordCredentials passwords_;
+  PasswordCredentialFetcher::PasswordCredentials passwords_;
 
   content::AuthenticatorRequestClientDelegate::AccountPreselectedCallback
       account_preselected_callback_;
@@ -535,31 +508,6 @@ class AuthenticatorRequestDialogController
 
   base::OnceCallback<void(device::AuthenticatorGetAssertionResponse)>
       selection_callback_;
-
-  // cable_extension_provided_ indicates whether the request included a caBLE
-  // extension.
-  bool cable_extension_provided_ = false;
-
-  // paired_phones_ contains details of caBLEv2-paired phones from both Sync and
-  // QR-based pairing. The entries are sorted by name.
-  std::vector<std::unique_ptr<device::cablev2::Pairing>> paired_phones_;
-
-  // The index, into `paired_phones_`, for the top-priority phone.
-  std::optional<size_t> priority_phone_index_;
-
-  // paired_phones_contacted_ is the same length as |paired_phones_| and
-  // contains true whenever the corresponding phone as already been contacted.
-  std::vector<bool> paired_phones_contacted_;
-
-  // contact_phone_callback can be run with a pairing in order to contact the
-  // indicated phone.
-  base::RepeatingCallback<void(std::unique_ptr<device::cablev2::Pairing>)>
-      contact_phone_callback_;
-
-  // cable_device_ready_ is true if a CTAP-level request has been sent to a
-  // caBLE device. At this point we assume that any transport errors are
-  // cancellations on the device, not networking errors.
-  bool cable_device_ready_ = false;
 
   // cable_connecting_sheet_timer_ is started when we start displaying
   // the "connecting..." sheet for a caBLE connection. To avoid flashing the UI,
@@ -600,11 +548,6 @@ class AuthenticatorRequestDialogController
   // starting the current request was made. Any later successful completion will
   // only be recorded if a start event was recorded first.
   bool did_record_macos_start_histogram_ = false;
-
-  // is_active_profile_authenticator_user_ is true if the current profile has
-  // recently used the platform authenticator on macOS that saves credentials
-  // into the profile.
-  bool is_active_profile_authenticator_user_ = false;
 
   // has_icloud_drive_enabled_ is true if the current system has iCloud Drive
   // enabled. This is used as an approximation for whether iCloud Keychain

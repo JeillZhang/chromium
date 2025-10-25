@@ -29,15 +29,14 @@
 #include "base/types/pass_key.h"
 #include "build/build_config.h"
 #include "third_party/skia/include/core/SkPath.h"
-#include "ui/accessibility/ax_enums.mojom.h"
-#include "ui/accessibility/ax_node_data.h"
+#include "ui/accessibility/ax_enums.mojom-forward.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/class_property.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
-#include "ui/base/cursor/cursor.h"
 #include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/dragdrop/mojom/drag_drop_types.mojom-forward.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
+#include "ui/base/interaction/element_identifier.h"
 #include "ui/base/metadata/metadata_header_macros.h"
 #include "ui/base/metadata/metadata_types.h"
 #include "ui/base/metadata/metadata_utils.h"
@@ -55,7 +54,7 @@
 #include "ui/gfx/geometry/transform.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/geometry/vector2d_conversions.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 #include "ui/views/actions/action_view_interface.h"
 #include "ui/views/layout/layout_manager.h"
 #include "ui/views/layout/layout_types.h"
@@ -97,8 +96,10 @@ class Insets;
 
 namespace ui {
 struct AXActionData;
+struct AXNodeData;
 class ColorProvider;
 class Compositor;
+class Cursor;
 class InputMethod;
 class Layer;
 class LayerTreeOwner;
@@ -711,6 +712,16 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   [[nodiscard]] base::CallbackListSubscription AddEnabledChangedCallback(
       PropertyChangedCallback callback);
 
+  // Returns whether the views subtree is enabled.
+  // "true" means: This view AND ALL ancestor views are enabled.
+  // "false" means: This view OR ANY of ancestor views is disabled.
+  bool GetEnabledInViewsSubtree() const;
+
+  // Adds a callback associated with the above |EnabledInViewsSubtree| property.
+  // The callback will be invoked whenever the property changes.
+  [[nodiscard]] base::CallbackListSubscription
+  AddEnabledInViewsSubtreeChangedCallback(PropertyChangedCallback callback);
+
   // Returns the child views ordered in reverse z-order. That is, views later in
   // the returned vector have a higher z-order (are painted later) than those
   // early in the vector. The returned vector has exactly the same number of
@@ -924,6 +935,15 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   const View* GetViewByID(int id) const;
   View* GetViewByID(int id);
 
+  // Searches this view and the descendants of this View for a View with the
+  // given identifier and returns the first matching View, or null if none.
+  //
+  // Prefer using ElementTrackerViews or BrowserElements[Views] unless you need
+  // to specifically search a subtree of the Views hierarchy.
+  virtual View* GetViewByElementId(ui::ElementIdentifier element_id);
+  virtual const View* GetViewByElementId(
+      ui::ElementIdentifier element_id) const;
+
   // Gets and sets the ID for this view. ID should be unique within the subtree
   // that you intend to search for it. 0 is the default ID for views.
   int GetID() const { return id_; }
@@ -939,8 +959,16 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Groups are currently used to implement radio button mutual exclusion.
   // The group id is immutable once it's set.
   void SetGroup(int gid);
+
+  // Sets the group this view owns. Immutable once set.
+  void SetOwnedGroup(int group_id);
+
   // Returns the group id of the view, or -1 if the id is not set yet.
   int GetGroup() const;
+
+  // Returns the group id of the group that the view owns or -1 if the view does
+  // not own a group.
+  int GetOwnedGroup() const;
 
   // Adds a callback associated with the above |Group| property. The callback
   // will be invoked whenever the property changes.
@@ -1064,6 +1092,13 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // to paint itself via the various OnPaint*() event handlers and then paints
   // the hierarchy beneath it.
   void Paint(const PaintInfo& parent_paint_info);
+
+  // Returns the type of scaling to be done for this View. Override this to
+  // change the default scaling type from |kScaleToFit|. You would want to
+  // override this for a view and return |kScaleToScaleFactor| in cases where
+  // scaling should cause no distortion. Such as in the case of an image or
+  // an icon.
+  virtual PaintInfo::ScaleType GetPaintScaleType() const;
 
   // The background object may be null.
   void SetBackground(std::unique_ptr<Background> b);
@@ -1309,6 +1344,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   gfx::PointF GetScreenLocationF(const ui::LocatedEvent& event) const override;
 
   // Overridden from ui::EventHandler:
+  void OnEvent(ui::Event* event) override;
   void OnKeyEvent(ui::KeyEvent* event) override;
   void OnMouseEvent(ui::MouseEvent* event) override;
   void OnScrollEvent(ui::ScrollEvent* event) override;
@@ -1838,6 +1874,10 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // When SetVisible() changes the visibility of a view, this method is
   // invoked for that view as well as all the children recursively.
+  //
+  // If `starting_from` is null, this call is the result of the widget being
+  // shown or hidden. (Note that `Widget::IsVisible()` updates asynchronously
+  // and may not agree with `is_visible`.)
   virtual void VisibilityChanged(View* starting_from, bool is_visible);
 
   // This method is invoked when the view will soon no longer have a focus
@@ -1887,13 +1927,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Override to paint a border not specified by SetBorder().
   virtual void OnPaintBorder(gfx::Canvas* canvas);
-
-  // Returns the type of scaling to be done for this View. Override this to
-  // change the default scaling type from |kScaleToFit|. You would want to
-  // override this for a view and return |kScaleToScaleFactor| in cases where
-  // scaling should cause no distortion. Such as in the case of an image or
-  // an icon.
-  virtual PaintInfo::ScaleType GetPaintScaleType() const;
 
   // Accelerated painting ------------------------------------------------------
 
@@ -2130,6 +2163,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Calls ViewHierarchyChanged() and notifies observers.
   void ViewHierarchyChangedImpl(const ViewHierarchyChangedDetails& details);
 
+  void SetWidget(Widget* widget);
+
   // Size and disposition ------------------------------------------------------
 
   // Call VisibilityChanged() recursively for all children.
@@ -2158,6 +2193,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   void SetLayoutManagerImpl(std::unique_ptr<LayoutManager> layout);
 
   void SetToDefaultFillLayout();
+
+  void UpdateEnabledInViewsSubtreeState();
 
   // Transformations -----------------------------------------------------------
 
@@ -2374,7 +2411,19 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // to find other radio buttons.
   int group_ = -1;
 
+  // The id of the group that this view owns. Some view subclasses use this id
+  // to find the common parent of the group. One example in Chrome is
+  // `CombinedSelectorRadioButton` that is in a `CombinedSelectorRowView` which
+  // is in a `CombinedSelectorListView`. In this example
+  // `CombinedSelectorRadioButton` is not the direct parent of the radio button,
+  // but it is its group owner.
+  int owned_group_ = -1;
+
   // Tree operations -----------------------------------------------------------
+
+  // The widget that this view is attached to. This is null if the view is not
+  // attached to a widget.
+  raw_ptr<Widget> widget_ = nullptr;
 
   // This view's parent.
   raw_ptr<View> parent_ = nullptr;
@@ -2402,6 +2451,9 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Whether this view is enabled.
   bool enabled_ = true;
+
+  // Whether this view is enabled in views subtree.
+  bool enabled_in_views_subtree_ = true;
 
   // When this flag is on, a View receives a mouse-enter and mouse-leave event
   // even if a descendant View is the event-recipient for the real mouse
@@ -2684,6 +2736,7 @@ VIEW_BUILDER_PROPERTY(bool, Enabled)
 VIEW_BUILDER_PROPERTY(bool, FlipCanvasOnPaintForRTLUI)
 VIEW_BUILDER_PROPERTY(views::View::FocusBehavior, FocusBehavior)
 VIEW_BUILDER_PROPERTY(int, Group)
+VIEW_BUILDER_PROPERTY(int, OwnedGroup)
 VIEW_BUILDER_PROPERTY(int, ID)
 VIEW_BUILDER_PROPERTY(bool, Mirrored)
 VIEW_BUILDER_PROPERTY(bool, NotifyEnterExitOnChild)

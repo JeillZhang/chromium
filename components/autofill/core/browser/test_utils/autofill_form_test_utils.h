@@ -41,8 +41,11 @@ struct FieldDescription {
   std::optional<std::u16string> name;
   std::optional<std::u16string> name_attribute;
   std::optional<std::u16string> id_attribute;
+  std::optional<std::u16string> nonce;
   std::optional<std::u16string> value;
   std::optional<std::u16string> placeholder;
+  std::optional<std::u16string> aria_label;
+  std::optional<std::u16string> aria_description;
   std::optional<uint64_t> max_length;
   const std::string autocomplete_attribute;
   std::optional<AutocompleteParsingResult> parsed_autocomplete;
@@ -120,9 +123,6 @@ using FormStructureTestCase = internal::FormStructureTestCase<>;
 // Describes the |form_data|. Use this in SCOPED_TRACE if other logging
 // messages might refer to the form.
 testing::Message DescribeFormData(const FormData& form_data);
-
-// Returns the form field relevant to the |role|.
-FormFieldData CreateFieldByRole(FieldType role);
 
 // Creates a FormFieldData to be fed to the parser.
 FormFieldData GetFormFieldData(const FieldDescription& fd);

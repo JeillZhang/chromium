@@ -56,6 +56,7 @@
 #include "ui/views/view_class_properties.h"
 
 #if BUILDFLAG(IS_CHROMEOS)
+#include "chrome/browser/ui/user_education/browser_user_education_interface.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/virtual_keyboard_controller.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
@@ -213,17 +214,13 @@ void BrowserAppMenuButton::UpdateTextAndHighlightColor() {
 #else
     text = l10n_util::GetStringUTF16(IDS_APP_MENU_BUTTON_UPDATE);
 #endif
-  } else if (type_and_severity_.type ==
-             AppMenuIconController::IconType::DEFAULT_BROWSER_PROMPT) {
-#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_CHROMEOS)
-    tooltip_message_id = IDS_APP_MENU_TOOLTIP_DEFAULT_PROMPT;
-    text = l10n_util::GetStringUTF16(IDS_APP_MENU_BUTTON_DEFAULT_PROMPT);
-#else
-    tooltip_message_id = IDS_APPMENU_TOOLTIP;
-#endif
   } else {
     tooltip_message_id = IDS_APPMENU_TOOLTIP_ALERT;
-    text = l10n_util::GetStringUTF16(IDS_APP_MENU_BUTTON_ERROR);
+    const int text_id =
+        type_and_severity_.severity == AppMenuIconController::Severity::LOW
+            ? IDS_APP_MENU_BUTTON_ACTION_REQUIRED
+            : IDS_APP_MENU_BUTTON_ERROR;
+    text = l10n_util::GetStringUTF16(text_id);
   }
 
   SetTooltipText(l10n_util::GetStringUTF16(tooltip_message_id));
@@ -271,9 +268,11 @@ void BrowserAppMenuButton::OnTouchUiChanged() {
 
 void BrowserAppMenuButton::ButtonPressed(const ui::Event& event) {
 #if BUILDFLAG(IS_CHROMEOS)
-  if (toolbar_view_->browser()->window()->IsFeaturePromoActive(
+  auto* const user_education =
+      BrowserUserEducationInterface::From(toolbar_view_->browser());
+  if (user_education->IsFeaturePromoActive(
           feature_engagement::kIPHPasswordsSavePrimingPromoFeature)) {
-    toolbar_view_->browser()->window()->NotifyFeaturePromoFeatureUsed(
+    user_education->NotifyFeaturePromoFeatureUsed(
         feature_engagement::kIPHPasswordsSavePrimingPromoFeature,
         FeaturePromoFeatureUsedAction::kClosePromoIfPresent);
   }

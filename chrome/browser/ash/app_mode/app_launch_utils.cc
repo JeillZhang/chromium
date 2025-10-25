@@ -17,7 +17,6 @@
 
 #include "ash/constants/ash_switches.h"
 #include "base/check.h"
-#include "base/check_deref.h"
 #include "base/command_line.h"
 #include "base/notimplemented.h"
 #include "base/notreached.h"
@@ -49,7 +48,8 @@ std::vector<std::string>* test_prefs_to_reset = nullptr;
 
 bool ShouldAutoLaunchAfterAppLaunchError(KioskAppLaunchError::Error error) {
   return error == KioskAppLaunchError::Error::kNone ||
-         error == KioskAppLaunchError::Error::kChromeAppDeprecated;
+         error == KioskAppLaunchError::Error::kChromeAppDeprecated ||
+         error == KioskAppLaunchError::Error::kIsolatedAppNotAllowed;
 }
 
 }  // namespace
@@ -93,7 +93,8 @@ bool ShouldAutoLaunchKioskApp(const base::CommandLine& command_line,
 
   return command_line.HasSwitch(switches::kLoginManager) &&
          KioskController::Get().GetAutoLaunchApp().has_value() &&
-         ShouldAutoLaunchAfterAppLaunchError(KioskAppLaunchError::Get()) &&
+         ShouldAutoLaunchAfterAppLaunchError(
+             KioskAppLaunchError::Get(local_state)) &&
          // IsOobeCompleted() is needed to prevent kiosk session start in case
          // of enterprise rollback, when keeping the enrollment, policy, not
          // clearing TPM, but wiping stateful partition.

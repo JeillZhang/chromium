@@ -181,10 +181,6 @@ class TabSlotController {
   // `tab`.
   virtual void HideHover(Tab* tab, TabStyle::HideHoverStyle style) = 0;
 
-  // Returns the background offset used by inactive tabs to match the frame
-  // image.
-  virtual int GetBackgroundOffset() const = 0;
-
   // Returns the thickness of the stroke around the active tab in DIP.  Returns
   // 0 if there is no stroke.
   virtual int GetStrokeThickness() const = 0;
@@ -256,7 +252,7 @@ class TabSlotController {
 
   virtual Browser* GetBrowser() = 0;
 
-  // See BrowserNonClientFrameView::IsFrameCondensed().
+  // See BrowserFrameView::IsFrameCondensed().
   virtual bool IsFrameCondensed() const = 0;
 
 #if BUILDFLAG(IS_CHROMEOS)

@@ -68,6 +68,7 @@
 #include "third_party/blink/renderer/core/xml/document_xml_tree_viewer.h"
 #include "third_party/blink/renderer/core/xml/document_xslt.h"
 #include "third_party/blink/renderer/core/xml/parser/shared_buffer_reader.h"
+#include "third_party/blink/renderer/core/xml/parser/xhtml_subset.h"
 #include "third_party/blink/renderer/core/xml/parser/xml_document_parser_scope.h"
 #include "third_party/blink/renderer/core/xml/parser/xml_parser_input.h"
 #include "third_party/blink/renderer/core/xmlns_names.h"
@@ -780,16 +781,6 @@ scoped_refptr<XMLParserContext> XMLParserContext::CreateMemoryParser(
   xmlCtxtUseOptions(parser,
                     XML_PARSE_NODICT | XML_PARSE_NOENT | XML_PARSE_HUGE);
 
-#if LIBXML_VERSION < 21300
-  // Internal initialization required before libxml2 2.13.
-  // Fixed with https://gitlab.gnome.org/GNOME/libxml2/-/commit/8c5848bd
-  parser->sax2 = 1;
-  parser->instate = XML_PARSER_CONTENT;  // We are parsing a CONTENT
-  parser->depth = 0;
-  parser->str_xml = xmlDictLookup(parser->dict, BAD_CAST "xml", 3);
-  parser->str_xmlns = xmlDictLookup(parser->dict, BAD_CAST "xmlns", 5);
-  parser->str_xml_ns = xmlDictLookup(parser->dict, XML_XML_NAMESPACE, 36);
-#endif
   parser->_private = user_data;
 
   return base::AdoptRef(new XMLParserContext(parser));
@@ -942,8 +933,8 @@ static inline bool HandleNamespaceAttributes(
     AtomicString namespace_q_name = g_xmlns_atom;
     AtomicString namespace_uri = ToAtomicString(ns.uri);
     if (ns.prefix) {
-      namespace_q_name = AtomicString(
-          WTF::StrCat({WTF::g_xmlns_with_colon, ToAtomicString(ns.prefix)}));
+      namespace_q_name =
+          AtomicString(StrCat({g_xmlns_with_colon, ToAtomicString(ns.prefix)}));
     }
     std::optional<QualifiedName> parsed_name = Element::ParseAttributeName(
         xmlns_names::kNamespaceURI, namespace_q_name, exception_state);
@@ -987,10 +978,9 @@ static inline bool HandleElementAttributes(
       }
     }
     AtomicString attr_q_name =
-        attr_prefix.empty()
-            ? ToAtomicString(attr.localname)
-            : AtomicString(
-                  WTF::StrCat({attr_prefix, ":", ToString(attr.localname)}));
+        attr_prefix.empty() ? ToAtomicString(attr.localname)
+                            : AtomicString(StrCat({attr_prefix, ":",
+                                                   ToString(attr.localname)}));
 
     std::optional<QualifiedName> parsed_name =
         Element::ParseAttributeName(attr_uri, attr_q_name, exception_state);
@@ -1071,7 +1061,7 @@ void XMLDocumentParser::StartElementNs(
   QualifiedName q_name(prefix, local_name, adjusted_uri);
   if (!prefix.empty() && adjusted_uri.empty()) {
     q_name = QualifiedName(g_null_atom,
-                           AtomicString(WTF::StrCat({prefix, ":", local_name})),
+                           AtomicString(StrCat({prefix, ":", local_name})),
                            g_null_atom);
   }
 
@@ -1084,8 +1074,8 @@ void XMLDocumentParser::StartElementNs(
   std::optional<ThrowOnDynamicMarkupInsertionCountIncrementer>
       throw_on_dynamic_markup_insertions;
   if (!parsing_fragment_) {
-    if (HTMLConstructionSite::LookUpCustomElementDefinition(*document_, q_name,
-                                                            is)) {
+    if (HTMLConstructionSite::LookUpCustomElementDefinition(
+            *document_, q_name, is, document_->customElementRegistry())) {
       throw_on_dynamic_markup_insertions.emplace(document_);
       document_->GetAgent().event_loop()->PerformMicrotaskCheckpoint();
       reactions.emplace(isolate);
@@ -1096,7 +1086,7 @@ void XMLDocumentParser::StartElementNs(
       q_name,
       parsing_fragment_ ? CreateElementFlags::ByFragmentParser(document_)
                         : CreateElementFlags::ByParser(document_),
-      is);
+      is, /*registry*/ nullptr);
   // Check IsStopped() because custom element constructors may synchronously
   // trigger removal of the document and cancellation of this parser.
   if (IsStopped()) {
@@ -1275,6 +1265,7 @@ void XMLDocumentParser::GetProcessingInstruction(const String& target,
   CheckIfBlockingStyleSheetAdded();
 
   saw_xsl_transform_ = !saw_first_element_ && pi->IsXSL();
+  CHECK(!saw_xsl_transform_ || RuntimeEnabledFeatures::XSLTEnabled());
   if (saw_xsl_transform_ &&
       !DocumentXSLT::HasTransformSourceDocument(*GetDocument())) {
     // This behavior is very tricky. We call stopParsing() here because we
@@ -1492,9 +1483,9 @@ static base::span<const char> ConvertUTF16EntityToUTF8(
   auto utf16_entity = base::span(entity.data).first(entity.length);
   auto entity_buffer =
       base::as_writable_bytes(base::span(g_shared_xhtml_entity_result));
-  WTF::unicode::ConversionResult conversion_result =
-      WTF::unicode::ConvertUTF16ToUTF8(utf16_entity, entity_buffer);
-  if (conversion_result.status != WTF::unicode::kConversionOK) {
+  unicode::ConversionResult conversion_result =
+      unicode::ConvertUtf16ToUtf8(utf16_entity, entity_buffer);
+  if (conversion_result.status != unicode::kConversionOK) {
     return {};
   }
 
@@ -1594,18 +1585,8 @@ static void ExternalSubsetHandler(void* closure,
                                   const xmlChar*) {
   // https://html.spec.whatwg.org/C/#parsing-xhtml-documents:named-character-references
   String ext_id = ToString(external_id);
-  if (ext_id == "-//W3C//DTD XHTML 1.0 Transitional//EN" ||
-      ext_id == "-//W3C//DTD XHTML 1.1//EN" ||
-      ext_id == "-//W3C//DTD XHTML 1.0 Strict//EN" ||
-      ext_id == "-//W3C//DTD XHTML 1.0 Frameset//EN" ||
-      ext_id == "-//W3C//DTD XHTML Basic 1.0//EN" ||
-      ext_id == "-//W3C//DTD XHTML 1.1 plus MathML 2.0//EN" ||
-      ext_id == "-//W3C//DTD XHTML 1.1 plus MathML 2.0 plus SVG 1.1//EN" ||
-      ext_id == "-//W3C//DTD MathML 2.0//EN" ||
-      ext_id == "-//WAPFORUM//DTD XHTML Mobile 1.0//EN" ||
-      ext_id == "-//WAPFORUM//DTD XHTML Mobile 1.1//EN" ||
-      ext_id == "-//WAPFORUM//DTD XHTML Mobile 1.2//EN") {
-    // Controls if we replace entities or not.
+  // Controls if we replace entities or not.
+  if (MatchesXHTMLSubsetDTD(ext_id)) {
     GetParser(closure)->SetIsXHTMLDocument(true);
   }
 }
@@ -1617,8 +1598,7 @@ static void IgnorableWhitespaceHandler(void*, const xmlChar*, int) {
 }
 
 void XMLDocumentParser::InitializeParserContext(const std::string& chunk) {
-  xmlSAXHandler sax;
-  UNSAFE_TODO(memset(&sax, 0, sizeof(sax)));
+  xmlSAXHandler sax = {};
 
   // According to http://xmlsoft.org/html/libxml-tree.html#xmlSAXHandler and
   // http://xmlsoft.org/html/libxml-parser.html#fatalErrorSAXFunc the SAX
@@ -1772,24 +1752,6 @@ bool XMLDocumentParser::AppendFragmentSource(const String& chunk) {
   xmlParseContent(Context());
   EndDocument();  // Close any open text nodes.
 
-#if LIBXML_VERSION < 21400
-  // FIXME: If this code is actually needed, it should probably move to
-  // finish()
-  // XMLDocumentParserQt has a similar check (m_stream.error() ==
-  // QXmlStreamReader::PrematureEndOfDocumentError) in doEnd(). Check if all
-  // the chunk has been processed.
-  int64_t bytes_processed = xmlByteConsumed(Context());
-  if (bytes_processed == -1 ||
-      bytes_processed != static_cast<int64_t>(chunk_as_utf8.length())) {
-    // FIXME: I don't believe we can hit this case without also having seen
-    // an error or a null byte. If we hit this DCHECK, we've found a test
-    // case which demonstrates the need for this code.
-    DCHECK(saw_error_ ||
-           (bytes_processed >= 0 && !chunk_as_utf8.data()[bytes_processed]));
-    return false;
-  }
-#endif
-
   // No error if the chunk is well formed or it is not but we have no error.
   return Context()->wellFormed || !xmlCtxtGetLastError(Context());
 }
@@ -1868,8 +1830,7 @@ HashMap<String, String> ParseAttributes(const String& string, bool& attrs_ok) {
   AttributeParseState state;
   state.got_attributes = false;
 
-  xmlSAXHandler sax;
-  UNSAFE_TODO(memset(&sax, 0, sizeof(sax)));
+  xmlSAXHandler sax = {};
   sax.startElementNs = AttributesStartElementNsHandler;
   sax.initialized = XML_SAX2_MAGIC;
   scoped_refptr<XMLParserContext> parser =

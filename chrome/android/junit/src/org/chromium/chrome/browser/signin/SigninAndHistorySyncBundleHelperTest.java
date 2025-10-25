@@ -19,8 +19,8 @@ import org.chromium.chrome.browser.ui.signin.BottomSheetSigninAndHistorySyncConf
 import org.chromium.chrome.browser.ui.signin.FullscreenSigninAndHistorySyncConfig;
 import org.chromium.chrome.browser.ui.signin.account_picker.AccountPickerBottomSheetStrings;
 import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncConfig;
-import org.chromium.components.signin.base.CoreAccountId;
-import org.chromium.components.signin.base.GaiaId;
+import org.chromium.google_apis.gaia.CoreAccountId;
+import org.chromium.google_apis.gaia.GaiaId;
 
 /** Unit tests for {@link SigninAndHistorySyncBundleHelper}. */
 @RunWith(BaseRobolectricTestRunner.class)
@@ -31,15 +31,11 @@ public class SigninAndHistorySyncBundleHelperTest {
     @SmallTest
     public void testPutAndGetFullscreenSigninAndHistorySyncConfig() {
         final FullscreenSigninAndHistorySyncConfig initialConfig =
-                new FullscreenSigninAndHistorySyncConfig.Builder()
+                new FullscreenSigninAndHistorySyncConfig.Builder(
+                                "title", "subtitle", "dismiss", "history title", "history subtitle")
                         .historyOptInMode(HistorySyncConfig.OptInMode.REQUIRED)
-                        .signinTitleId(1)
-                        .signinSubtitleId(2)
                         .signinLogoId(3)
                         .shouldDisableSignin(true)
-                        .signinDismissTextId(4)
-                        .historySyncTitleId(5)
-                        .historySyncSubtitleId(6)
                         .build();
 
         Bundle bundle = SigninAndHistorySyncBundleHelper.getBundle(initialConfig);
@@ -54,17 +50,17 @@ public class SigninAndHistorySyncBundleHelperTest {
     public void testPutAndGetBottomSheetSigninAndHistorySyncConfig() {
         final BottomSheetSigninAndHistorySyncConfig initialConfig =
                 new BottomSheetSigninAndHistorySyncConfig.Builder(
-                                new AccountPickerBottomSheetStrings.Builder(1)
-                                        .setSubtitleStringId(2)
-                                        .setDismissButtonStringId(3)
+                                new AccountPickerBottomSheetStrings.Builder("title")
+                                        .setSubtitleString("subtitle")
+                                        .setDismissButtonString("dismiss")
                                         .build(),
                                 BottomSheetSigninAndHistorySyncConfig.NoAccountSigninMode
                                         .BOTTOM_SHEET,
                                 BottomSheetSigninAndHistorySyncConfig.WithAccountSigninMode
                                         .DEFAULT_ACCOUNT_BOTTOM_SHEET,
-                                HistorySyncConfig.OptInMode.REQUIRED)
-                        .historySyncTitleId(6)
-                        .historySyncSubtitleId(7)
+                                HistorySyncConfig.OptInMode.REQUIRED,
+                                "history title",
+                                "history subtitle")
                         .selectedCoreAccountId(new CoreAccountId(new GaiaId("gaia-id")))
                         .build();
 

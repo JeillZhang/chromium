@@ -21,7 +21,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "ipc/ipc_channel_proxy.h"
-#include "ipc/ipc_message.h"
 #include "mojo/public/cpp/bindings/pending_associated_receiver.h"
 #include "mojo/public/cpp/bindings/scoped_interface_endpoint_handle.h"
 #include "mojo/public/cpp/system/message_pipe.h"
@@ -105,11 +104,6 @@ DesktopSessionAgent::DesktopSessionAgent(
       input_task_runner_(input_task_runner),
       io_task_runner_(io_task_runner) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
-}
-
-bool DesktopSessionAgent::OnMessageReceived(const IPC::Message& message) {
-  DCHECK(caller_task_runner_->BelongsToCurrentThread());
-  NOTREACHED() << "Received unexpected IPC type: " << message.type();
 }
 
 void DesktopSessionAgent::OnChannelConnected(std::int32_t peer_pid) {

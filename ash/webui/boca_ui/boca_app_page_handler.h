@@ -6,6 +6,7 @@
 #define ASH_WEBUI_BOCA_UI_BOCA_APP_PAGE_HANDLER_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "ash/webui/boca_ui/mojom/boca.mojom-forward.h"
@@ -19,21 +20,32 @@
 #include "base/containers/queue.h"
 #include "base/functional/callback_forward.h"
 #include "base/memory/raw_ptr.h"
+#include "base/sequence_checker.h"
 #include "base/thread_annotations.h"
+#include "base/timer/timer.h"
 #include "chromeos/ash/components/boca/boca_session_manager.h"
 #include "chromeos/ash/components/boca/on_task/on_task_system_web_app_manager.h"
 #include "chromeos/ash/components/boca/proto/roster.pb.h"
 #include "chromeos/ash/components/boca/proto/session.pb.h"
 #include "chromeos/ash/components/boca/session_api/session_client_impl.h"
 #include "chromeos/ash/components/boca/session_api/update_session_request.h"
+#include "chromeos/ash/components/boca/spotlight/spotlight_constants.h"
 #include "chromeos/ash/components/boca/spotlight/spotlight_service.h"
 #include "components/account_id/account_id.h"
 #include "components/sessions/core/session_id.h"
 #include "content/public/browser/web_ui.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+
+namespace webrtc {
+class DesktopFrame;
+}
 
 namespace ash::boca {
+
+class StudentScreenPresenter;
+class TeacherScreenPresenter;
 
 // TODO(crbug.com/399923859): Remove `mojom::Page` implementation.
 class BocaAppHandler : public mojom::PageHandler,
@@ -111,6 +123,17 @@ class BocaAppHandler : public mojom::PageHandler,
   void RefreshWorkbook(RefreshWorkbookCallback callback) override;
   void GetSpeechRecognitionInstallationStatus(
       GetSpeechRecognitionInstallationStatusCallback callback) override;
+  void StartSpotlight(const std::string& crd_connection_code,
+                      StartSpotlightCallback callback) override;
+  void PresentStudentScreen(mojom::IdentityPtr student,
+                            const std::string& receiver_id,
+                            PresentStudentScreenCallback callback) override;
+  void StopPresentingStudentScreen(
+      StopPresentingStudentScreenCallback callback) override;
+  void PresentOwnScreen(const std::string& receiver_id,
+                        PresentOwnScreenCallback callback) override;
+  void StopPresentingOwnScreen(
+      StopPresentingOwnScreenCallback callback) override;
 
   // mojom::Page:
   void OnStudentActivityUpdated(
@@ -122,6 +145,9 @@ class BocaAppHandler : public mojom::PageHandler,
   void OnSpeechRecognitionInstallStateUpdated(
       mojom::SpeechRecognitionInstallState state) override;
   void OnSessionCaptionDisabled(bool is_error) override;
+  void OnFrameDataReceived(const SkBitmap& frame_data) override;
+  void OnSpotlightCrdSessionStatusUpdated(
+      mojom::CrdConnectionState state) override;
 
   // BocaSessionManager::Observer
   void OnConsumerActivityUpdated(
@@ -140,6 +166,16 @@ class BocaAppHandler : public mojom::PageHandler,
   void OnLocalCaptionClosed() override;
   void OnSodaStatusUpdate(BocaSessionManager::SodaStatus status) override;
   void OnSessionCaptionClosed(bool is_error) override;
+  void OnReceiverInvalidation() override;
+
+  // Receives a `webrtc::Desktopframe` and an `SkBitmap` containing the 2D-array
+  // representation of the frame. `SkBitmap` requires the caller to keep the
+  // pixel data alive, so this method owns the frame and releases it after
+  // the Boca UI has processed the frame.
+  void OnCrdFrameReceived(SkBitmap bitmap,
+                          std::unique_ptr<webrtc::DesktopFrame> frame);
+
+  void OnCrdConnectionStateUpdated(CrdConnectionState state);
 
   void NotifyLocalCaptionConfigUpdate(mojom::CaptionConfigPtr config);
 
@@ -232,6 +268,29 @@ class BocaAppHandler : public mojom::PageHandler,
   BocaSessionManager* GetSessionManager();
 
   void SetAccountImage(user_manager::User* user);
+
+  // TODO(crbug.com/399923859): remove only the override keyword when the
+  // inheritance from `mojom::Page` is removed.
+  void OnPresentStudentScreenEnded() override;
+  void OnPresentOwnScreenEnded() override;
+
+  void EndViewScreenSessionInternal(const std::string& id,
+                                    EndViewScreenSessionCallback callback);
+
+  void PresentStudentScreenInternal(const std::string& session_id,
+                                    mojom::IdentityPtr student,
+                                    const std::string& receiver_id,
+                                    PresentStudentScreenCallback callback);
+
+  void OnEndViewScreenResponseForPresentStudentScreen(
+      const std::string& session_id,
+      mojom::IdentityPtr student,
+      const std::string& receiver_id,
+      PresentStudentScreenCallback callback,
+      std::optional<mojom::EndViewScreenSessionError> end_view_screen_error);
+
+  TeacherScreenPresenter* teacher_screen_presenter();
+  StudentScreenPresenter* student_screen_presenter();
 
   SEQUENCE_CHECKER(sequence_checker_);
   const bool is_producer_;

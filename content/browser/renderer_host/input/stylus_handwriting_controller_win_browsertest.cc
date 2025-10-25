@@ -12,6 +12,7 @@
 #include "content/browser/renderer_host/input/stylus_handwriting_callback_sink_win.h"
 #include "content/browser/renderer_host/input/stylus_handwriting_win_test_helper.h"
 #include "content/browser/renderer_host/render_widget_host_view_aura.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/content_browser_test.h"
@@ -60,7 +61,8 @@ std::vector<APIError> GetAPIErrors() {
 }
 
 bool JSONToPoint(const std::string& str, gfx::PointF* point) {
-  std::optional<base::Value> value = base::JSONReader::Read(str);
+  std::optional<base::Value> value =
+      base::JSONReader::Read(str, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   if (!value) {
     return false;
   }

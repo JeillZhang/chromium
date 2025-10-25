@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "chromeos/ash/components/dbus/shill/shill_client_unittest_base.h"
 
 #include <stddef.h>
@@ -16,10 +11,13 @@
 #include <optional>
 #include <utility>
 
+#include "base/compiler_specific.h"
+#include "base/containers/span.h"
 #include "base/functional/bind.h"
 #include "base/json/json_writer.h"
 #include "base/location.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_view_util.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/values.h"
 #include "dbus/message.h"
@@ -102,39 +100,36 @@ void ShillClientUnittestBase::SetUp() {
   // Create a mock bus.
   dbus::Bus::Options options;
   options.bus_type = dbus::Bus::SYSTEM;
-  mock_bus_ = new dbus::MockBus(options);
+  mock_bus_ = new dbus::MockBus(std::move(options));
 
   // Create a mock proxy.
   mock_proxy_ = new dbus::MockObjectProxy(
       mock_bus_.get(), shill::kFlimflamServiceName, object_path_);
 
   // Set expectations so that mock_proxy's Call methods will return responses.
-  EXPECT_CALL(*mock_proxy_.get(), DoCallMethod(_, _, _))
+  EXPECT_CALL(*mock_proxy_.get(), CallMethod(_, _, _))
       .WillRepeatedly(Invoke(this, &ShillClientUnittestBase::OnCallMethod));
-  EXPECT_CALL(*mock_proxy_.get(), DoCallMethodWithErrorResponse(_, _, _))
+  EXPECT_CALL(*mock_proxy_.get(), CallMethodWithErrorResponse(_, _, _))
       .WillRepeatedly(Invoke(
           this, &ShillClientUnittestBase::OnCallMethodWithErrorResponse));
-  EXPECT_CALL(*mock_proxy_.get(), DoCallMethodWithErrorCallback(_, _, _, _))
-      .WillRepeatedly(Invoke(
-          this, &ShillClientUnittestBase::OnCallMethodWithErrorCallback));
 
   // Set an expectation so mock_proxy's ConnectToSignal() will use
   // OnConnectToPropertyChanged() to run the callback.
   EXPECT_CALL(
       *mock_proxy_.get(),
-      DoConnectToSignal(interface_name_, shill::kMonitorPropertyChanged, _, _))
+      ConnectToSignal(interface_name_, shill::kMonitorPropertyChanged, _, _))
       .WillRepeatedly(
           Invoke(this, &ShillClientUnittestBase::OnConnectToPropertyChanged));
 
-  EXPECT_CALL(*mock_proxy_.get(),
-              DoConnectToSignal(interface_name_,
-                                shill::kOnPlatformMessageFunction, _, _))
+  EXPECT_CALL(
+      *mock_proxy_.get(),
+      ConnectToSignal(interface_name_, shill::kOnPlatformMessageFunction, _, _))
       .WillRepeatedly(
           Invoke(this, &ShillClientUnittestBase::OnConnectToPlatformMessage));
 
-  EXPECT_CALL(*mock_proxy_.get(),
-              DoConnectToSignal(interface_name_,
-                                shill::kOnPacketReceivedFunction, _, _))
+  EXPECT_CALL(
+      *mock_proxy_.get(),
+      ConnectToSignal(interface_name_, shill::kOnPacketReceivedFunction, _, _))
       .WillRepeatedly(
           Invoke(this, &ShillClientUnittestBase::OnConnectToPacketReceived));
 
@@ -219,13 +214,9 @@ void ShillClientUnittestBase::ExpectIntArgument(
 void ShillClientUnittestBase::ExpectArrayOfBytesArgument(
     const std::string& expected_bytes,
     dbus::MessageReader* reader) {
-  const uint8_t* bytes = nullptr;
-  size_t size = 0;
-  ASSERT_TRUE(reader->PopArrayOfBytes(&bytes, &size));
-  EXPECT_EQ(expected_bytes.size(), size);
-  for (size_t i = 0; i < size; ++i) {
-    EXPECT_EQ(expected_bytes[i], bytes[i]);
-  }
+  base::span<const uint8_t> bytes;
+  ASSERT_TRUE(reader->PopArrayOfBytes(&bytes));
+  EXPECT_EQ(base::as_string_view(bytes), expected_bytes);
   EXPECT_FALSE(reader->HasMoreData());
 }
 
@@ -336,11 +327,11 @@ void ShillClientUnittestBase::OnConnectToPlatformMessage(
     const std::string& interface_name,
     const std::string& signal_name,
     const dbus::ObjectProxy::SignalCallback& signal_callback,
-    dbus::ObjectProxy::OnConnectedCallback* on_connected_callback) {
+    dbus::ObjectProxy::OnConnectedCallback on_connected_callback) {
   platform_message_handler_ = signal_callback;
   const bool success = true;
   task_environment_.GetMainThreadTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(std::move(*on_connected_callback),
+      FROM_HERE, base::BindOnce(std::move(on_connected_callback),
                                 interface_name, signal_name, success));
 }
 
@@ -348,11 +339,11 @@ void ShillClientUnittestBase::OnConnectToPacketReceived(
     const std::string& interface_name,
     const std::string& signal_name,
     const dbus::ObjectProxy::SignalCallback& signal_callback,
-    dbus::ObjectProxy::OnConnectedCallback* on_connected_callback) {
+    dbus::ObjectProxy::OnConnectedCallback on_connected_callback) {
   packet_receieved__handler_ = signal_callback;
   const bool success = true;
   task_environment_.GetMainThreadTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(std::move(*on_connected_callback),
+      FROM_HERE, base::BindOnce(std::move(on_connected_callback),
                                 interface_name, signal_name, success));
 }
 
@@ -360,45 +351,37 @@ void ShillClientUnittestBase::OnConnectToPropertyChanged(
     const std::string& interface_name,
     const std::string& signal_name,
     const dbus::ObjectProxy::SignalCallback& signal_callback,
-    dbus::ObjectProxy::OnConnectedCallback* on_connected_callback) {
+    dbus::ObjectProxy::OnConnectedCallback on_connected_callback) {
   property_changed_handler_ = signal_callback;
   const bool success = true;
   task_environment_.GetMainThreadTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(std::move(*on_connected_callback),
+      FROM_HERE, base::BindOnce(std::move(on_connected_callback),
                                 interface_name, signal_name, success));
 }
 
 void ShillClientUnittestBase::OnCallMethod(
     dbus::MethodCall* method_call,
     int timeout_ms,
-    dbus::ObjectProxy::ResponseCallback* response_callback) {
+    dbus::ObjectProxy::ResponseCallback response_callback) {
   EXPECT_EQ(interface_name_, method_call->GetInterface());
   EXPECT_EQ(expected_method_name_, method_call->GetMember());
   dbus::MessageReader reader(method_call);
   argument_checker_.Run(&reader);
   task_environment_.GetMainThreadTaskRunner()->PostTask(
-      FROM_HERE, base::BindOnce(std::move(*response_callback), response_));
+      FROM_HERE, base::BindOnce(std::move(response_callback), response_));
 }
 
 void ShillClientUnittestBase::OnCallMethodWithErrorResponse(
     dbus::MethodCall* method_call,
     int timeout_ms,
-    dbus::ObjectProxy::ResponseOrErrorCallback* response_callback) {
+    dbus::ObjectProxy::ResponseOrErrorCallback response_callback) {
   EXPECT_EQ(interface_name_, method_call->GetInterface());
   EXPECT_EQ(expected_method_name_, method_call->GetMember());
   dbus::MessageReader reader(method_call);
   argument_checker_.Run(&reader);
   task_environment_.GetMainThreadTaskRunner()->PostTask(
       FROM_HERE,
-      base::BindOnce(std::move(*response_callback), response_, nullptr));
-}
-
-void ShillClientUnittestBase::OnCallMethodWithErrorCallback(
-    dbus::MethodCall* method_call,
-    int timeout_ms,
-    dbus::ObjectProxy::ResponseCallback* response_callback,
-    dbus::ObjectProxy::ErrorCallback* error_callback) {
-  OnCallMethod(method_call, timeout_ms, response_callback);
+      base::BindOnce(std::move(response_callback), response_, nullptr));
 }
 
 }  // namespace ash

@@ -8,7 +8,6 @@
 #include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "base/feature_list.h"
 #include "base/files/file.h"
@@ -30,7 +29,6 @@
 #include "components/privacy_sandbox/masked_domain_list/masked_domain_list.pb.h"
 #include "content/public/browser/network_service_instance.h"
 #include "content/public/common/content_client.h"
-#include "mojo/public/cpp/base/proto_wrapper.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/mojom/network_service.mojom.h"
 
@@ -44,11 +42,6 @@ constexpr base::FilePath::CharType kDefaultMdlFileName[] =
 constexpr base::FilePath::CharType kRegularBrowsingMdlFileName[] =
     FILE_PATH_LITERAL("Regular Browsing MDL");
 
-bool UseFlatbuffer() {
-  return base::FeatureList::IsEnabled(
-      network::features::kMaskedDomainListFlatbufferImpl);
-}
-
 struct BuildFlatbufferResult {
   base::File default_mdl_file;
   uint64_t default_mdl_size = 0;
@@ -56,14 +49,14 @@ struct BuildFlatbufferResult {
   uint64_t regular_browsing_mdl_size = 0;
 };
 
-void BuildFlatbuffer(
-    std::optional<mojo_base::ProtoWrapper> masked_domain_list) {
+void BuildFlatbufferAndSendToNetworkService(
+    std::optional<masked_domain_list::MaskedDomainList> masked_domain_list) {
   base::ThreadPool::PostTaskAndReplyWithResult(
       FROM_HERE, {base::MayBlock()},
       // Build the flatbuffer file in a thread, as it does some CPU-intensive
       // processing and writes to disk, which can block.
       base::BindOnce(
-          [](std::optional<mojo_base::ProtoWrapper> masked_domain_list)
+          [](std::optional<masked_domain_list::MaskedDomainList> mdl)
               -> std::optional<BuildFlatbufferResult> {
             base::FilePath user_data_path;
             if (!base::PathService::Get(chrome::DIR_USER_DATA,
@@ -77,10 +70,8 @@ void BuildFlatbuffer(
             base::FilePath regular_browsing_mdl_file_path =
                 user_data_path.Append(kRegularBrowsingMdlFileName);
 
-            std::optional<masked_domain_list::MaskedDomainList> mdl =
-                masked_domain_list->As<masked_domain_list::MaskedDomainList>();
             if (!mdl.has_value()) {
-              VLOG(1) << "Masked Domain List was empty";
+              VLOG(1) << "Masked Domain List was empty or failed to parse";
               return std::nullopt;
             }
             ip_protection::Telemetry().MdlSize(mdl->ByteSizeLong());
@@ -91,9 +82,7 @@ void BuildFlatbuffer(
               VLOG(1) << "Masked Domain List flatbuffer build failed";
               return std::nullopt;
             }
-            base::UmaHistogramTimes(
-                "NetworkService.IpProtection.ProxyAllowList."
-                "FlatbufferBuildTime",
+            ip_protection::Telemetry().MdlFlatbufferBuildTime(
                 base::Time::Now() - start_time);
 
             std::optional<int64_t> default_mdl_size =
@@ -139,7 +128,7 @@ void BuildFlatbuffer(
       // Call to the network service on the main thread.
       base::BindOnce([](std::optional<BuildFlatbufferResult> result) {
         if (result.has_value()) {
-          content::GetNetworkService()->UpdateMaskedDomainListFlatbuffer(
+          content::GetNetworkService()->UpdateMaskedDomainList(
               std::move(result->default_mdl_file), result->default_mdl_size,
               std::move(result->regular_browsing_mdl_file),
               result->regular_browsing_mdl_size);
@@ -151,21 +140,11 @@ void BuildFlatbuffer(
 
 void OnMaskedDomainListReady(
     base::Version version,
-    std::optional<mojo_base::ProtoWrapper> masked_domain_list) {
-  base::UmaHistogramBoolean(
-      "NetworkService.IpProtection.ProxyAllowList."
-      "UpdateSuccess",
-      masked_domain_list.has_value());
+    std::optional<masked_domain_list::MaskedDomainList> masked_domain_list) {
+  ip_protection::Telemetry().MdlUpdateSuccess(masked_domain_list.has_value());
   if (masked_domain_list.has_value()) {
     VLOG(1) << "Received Masked Domain List";
-
-    if (UseFlatbuffer()) {
-      BuildFlatbuffer(std::move(masked_domain_list));
-    } else {
-      content::GetNetworkService()->UpdateMaskedDomainList(
-          std::move(masked_domain_list).value(),
-          /*exclusion_list=*/std::vector<std::string>());
-    }
+    BuildFlatbufferAndSendToNetworkService(std::move(masked_domain_list));
   } else {
     VLOG(1) << "Could not read Masked Domain List file";
   }
@@ -178,7 +157,7 @@ void RegisterMaskedDomainListComponent(ComponentUpdateService* cus) {
   VLOG(1) << "Registering Masked Domain List component.";
 
   auto policy = std::make_unique<MaskedDomainListComponentInstallerPolicy>(
-      base::BindRepeating(OnMaskedDomainListReady));
+      base::BindRepeating(&OnMaskedDomainListReady));
 
   base::MakeRefCounted<ComponentInstaller>(std::move(policy),
                                            /*action_handler=*/nullptr,

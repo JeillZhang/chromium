@@ -151,10 +151,7 @@ class TestInterfaceFactory final : public media::mojom::InterfaceFactory {
       mojo::PendingRemote<media::mojom::MediaLog> media_log_remote,
       mojo::PendingReceiver<media::mojom::Renderer> receiver,
       mojo::PendingReceiver<media::mojom::MediaFoundationRendererExtension>
-          renderer_extension_receiver,
-      mojo::PendingRemote<
-          ::media::mojom::MediaFoundationRendererClientExtension>
-          client_extension_remote) override {
+          renderer_extension_receiver) override {
     NOTREACHED();
   }
 #endif  // BUILDFLAG(IS_WIN)
@@ -173,8 +170,8 @@ class AudioTrackMojoEncoderTest : public testing::Test {
   AudioTrackMojoEncoderTest() {
     CHECK(Platform::Current()->GetBrowserInterfaceBroker()->SetBinderForTesting(
         media::mojom::InterfaceFactory::Name_,
-        WTF::BindRepeating(&TestInterfaceFactory::BindRequest,
-                           base::Unretained(&interface_factory_))));
+        BindRepeating(&TestInterfaceFactory::BindRequest,
+                      Unretained(&interface_factory_))));
 
     audio_track_encoder_.OnSetFormat(media::TestAudioParameters::Normal());
     // Progress until TestAudioEncoder receives the Initialize() call.
@@ -203,10 +200,9 @@ class AudioTrackMojoEncoderTest : public testing::Test {
   media::EncoderStatus::Codes error_code_ = media::EncoderStatus::Codes::kOk;
   std::vector<base::TimeTicks> capture_times_;
   AudioTrackMojoEncoder audio_track_encoder_{
-      scheduler::GetSequencedTaskRunnerForTesting(),
-      AudioTrackRecorder::CodecId::kAac,
+      scheduler::GetSequencedTaskRunnerForTesting(), media::AudioCodec::kAAC,
       /*on_encoded_audio_cb=*/
-      WTF::CrossThreadBindRepeating(base::BindLambdaForTesting(
+      CrossThreadBindRepeating(base::BindLambdaForTesting(
           [this](const media::AudioParameters& /*params*/,
                  scoped_refptr<media::DecoderBuffer> /*encoded_data*/,
                  std::optional<
@@ -216,7 +212,7 @@ class AudioTrackMojoEncoderTest : public testing::Test {
             capture_times_.push_back(capture_time);
           })),
       /*on_encoded_audio_error_cb=*/
-      WTF::CrossThreadBindOnce(
+      CrossThreadBindOnce(
           base::BindLambdaForTesting([this](media::EncoderStatus status) {
             ASSERT_EQ(error_code_, media::EncoderStatus::Codes::kOk);
             ASSERT_FALSE(status.is_ok());

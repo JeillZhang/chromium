@@ -14,9 +14,10 @@
 #include "ash/wm/window_pin_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_test.h"
-#include "chrome/browser/ui/views/frame/browser_non_client_frame_view_chromeos.h"
+#include "chrome/browser/ui/views/frame/browser_frame_view_chromeos.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_tester.h"
@@ -45,7 +46,7 @@ void ChromeOSBrowserUITest::TearDownOnMainThread() {
 }
 
 bool ChromeOSBrowserUITest::InTabletMode() {
-  return display::Screen::GetScreen()->InTabletMode();
+  return display::Screen::Get()->InTabletMode();
 }
 
 void ChromeOSBrowserUITest::EnterTabletMode() {
@@ -84,26 +85,16 @@ void ChromeOSBrowserUITest::SetOverviewMode(bool enable) {
   }
 }
 
-bool ChromeOSBrowserUITest::IsSnapWindowSupported() {
-  return true;
-}
-
 void ChromeOSBrowserUITest::SnapWindow(aura::Window* window,
                                        ash::SnapPosition position) {
-  CHECK(IsSnapWindowSupported());
   ash::SplitViewTestApi().SnapWindow(window, position);
 }
 
 void ChromeOSBrowserUITest::PinWindow(aura::Window* window, bool trusted) {
-  ::PinWindow(window, trusted);
-}
-
-bool ChromeOSBrowserUITest::IsIsShelfVisibleSupported() {
-  return true;
+  ash::PinWindow(window, trusted);
 }
 
 bool ChromeOSBrowserUITest::IsShelfVisible() {
-  CHECK(IsIsShelfVisibleSupported());
   return ash::ShelfTestApi().IsVisible();
 }
 
@@ -115,8 +106,8 @@ void ChromeOSBrowserUITest::EnterImmersiveFullscreenMode(Browser* browser) {
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
   ASSERT_FALSE(browser_view->IsFullscreen());
 
-  ImmersiveModeController* immersive_mode_controller =
-      browser_view->immersive_mode_controller();
+  auto* const immersive_mode_controller =
+      ImmersiveModeController::From(browser);
   ASSERT_FALSE(immersive_mode_controller->IsEnabled());
 
   ui_test_utils::ToggleFullscreenModeAndWait(browser);
@@ -130,8 +121,8 @@ void ChromeOSBrowserUITest::ExitImmersiveFullscreenMode(Browser* browser) {
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
   ASSERT_TRUE(browser_view->IsFullscreen());
 
-  ImmersiveModeController* immersive_mode_controller =
-      browser_view->immersive_mode_controller();
+  auto* const immersive_mode_controller =
+      ImmersiveModeController::From(browser);
   ASSERT_TRUE(immersive_mode_controller->IsEnabled());
 
   ui_test_utils::ToggleFullscreenModeAndWait(browser);
@@ -154,16 +145,17 @@ void ChromeOSBrowserUITest::ExitTabFullscreenMode(
     Browser* browser,
     content::WebContents* web_contents) {
   ui_test_utils::FullscreenWaiter waiter(browser, {.tab_fullscreen = false});
-  browser->exclusive_access_manager()
+  browser->GetFeatures()
+      .exclusive_access_manager()
       ->fullscreen_controller()
       ->ExitFullscreenModeForTab(web_contents);
   waiter.Wait();
 }
 
-BrowserNonClientFrameViewChromeOS* ChromeOSBrowserUITest::GetFrameViewChromeOS(
+BrowserFrameViewChromeOS* ChromeOSBrowserUITest::GetFrameViewChromeOS(
     BrowserView* browser_view) {
   // We know we're using ChromeOS, so static cast.
-  auto* frame_view = static_cast<BrowserNonClientFrameViewChromeOS*>(
+  auto* frame_view = static_cast<BrowserFrameViewChromeOS*>(
       browser_view->GetWidget()->non_client_view()->frame_view());
   DCHECK(frame_view);
   return frame_view;

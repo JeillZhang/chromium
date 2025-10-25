@@ -92,8 +92,15 @@ void ContextualCueingPageData::FindMatchingConfig() {
     }
     auto decision = DidMatchCueingConditions(config);
     if (decision == kAllowed) {
-      std::move(cueing_decision_callback_)
-          .Run(base::ok(std::move(config.cue_label())));
+      if (kUseDynamicCues.Get() && config.has_dynamic_cue_label()) {
+        std::move(cueing_decision_callback_)
+            .Run(base::ok(CueingResult{config.dynamic_cue_label(),
+                                       config.default_text()}));
+      } else {
+        std::move(cueing_decision_callback_)
+            .Run(base::ok(
+                CueingResult{config.cue_label(), /*prompt_suggestion=*/""}));
+      }
       return;
     } else if (decision == kNeedsPdfPageCount) {
       needs_pdf_page_count = true;

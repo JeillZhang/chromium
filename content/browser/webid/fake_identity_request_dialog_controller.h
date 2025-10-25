@@ -9,8 +9,8 @@
 #include <string>
 
 #include "base/functional/callback_forward.h"
-#include "content/public/browser/identity_request_dialog_controller.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/browser/webid/identity_request_dialog_controller.h"
 
 namespace base {
 class Location;
@@ -79,6 +79,7 @@ class CONTENT_EXPORT FakeIdentityRequestDialogController
       AccountsDisplayedCallback accounts_displayed_callback) override;
 
   std::string GetTitle() const override;
+  std::optional<std::string> GetSubtitle() const override;
 
   void ShowUrl(LinkType link_type, const GURL& url) override;
 
@@ -95,16 +96,20 @@ class CONTENT_EXPORT FakeIdentityRequestDialogController
       const url::Origin& origin,
       base::OnceCallback<void(bool accepted)> callback) override;
 
+  bool DidShowUi() const override;
+
  private:
   void PostTask(const base::Location& from_here, base::OnceClosure task);
 
   std::optional<std::string> selected_account_;
   std::string title_;
+  std::string subtitle_;
   // The caller ensures that this object does not outlive the web_contents_.
   raw_ptr<WebContents> web_contents_;
   // We observe WebContentsDestroyed to ensure that this pointer is valid.
   raw_ptr<WebContents> popup_window_{nullptr};
   DismissCallback popup_dismiss_callback_;
+  bool did_show_ui_ = false;
 };
 
 }  // namespace content

@@ -45,9 +45,7 @@ namespace views {
 namespace features {
 // Gates the ability of the Dialog to use a vertical button layout, if other
 // conditions permit. This is a killswitch and is on by default.
-BASE_FEATURE(kDialogVerticalButtonFallback,
-             "DialogVerticalButtonFallback",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kDialogVerticalButtonFallback, base::FEATURE_ENABLED_BY_DEFAULT);
 }  // namespace features
 
 namespace {
@@ -202,7 +200,7 @@ void DialogClientView::UpdateWindowRoundedCorners(
   DCHECK(GetWidget());
 
   // ChromeOS has rounded windows. A dialog can use native frame i.e look like
-  // a top-level window. For ChromeOS, dialogs use `NonClientFrameViewAsh`
+  // a top-level window. For ChromeOS, dialogs use `FrameViewAsh`
   // as native frame. The top corners will be rounded by the frame_view and
   // client-view is responsible for rounding the bottom corners.
   const gfx::RoundedCornersF background_radii(0, 0, window_radii.lower_right(),
@@ -307,12 +305,18 @@ void DialogClientView::ResetViewShownTimeStampForTesting() {
   input_protector_->ResetForTesting();  // IN-TEST
 }
 
-bool DialogClientView::IsPossiblyUnintendedInteraction(const ui::Event& event) {
-  return input_protector_->IsPossiblyUnintendedInteraction(event);
+bool DialogClientView::IsPossiblyUnintendedInteraction(const ui::Event& event,
+                                                       bool allow_key_events) {
+  return input_protector_->IsPossiblyUnintendedInteraction(event,
+                                                           allow_key_events);
 }
 
 DialogDelegate* DialogClientView::GetDialogDelegate() const {
-  return GetWidget()->widget_delegate()->AsDialogDelegate();
+  // TODO(crbug.com/443163515): investigate which dialog is crashing due to
+  // widget delegate being null.
+  return GetWidget()->widget_delegate()
+             ? GetWidget()->widget_delegate()->AsDialogDelegate()
+             : nullptr;
 }
 
 void DialogClientView::SetBackgroundRadii(const gfx::RoundedCornersF& radii) {
@@ -401,7 +405,10 @@ void DialogClientView::UpdateDialogButton(raw_ptr<MdTextButton>* member,
 void DialogClientView::ButtonPressed(ui::mojom::DialogButton type,
                                      const ui::Event& event) {
   DialogDelegate* const delegate = GetDialogDelegate();
-  if (!delegate || input_protector_->IsPossiblyUnintendedInteraction(event)) {
+  if (!delegate ||
+      input_protector_->IsPossiblyUnintendedInteraction(
+          event, /*allow_key_events=*/delegate
+                     ->ShouldAllowKeyEventsDuringInputProtection())) {
     return;
   }
 

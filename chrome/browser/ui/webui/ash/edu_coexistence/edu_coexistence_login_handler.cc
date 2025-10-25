@@ -41,6 +41,7 @@
 #include "components/signin/public/identity_manager/access_token_info.h"
 #include "components/signin/public/identity_manager/account_info.h"
 #include "components/signin/public/identity_manager/identity_manager.h"
+#include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "google_apis/gaia/gaia_constants.h"
 #include "google_apis/gaia/gaia_urls.h"
@@ -156,17 +157,11 @@ EduCoexistenceLoginHandler::EduCoexistenceLoginHandler(
   // Start observing IdentityManager.
   identity_manager->AddObserver(this);
 
-  OAuth2AccessTokenManager::ScopeSet scopes;
-  scopes.insert(GaiaConstants::kKidsSupervisionSetupChildOAuth2Scope);
-  scopes.insert(GaiaConstants::kAccountsReauthOAuth2Scope);
-  scopes.insert(GaiaConstants::kAuditRecordingOAuth2Scope);
-  scopes.insert(GaiaConstants::kClearCutOAuth2Scope);
-  scopes.insert(GaiaConstants::kKidManagementPrivilegedOAuth2Scope);
-
   // Start fetching oauth access token.
   access_token_fetcher_ =
       std::make_unique<signin::PrimaryAccountAccessTokenFetcher>(
-          "EduCoexistenceLoginHandler", identity_manager, scopes,
+          signin::OAuthConsumerId::kEduCoexistenceLoginHandler,
+          identity_manager,
           base::BindOnce(
               &EduCoexistenceLoginHandler::OnOAuthAccessTokensFetched,
               base::Unretained(this)),

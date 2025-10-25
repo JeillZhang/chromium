@@ -110,7 +110,7 @@ public class CafMessageHandlerTest {
     }
 
     void setUpForAppMessageTest() throws JSONException {
-        List<String> namespaces = new ArrayList<String>();
+        List<String> namespaces = new ArrayList<>();
         namespaces.add(NAMESPACE1);
         doReturn(namespaces).when(mSessionController).getNamespaces();
         doReturn(true)
@@ -900,7 +900,7 @@ public class CafMessageHandlerTest {
                 .when(mMessageHandler)
                 .sendEnclosedMessageToClient(anyString(), anyString(), anyString(), anyInt());
         assertEquals(0, mMessageHandler.getStopRequestsForTest().size());
-        mMessageHandler.getStopRequestsForTest().put(CLIENT_ID1, new ArrayDeque<Integer>());
+        mMessageHandler.getStopRequestsForTest().put(CLIENT_ID1, new ArrayDeque<>());
         mMessageHandler.getStopRequestsForTest().get(CLIENT_ID1).add(SEQUENCE_NUMBER1);
         mMessageHandler.getStopRequestsForTest().get(CLIENT_ID1).add(SEQUENCE_NUMBER2);
         assertEquals(1, mMessageHandler.getStopRequestsForTest().size());
@@ -982,7 +982,7 @@ public class CafMessageHandlerTest {
                 .when(mMessageHandler)
                 .sendEnclosedMessageToClient(anyString(), anyString(), anyString(), anyInt());
         mMessageHandler.broadcastClientMessage("anytype", "anymessage");
-        for (String clientId : mRouteProvider.getClientIdToRecords().keySet()) {
+        for (String clientId : mClientRecordMap.keySet()) {
             verify(mMessageHandler)
                     .sendEnclosedMessageToClient(
                             eq(clientId),
@@ -1194,7 +1194,7 @@ public class CafMessageHandlerTest {
     private JSONObject buildAppMessage(String clientId, String namespace, Object actualMessage)
             throws JSONException {
         JSONObject innerMessage = new JSONObject();
-        innerMessage.put("sessionId", mSessionController.getSessionId());
+        innerMessage.put("sessionId", SESSION_ID);
         innerMessage.put("namespaceName", namespace);
         innerMessage.put("message", actualMessage);
 

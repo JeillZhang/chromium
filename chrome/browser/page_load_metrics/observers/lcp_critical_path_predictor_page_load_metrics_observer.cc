@@ -20,6 +20,7 @@
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
 #include "third_party/blink/public/common/features.h"
+#include "third_party/perfetto/include/perfetto/tracing/track.h"
 
 namespace internal {
 
@@ -102,7 +103,7 @@ void RemoveFetchedSubresourceUrlsAfterLCP(
 }
 
 bool IsSameSite(const GURL& url1, const GURL& url2) {
-  return url1.SchemeIs(url2.scheme()) &&
+  return url1.SchemeIs(url2.GetScheme()) &&
          net::registry_controlled_domains::SameDomainOrHost(
              url1, url2,
              net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
@@ -834,12 +835,11 @@ void LcpCriticalPathPredictorPageLoadMetricsObserver::
         "Blink.LCPP.NavigationToStartPreload.MainFrame.FirstSubresource.Time",
         subresource_load_start);
     const base::TimeTicks navigation_start = GetDelegate().GetNavigationStart();
-    TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(
-        "loading", "NavigationToStartFirstPreload", TRACE_ID_LOCAL(this),
-        navigation_start, "url", subresource_url);
-    TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP0(
-        "loading", "NavigationToStartFirstPreload", TRACE_ID_LOCAL(this),
-        navigation_start + subresource_load_start);
+    TRACE_EVENT_BEGIN("loading", "NavigationToStartFirstPreload",
+                      perfetto::Track::FromPointer(this), navigation_start,
+                      "url", subresource_url);
+    TRACE_EVENT_END("loading", perfetto::Track::FromPointer(this),
+                    navigation_start + subresource_load_start);
   }
   base::UmaHistogramMediumTimes(
       "Blink.LCPP.NavigationToStartPreload.MainFrame.EachSubresource.Time",

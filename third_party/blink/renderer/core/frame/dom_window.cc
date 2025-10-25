@@ -14,6 +14,7 @@
 #include "services/network/public/mojom/web_sandbox_flags.mojom-blink.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/frame/frame.mojom-blink.h"
+#include "third_party/blink/renderer/bindings/core/v8/binding_security.h"
 #include "third_party/blink/renderer/bindings/core/v8/capture_source_location.h"
 #include "third_party/blink/renderer/bindings/core/v8/serialization/post_message_helper.h"
 #include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
@@ -45,6 +46,7 @@
 #include "third_party/blink/renderer/core/page/focus_controller.h"
 #include "third_party/blink/renderer/core/page/page.h"
 #include "third_party/blink/renderer/core/probe/core_probes.h"
+#include "third_party/blink/renderer/core/url/dom_origin.h"
 #include "third_party/blink/renderer/platform/bindings/source_location.h"
 #include "third_party/blink/renderer/platform/bindings/v8_dom_wrapper.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -231,6 +233,14 @@ DOMWindow::DOMWindow(Frame& frame)
 DOMWindow::~DOMWindow() {
   // The frame must be disconnected before finalization.
   DCHECK(!frame_);
+}
+
+DOMOrigin* DOMWindow::GetDOMOrigin(LocalDOMWindow* accessing_window) const {
+  if (BindingSecurity::ShouldAllowAccessTo(accessing_window, this) &&
+      IsLocalDOMWindow()) {
+    return DOMOrigin::Create(To<LocalDOMWindow>(this)->GetSecurityOrigin());
+  }
+  return nullptr;
 }
 
 v8::Local<v8::Value> DOMWindow::Wrap(ScriptState* script_state) {
@@ -484,13 +494,13 @@ String DOMWindow::SanitizedCrossDomainAccessErrorMessage(
   const SecurityOrigin* active_origin = accessing_window->GetSecurityOrigin();
   String message;
   if (cross_document_access == CrossDocumentAccessPolicy::kDisallowed) {
-    message = WTF::StrCat({"Blocked a restricted frame with origin \"",
-                           active_origin->ToString(),
-                           "\" from accessing another frame."});
+    message =
+        StrCat({"Blocked a restricted frame with origin \"",
+                active_origin->ToString(), "\" from accessing another frame."});
   } else {
-    message = WTF::StrCat({"Blocked a frame with origin \"",
-                           active_origin->ToString(),
-                           "\" from accessing a cross-origin frame."});
+    message =
+        StrCat({"Blocked a frame with origin \"", active_origin->ToString(),
+                "\" from accessing a cross-origin frame."});
   }
 
   // FIXME: Evaluate which details from 'crossDomainAccessErrorMessage' may
@@ -522,9 +532,9 @@ String DOMWindow::CrossDomainAccessErrorMessage(
           accessing_window->GetAgent() != local_dom_window->GetAgent()));
 
   String message =
-      WTF::StrCat({"Blocked a frame with origin \"", active_origin->ToString(),
-                   "\" from accessing a frame with origin \"",
-                   target_origin->ToString(), "\". "});
+      StrCat({"Blocked a frame with origin \"", active_origin->ToString(),
+              "\" from accessing a frame with origin \"",
+              target_origin->ToString(), "\". "});
 
   // Sandbox errors: Use the origin of the frames' location, rather than their
   // actual origin (since we know that at least one will be "null").
@@ -539,44 +549,42 @@ String DOMWindow::CrossDomainAccessErrorMessage(
   using SandboxFlags = network::mojom::blink::WebSandboxFlags;
   if (GetFrame()->GetSecurityContext()->IsSandboxed(SandboxFlags::kOrigin) ||
       accessing_window->IsSandboxed(SandboxFlags::kOrigin)) {
-    message =
-        WTF::StrCat({"Blocked a frame at \"",
-                     SecurityOrigin::Create(active_url)->ToString(),
-                     "\" from accessing a frame at \"",
-                     SecurityOrigin::Create(target_url)->ToString(), "\". "});
+    message = StrCat({"Blocked a frame at \"",
+                      SecurityOrigin::Create(active_url)->ToString(),
+                      "\" from accessing a frame at \"",
+                      SecurityOrigin::Create(target_url)->ToString(), "\". "});
 
     if (GetFrame()->GetSecurityContext()->IsSandboxed(SandboxFlags::kOrigin) &&
         accessing_window->IsSandboxed(SandboxFlags::kOrigin)) {
-      return WTF::StrCat({"Sandbox access violation: ", message,
-                          " Both frames are sandboxed and lack the "
-                          "\"allow-same-origin\" flag."});
+      return StrCat({"Sandbox access violation: ", message,
+                     " Both frames are sandboxed and lack the "
+                     "\"allow-same-origin\" flag."});
     }
 
     if (GetFrame()->GetSecurityContext()->IsSandboxed(SandboxFlags::kOrigin)) {
-      return WTF::StrCat({"Sandbox access violation: ", message,
-                          " The frame being accessed is sandboxed and lacks "
-                          "the \"allow-same-origin\" flag."});
+      return StrCat({"Sandbox access violation: ", message,
+                     " The frame being accessed is sandboxed and lacks "
+                     "the \"allow-same-origin\" flag."});
     }
 
-    return WTF::StrCat({"Sandbox access violation: ", message,
-                        " The frame requesting access is sandboxed and lacks "
-                        "the \"allow-same-origin\" flag."});
+    return StrCat({"Sandbox access violation: ", message,
+                   " The frame requesting access is sandboxed and lacks "
+                   "the \"allow-same-origin\" flag."});
   }
 
   // Protocol errors: Use the URL's protocol rather than the origin's protocol
   // so that we get a useful message for non-heirarchal URLs like 'data:'.
   if (target_origin->Protocol() != active_origin->Protocol()) {
-    return WTF::StrCat({message,
-                        " The frame requesting access has a protocol of \"",
-                        active_url.Protocol(),
-                        "\", the frame being accessed has a protocol of \"",
-                        target_url.Protocol(), "\". Protocols must match."});
+    return StrCat({message, " The frame requesting access has a protocol of \"",
+                   active_url.Protocol(),
+                   "\", the frame being accessed has a protocol of \"",
+                   target_url.Protocol(), "\". Protocols must match."});
   }
 
   // 'document.domain' errors.
   if (target_origin->DomainWasSetInDOM() &&
       active_origin->DomainWasSetInDOM()) {
-    return WTF::StrCat(
+    return StrCat(
         {message, "The frame requesting access set \"document.domain\" to \"",
          active_origin->Domain(), "\", the frame being accessed set it to \"",
          target_origin->Domain(),
@@ -584,25 +592,25 @@ String DOMWindow::CrossDomainAccessErrorMessage(
          "access."});
   }
   if (active_origin->DomainWasSetInDOM()) {
-    return WTF::StrCat(
-        {message, "The frame requesting access set \"document.domain\" to \"",
-         active_origin->Domain(),
-         "\", but the frame being accessed did not. Both must set "
-         "\"document.domain\" to the same value to allow access."});
+    return StrCat({message,
+                   "The frame requesting access set \"document.domain\" to \"",
+                   active_origin->Domain(),
+                   "\", but the frame being accessed did not. Both must set "
+                   "\"document.domain\" to the same value to allow access."});
   }
   if (target_origin->DomainWasSetInDOM()) {
-    return WTF::StrCat(
-        {message, "The frame being accessed set \"document.domain\" to \"",
-         target_origin->Domain(),
-         "\", but the frame requesting access did not. Both must set "
-         "\"document.domain\" to the same value to allow access."});
+    return StrCat({message,
+                   "The frame being accessed set \"document.domain\" to \"",
+                   target_origin->Domain(),
+                   "\", but the frame requesting access did not. Both must set "
+                   "\"document.domain\" to the same value to allow access."});
   }
   if (cross_document_access == CrossDocumentAccessPolicy::kDisallowed) {
-    return WTF::StrCat({message, "The document-access policy denied access."});
+    return StrCat({message, "The document-access policy denied access."});
   }
 
   // Default.
-  return WTF::StrCat({message, "Protocols, domains, and ports must match."});
+  return StrCat({message, "Protocols, domains, and ports must match."});
 }
 
 void DOMWindow::close(v8::Isolate* isolate) {
@@ -820,8 +828,8 @@ void DOMWindow::InstallCoopAccessMonitor(
   // TODO(arthursonzogni): Consider observing |accessing_main_frame| deletion
   // instead.
   monitor->reporter.set_disconnect_handler(
-      WTF::BindOnce(&DOMWindow::DisconnectCoopAccessMonitor,
-                    WrapWeakPersistent(this), monitor->accessing_main_frame));
+      blink::BindOnce(&DOMWindow::DisconnectCoopAccessMonitor,
+                      WrapWeakPersistent(this), monitor->accessing_main_frame));
 
   // As long as RenderDocument isn't shipped, it can exist a CoopAccessMonitor
   // for the same |accessing_main_frame|, because it might now host a different
@@ -887,7 +895,7 @@ void DOMWindow::ReportCoopAccess(const char* property_name) {
   const LocalFrameToken accessing_main_frame_token =
       accessing_main_frame.GetLocalFrameToken();
 
-  WTF::EraseIf(
+  EraseIf(
       coop_access_monitor_, [&](const Member<CoopAccessMonitor>& monitor) {
         if (monitor->accessing_main_frame != accessing_main_frame_token) {
           return false;
@@ -1026,16 +1034,6 @@ void DOMWindow::DoPostMessage(scoped_refptr<SerializedScriptValue> message,
       UseCounter::Count(source, WebFeature::kCrossSitePostMessage);
     }
   }
-  auto* local_dom_window = DynamicTo<LocalDOMWindow>(this);
-  KURL target_url = local_dom_window
-                        ? local_dom_window->Url()
-                        : KURL(NullURL(), target_security_origin->ToString());
-  if (!source->GetContentSecurityPolicy()->AllowConnectToSource(
-          target_url, target_url, RedirectStatus::kNoRedirect,
-          ReportingDisposition::kSuppressReporting)) {
-    UseCounter::Count(
-        source, WebFeature::kPostMessageOutgoingWouldBeBlockedByConnectSrc);
-  }
   UserActivation* user_activation = nullptr;
   if (options->includeUserActivation())
     user_activation = UserActivation::CreateSnapshot(source);
@@ -1062,8 +1060,8 @@ void DOMWindow::DoPostMessage(scoped_refptr<SerializedScriptValue> message,
     } else {
       exception_state.ThrowDOMException(
           DOMExceptionCode::kNotSupportedError,
-          WTF::StrCat({"Delegation of \'", options->delegate(),
-                       "\' is not supported."}));
+          StrCat({"Delegation of \'", options->delegate(),
+                  "\' is not supported."}));
       return;
     }
 
@@ -1236,11 +1234,10 @@ void DOMWindow::Trace(Visitor* visitor) const {
 
 void DOMWindow::DisconnectCoopAccessMonitor(
     const LocalFrameToken& accessing_main_frame) {
-  WTF::EraseIf(
-      coop_access_monitor_,
-      [&accessing_main_frame](const Member<CoopAccessMonitor>& monitor) {
-        return monitor->accessing_main_frame == accessing_main_frame;
-      });
+  EraseIf(coop_access_monitor_,
+          [&accessing_main_frame](const Member<CoopAccessMonitor>& monitor) {
+            return monitor->accessing_main_frame == accessing_main_frame;
+          });
 }
 
 }  // namespace blink

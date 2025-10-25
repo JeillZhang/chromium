@@ -26,6 +26,7 @@ import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.browser_controls.BrowserControlsStateProvider;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.theme.ThemeUtils;
+import org.chromium.components.browser_ui.styles.ChromeColors;
 import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.ClipDrawableProgressBar;
 import org.chromium.ui.interpolators.Interpolators;
@@ -162,7 +163,10 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar
         setAlpha(0.0f);
         mAnimationLogic = new ProgressAnimationSmooth();
 
-        setVisibility(View.VISIBLE);
+        if (!(ChromeFeatureList.sAndroidAnimatedProgressBarInViz.isEnabled()
+                || ChromeFeatureList.sAndroidAnimatedProgressBarInBrowser.isEnabled())) {
+            setVisibility(View.VISIBLE);
+        }
 
         // This tells accessibility services that progress bar changes are important enough to
         // announce to the user even when not focused.
@@ -177,6 +181,9 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar
 
     public void setAnimatingView(ToolbarProgressBarAnimatingView animatingView) {
         mAnimatingView = animatingView;
+        if (useGradientDrawable()) {
+            mAnimatingView.setCornerRadius((float) mProgressBarHeight / 2);
+        }
         setProgressBarColors();
     }
 
@@ -363,7 +370,7 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar
         if (mThemeColor != 0) {
             setThemeColor(mThemeColor, false);
         } else {
-            setForegroundColor(getForegroundColor());
+            setThemeColor(ChromeColors.getDefaultThemeColor(getContext(), false), false);
         }
     }
 
@@ -388,6 +395,7 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar
             setForegroundColor(SemanticColorUtils.getProgressBarForeground(getContext()));
             if (ChromeFeatureList.sAndroidProgressBarVisualUpdate.isEnabled()) {
                 setBackgroundColor(SemanticColorUtils.getProgressBarTrackColor(getContext()));
+                setProgressGapBackgroundColor(color);
             } else {
                 setBackgroundColor(getContext().getColor(R.color.progress_bar_bg_color_list));
             }
@@ -405,6 +413,9 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar
         setBackgroundColor(
                 ColorUtils.getColorWithOverlay(
                         color, Color.WHITE, THEMED_BACKGROUND_WHITE_FRACTION));
+        if (ChromeFeatureList.sAndroidProgressBarVisualUpdate.isEnabled()) {
+            setProgressGapBackgroundColor(color);
+        }
     }
 
     @Override

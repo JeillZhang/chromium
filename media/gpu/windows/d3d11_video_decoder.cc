@@ -152,6 +152,12 @@ D3D11VideoDecoder::~D3D11VideoDecoder() {
   // Log whatever usage we measured, if any.
   LogPictureBufferUsage();
 
+  // Driver may cache allocated D3D11 resources even we release them. Adding
+  // a Flush() here, so driver will less likely perform caching.
+  if (device_context_) {
+    device_context_->Flush();
+  }
+
   // Explicitly destroy the decoder, since it can reference picture buffers.
   accelerated_video_decoder_.reset();
 }
@@ -314,7 +320,8 @@ D3D11VideoDecoder::CreateD3DVideoDecoderWrapper(
     return nullptr;
   }
   use_single_video_decoder_texture_ =
-      use_single_texture.value() | use_shared_handle_;
+      use_single_texture.value() || use_shared_handle_ ||
+      gpu_workarounds_.disable_decode_into_array_texture;
   if (use_single_video_decoder_texture_) {
     MEDIA_LOG(INFO, media_log_) << "D3D11VideoDecoder is using single textures";
   } else {
@@ -586,7 +593,7 @@ void D3D11VideoDecoder::DoDecode() {
     // EOS buffer.
     current_timestamp_ = current_buffer_->timestamp();
 
-    accelerated_video_decoder_->SetStream(-1, *current_buffer_);
+    accelerated_video_decoder_->SetStream(-1, current_buffer_);
   }
 
   while (true) {
@@ -1110,26 +1117,18 @@ D3D11VideoDecoder::GetSupportedVideoDecoderConfigs(
   std::vector<SupportedVideoDecoderConfig> configs;
   for (const auto& kv : supported_resolutions) {
     const auto profile = kv.first;
-    // TODO(liberato): Add VP8 support to D3D11VideoDecoder.
-    if (profile == VP8PROFILE_ANY)
-      continue;
-
     const auto& resolution_range = kv.second;
 
-    // TODO(crbug.com/415370683): This should be handled elsewhere.
-    if (resolution_range.min_resolution.IsEmpty()) {
-      continue;
-    }
+    DCHECK(!resolution_range.min_resolution.IsEmpty());
+    DCHECK(!resolution_range.max_landscape_resolution.IsEmpty());
 
     configs.emplace_back(profile, profile, resolution_range.min_resolution,
                          resolution_range.max_landscape_resolution,
                          /*allow_encrypted=*/false,
                          /*require_encrypted=*/false);
-    if (!resolution_range.max_portrait_resolution.IsEmpty() &&
-        resolution_range.max_portrait_resolution !=
-            resolution_range.max_landscape_resolution) {
+    if (resolution_range.max_portrait_resolution) {
       configs.emplace_back(profile, profile, resolution_range.min_resolution,
-                           resolution_range.max_portrait_resolution,
+                           *resolution_range.max_portrait_resolution,
                            /*allow_encrypted=*/false,
                            /*require_encrypted=*/false);
     }

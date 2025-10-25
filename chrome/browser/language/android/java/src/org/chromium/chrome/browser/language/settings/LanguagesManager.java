@@ -184,7 +184,7 @@ public class LanguagesManager {
      * which list or preference a language will be added to. By default the potential languages for
      * the Accept-Language list is returned.
      *
-     * @param LanguageListType key to select which languages to get.
+     * @param potentialLanguages Key to select which languages to get.
      * @return A list of LanguageItems to choose from for the given preference.
      */
     public List<LanguageItem> getPotentialLanguages(@LanguageListType int potentialLanguages) {
@@ -211,11 +211,12 @@ public class LanguagesManager {
     /**
      * Get a list of LanguageItems that can be used as a Translate language but excluding
      * |codesToSkip|. The current Accept-Languages are added to the front of the list.
+     *
      * @param codesToSkip Collection of String language codes to exclude from the list.
      * @return List of LanguageItems.
      */
     private List<LanguageItem> getPotentialTranslateLanguages(Collection<String> codesToSkip) {
-        HashSet<String> codesToSkipSet = new HashSet<String>(codesToSkip);
+        HashSet<String> codesToSkipSet = new HashSet<>(codesToSkip);
         LinkedHashSet<LanguageItem> results = new LinkedHashSet<>();
         // Filter for translatable languages not in |codesToSkipSet|.
         Predicate<LanguageItem> filter =

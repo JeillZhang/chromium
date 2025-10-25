@@ -13,7 +13,9 @@
 #include "third_party/blink/public/common/privacy_budget/identifiable_surface.h"
 #include "third_party/blink/public/common/privacy_budget/identifiable_token.h"
 #include "third_party/blink/public/common/privacy_budget/scoped_identifiability_test_sample_collector.h"
+#include "third_party/blink/renderer/core/css/css_numeric_literal_value.h"
 #include "third_party/blink/renderer/core/css/media_list.h"
+#include "third_party/blink/renderer/core/css/media_query_exp.h"
 #include "third_party/blink/renderer/core/css/media_values.h"
 #include "third_party/blink/renderer/core/css/media_values_cached.h"
 #include "third_party/blink/renderer/core/css/parser/css_parser_token_stream.h"
@@ -451,9 +453,19 @@ MediaQueryEvaluatorTestCase g_scripting_enabled_cases[] = {
     {"(scripting: enabled)", true},
 };
 
+// Exercised for UBSAN:
+MediaQueryEvaluatorTestCase g_float_cast_overflow_cases[] = {
+    {"(color: 3.0e38)", false},
+    {"(color-index: 3.0e38)", false},
+    {"(monochrome: 3.0e38)", false},
+    {"(grid: 3.0e38)", false},
+    {"(-webkit-transform-3d: 3.0e38)", false},
+    {"(horizontal-viewport-segments: 3.0e38)", false},
+    {"(vertical-viewport-segments: 3.0e38)", false},
+};
+
 void TestMQEvaluator(base::span<MediaQueryEvaluatorTestCase> test_cases,
-                     const MediaQueryEvaluator* media_query_evaluator,
-                     CSSParserMode mode) {
+                     const MediaQueryEvaluator* media_query_evaluator) {
   MediaQuerySet* query_set = nullptr;
   for (const MediaQueryEvaluatorTestCase& test_case : test_cases) {
     if (String(test_case.input).empty()) {
@@ -461,17 +473,11 @@ void TestMQEvaluator(base::span<MediaQueryEvaluatorTestCase> test_cases,
     } else {
       StringView str(test_case.input);
       CSSParserTokenStream stream(str);
-      query_set =
-          MediaQueryParser::ParseMediaQuerySetInMode(stream, mode, nullptr);
+      query_set = MediaQueryParser::ParseMediaQuerySet(stream, nullptr);
     }
     EXPECT_EQ(test_case.output, media_query_evaluator->Eval(*query_set))
         << "Query: " << test_case.input;
   }
-}
-
-void TestMQEvaluator(base::span<MediaQueryEvaluatorTestCase> test_cases,
-                     const MediaQueryEvaluator* media_query_evaluator) {
-  TestMQEvaluator(test_cases, media_query_evaluator, kHTMLStandardMode);
 }
 
 TEST(MediaQueryEvaluatorTest, Cached) {
@@ -961,6 +967,14 @@ TEST(MediaQueryEvaluatorTest, CachedScripting) {
         MakeGarbageCollected<MediaQueryEvaluator>(media_values);
     TestMQEvaluator(g_scripting_enabled_cases, media_query_evaluator);
   }
+}
+
+TEST(MediaQueryEvaluatorTest, FloatCastOverflow) {
+  MediaValuesCached::MediaValuesCachedData data;
+  MediaValues* media_values = MakeGarbageCollected<MediaValuesCached>(data);
+  MediaQueryEvaluator* media_query_evaluator =
+      MakeGarbageCollected<MediaQueryEvaluator>(media_values);
+  TestMQEvaluator(g_float_cast_overflow_cases, media_query_evaluator);
 }
 
 TEST(MediaQueryEvaluatorTest, RangedValues) {
@@ -1459,7 +1473,7 @@ class MediaQueryEvaluatorIdentifiabilityTest : public PageTestBase {
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfacePrefersReducedMotion) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media (prefers-reduced-motion: reduce) {
         div { color: green }
@@ -1487,7 +1501,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfacePrefersReducedTransparency) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media (prefers-reduced-transparency: reduce) {
         div { color: green }
@@ -1514,7 +1528,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfaceOrientation) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media (orientation: landscape) {
         div { color: green }
@@ -1542,7 +1556,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfaceCollectOnce) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media (orientation: landscape) {
         div { color: green }
@@ -1572,7 +1586,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfaceDisplayMode) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media all and (display-mode: browser) {
         div { color: green }
@@ -1600,7 +1614,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfaceDisplayState) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media all and (display-state: normal) {
         div { color: green }
@@ -1628,7 +1642,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfaceResizable) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media all and (resizable: true) {
         div { color: green }
@@ -1655,7 +1669,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfaceForcedColorsHover) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media all and (forced-colors: active) {
         div { color: green }
@@ -1700,7 +1714,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfaceAspectRatioNormalized) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media all and (min-aspect-ratio: 8/5) {
         div { color: green }
@@ -1727,7 +1741,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfaceResolution) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media all and (min-resolution: 72dpi) {
         div { color: green }
@@ -1753,7 +1767,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfaceInvertedColors) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media (inverted-colors: inverted) {
         div { color: green }
@@ -1780,7 +1794,7 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
 
 TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
        MediaFeatureIdentifiableSurfaceScripting) {
-  GetDocument().body()->setInnerHTML(R"HTML(
+  GetDocument().body()->SetInnerHTMLWithoutTrustedTypes(R"HTML(
     <style>
       @media (scripting: enabled) {
         div { color: green }
@@ -1803,6 +1817,19 @@ TEST_F(MediaQueryEvaluatorIdentifiabilityTest,
                 IdentifiableToken(
                     IdentifiableSurface::MediaFeatureName::kScripting)));
   EXPECT_EQ(entry.metrics.begin()->value, IdentifiableToken(Scripting::kNone));
+}
+
+TEST(MediaQueryEvaluatorTest, TestQueriesWithUndefinedCustomMedias) {
+  MediaValuesCached::MediaValuesCachedData data;
+  auto* media_values = MakeGarbageCollected<MediaValuesCached>(data);
+  MediaQueryEvaluator* media_query_evaluator =
+      MakeGarbageCollected<MediaQueryEvaluator>(media_values);
+
+  MediaQueryEvaluatorTestCase test_cases[] = {
+      {"(--undefined)", false},
+  };
+
+  TestMQEvaluator(test_cases, media_query_evaluator);
 }
 
 }  // namespace blink

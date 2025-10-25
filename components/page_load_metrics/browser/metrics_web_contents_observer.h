@@ -16,8 +16,8 @@
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
-#include "components/page_load_metrics/browser/page_load_metrics_observer.h"
-#include "components/page_load_metrics/common/page_load_metrics.mojom.h"
+#include "components/page_load_metrics/browser/page_load_metrics_observer_interface.h"
+#include "components/page_load_metrics/common/page_load_metrics.mojom-forward.h"
 #include "components/page_load_metrics/common/page_load_timing.h"
 #include "content/public/browser/auction_result.h"
 #include "content/public/browser/render_frame_host_receiver_set.h"
@@ -28,7 +28,7 @@
 #include "net/cookies/canonical_cookie.h"
 #include "services/network/public/mojom/fetch_api.mojom-forward.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
-#include "third_party/blink/public/mojom/loader/resource_load_info.mojom.h"
+#include "third_party/blink/public/mojom/loader/resource_load_info.mojom-forward.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-forward.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/webdx_feature.mojom.h"
 
@@ -39,11 +39,12 @@ class RenderFrameHost;
 
 namespace page_load_metrics {
 
-struct MemoryUpdate;
+class MetricsLifecycleObserver;
 class PageLoadMetricsEmbedderInterface;
 class PageLoadMetricsMemoryTracker;
+class PageLoadMetricsObserverDelegate;
 class PageLoadTracker;
-class MetricsLifecycleObserver;
+struct MemoryUpdate;
 
 // MetricsWebContentsObserver tracks page loads and loading metrics
 // related data based on IPC messages received from a
@@ -126,7 +127,7 @@ class MetricsWebContentsObserver
                          const content::CookieAccessDetails& details) override;
   void OnCookiesAccessed(content::RenderFrameHost* rfh,
                          const content::CookieAccessDetails& details) override;
-  void DidActivatePreviewedPage(base::TimeTicks activaation_time) override;
+  void DidActivatePreviewedPage(base::TimeTicks activation_time) override;
 
   void OnStorageAccessed(content::RenderFrameHost* rfh,
                          const GURL& url,
@@ -148,6 +149,23 @@ class MetricsWebContentsObserver
   // Returns the delegate for the current committed primary page load, required
   // for `MetricsLifecycleObserver`s.
   const PageLoadMetricsObserverDelegate& GetDelegateForCommittedLoad();
+
+  // Returns the delegate for the committed load if one is being tracked. This
+  // method is a safer alternative to
+  // `GetDelegateForCommittedLoad()` for callers that may be operating on a
+  // WebContents where page load metrics are not being actively tracked.
+  //
+  // Unlike `GetDelegateForCommittedLoad()`, which will CHECK-fail if called at
+  // an invalid time (e.g., before a primary navigation has committed or on a
+  // page type that is not tracked), this method will return a nullptr.
+  //
+  // Callers must check the returned pointer for null before using it.
+  const PageLoadMetricsObserverDelegate* GetDelegateForCommittedLoadOrNull();
+
+  // Returns the embedder interface. Public for testing.
+  PageLoadMetricsEmbedderInterface* GetEmbedderInterfaceForTesting() const {
+    return embedder_interface_.get();
+  }
 
   // Register / unregister `MetricsLifecycleObserver`s.
   void AddLifecycleObserver(MetricsLifecycleObserver* observer);
@@ -256,8 +274,7 @@ class MetricsWebContentsObserver
   void AddCustomUserTiming(
       mojom::CustomUserTimingMarkPtr custom_timing) override;
 
-  void SetUpSharedMemoryForUkms(
-      base::ReadOnlySharedMemoryRegion smoothness_memory,
+  void SetUpSharedMemoryForDroppedFrames(
       base::ReadOnlySharedMemoryRegion dropped_frames_memory) override;
 
   // Common part for UpdateThroughput and OnTimingUpdated.
@@ -395,10 +412,8 @@ class MetricsWebContentsObserver
   // This is currently set only for the main frame of each page associated with
   // the WebContents. It maps to the shared memory for the smoothness and the
   // dropped frame count UKMs.
-  base::flat_map<content::RenderFrameHost*,
-                 std::pair<base::ReadOnlySharedMemoryRegion,
-                           base::ReadOnlySharedMemoryRegion>>
-      ukm_data_;
+  base::flat_map<content::RenderFrameHost*, base::ReadOnlySharedMemoryRegion>
+      ukm_dropped_frames_data_;
 
   std::vector<mojom::CustomUserTimingMarkPtr> page_load_custom_timings_;
 

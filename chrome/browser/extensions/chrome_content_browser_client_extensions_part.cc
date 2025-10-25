@@ -40,7 +40,6 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/storage_partition.h"
-#include "content/public/browser/vpn_service_proxy.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
@@ -57,6 +56,7 @@
 #include "extensions/browser/url_loader_factory_manager.h"
 #include "extensions/browser/url_request_util.h"
 #include "extensions/browser/view_type_utils.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/api/sockets/sockets_manifest_data.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_id.h"
@@ -70,6 +70,7 @@
 #include "extensions/common/switches.h"
 #include "pdf/buildflags.h"
 #include "third_party/blink/public/common/features_generated.h"
+#include "third_party/blink/public/common/web_preferences/web_preferences.h"
 #include "url/origin.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
@@ -83,7 +84,7 @@
 #endif
 
 #if BUILDFLAG(ENABLE_GUEST_VIEW)
-#include "components/guest_view/common/guest_view.mojom.h"
+#include "components/guest_view/common/guest_view.mojom.h"  // nogncheck
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/guest_view/web_view/web_view_renderer_state.h"
 #endif
@@ -91,11 +92,14 @@
 #if BUILDFLAG(IS_CHROMEOS)
 #include "chrome/browser/chromeos/extensions/vpn_provider/vpn_service_factory.h"
 #include "chromeos/constants/chromeos_features.h"
+#include "components/user_manager/user_manager_impl.h"
 #endif  // BUILDFLAG(IS_CHROMEOS)
 
 #if BUILDFLAG(ENABLE_PDF)
 #include "pdf/pdf_features.h"
 #endif  // BUILDFLAG(ENABLE_PDF)
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 using blink::web_pref::WebPreferences;
 using content::BrowserContext;
@@ -121,13 +125,14 @@ const Extension* GetEnabledExtensionFromSiteURL(BrowserContext* context,
   if (!registry)
     return nullptr;
 
-  return registry->enabled_extensions().GetByID(site_url.host());
+  return registry->enabled_extensions().GetByID(site_url.GetHost());
 }
 
 bool HasEffectiveUrl(content::BrowserContext* browser_context,
                      const GURL& url) {
   return ChromeContentBrowserClientExtensionsPart::GetEffectiveURL(
-             Profile::FromBrowserContext(browser_context), url) != url;
+             Profile::FromBrowserContext(browser_context), url)
+      .has_value();
 }
 
 bool AllowServiceWorker(const GURL& scope,
@@ -219,7 +224,7 @@ ChromeContentBrowserClientExtensionsPart::
     ~ChromeContentBrowserClientExtensionsPart() = default;
 
 // static
-GURL ChromeContentBrowserClientExtensionsPart::GetEffectiveURL(
+std::optional<GURL> ChromeContentBrowserClientExtensionsPart::GetEffectiveURL(
     Profile* profile,
     const GURL& url) {
   ExtensionRegistry* registry = ExtensionRegistry::Get(profile);
@@ -256,7 +261,7 @@ GURL ChromeContentBrowserClientExtensionsPart::GetEffectiveURL(
   }
 
   // Don't translate to effective URLs in all other cases.
-  return url;
+  return std::nullopt;
 }
 
 // static
@@ -374,7 +379,7 @@ bool ChromeContentBrowserClientExtensionsPart::
   }
 
   // Determine whether the URL is manifest-sandboxed.
-  return SandboxedPageInfo::IsSandboxedPage(extension, url.path());
+  return SandboxedPageInfo::IsSandboxedPage(extension, url.GetPath());
 }
 
 // static
@@ -415,7 +420,7 @@ bool ChromeContentBrowserClientExtensionsPart::CanCommitURL(
   // separately) to verify that the ProcessLock matches the extension's origin.
   // TODO(https://crbug.com/346264217): Also ensure the process is sandboxed, if
   // that does not cause problems for pushState cases.
-  if (SandboxedPageInfo::IsSandboxedPage(extension, url.path())) {
+  if (SandboxedPageInfo::IsSandboxedPage(extension, url.GetPath())) {
     return true;
   }
 
@@ -649,7 +654,13 @@ bool ChromeContentBrowserClientExtensionsPart::
   // of e.g. throwing errors in response to installation events (where the
   // worker is registered, but then immediately unregistered).
   if (!registered_version.IsValid()) {
+#if BUILDFLAG(IS_CHROMEOS)
+    // Make an exception for kiosk mode, since kiosk sessions use temporary
+    // profiles, which are discarded when a session ends.
+    return !user_manager::UserManager::Get()->IsLoggedInAsAnyKioskApp();
+#else
     return true;
+#endif
   }
 
   // Don't allow the unregistration of a valid, enabled service worker-based
@@ -684,21 +695,6 @@ std::vector<url::Origin> ChromeContentBrowserClientExtensionsPart::
       url::Origin::Create(extension_urls::GetNewWebstoreLaunchURL()));
 
   return list;
-}
-
-// static
-std::unique_ptr<content::VpnServiceProxy>
-ChromeContentBrowserClientExtensionsPart::GetVpnServiceProxy(
-    content::BrowserContext* browser_context) {
-#if BUILDFLAG(IS_CHROMEOS)
-  chromeos::VpnServiceInterface* vpn_service =
-      chromeos::VpnServiceFactory::GetForBrowserContext(browser_context);
-  if (!vpn_service)
-    return nullptr;
-  return vpn_service->GetVpnServiceProxy();
-#else
-  return nullptr;
-#endif
 }
 
 // static
@@ -853,7 +849,7 @@ bool ChromeContentBrowserClientExtensionsPart::
 
 #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
   const Extension* extension = registry->enabled_extensions().GetByID(
-      main_frame_site.GetSiteURL().host());
+      main_frame_site.GetSiteURL().GetHost());
   extension_webkit_preferences::SetPreferences(extension, web_prefs);
 #endif
   return true;
@@ -865,6 +861,14 @@ void ChromeContentBrowserClientExtensionsPart::OverrideWebPreferences(
     WebPreferences* web_prefs) {
   OverrideWebPreferencesAfterNavigation(web_contents, main_frame_site,
                                         web_prefs);
+
+  // Ensure to disable text autosizing for extension popups since it is
+  // fundamentally incompatible with frame autoresizing.
+  // See: https://crbug.com/422896512
+  mojom::ViewType view_type = GetViewType(web_contents->GetPrimaryMainFrame());
+  if (view_type == mojom::ViewType::kExtensionPopup) {
+    web_prefs->text_autosizing_enabled = false;
+  }
 }
 
 void ChromeContentBrowserClientExtensionsPart::BrowserURLHandlerCreated(

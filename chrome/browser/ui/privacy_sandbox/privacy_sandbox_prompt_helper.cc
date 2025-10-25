@@ -18,9 +18,10 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/privacy_sandbox/privacy_sandbox_prompt.h"
 #include "chrome/browser/ui/profiles/profile_customization_bubble_sync_controller.h"
-#include "chrome/common/extensions/chrome_manifest_url_handlers.h"
+#include "chrome/browser/ui/signin/signin_view_controller.h"
 #include "chrome/common/webui_url_constants.h"
 #include "components/privacy_sandbox/privacy_sandbox_features.h"
 #include "components/sync/service/sync_service.h"
@@ -29,6 +30,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_registry.h"
+#include "extensions/common/manifest_handlers/chrome_url_overrides_handler.h"
 
 namespace {
 constexpr char kPrivacySandboxPromptHelperEventHistogram[] =
@@ -165,7 +167,7 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
   // TODO(crbug.com/370806609): When we add sign in notice to queue, put this
   // behind flag / remove.
   bool signin_dialog_showing =
-      browser->signin_view_controller()->ShowsModalDialog();
+      browser->GetFeatures().signin_view_controller()->ShowsModalDialog();
 #if !BUILDFLAG(IS_CHROMEOS)
   signin_dialog_showing =
       signin_dialog_showing ||
@@ -235,7 +237,7 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
   // Record the URL that the prompt was displayed over.
   uint32_t host_hash = base::Hash(navigation_handle->GetURL().IsAboutBlank()
                                       ? "about:blank"
-                                      : navigation_handle->GetURL().host());
+                                      : navigation_handle->GetURL().GetHost());
   base::UmaHistogramSparse(
       "Settings.PrivacySandbox.DialogDisplayHost",
       static_cast<base::HistogramBase::Sample32>(host_hash));
@@ -248,14 +250,6 @@ void PrivacySandboxPromptHelper::DidFinishNavigation(
   base::UmaHistogramEnumeration(
       kPrivacySandboxPromptHelperEventHistogram,
       SettingsPrivacySandboxPromptHelperEvent::kPromptShown);
-
-  if (auto* privacy_sandbox_service =
-          PrivacySandboxServiceFactory::GetForProfile(profile())) {
-    privacy_sandbox::PrivacySandboxQueueManager& queue_manager =
-        privacy_sandbox_service->GetPrivacySandboxNoticeQueueManager();
-
-    queue_manager.SetQueueHandleShown();
-  }
 }
 
 // static

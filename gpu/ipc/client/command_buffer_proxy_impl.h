@@ -19,7 +19,7 @@
 #include "base/containers/flat_map.h"
 #include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/shared_memory_mapping.h"
 #include "base/memory/unsafe_shared_memory_region.h"
 #include "base/memory/weak_ptr.h"
@@ -35,8 +35,8 @@
 #include "gpu/command_buffer/common/context_result.h"
 #include "gpu/command_buffer/common/gpu_memory_allocation.h"
 #include "gpu/command_buffer/common/scheduling_priority.h"
-#include "gpu/gpu_export.h"
 #include "gpu/ipc/client/gpu_channel_host.h"
+#include "gpu/ipc/client/gpu_ipc_client_export.h"
 #include "gpu/ipc/common/gpu_channel.mojom.h"
 #include "gpu/ipc/common/surface_handle.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
@@ -55,8 +55,6 @@ struct GpuFenceHandle;
 }
 
 namespace gpu {
-struct ContextCreationAttribs;
-struct Mailbox;
 struct SyncToken;
 }
 
@@ -66,9 +64,10 @@ class GpuMemoryBufferManager;
 
 // Client side proxy that forwards messages synchronously to a
 // CommandBufferStub.
-class GPU_EXPORT CommandBufferProxyImpl : public gpu::CommandBuffer,
-                                          public gpu::GpuControl,
-                                          public mojom::CommandBufferClient {
+class GPU_IPC_CLIENT_EXPORT CommandBufferProxyImpl
+    : public gpu::CommandBuffer,
+      public gpu::GpuControl,
+      public mojom::CommandBufferClient {
  public:
   class DeletionObserver {
    public:
@@ -91,9 +90,8 @@ class GPU_EXPORT CommandBufferProxyImpl : public gpu::CommandBuffer,
   ~CommandBufferProxyImpl() override;
 
   // Connect to a command buffer in the GPU process.
-  ContextResult Initialize(CommandBufferProxyImpl* share_group,
-                           gpu::SchedulingPriority stream_priority,
-                           const gpu::ContextCreationAttribs& attribs,
+  ContextResult Initialize(gpu::SchedulingPriority stream_priority,
+                           mojom::ContextCreationAttribsPtr attribs,
                            const GURL& active_url = GURL(),
                            const std::string_view label = "");
 
@@ -139,12 +137,6 @@ class GPU_EXPORT CommandBufferProxyImpl : public gpu::CommandBuffer,
                        base::OnceClosure callback) override;
   void WaitSyncToken(const gpu::SyncToken& sync_token) override;
   bool CanWaitUnverifiedSyncToken(const gpu::SyncToken& sync_token) override;
-  void SetDefaultFramebufferSharedImage(const gpu::Mailbox& mailbox,
-                                        const gpu::SyncToken& sync_token,
-                                        int samples_count,
-                                        bool preserve,
-                                        bool needs_depth,
-                                        bool needs_stencil);
   void AddDeletionObserver(DeletionObserver* observer);
   void RemoveDeletionObserver(DeletionObserver* observer);
 
@@ -184,7 +176,7 @@ class GPU_EXPORT CommandBufferProxyImpl : public gpu::CommandBuffer,
 
   // mojom::CommandBufferClient:
   void OnConsoleMessage(const std::string& message) override;
-  void OnGpuSwitched(gl::GpuPreference active_gpu_heuristic) override;
+  void OnGpuSwitched() override;
   void OnDestroyed(gpu::error::ContextLostReason reason,
                    gpu::error::Error error) override;
   void OnReturnData(const std::vector<uint8_t>& data) override;

@@ -9,13 +9,15 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/memory/raw_ptr.h"
+#include "build/android_buildflags.h"
 #include "chrome/browser/flags/android/chrome_session_state.h"
 #include "chrome/browser/ui/android/tab_model/android_live_tab_context.h"
-#include "chrome/browser/ui/android/tab_model/tab_list_interface.h"
+#include "chrome/browser/ui/tabs/tab_list_interface.h"
 #include "components/omnibox/browser/location_bar_model.h"
 #include "components/omnibox/browser/location_bar_model_delegate.h"
 #include "components/sessions/core/session_id.h"
 #include "components/sync_sessions/synced_window_delegate.h"
+#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
 
 struct NavigateParams;
 
@@ -40,6 +42,7 @@ class TabModelObserver;
 // with Android's Tabs and Tab Model.
 class TabModel : public TabListInterface {
  public:
+  DECLARE_USER_DATA(TabModel);
   // LINT.IfChange(TabLaunchType)
   // Various ways tabs can be launched.
   // Values must be numbered from 0 and can't have gaps.
@@ -148,6 +151,8 @@ class TabModel : public TabListInterface {
     // Open tab using the TabListInterface API. This tab is created
     // programmatically from operations such as OpenTab or DuplicateTab.
     FROM_TAB_LIST_INTERFACE,
+    // Open a link, creating a new window.
+    FROM_LINK_CREATING_NEW_WINDOW,
     // Must be last.
     SIZE
   };
@@ -165,6 +170,18 @@ class TabModel : public TabListInterface {
   // clang-format off
   // LINT.ThenChange(//tools/metrics/histograms/metadata/new_tab_page/enums.xml:TabLaunchType,//chrome/android/java/src/org/chromium/chrome/browser/tabmodel/ChromeTabCreator.java,//chrome/browser/tabpersistence/android/java/src/org/chromium/chrome/browser/tabpersistence/flatbuffer/tab_state_common.fbs,//chrome/browser/tabpersistence/android/java/src/org/chromium/chrome/browser/tabpersistence/FlatBufferTabStateSerializer.java)
   // clang-format on
+
+  // Various ways tabs can be closed.
+  // Values must be numbered from 0 and can't have gaps.
+  // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.tab
+  enum class TabClosingSource {
+    // Tab closing from all other sources.
+    UNKNOWN,
+    // Tab closing from tablet tab strip.
+    TABLET_TAB_STRIP,
+    // Must be last.
+    SIZE
+  };
 
   // Various ways tabs can be selected.
   // Values must be numbered from 0 and can't have gaps.
@@ -214,8 +231,6 @@ class TabModel : public TabListInterface {
   virtual SessionID GetSessionId() const;
   virtual sessions::LiveTabContext* GetLiveTabContext() const;
 
-  virtual int GetTabCount() const = 0;
-  virtual int GetActiveIndex() const = 0;
   virtual content::WebContents* GetActiveWebContents() const;
   virtual content::WebContents* GetWebContentsAt(int index) const = 0;
   // This will return NULL if the tab has not yet been initialized.
@@ -274,6 +289,18 @@ class TabModel : public TabListInterface {
   void BroadcastSessionRestoreComplete();
 
   LocationBarModel* GetLocationBarModel();
+
+#if BUILDFLAG(IS_DESKTOP_ANDROID)
+  // Sets the |SessionID|.
+  //
+  // This is only needed on desktop Android, where |BrowserWindowInterface|
+  // should be the source of truth for |SessionID|. This function will be
+  // called when |TabModel| is associated with a |BrowserWindowInterface|.
+  //
+  // TODO(http://crbug.com/444518651): remove the if-def when
+  // |BrowserWindowInterface| is compiled into all Android builds.
+  void SetSessionId(SessionID sessionId);
+#endif
 
  private:
   raw_ptr<Profile, DanglingUntriaged> profile_;

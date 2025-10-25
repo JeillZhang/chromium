@@ -65,7 +65,6 @@ using ::testing::AllOf;
 using ::testing::ByMove;
 using ::testing::Field;
 using ::testing::HasSubstr;
-using ::testing::Invoke;
 using ::testing::Not;
 using ::testing::Return;
 
@@ -148,7 +147,7 @@ class GlanceablesClassroomClientImplIsDisabledByAdminTest
     return GlanceablesClassroomClientImpl(
         profile, base::DefaultClock::GetInstance(),
         base::BindLambdaForTesting(
-            [](const std::vector<std::string>& scopes,
+            [](signin::OAuthConsumerId oauth_consumer_id,
                const net::NetworkTrafficAnnotationTag& traffic_annotation_tag)
                 -> std::unique_ptr<google_apis::RequestSender> {
               return nullptr;
@@ -220,7 +219,7 @@ class GlanceablesClassroomClientImplTest : public testing::Test {
     OverrideTime("10 Apr 2023 00:00 GMT");
 
     auto create_request_sender_callback = base::BindLambdaForTesting(
-        [&](const std::vector<std::string>& scopes,
+        [&](signin::OAuthConsumerId oauth_consumer_id,
             const net::NetworkTrafficAnnotationTag& traffic_annotation_tag) {
           return std::make_unique<google_apis::RequestSender>(
               std::make_unique<google_apis::DummyAuthService>(),
@@ -256,7 +255,7 @@ class GlanceablesClassroomClientImplTest : public testing::Test {
                 HandleRequest(
                     Field(&HttpRequest::relative_url, HasSubstr("/courses?"))))
         .Times(call_count)
-        .WillRepeatedly(Invoke([](const HttpRequest&) {
+        .WillRepeatedly([](const HttpRequest&) {
           return TestRequestHandler::CreateSuccessfulResponse(R"(
             {
               "courses": [
@@ -267,7 +266,7 @@ class GlanceablesClassroomClientImplTest : public testing::Test {
                 }
               ]
             })");
-        }));
+        });
   }
 
   base::SimpleTestClock* clock() { return &test_clock_; }
@@ -2136,7 +2135,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
       HandleRequest(Field(&HttpRequest::relative_url,
                           HasSubstr("/courses/course-id-1/courseWork?"))))
       .Times(2)
-      .WillRepeatedly(Invoke([](const HttpRequest&) {
+      .WillRepeatedly([](const HttpRequest&) {
         return TestRequestHandler::CreateSuccessfulResponse(R"(
             {
               "courseWork": [
@@ -2154,7 +2153,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
                 }
               ]
             })");
-      }));
+      });
   EXPECT_CALL(
       request_handler(),
       HandleRequest(Field(&HttpRequest::relative_url,
@@ -2206,7 +2205,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
       HandleRequest(Field(&HttpRequest::relative_url,
                           HasSubstr("/courses/course-id-1/courseWork?"))))
       .Times(2)
-      .WillRepeatedly(Invoke([](const HttpRequest&) {
+      .WillRepeatedly([](const HttpRequest&) {
         return TestRequestHandler::CreateSuccessfulResponse(R"(
             {
               "courseWork": [
@@ -2224,7 +2223,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
                 }
               ]
             })");
-      }));
+      });
   EXPECT_CALL(
       request_handler(),
       HandleRequest(Field(&HttpRequest::relative_url,
@@ -2372,7 +2371,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
               HandleRequest(Field(&HttpRequest::relative_url,
                                   HasSubstr("course-id-1/courseWork?"))))
       .Times(2)
-      .WillRepeatedly(Invoke([](const HttpRequest&) {
+      .WillRepeatedly([](const HttpRequest&) {
         return TestRequestHandler::CreateSuccessfulResponse(R"(
             {
               "courseWork": [
@@ -2391,7 +2390,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
                 }
               ]
             })");
-      }));
+      });
   EXPECT_CALL(request_handler(),
               HandleRequest(Field(&HttpRequest::relative_url,
                                   HasSubstr("course-id-2/courseWork?"))))
@@ -2417,7 +2416,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
               HandleRequest(Field(&HttpRequest::relative_url,
                                   HasSubstr("/studentSubmissions?"))))
       .Times(3)
-      .WillRepeatedly(Invoke([](const HttpRequest&) {
+      .WillRepeatedly([](const HttpRequest&) {
         return TestRequestHandler::CreateSuccessfulResponse(R"(
             {
               "studentSubmissions": [
@@ -2428,7 +2427,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
                 }
               ]
             })");
-      }));
+      });
 
   {
     AssignmentListFuture future;
@@ -2523,7 +2522,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
               HandleRequest(Field(&HttpRequest::relative_url,
                                   HasSubstr("course-id-1/courseWork?"))))
       .Times(2)
-      .WillRepeatedly(Invoke([](const HttpRequest&) {
+      .WillRepeatedly([](const HttpRequest&) {
         return TestRequestHandler::CreateSuccessfulResponse(R"(
             {
               "courseWork": [
@@ -2542,7 +2541,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
                 }
               ]
             })");
-      }));
+      });
   EXPECT_CALL(request_handler(),
               HandleRequest(Field(&HttpRequest::relative_url,
                                   HasSubstr("course-id-2/courseWork?"))))
@@ -2568,7 +2567,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
               HandleRequest(Field(&HttpRequest::relative_url,
                                   HasSubstr("studentSubmissions?"))))
       .Times(3)
-      .WillRepeatedly(Invoke([](const HttpRequest&) {
+      .WillRepeatedly([](const HttpRequest&) {
         return TestRequestHandler::CreateSuccessfulResponse(R"(
             {
               "studentSubmissions": [
@@ -2579,7 +2578,7 @@ TEST_F(GlanceablesClassroomClientImplTest,
                 }
               ]
             })");
-      }));
+      });
 
   {
     AssignmentListFuture future;

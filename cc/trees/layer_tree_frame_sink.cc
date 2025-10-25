@@ -65,8 +65,9 @@ LayerTreeFrameSink::LayerTreeFrameSink(
 }
 
 LayerTreeFrameSink::~LayerTreeFrameSink() {
-  if (client_)
+  if (client_) {
     DetachFromClient();
+  }
 }
 
 base::WeakPtr<LayerTreeFrameSink> LayerTreeFrameSink::GetWeakPtr() {
@@ -118,7 +119,12 @@ bool LayerTreeFrameSink::BindToClient(LayerTreeFrameSinkClient* client) {
     task_gpu_channel_lost_on_client_thread_ =
         base::BindPostTaskToCurrentDefault(base::BindOnce(
             &LayerTreeFrameSink::GpuChannelLostOnClientThread, GetWeakPtr()));
-    shared_image_interface_->gpu_channel()->AddObserver(this);
+    if (!shared_image_interface_->gpu_channel()->AddObserverIfNotAlreadyLost(
+            this)) {
+      task_gpu_channel_lost_on_client_thread_.Reset();
+      shared_image_interface_ = nullptr;
+      return false;
+    }
   }
 
   client_ = client;
@@ -194,8 +200,12 @@ void LayerTreeFrameSink::GpuChannelLostOnClientThread() {
   client_->DidLoseLayerTreeFrameSink();
 }
 
-scoped_refptr<gpu::ClientSharedImageInterface>
+scoped_refptr<gpu::SharedImageInterface>
 LayerTreeFrameSink::shared_image_interface() const {
+  if (context_provider_) {
+    return context_provider_->SharedImageInterface();
+  }
+
   return shared_image_interface_;
 }
 

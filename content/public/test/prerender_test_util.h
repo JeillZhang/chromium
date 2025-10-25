@@ -89,6 +89,9 @@ class PrerenderHostObserver {
   // True if the PrerenderHost was activated to be the primary page.
   bool was_activated() const;
 
+  // Returns true if the PrerenderHost is reused.
+  bool WasHostReused() const;
+
  private:
   std::unique_ptr<PrerenderHostObserverImpl> impl_;
 };
@@ -112,8 +115,7 @@ class PrerenderHostCreationWaiter {
 class ScopedPrerenderFeatureList {
  public:
   ScopedPrerenderFeatureList();
-  explicit ScopedPrerenderFeatureList(bool force_disable_prerender2_fallback,
-                                      bool force_enable_prerender2_in_new_tab);
+  explicit ScopedPrerenderFeatureList(bool force_disable_prerender2_fallback);
   ScopedPrerenderFeatureList(const ScopedPrerenderFeatureList&) = delete;
   ScopedPrerenderFeatureList& operator=(const ScopedPrerenderFeatureList&) =
       delete;
@@ -127,8 +129,7 @@ class PrerenderTestHelper {
  public:
   explicit PrerenderTestHelper(const WebContents::Getter& fn);
   explicit PrerenderTestHelper(const WebContents::Getter& fn,
-                               bool force_disable_prerender2_fallback,
-                               bool force_enable_prerender2_in_new_tab);
+                               bool force_disable_prerender2_fallback);
   ~PrerenderTestHelper();
   PrerenderTestHelper(const PrerenderTestHelper&) = delete;
   PrerenderTestHelper& operator=(const PrerenderTestHelper&) = delete;
@@ -150,6 +151,10 @@ class PrerenderTestHelper {
                                        const GURL& url);
   FrameTreeNodeId GetHostForUrl(const GURL& url);
 
+  static FrameTreeNodeId GetPrewarmSearchResultHost(WebContents& web_contents,
+                                                    const GURL& prewarm_url);
+  FrameTreeNodeId GetPrewarmSearchResultHost(const GURL& prewarm_url);
+
   // Returns whether the registry holds the handler for prerender-into-new-tab.
   bool HasNewTabHandle(FrameTreeNodeId host_id);
 
@@ -170,6 +175,7 @@ class PrerenderTestHelper {
   static void WaitForPrerenderLoadCancellation(WebContents& web_contents,
                                                const GURL& url);
   void WaitForPrerenderLoadCancellation(const GURL& url);
+  void WaitForPrerenderLoadCancellation(FrameTreeNodeId host_id);
 
   // Adds <script type="speculationrules"> in the current main frame and waits
   // until the completion of prerendering. Returns the id of the resulting
@@ -204,6 +210,10 @@ class PrerenderTestHelper {
       const std::string& target_hint,
       std::optional<std::string> ruleset_tag = std::nullopt,
       int32_t world_id = ISOLATED_WORLD_ID_GLOBAL);
+  void AddPrerenderUntilScriptAsync(
+      const GURL& url,
+      blink::mojom::SpeculationEagerness eagerness =
+          blink::mojom::SpeculationEagerness::kImmediate);
 
   void AddPrefetchAsync(const GURL& prefetch_url);
 

@@ -6,14 +6,18 @@
 #define CHROME_BROWSER_ACTOR_SITE_POLICY_H_
 
 #include "base/functional/callback_forward.h"
+#include "chrome/common/actor/task_id.h"
 
 namespace tabs {
 class TabInterface;
 }
 
+class GURL;
 class Profile;
 
 namespace actor {
+
+class AggregatedJournal;
 
 // Called during initialization of the given profile, to load the blocklist.
 void InitActionBlocklist(Profile* profile);
@@ -23,7 +27,31 @@ using DecisionCallback = base::OnceCallback<void(/*may_act=*/bool)>;
 // Checks whether the actor may perform actions on the given tab based on the
 // last committed document and URL. Invokes the callback with true if it is
 // allowed.
-void MayActOnTab(const tabs::TabInterface& tab, DecisionCallback callback);
+// Please use ActorPolicyChecker instead of calling this directly.
+void MayActOnTab(const tabs::TabInterface& tab,
+                 AggregatedJournal& journal,
+                 TaskId task_id,
+                 DecisionCallback callback);
+
+// Like MayActOnTab, but considers a URL on its own.
+// This can optionally allow insecure HTTP URLs as in practice sites may have
+// HTTP links that will get upgraded. Rejecting HTTP URLs before this can happen
+// would be too serious of an impediment.
+// Please use ActorPolicyChecker instead of calling this directly.
+void MayActOnUrl(const GURL& url,
+                 bool allow_insecure_http,
+                 Profile* profile,
+                 AggregatedJournal& journal,
+                 TaskId task_id,
+                 DecisionCallback callback);
+
+// Checks if navigation to `url` should be blocked using
+// OptimizationGuideService. If the callback is invoked with `may_act` set to
+// `true`, then the actor is allowed to navigate to the URL. Otherwise, the
+// actor should block navigation or ask the user to confirm.
+bool ShouldBlockNavigationUrlForOriginGating(const GURL& url,
+                                             Profile* profile,
+                                             DecisionCallback callback);
 
 }  // namespace actor
 

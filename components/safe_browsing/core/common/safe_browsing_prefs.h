@@ -250,6 +250,22 @@ inline constexpr char kExtensionTelemetryConfig[] =
 inline constexpr char kExtensionTelemetryFileData[] =
     "safebrowsing.extension_telemetry_file_data";
 
+// The last time the search hijacking heuristic was checked.
+inline constexpr char kExtensionTelemetrySearchHijackingLastCheckTime[] =
+    "safebrowsing.extension_telemetry.search_hijacking_last_check_time";
+
+// The data associated with a search hijacking signal.
+inline constexpr char kExtensionTelemetrySearchHijackingSignalData[] =
+    "safebrowsing.extension_telemetry.search_hijacking_signal_data";
+
+// The number of omnibox searches observed.
+inline constexpr char kExtensionTelemetrySearchHijackingOmniboxSearchCount[] =
+    "safebrowsing.extension_telemetry.search_hijacking_omnibox_search_count";
+
+// The number of SERP landings observed.
+inline constexpr char kExtensionTelemetrySearchHijackingSerpLandingCount[] =
+    "safebrowsing.extension_telemetry.search_hijacking_serp_landing_count";
+
 // A boolean indicating if hash-prefix real-time lookups are allowed by policy.
 // If false, the lookups will instead be hash-prefix database lookups. If true,
 // there is no such override; the hash-prefix real-time lookups might still not
@@ -263,9 +279,29 @@ inline constexpr char kHashPrefixRealTimeChecksAllowedByPolicy[] =
 inline constexpr char kExternalAppRedirectTimestamps[] =
     "safe_browsing.external_app_redirect_timestamps";
 
+// Integer that maps to SecuritySettingsBundleLevel. Indicates what bundle
+// the user is in.
+inline constexpr char kSecuritySettingsBundle[] = "safebrowsing.bundle";
+
+// A boolean indicating whether the user selected on chrome://settings to
+// disable the JavaScript optimizer on unfamiliar sites for improved security.
+// The site-familiarity computation is done locally based on the user's
+// browsing habits.
+inline constexpr char kJavascriptOptimizerBlockedForUnfamiliarSites[] =
+    "safebrowsing.javascript_optimizer_blocked_for_unfamiliar_sites";
+
 }  // namespace prefs
 
 namespace safe_browsing {
+
+// Enumerates the possible bundle options for bundled security settings found
+// chrome://settings/security.
+enum SecuritySettingsBundleLevel {
+  // Standard bundle with default settings.
+  STANDARD = 0,
+  // Enhanced bundle with most secure settings selected.
+  ENHANCED = 1,
+};
 
 // Enumerates the level of Safe Browsing Extended Reporting that is currently
 // available.
@@ -520,6 +556,9 @@ bool MatchesPasswordProtectionChangePasswordURL(const GURL& url,
 
 // Helper function to match a |target_url| against |url_list|.
 bool MatchesURLList(const GURL& target_url, const std::vector<GURL>& url_list);
+
+// Helper function to check whether Extended Reporting is deprecated.
+bool IsExtendedReportingDeprecated();
 
 }  // namespace safe_browsing
 

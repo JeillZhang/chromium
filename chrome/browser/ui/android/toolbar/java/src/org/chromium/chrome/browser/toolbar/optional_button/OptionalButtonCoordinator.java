@@ -17,10 +17,11 @@ import androidx.annotation.IntDef;
 
 import org.chromium.base.Callback;
 import org.chromium.base.FeatureList;
-import org.chromium.base.supplier.Supplier;
+import org.chromium.base.supplier.ObservableSupplier;
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.chrome.browser.toolbar.adaptive.AdaptiveToolbarFeatures;
+import org.chromium.chrome.browser.toolbar.optional_button.OptionalButtonProperties.OnBeforeWidthTransitionCallback;
 import org.chromium.chrome.browser.user_education.IphCommandBuilder;
 import org.chromium.chrome.browser.user_education.UserEducationHelper;
 import org.chromium.components.browser_ui.widget.highlight.PulseDrawable.Bounds;
@@ -35,6 +36,7 @@ import org.chromium.ui.widget.ViewRectProvider;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /**
  * The coordinator for a button that may appear on the toolbar whose icon and click handler can be
@@ -45,9 +47,10 @@ public class OptionalButtonCoordinator {
     private final OptionalButtonMediator mMediator;
     private final OptionalButtonView mView;
     private final Supplier<UserEducationHelper> mUserEducationHelper;
-    private final Supplier<Tracker> mFeatureEngagementTrackerSupplier;
+    private final ObservableSupplier<Tracker> mFeatureEngagementTrackerSupplier;
     private @Nullable Callback<Integer> mTransitionFinishedCallback;
     private @Nullable IphCommandBuilder mIphCommandBuilder;
+    private boolean mAlwaysShowActionChip;
 
     @IntDef({
         TransitionType.SWAPPING,
@@ -81,7 +84,7 @@ public class OptionalButtonCoordinator {
             Supplier<UserEducationHelper> userEducationHelper,
             ViewGroup transitionRoot,
             BooleanSupplier isAnimationAllowedPredicate,
-            Supplier<Tracker> featureEngagementTrackerSupplier) {
+            ObservableSupplier<Tracker> featureEngagementTrackerSupplier) {
         mUserEducationHelper = userEducationHelper;
         PropertyModel model =
                 new PropertyModel.Builder(OptionalButtonProperties.ALL_KEYS)
@@ -109,6 +112,16 @@ public class OptionalButtonCoordinator {
     }
 
     /**
+     * Set the capability of optional button changing its own visibility. If set to {@code false},
+     * optional button leaves the visibility control to some other entity. {@code true} by default.
+     *
+     * @param canChange Whether optional button can change its own visibility.
+     */
+    public void setCanChangeVisibility(boolean canChange) {
+        mMediator.setCanChangeVisibility(canChange);
+    }
+
+    /**
      * Sets the collapsed state width of the button, overriding the default value.
      *
      * @param width The new collapsed state width.
@@ -131,12 +144,33 @@ public class OptionalButtonCoordinator {
     }
 
     /**
+     * Set a callback that allows the control of the animation to be performed together with the
+     * chip.
+     *
+     * @param callback {@link OnBeforeWidthTransitionCallback} with a transition type and the
+     *     animation delta to be used by other UI elements.
+     */
+    public void setOnBeforeWidthTransitionCallback(OnBeforeWidthTransitionCallback callback) {
+        mMediator.setOnBeforeWidthTransitionCallback(callback);
+    }
+
+    /**
      * Sets a callback that's invoked when any transition is finished.
+     *
      * @param transitionFinishedCallback A callback with an integer argument, this argument a value
-     *         from {@link TransitionType}.
+     *     from {@link TransitionType}.
      */
     public void setTransitionFinishedCallback(Callback<Integer> transitionFinishedCallback) {
         mTransitionFinishedCallback = transitionFinishedCallback;
+    }
+
+    /**
+     * Set the flag that always enables chip animiation of contextual page action.
+     *
+     * @param show Whether the animation should be always enabled.
+     */
+    public void setAlwaysShowActionChip(boolean show) {
+        mAlwaysShowActionChip = show;
     }
 
     /**
@@ -170,11 +204,12 @@ public class OptionalButtonCoordinator {
             // And if feature engagement allows it.
             Tracker featureEngagementTracker = mFeatureEngagementTrackerSupplier.get();
             boolean shouldShowActionChip =
-                    isActionChipVariant
-                            && featureEngagementTracker != null
-                            && featureEngagementTracker.isInitialized()
-                            && featureEngagementTracker.shouldTriggerHelpUi(
-                                    FeatureConstants.CONTEXTUAL_PAGE_ACTIONS_ACTION_CHIP);
+                    mAlwaysShowActionChip
+                            || (isActionChipVariant
+                                    && featureEngagementTracker != null
+                                    && featureEngagementTracker.isInitialized()
+                                    && featureEngagementTracker.shouldTriggerHelpUi(
+                                            FeatureConstants.CONTEXTUAL_PAGE_ACTIONS_ACTION_CHIP));
 
             if (!shouldShowActionChip) {
                 ((ButtonDataImpl) buttonData).updateActionChipResourceId(Resources.ID_NULL);
@@ -254,17 +289,18 @@ public class OptionalButtonCoordinator {
             mTransitionFinishedCallback.onResult(transitionType);
         }
 
-        if (transitionType == TransitionType.EXPANDING_ACTION_CHIP
-                && mFeatureEngagementTrackerSupplier.hasValue()) {
-            // Record an event in feature engagement to limit the amount of times we show the action
-            // chip.
+        if (transitionType == TransitionType.EXPANDING_ACTION_CHIP) {
             Tracker featureEngagementTracker = mFeatureEngagementTrackerSupplier.get();
-            featureEngagementTracker.addOnInitializedCallback(
-                    isReady -> {
-                        if (!isReady) return;
-                        featureEngagementTracker.dismissed(
-                                FeatureConstants.CONTEXTUAL_PAGE_ACTIONS_ACTION_CHIP);
-                    });
+            if (featureEngagementTracker != null) {
+                // Record an event in feature engagement to limit the amount of times we show the
+                // action chip.
+                featureEngagementTracker.addOnInitializedCallback(
+                        isReady -> {
+                            if (!isReady) return;
+                            featureEngagementTracker.dismissed(
+                                    FeatureConstants.CONTEXTUAL_PAGE_ACTIONS_ACTION_CHIP);
+                        });
+            }
         }
 
         if (mIphCommandBuilder != null) {

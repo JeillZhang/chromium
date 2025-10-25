@@ -456,7 +456,7 @@ def bind_callback_local_vars(code_node, cg_context):
         # the property being processed.
         local_vars.append(
             S("v8_receiver",
-              "v8::Local<v8::Object> ${v8_receiver} = ${info}.Holder();"))
+              "v8::Local<v8::Object> ${v8_receiver} = ${info}.HolderV2();"))
 
     # v8_return_value
     def create_v8_return_value(symbol_node):
@@ -479,7 +479,8 @@ def bind_callback_local_vars(code_node, cg_context):
 
 
 def _make_throw_security_error():
-    return TextNode("BindingSecurity::FailedAccessCheckFor(${info}.Holder());")
+    return TextNode(
+        "BindingSecurity::FailedAccessCheckFor(${info}.HolderV2());")
 
 
 def _make_reflect_content_attribute_key(code_node, cg_context):
@@ -516,10 +517,6 @@ def _make_reflect_accessor_func_name(cg_context):
 
         if "URL" in cg_context.attribute.extended_attributes:
             return "GetURLAttribute"
-    else:
-        if ("StringContext"
-                in cg_context.attribute.idl_type.effective_annotations):
-            return "SetAttributeWithoutValidation"
 
 
     FAST_ACCESSORS = {
@@ -673,7 +670,8 @@ def _make_blink_api_call(code_node,
 
     code_generator_info = cg_context.member_like.code_generator_info
     is_partial = code_generator_info.defined_in_partial
-    if (is_partial and
+    is_across_component = code_generator_info.defined_across_component
+    if ((is_partial or is_across_component) and
             not (cg_context.constructor or cg_context.member_like.is_static)):
         arguments.append("*${blink_receiver}")
 
@@ -707,7 +705,7 @@ def _make_blink_api_call(code_node,
         func_name = _make_reflect_accessor_func_name(cg_context)
 
     if (cg_context.constructor or cg_context.member_like.is_static
-            or is_partial):
+            or is_partial or is_across_component):
         class_like = cg_context.member_like.owner_mixin or cg_context.class_like
         class_name = (code_generator_info.receiver_implemented_as
                       or name_style.class_(class_like.identifier))
@@ -908,8 +906,9 @@ def make_check_constructor_call(cg_context):
     if not cg_context.is_legacy_factory_function:
         node.append(
             CxxLikelyIfNode(
-                cond=("ConstructorMode::Current(${isolate}) == "
-                      "ConstructorMode::kWrapExistingObject"),
+                cond=(
+                    "V8PerIsolateData::From(${isolate})->InWrapperConstructor()"
+                ),
                 attribute=None,
                 body=T("bindings::V8SetReturnValue(${info}, ${v8_receiver});\n"
                        "return;")))
@@ -2190,11 +2189,6 @@ EventListener* event_handler = JSEventHandler::CreateOrNull(
         body.append(node)
         return func_def
 
-    body.extend([
-        make_check_argument_length(cg_context),
-        EmptyNode(),
-    ])
-
     if "PutForwards" in ext_attrs:
         body.append(make_steps_of_put_forwards(cg_context))
         return func_def
@@ -2970,7 +2964,7 @@ return ${class_name}::NamedPropertySetterCallback(
 // https://webidl.spec.whatwg.org/#legacy-platform-object-set
 // step 1. If O and Receiver are the same object, then:\
 """),
-        CxxLikelyIfNode(cond="${info}.Holder() == ${info}.This()",
+        CxxLikelyIfNode(cond="${info}.HolderV2() == ${info}.This()",
                         attribute=None,
                         body=[
                             TextNode("""\
@@ -3328,7 +3322,7 @@ def make_named_property_setter_callback(cg_context, function_name):
             body.append(
                 TextNode("""\
 // [LegacyOverrideBuiltIns]
-if (${info}.Holder()->GetRealNamedPropertyAttributesInPrototypeChain(
+if (${info}.HolderV2()->GetRealNamedPropertyAttributesInPrototypeChain(
         ${current_context}, ${v8_property_name}).IsJust()) {
   // Do not intercept. Fallback to the existing property.
   return v8::Intercepted::kNo;
@@ -3369,7 +3363,7 @@ return v8::Intercepted::kNo;
 // https://webidl.spec.whatwg.org/#legacy-platform-object-set
 // step 1. If O and Receiver are the same object, then:\
 """),
-        CxxLikelyIfNode(cond="${info}.Holder() == ${info}.This()",
+        CxxLikelyIfNode(cond="${info}.HolderV2() == ${info}.This()",
                         attribute=None,
                         body=[
                             TextNode("""\
@@ -3825,7 +3819,7 @@ def make_cross_origin_access_check_callback(cg_context, function_name):
             _format(
                 "{blink_class}* blink_accessed_object = "
                 "${class_name}::ToWrappableUnsafe("
-                "accessing_context->GetIsolate(),"
+                "v8::Isolate::GetCurrent(),"
                 "${accessed_object});",
                 blink_class=blink_class)),
         TextNode("return BindingSecurity::ShouldAllowAccessTo("
@@ -4328,7 +4322,7 @@ def bind_installer_local_vars(code_node, cg_context):
         S("is_in_secure_context",
           ("const bool ${is_in_secure_context} = "
            "${execution_context}->IsSecureContext();")),
-        S("isolate", "v8::Isolate* ${isolate} = ${v8_context}->GetIsolate();"),
+        S("isolate", "v8::Isolate* ${isolate} = v8::Isolate::GetCurrent();"),
         S("script_state", ("ScriptState* ${script_state} = "
                            "ScriptState::From(${isolate}, ${v8_context});")),
         S("wrapper_type_info",
@@ -5752,7 +5746,7 @@ def make_install_properties(cg_context, function_name, class_name,
                             attribute=None,
                             body=[
                                 TextNode("""\
-${instance_object} = ${v8_context}->Global()->GetPrototype().As<v8::Object>();\
+${instance_object} = ${v8_context}->Global();\
 """),
                             ]),
             EmptyNode(),
@@ -6395,6 +6389,10 @@ def make_wrapper_type_info(cg_context, function_name,
 
     public_defs.append(
         TextNode("""\
+  static_assert(static_cast<v8::CppHeapPointerTag>({this_tag}) <
+                 blink::kLastScriptWrappableTag,
+                 "There are more ScriptWrappable types than available type tags."
+                 "You have to increase the kLastScirptWrappableTag in wrapper_type_info.h");
   static constexpr v8::CppHeapPointerTag kThisTag =
       static_cast<v8::CppHeapPointerTag>({this_tag});
   static constexpr v8::CppHeapPointerTag kMaxSubclassTag =
@@ -6404,6 +6402,10 @@ def make_wrapper_type_info(cg_context, function_name,
 """.format(this_tag=class_like.tag,
            max_subclass_tag=class_like.max_subclass_tag)))
 
+    public_defs.accumulate(
+        CodeGenAccumulator.require_include_headers([
+            "third_party/blink/renderer/platform/bindings/wrapper_type_info.h"
+        ]))
     member_var_def = TextNode(
         "static const WrapperTypeInfo wrapper_type_info_;")
     member_var_def.accumulate(
@@ -6511,6 +6513,10 @@ static_assert(
     "[ActiveScriptWrappable] extended attribute.");"""
     if class_like.is_interface:
         wrapper_type_info_def.append(F(pattern, blink_class=blink_class))
+        wrapper_type_info_def.accumulate(
+            CodeGenAccumulator.require_include_headers([
+                "third_party/blink/renderer/platform/bindings/active_script_wrappable_base.h"
+            ]))
 
     return public_defs, member_var_def, wrapper_type_info_def
 
@@ -6737,6 +6743,13 @@ def _collect_include_headers(class_like):
         if idl_type.is_frozen_array:
             headers.add(
                 "third_party/blink/renderer/bindings/core/v8/frozen_array.h")
+            return
+
+        observable_array_def_obj = idl_type.observable_array_definition_object
+        if observable_array_def_obj is not None:
+            headers.add(
+                PathManager(observable_array_def_obj).api_path(ext="h"))
+            return
 
     for attribute in class_like.attributes:
         collect_from_idl_type(attribute.idl_type)
@@ -7359,6 +7372,8 @@ def generate_install_properties_per_feature(function_name,
     ])
     source_node.accumulator.add_include_headers([
         "base/containers/span.h",
+        "base/notimplemented.h",
+        "base/notreached.h",
         "third_party/blink/renderer/platform/bindings/script_state.h",
         "third_party/blink/renderer/platform/bindings/v8_per_context_data.h",
         "third_party/blink/public/mojom/origin_trials/origin_trial_feature.mojom-shared.h",

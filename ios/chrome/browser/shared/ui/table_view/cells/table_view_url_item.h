@@ -7,7 +7,7 @@
 
 #import <UIKit/UIKit.h>
 
-#import "ios/chrome/browser/shared/ui/table_view/cells/table_view_cell.h"
+#import "ios/chrome/browser/shared/ui/table_view/cells/legacy_table_view_cell.h"
 #import "ios/chrome/browser/shared/ui/table_view/cells/table_view_item.h"
 
 @class CrURL;
@@ -21,10 +21,6 @@
 @property(nonatomic, readwrite, copy) NSString* title;
 // CrURL from which the cell will retrieve a favicon and display the host name.
 @property(nonatomic, readwrite, strong) CrURL* URL;
-// Supplemental text used to describe the URL.
-@property(nonatomic, readwrite, copy) NSString* supplementalURLText;
-// Delimiter used to separate the URL hostname and the supplemental text.
-@property(nonatomic, readwrite, copy) NSString* supplementalURLTextDelimiter;
 // Custom third row text. This is not shown if it is empty or if the second row
 // is empty.
 @property(nonatomic, readwrite, copy) NSString* thirdRowText;
@@ -35,13 +31,6 @@
 @property(nonatomic, copy) NSString* detailText;
 // Metadata text displayed at the trailing edge of the cell.
 @property(nonatomic, readwrite, copy) NSString* metadata;
-// Metadata image displayed at the trailing edge of the cell, before the
-// metadata text if there's any.
-@property(nonatomic, readwrite, copy) UIImage* metadataImage;
-// Tint color for metadata image.
-@property(nonatomic, readwrite, copy) UIColor* metadataImageColor;
-// The image for the badge view added over the favicon.
-@property(nonatomic, readwrite, strong) UIImage* badgeImage;
 // Identifier to match a URLItem with its URLCell.
 @property(nonatomic, readonly) NSString* uniqueIdentifier;
 
@@ -51,7 +40,7 @@
 // contains a favicon, a title, a URL, and optionally some metadata such as a
 // timestamp or a file size. After configuring the cell, make sure to call
 // configureUILayout:.
-@interface TableViewURLCell : TableViewCell
+@interface TableViewURLCell : LegacyTableViewCell
 
 // The imageview that is displayed on the leading edge of the cell.  This
 // contains a favicon composited on top of an off-white background.
@@ -77,6 +66,11 @@
 // text.
 @property(nonatomic, readonly, strong) UILabel* thirdRowLabel;
 
+// Vertical spacing between the title, URL and third row labels. Used to
+// override the default spacing value. Setting this property will trigger a
+// relayout.
+@property(nonatomic, assign) CGFloat labelSpacing;
+
 // Unique identifier that matches with one URLItem.
 @property(nonatomic, copy) NSString* cellUniqueIdentifier;
 
@@ -95,6 +89,9 @@
 
 // Sets the background color for the favicon container view.
 - (void)setFaviconContainerBackgroundColor:(UIColor*)backgroundColor;
+
+// Replaces the favicon with a custom `symbol`.
+- (void)replaceFaviconWithSymbol:(UIImage*)symbol;
 
 @end
 

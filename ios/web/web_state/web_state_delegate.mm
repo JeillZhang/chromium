@@ -40,6 +40,31 @@ void WebStateDelegate::ShowRepostFormWarningDialog(
   std::move(callback).Run(true);
 }
 
+void WebStateDelegate::ShouldAllowCopy(
+    WebState* source,
+    base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(true);
+}
+
+void WebStateDelegate::ShouldAllowPaste(
+    WebState* source,
+    base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(true);
+}
+
+void WebStateDelegate::ShouldAllowCut(WebState* source,
+                                      base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(true);
+}
+
+void WebStateDelegate::ShouldAllowShare(
+    WebState* source,
+    base::OnceCallback<void(bool)> callback) {
+  std::move(callback).Run(true);
+}
+
+void WebStateDelegate::DidFinishClipboardRead(WebState* source) {}
+
 JavaScriptDialogPresenter* WebStateDelegate::GetJavaScriptDialogPresenter(
     WebState*) {
   return nullptr;

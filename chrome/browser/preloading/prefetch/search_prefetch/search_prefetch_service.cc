@@ -461,7 +461,7 @@ bool SearchPrefetchService::MaybePrefetchURL(
                          base::Unretained(this)));
 
   DCHECK(prefetch_request);
-  if (!prefetch_request->StartPrefetchRequest(profile_)) {
+  if (!prefetch_request->StartPrefetchRequest(profile_, *web_contents)) {
     recorder.reason_ = SearchPrefetchEligibilityReason::kThrottled;
     // We don't consider Throttled as an ineligibility reason is because we
     // can't replicate this behaviour in our other experiment group. To prevent
@@ -628,13 +628,23 @@ SearchPrefetchService::TakePrefetchResponseFromMemoryCache(
 SearchPrefetchURLLoader::RequestHandler
 SearchPrefetchService::TakePrefetchResponseFromDiskCache(
     const GURL& navigation_url) {
-  DCHECK(!IsNoVarySearchDiskCacheEnabled());
+  CHECK(!IsNoVarySearchDiskCacheEnabled() ||
+        CacheAliasLoaderDryRunModeEnabled());
   GURL navigation_url_without_ref(net::SimplifyUrlForRequest(navigation_url));
   if (prefetch_cache_.find(navigation_url_without_ref) ==
       prefetch_cache_.end()) {
     return {};
   }
 
+  if (IsNoVarySearchDiskCacheEnabled()) {
+    if (!CacheAliasLoaderDryRunModeEnabled()) {
+      return {};
+    }
+    auto loader = std::make_unique<CacheAliasSearchPrefetchURLLoader>(
+        profile_, SearchPrefetchRequest::NetworkAnnotationForPrefetch());
+    return CacheAliasSearchPrefetchURLLoader::
+        GetServingResponseHandlerFromLoader(std::move(loader));
+  }
   auto loader = std::make_unique<CacheAliasSearchPrefetchURLLoader>(
       profile_, SearchPrefetchRequest::NetworkAnnotationForPrefetch(),
       prefetch_cache_[navigation_url_without_ref].first);
@@ -698,11 +708,6 @@ void SearchPrefetchService::OnResultChanged(content::WebContents* web_contents,
   // Do not perform preloading if there is no active tab.
   if (!web_contents)
     return;
-
-  // This preloads dictionaries for AutocompleteResult's `destination_url` which
-  // are not specific to search prefetch.
-  // TODO(crbug.com/349030549): Consider moving somewhere more suitable.
-  MaybePreloadDictionary(result);
 
   for (const auto& match : result) {
     // Return early if neither prefetch nor prerender are enabled for the match.
@@ -903,9 +908,13 @@ void SearchPrefetchService::OnTemplateURLServiceChanged() {
 }
 
 void SearchPrefetchService::ClearCacheEntry(const GURL& navigation_url) {
-  if (IsNoVarySearchDiskCacheEnabled()) {
+  // Only update the profile data when disk cache is disabled or dry run mode is
+  // enabled.
+  if (IsNoVarySearchDiskCacheEnabled() &&
+      !CacheAliasLoaderDryRunModeEnabled()) {
     return;
   }
+
   GURL navigation_url_without_ref(net::SimplifyUrlForRequest(navigation_url));
   if (prefetch_cache_.find(navigation_url_without_ref) ==
       prefetch_cache_.end()) {
@@ -917,7 +926,6 @@ void SearchPrefetchService::ClearCacheEntry(const GURL& navigation_url) {
 }
 
 void SearchPrefetchService::UpdateServeTime(const GURL& navigation_url) {
-  DCHECK(!IsNoVarySearchDiskCacheEnabled());
   GURL navigation_url_without_ref(net::SimplifyUrlForRequest(navigation_url));
   if (prefetch_cache_.find(navigation_url_without_ref) == prefetch_cache_.end())
     return;
@@ -928,11 +936,15 @@ void SearchPrefetchService::UpdateServeTime(const GURL& navigation_url) {
 
 void SearchPrefetchService::AddCacheEntry(const GURL& navigation_url,
                                           const GURL& prefetch_url) {
-  // Disk cache is responsible for retrieving the cache and we do not need to
-  // modify the URL to help the disk cache retrieve the cache.
-  if (IsNoVarySearchDiskCacheEnabled()) {
+  // Only update the profile data when disk cache is disabled or dry run mode is
+  // enabled.
+  if (IsNoVarySearchDiskCacheEnabled() &&
+      !CacheAliasLoaderDryRunModeEnabled()) {
     return;
   }
+
+  // Disk cache is responsible for retrieving the cache and we do not need to
+  // modify the URL to help the disk cache retrieve the cache.
   GURL navigation_url_without_ref(net::SimplifyUrlForRequest(navigation_url));
   GURL prefetch_url_without_ref(net::SimplifyUrlForRequest(prefetch_url));
   if (navigation_url_without_ref == prefetch_url_without_ref) {
@@ -1259,44 +1271,6 @@ void SearchPrefetchService::SetLoaderDestructionCallbackForTesting(
   return prefetches_[canonical_search_url]
       ->SetLoaderDestructionCallbackForTesting(  // IN-TEST
           std::move(streaming_url_loader_destruction_callback));
-}
-
-void SearchPrefetchService::MaybePreloadDictionary(
-    const AutocompleteResult& result) {
-  if (!base::FeatureList::IsEnabled(kAutocompleteDictionaryPreload)) {
-    return;
-  }
-  std::vector<GURL> match_destination_urls;
-  match_destination_urls.reserve(result.size());
-  for (const AutocompleteMatch& match : result) {
-    if (match.destination_url.SchemeIsHTTPOrHTTPS()) {
-      match_destination_urls.emplace_back(match.destination_url);
-    }
-  }
-
-  if (match_destination_urls.empty()) {
-    return;
-  }
-
-  // Keep the old handle until `PreloadSharedDictionaryInfoForDocument()` call
-  // to avoid reloading dictionaries in the network service.
-  mojo::PendingRemote<network::mojom::PreloadedSharedDictionaryInfoHandle>
-      old_handle = std::move(preloaded_shared_dictionaries_handle_);
-
-  preloaded_shared_dictionaries_handle_.reset();
-  profile_->GetDefaultStoragePartition()
-      ->GetNetworkContext()
-      ->PreloadSharedDictionaryInfoForDocument(
-          match_destination_urls, preloaded_shared_dictionaries_handle_
-                                      .InitWithNewPipeAndPassReceiver());
-  preloaded_shared_dictionaries_expiry_timer_.Start(
-      FROM_HERE, kAutocompletePreloadedDictionaryTimeout.Get(),
-      base::BindOnce(&SearchPrefetchService::DeletePreloadedDictionaries,
-                     base::Unretained(this)));
-}
-
-void SearchPrefetchService::DeletePreloadedDictionaries() {
-  preloaded_shared_dictionaries_handle_.reset();
 }
 
 void SearchPrefetchService::RecordInterceptionMetrics(

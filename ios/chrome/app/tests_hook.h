@@ -5,7 +5,7 @@
 #ifndef IOS_CHROME_APP_TESTS_HOOK_H_
 #define IOS_CHROME_APP_TESTS_HOOK_H_
 
-#include <memory>
+#import <memory>
 #import <optional>
 
 class PrefService;
@@ -16,6 +16,7 @@ class ShareKitService;
 class SystemIdentityManager;
 class TabGroupService;
 class TrustedVaultClientBackend;
+@class UIImage;
 
 namespace base {
 class TimeDelta;
@@ -24,6 +25,10 @@ class TimeDelta;
 namespace collaboration {
 class CollaborationService;
 }  // namespace collaboration
+
+namespace commerce {
+class ShoppingService;
+}  // namespace commerce
 
 namespace data_sharing {
 class DataSharingService;
@@ -55,6 +60,10 @@ class TabGroupSyncService;
 }  // namespace tab_groups
 
 namespace tests_hook {
+
+// Returns true if Gemini eligibility check should be disabled as tests do
+// not have the required identity internal state to perform the verification.
+bool DisableGeminiEligibilityCheck();
 
 // Returns true if app group access should be disabled as tests don't have the
 // required entitlements.
@@ -101,9 +110,9 @@ std::unique_ptr<ProfileOAuth2TokenService> GetOverriddenTokenService(
     PrefService* user_prefs,
     std::unique_ptr<ProfileOAuth2TokenServiceDelegate> delegate);
 
-// Returns true if the upgrade sign-in promo should be disabled to allow other
-// tests to run unimpeded.
-bool DisableUpgradeSigninPromo();
+// Returns true if the fullscreen sign-in promo should be disabled to allow
+// other tests to run unimpeded.
+bool DisableFullscreenSigninPromo();
 
 // Returns true if the update service should be disabled so that the update
 // infobar won't be shown during testing.
@@ -139,6 +148,11 @@ std::unique_ptr<TrustedVaultClientBackend> CreateTrustedVaultClientBackend();
 // Allows overriding the TabGroupSyncService factory. The real factory will be
 // used if this hook returns null.
 std::unique_ptr<tab_groups::TabGroupSyncService> CreateTabGroupSyncService(
+    ProfileIOS* profile);
+
+// Allows overriding the ShoppingService factory. The real factory will be used
+// if this hook returns null.
+std::unique_ptr<commerce::ShoppingService> CreateShoppingService(
     ProfileIOS* profile);
 
 // Allows additional test setup for the DataSharingService.
@@ -185,10 +199,6 @@ void SignalAppLaunched();
 // duration as it can make test flaky.
 base::TimeDelta PasswordCheckMinimumDuration();
 
-// Duration for snackbars. If the value is 0, the default value from
-// -[MDCSnackbarMessage duration] should not be updated.
-base::TimeDelta GetOverriddenSnackbarDuration();
-
 // Returns a Drive service instance that should be used in EG tests. The real
 // instance will be used if this hook returns a nullptr.
 std::unique_ptr<drive::DriveService> GetOverriddenDriveService();
@@ -206,6 +216,13 @@ void WipeProfileIfRequested(int argc, char* argv[]);
 // Settings should not be updated.
 base::TimeDelta
 GetOverriddenDelayForRequestingTurningOnCredentialProviderExtension();
+
+// Returns the default value for the snackbar message duration.
+base::TimeDelta GetSnackbarMessageDuration();
+
+// Returns a UIImage for users of PHPickerViewController to use to skip
+// presenting that picker view controller in tests.
+UIImage* GetPHPickerViewControllerImage();
 
 }  // namespace tests_hook
 

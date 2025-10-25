@@ -48,6 +48,9 @@ class CORE_EXPORT ViewTransitionSupplement
                                                 Document&,
                                                 ExceptionState&);
 
+  // activeViewTransition idl implementation
+  static DOMViewTransition* activeViewTransition(Document&);
+
   static DOMViewTransition* StartViewTransitionForElement(
       ScriptState*,
       Element*,
@@ -119,7 +122,7 @@ class CORE_EXPORT ViewTransitionSupplement
   // Generates a new ID usable from viz to refer to a snapshot resource.
   viz::ViewTransitionElementResourceId GenerateResourceId(
       const blink::ViewTransitionToken& transition_token,
-      bool for_subframe_snapshot);
+      bool for_scope_snapshot);
 
   // Initializes the sequence such that the next call to GenerateResourceId()
   // will return `next_local_id`. Used to ensure a unique and continuous
@@ -169,6 +172,15 @@ class CORE_EXPORT ViewTransitionSupplement
 
   bool in_get_computed_style_scope_ = false;
   bool last_update_had_computed_style_scope_ = false;
+
+  // This allow deferring starting a navigation transition until some conditions
+  // are met, such as existing transitions are finished.
+  struct PendingNavigationTransition {
+    blink::ViewTransitionToken navigation_id;
+    mojom::blink::PageSwapEventParamsPtr params;
+    ViewTransition::ViewTransitionStateCallback callback;
+  };
+  std::optional<PendingNavigationTransition> pending_navigation_transition_;
 };
 
 }  // namespace blink

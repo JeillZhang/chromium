@@ -21,6 +21,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
 #include "build/build_config.h"
+#include "components/cronet/cronet_proxy_delegate.h"
 #include "net/base/address_family.h"
 #include "net/cert/caching_cert_verifier.h"
 #include "net/cert/cert_verifier.h"
@@ -59,9 +60,7 @@ namespace cronet {
 // should be aware of how the tag is used in QUICHE.
 //
 // The above warning applies to both client copts and copts.
-BASE_FEATURE(kOverrideConnectionOptions,
-             "OverrideConnectionOptions",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kOverrideConnectionOptions, base::FEATURE_DISABLED_BY_DEFAULT);
 // The expected format for this flag is comma-separated tags.
 BASE_FEATURE_PARAM(std::string,
                    kConnectionOptionsForceOn,
@@ -76,7 +75,6 @@ BASE_FEATURE_PARAM(std::string,
                    "");
 
 BASE_FEATURE(kOverrideClientConnectionOptions,
-             "OverrideClientConnectionOptions",
              base::FEATURE_DISABLED_BY_DEFAULT);
 // The expected format for this flag is comma-separated tags.
 BASE_FEATURE_PARAM(std::string,
@@ -314,7 +312,8 @@ URLRequestContextConfig::URLRequestContextConfig(
     std::unique_ptr<net::CertVerifier> mock_cert_verifier,
     bool enable_network_quality_estimator,
     bool bypass_public_key_pinning_for_local_trust_anchors,
-    std::optional<int> network_thread_priority)
+    std::optional<int> network_thread_priority,
+    std::optional<cronet::proto::ProxyOptions> proxy_options)
     : enable_quic(enable_quic),
       enable_spdy(enable_spdy),
       enable_brotli(enable_brotli),
@@ -332,7 +331,8 @@ URLRequestContextConfig::URLRequestContextConfig(
       experimental_options(std::move(experimental_options)),
       network_thread_priority(network_thread_priority),
       bidi_stream_detect_broken_connection(false),
-      heartbeat_interval(base::Seconds(0)) {
+      heartbeat_interval(base::Seconds(0)),
+      proxy_options(std::move(proxy_options)) {
   SetContextConfigExperimentalOptions();
 }
 
@@ -354,7 +354,8 @@ URLRequestContextConfig::CreateURLRequestContextConfig(
     std::unique_ptr<net::CertVerifier> mock_cert_verifier,
     bool enable_network_quality_estimator,
     bool bypass_public_key_pinning_for_local_trust_anchors,
-    std::optional<int> network_thread_priority) {
+    std::optional<int> network_thread_priority,
+    std::optional<cronet::proto::ProxyOptions> proxy_options) {
   std::optional<base::Value::Dict> experimental_options =
       ParseExperimentalOptions(unparsed_experimental_options);
   if (!experimental_options) {
@@ -371,7 +372,7 @@ URLRequestContextConfig::CreateURLRequestContextConfig(
       std::move(experimental_options).value(), std::move(mock_cert_verifier),
       enable_network_quality_estimator,
       bypass_public_key_pinning_for_local_trust_anchors,
-      network_thread_priority));
+      network_thread_priority, std::move(proxy_options)));
 }
 
 // static
@@ -384,7 +385,7 @@ URLRequestContextConfig::ParseExperimentalOptions(
     unparsed_experimental_options = "{}";
   DVLOG(1) << "Experimental Options:" << unparsed_experimental_options;
   auto parsed_json = base::JSONReader::ReadAndReturnValueWithError(
-      unparsed_experimental_options);
+      unparsed_experimental_options, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
   if (!parsed_json.has_value()) {
     LOG(ERROR) << "Parsing experimental options failed: '"
                << unparsed_experimental_options << "', error "
@@ -859,6 +860,7 @@ void URLRequestContextConfig::SetContextBuilderExperimentalOptions(
 
 void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
     net::URLRequestContextBuilder* context_builder,
+    CronetContext::NetworkTasks* network_tasks,
     net::handles::NetworkHandle bound_network) {
   std::string config_cache;
   if (http_cache != DISABLED) {
@@ -895,6 +897,11 @@ void URLRequestContextConfig::ConfigureURLRequestContextBuilder(
   context_builder->set_http_network_session_params(session_params);
   context_builder->set_quic_context(std::move(quic_context));
 
+  if (proxy_options.has_value()) {
+    context_builder->set_proxy_delegate(
+        std::make_unique<CronetProxyDelegate>(*proxy_options, network_tasks));
+  }
+
   if (mock_cert_verifier)
     context_builder->SetCertVerifier(std::move(mock_cert_verifier));
   // TODO(mef): Use |config| to set cookies.
@@ -911,7 +918,7 @@ URLRequestContextConfigBuilder::Build() {
       experimental_options, std::move(mock_cert_verifier),
       enable_network_quality_estimator,
       bypass_public_key_pinning_for_local_trust_anchors,
-      network_thread_priority);
+      network_thread_priority, std::optional<cronet::proto::ProxyOptions>());
 }
 
 }  // namespace cronet

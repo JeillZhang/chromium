@@ -11,6 +11,7 @@
 #include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_browser_utils.h"
+#include "chrome/browser/supervised_user/supervised_user_content_filters_service_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service_factory.h"
 #include "chrome/browser/sync/sync_service_factory.h"
 #include "components/supervised_user/core/browser/kids_chrome_management_url_checker_client.h"
@@ -80,6 +81,12 @@ std::unique_ptr<KeyedService> SupervisedUserServiceFactory::BuildInstanceFor(
       identity_manager, url_loader_factory, *profile->GetPrefs(),
       *SupervisedUserSettingsServiceFactory::GetInstance()->GetForKey(
           profile->GetProfileKey()),
+#if BUILDFLAG(IS_ANDROID)
+      SupervisedUserContentFiltersServiceFactory::GetInstance()->GetForKey(
+          profile->GetProfileKey()),
+#else
+      nullptr,
+#endif  // BUILDFLAG(IS_ANDROID)
       SyncServiceFactory::GetInstance()->GetForProfile(profile),
       std::make_unique<supervised_user::SupervisedUserURLFilter>(
           *profile->GetPrefs(), std::make_unique<FilterDelegateImpl>(),
@@ -88,7 +95,13 @@ std::unique_ptr<KeyedService> SupervisedUserServiceFactory::BuildInstanceFor(
               identity_manager, url_loader_factory, *profile->GetPrefs(),
               platform_delegate->GetCountryCode(),
               platform_delegate->GetChannel())),
-      std::move(platform_delegate));
+      std::move(platform_delegate)
+#if BUILDFLAG(IS_ANDROID)
+          ,
+      base::BindRepeating(
+          &supervised_user::ContentFiltersObserverBridge::Create)
+#endif  // BUILDFLAG(IS_ANDROID)
+  );
 }
 
 SupervisedUserServiceFactory::SupervisedUserServiceFactory()
@@ -102,6 +115,7 @@ SupervisedUserServiceFactory::SupervisedUserServiceFactory()
   DependsOn(IdentityManagerFactory::GetInstance());
   DependsOn(SyncServiceFactory::GetInstance());
   DependsOn(SupervisedUserSettingsServiceFactory::GetInstance());
+  DependsOn(SupervisedUserContentFiltersServiceFactory::GetInstance());
 }
 
 SupervisedUserServiceFactory::~SupervisedUserServiceFactory() = default;

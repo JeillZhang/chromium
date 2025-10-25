@@ -39,7 +39,6 @@
 namespace blink {
 
 DEFINE_GLOBAL(PLATFORM_EXPORT, Length, g_auto_length);
-DEFINE_GLOBAL(PLATFORM_EXPORT, Length, g_fill_available_length);
 DEFINE_GLOBAL(PLATFORM_EXPORT, Length, g_stretch_length);
 DEFINE_GLOBAL(PLATFORM_EXPORT, Length, g_fit_content_length);
 DEFINE_GLOBAL(PLATFORM_EXPORT, Length, g_max_content_length);
@@ -48,17 +47,15 @@ DEFINE_GLOBAL(PLATFORM_EXPORT, Length, g_min_intrinsic_length);
 
 // static
 void Length::Initialize() {
-  new (WTF::NotNullTag::kNotNull, (void*)&g_auto_length) Length(kAuto);
-  new (WTF::NotNullTag::kNotNull, (void*)&g_fill_available_length)
-      Length(kFillAvailable);
-  new (WTF::NotNullTag::kNotNull, (void*)&g_stretch_length) Length(kStretch);
-  new (WTF::NotNullTag::kNotNull, (void*)&g_fit_content_length)
+  new (base::NotNullTag::kNotNull, (void*)&g_auto_length) Length(kAuto);
+  new (base::NotNullTag::kNotNull, (void*)&g_stretch_length) Length(kStretch);
+  new (base::NotNullTag::kNotNull, (void*)&g_fit_content_length)
       Length(kFitContent);
-  new (WTF::NotNullTag::kNotNull, (void*)&g_max_content_length)
+  new (base::NotNullTag::kNotNull, (void*)&g_max_content_length)
       Length(kMaxContent);
-  new (WTF::NotNullTag::kNotNull, (void*)&g_min_content_length)
+  new (base::NotNullTag::kNotNull, (void*)&g_min_content_length)
       Length(kMinContent);
-  new (WTF::NotNullTag::kNotNull, (void*)&g_min_intrinsic_length)
+  new (base::NotNullTag::kNotNull, (void*)&g_min_intrinsic_length)
       Length(kMinIntrinsic);
 }
 
@@ -288,15 +285,14 @@ bool Length::HasPercentOrStretch() const {
   if (GetType() == kCalculated) {
     return GetCalculationValue().HasPercentOrStretch();
   }
-  return GetType() == kPercent || GetType() == kStretch ||
-         GetType() == kFillAvailable;
+  return GetType() == kPercent || GetType() == kStretch;
 }
 
 bool Length::HasStretch() const {
   if (GetType() == kCalculated) {
     return GetCalculationValue().HasStretch();
   }
-  return GetType() == kStretch || GetType() == kFillAvailable;
+  return GetType() == kStretch;
 }
 
 bool Length::HasMinContent() const {
@@ -347,6 +343,15 @@ String Length::ToString() const {
     builder.Append(", Quirk");
   builder.Append(")");
   return builder.ToString();
+}
+
+unsigned Length::GetHash() const {
+  unsigned hash = 0;
+  AddFloatToHash(hash, value_);
+  AddIntToHash(hash, type_);
+  AddIntToHash(hash, quirk_);
+  AddIntToHash(hash, calculation_handle_);
+  return hash;
 }
 
 std::ostream& operator<<(std::ostream& ostream, const Length& value) {

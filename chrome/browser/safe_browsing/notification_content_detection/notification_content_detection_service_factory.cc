@@ -9,6 +9,7 @@
 #include "base/task/thread_pool.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/optimization_guide/optimization_guide_keyed_service.h"
 #include "chrome/browser/optimization_guide/optimization_guide_keyed_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
@@ -52,10 +53,6 @@ std::unique_ptr<KeyedService> NotificationContentDetectionServiceFactory::
         content::BrowserContext* context) const {
   auto* opt_guide = OptimizationGuideKeyedServiceFactory::GetForProfile(
       Profile::FromBrowserContext(context));
-  if (!base::FeatureList::IsEnabled(
-          safe_browsing::kOnDeviceNotificationContentDetectionModel)) {
-    return nullptr;
-  }
   if (!opt_guide) {
     return nullptr;
   }

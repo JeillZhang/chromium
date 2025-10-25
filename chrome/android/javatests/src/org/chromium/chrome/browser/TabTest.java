@@ -16,7 +16,6 @@ import static org.mockito.Mockito.verify;
 
 import android.app.Activity;
 
-import androidx.annotation.Nullable;
 import androidx.test.core.app.ApplicationProvider;
 import androidx.test.filters.SmallTest;
 
@@ -36,7 +35,10 @@ import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.Features.DisableFeatures;
+import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.base.test.util.RequiresRestart;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.SadTab;
@@ -78,6 +80,7 @@ public class TabTest {
 
     private Tab mTab;
     private int mRootIdForReset;
+    private Token mTabGroupIdForReset;
     private CallbackHelper mOnTitleUpdatedHelper;
 
     private final TabObserver mTabObserver =
@@ -94,19 +97,21 @@ public class TabTest {
 
     @Before
     public void setUp() throws Exception {
-        mTab = mActivityTestRule.getActivity().getActivityTab();
+        mTab = mActivityTestRule.getActivityTab();
         ThreadUtils.runOnUiThreadBlocking(() -> mTab.addObserver(mTabObserver));
         mOnTitleUpdatedHelper = new CallbackHelper();
         mRootIdForReset = mTab.getRootId();
+        mTabGroupIdForReset = mTab.getTabGroupId();
     }
 
     @After
     public void tearDown() {
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
-                    // Reset Root Id to what it was at the start, as it can be modified in the
-                    // tests.
+                    // Reset root id and tab group id to what it was at the start, as it can be
+                    // modified in the tests.
                     mTab.setRootId(mRootIdForReset);
+                    mTab.setTabGroupId(mTabGroupIdForReset);
                     mTab.removeObserver(mTabObserver);
                 });
     }
@@ -240,6 +245,7 @@ public class TabTest {
     @Test
     @SmallTest
     @Feature({"Tab"})
+    @EnableFeatures(ChromeFeatureList.ANDROID_PINNED_TABS)
     public void testRestoreTabState() {
         TabState tabState =
                 ThreadUtils.runOnUiThreadBlocking(
@@ -276,6 +282,7 @@ public class TabTest {
     @Test
     @SmallTest
     @Feature({"Tab"})
+    @DisableFeatures(ChromeFeatureList.TAB_FREEZING_USES_DISCARD)
     public void testFreezeAndAppendPendingNavigation_AlreadyFrozen() {
         String firstUrl =
                 mActivityTestRule.getTestServer().getURL("/chrome/test/data/android/about.html");
@@ -288,6 +295,7 @@ public class TabTest {
     @Test
     @SmallTest
     @Feature({"Tab"})
+    @DisableFeatures(ChromeFeatureList.TAB_FREEZING_USES_DISCARD)
     public void testFreezeAndAppendPendingNavigation_LazyBackground() {
         String firstUrl =
                 mActivityTestRule.getTestServer().getURL("/chrome/test/data/android/about.html");
@@ -300,6 +308,7 @@ public class TabTest {
     @Test
     @SmallTest
     @Feature({"Tab"})
+    @DisableFeatures(ChromeFeatureList.TAB_FREEZING_USES_DISCARD)
     public void testFreezeAndAppendPendingNavigation_LiveBackground() {
         String firstUrl =
                 mActivityTestRule.getTestServer().getURL("/chrome/test/data/android/about.html");
@@ -324,6 +333,7 @@ public class TabTest {
     @Test
     @SmallTest
     @Feature({"Tab"})
+    @DisableFeatures(ChromeFeatureList.TAB_FREEZING_USES_DISCARD)
     public void testFreezeAndAppendPendingNavigation_LiveBackground_NativePage() {
         String firstUrl = UrlConstants.NTP_URL;
         String secondUrl =
@@ -354,14 +364,11 @@ public class TabTest {
         String secondUrl =
                 mActivityTestRule.getTestServer().getURL("/chrome/test/data/android/test.html");
         checkFreezingAndAppendingPendingNavigation(
-                this::createSecondFrozenTab, firstUrl, secondUrl, null);
+                this::createSecondFrozenTab, firstUrl, secondUrl, "");
     }
 
     private void checkFreezingAndAppendingPendingNavigation(
-            TestTabCreator tabCreator,
-            String firstUrl,
-            String secondUrl,
-            @Nullable String secondTitle) {
+            TestTabCreator tabCreator, String firstUrl, String secondUrl, String secondTitle) {
         TabObserver observer = Mockito.mock(TabObserver.class);
         Tab bgTab = tabCreator.createTab(firstUrl);
         boolean wasFrozen = bgTab.isFrozen();

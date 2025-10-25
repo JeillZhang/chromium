@@ -35,6 +35,7 @@ class PLATFORM_EXPORT SkiaImageDecoderBase : public ImageDecoder {
 
   // ImageDecoder:
   void OnSetData(scoped_refptr<SegmentReader> data) final;
+  std::optional<gfx::HDRMetadata> GetHDRMetadata() const final;
   int RepetitionCount() const final;
   bool FrameIsReceivedAtIndex(wtf_size_t) const final;
   base::TimeDelta FrameDurationAtIndex(wtf_size_t) const final;
@@ -61,6 +62,7 @@ class PLATFORM_EXPORT SkiaImageDecoderBase : public ImageDecoder {
   // we can't take over the data in that case. Before calling this method, the
   // caller must verify that the frame exists.
   bool CanReusePreviousFrameBuffer(wtf_size_t) const final;
+  bool SetSize(unsigned width, unsigned height) final;
 
   // When a frame depends on a previous frame's content, there is a list of
   // candidate reference frames. This function will find a previous frame from
@@ -95,6 +97,14 @@ class PLATFORM_EXPORT SkiaImageDecoderBase : public ImageDecoder {
   // an image embedded in a middle of another data stream - one specific example
   // is PNG images embedded inside ICO or BMP images.
   const wtf_size_t reading_offset_ = 0;
+
+  // Number of a frame for which calling `SkCodec::incrementalDecode` is okay.
+  // Set after calling `SkCodec::startIncrementalDecode` and reset after
+  // `SkCodec::incrementalDecode` succeeds or encounters a non-resumable error.
+  std::optional<wtf_size_t> already_started_frame_;
+
+  // The HDR metadata that was read from the codec.
+  std::optional<gfx::HDRMetadata> hdr_metadata_;
 };
 
 }  // namespace blink

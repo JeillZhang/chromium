@@ -42,9 +42,23 @@ WebAppFilter WebAppFilter::IsIsolatedApp() {
 }
 
 // static
+WebAppFilter WebAppFilter::PolicyInstalledIsolatedWebApp() {
+  WebAppFilter filter;
+  filter.is_policy_installed_iwa = true;
+  return filter;
+}
+
+// static
 WebAppFilter WebAppFilter::IsCraftedApp() {
   WebAppFilter filter;
   filter.is_crafted_app_ = true;
+  return filter;
+}
+
+// static
+WebAppFilter WebAppFilter::IsCraftedAppAndOpensInDedicatedWindow() {
+  WebAppFilter filter;
+  filter.is_crafted_app_and_opens_in_dedicated_window_ = true;
   return filter;
 }
 
@@ -88,6 +102,13 @@ WebAppFilter WebAppFilter::InstalledInOperatingSystemForTesting() {
 WebAppFilter WebAppFilter::IsDiyWithOsShortcut() {
   WebAppFilter filter;
   filter.is_diy_with_os_shortcut_ = true;
+  return filter;
+}
+
+// static
+WebAppFilter WebAppFilter::LaunchableFromInstallApi() {
+  WebAppFilter filter;
+  filter.launchable_from_install_api_ = true;
   return filter;
 }
 

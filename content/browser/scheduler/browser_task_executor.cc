@@ -6,6 +6,7 @@
 
 #include <atomic>
 
+#include "base/check_deref.h"
 #include "base/functional/bind.h"
 #include "base/message_loop/message_pump_type.h"
 #include "base/run_loop.h"
@@ -51,6 +52,9 @@ scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunnerForAndroidMainThread(
       break;
     case ::TaskTraits::UI_USER_BLOCKING:
       traits = {base::TaskPriority::USER_BLOCKING};
+      break;
+    case ::TaskTraits::UI_STARTUP:
+      traits = {BrowserTaskType::kStartup};
       break;
     default:
       NOTREACHED();
@@ -100,6 +104,9 @@ QueueType BrowserTaskExecutor::GetQueueType(const BrowserTaskTraits& traits) {
         return QueueType::kBeforeUnloadBrowserResponse;
       }
       break;
+
+    case BrowserTaskType::kStartup:
+      return QueueType::kStartup;
 
     case BrowserTaskType::kDefault:
       // Defer to traits.priority() below.
@@ -158,6 +165,8 @@ void BrowserTaskExecutor::CreateInternal(
   // required for WebView's async startup to work properly.
   g_browser_task_executor->browser_io_thread_handle_->EnableTaskQueue(
       QueueType::kDefault);
+  g_browser_task_executor->browser_ui_thread_handle_->EnableTaskQueue(
+      QueueType::kStartup);
 
   base::OnceClosure enable_native_ui_task_execution_callback =
       base::BindOnce([] {
@@ -250,6 +259,7 @@ void BrowserTaskExecutor::RunAllPendingTasksOnThreadForTesting(
 void BrowserTaskExecutor::OnStartupComplete() {
   Get()->browser_ui_thread_handle_->OnStartupComplete();
   Get()->browser_io_thread_handle_->OnStartupComplete();
+  Get()->browser_ui_thread_scheduler_->OnStartupComplete();
 }
 
 // static
@@ -282,13 +292,28 @@ std::unique_ptr<BrowserProcessIOThread> BrowserTaskExecutor::CreateIOThread() {
 
   base::Thread::Options options;
   options.message_pump_type = base::MessagePumpType::IO;
+  if (base::FeatureList::IsEnabled(
+          features::kBoostThreadsPriorityDuringInputScenario)) {
+    options.task_observer =
+        Get()->browser_io_thread_delegate_->GetTaskObserver();
+  }
   options.delegate = std::move(Get()->browser_io_thread_delegate_);
   // Up the priority of the |io_thread_| as some of its IPCs relate to
-  // display tasks.
-  options.thread_type = base::ThreadType::kDisplayCritical;
+  // display tasks, or use |kInteractive| for experiments.
+  options.thread_type =
+      base::FeatureList::IsEnabled(features::kIOThreadInteractiveThreadType)
+          ? base::ThreadType::kInteractive
+          : base::ThreadType::kDisplayCritical;
   if (!io_thread->StartWithOptions(std::move(options)))
     LOG(FATAL) << "Failed to start BrowserThread:IO";
   return io_thread;
+}
+
+// static
+void BrowserTaskExecutor::
+    InstallPartitionAllocSchedulerLoopQuarantineTaskObserver() {
+  CHECK_DEREF(Get()->browser_ui_thread_scheduler_.get())
+      .InstallPartitionAllocSchedulerLoopQuarantineTaskObserver();
 }
 
 }  // namespace content

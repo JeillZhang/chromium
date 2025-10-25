@@ -26,9 +26,7 @@
 
 namespace blink {
 
-BASE_FEATURE(kIdbDecompressValuesInPlace,
-             "IdbDecompressValuesInPlace",
-             base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kIdbDecompressValuesInPlace, base::FEATURE_ENABLED_BY_DEFAULT);
 
 namespace {
 
@@ -107,7 +105,9 @@ IDBValueWrapper::IDBValueWrapper(
     v8::Local<v8::Value> value,
     SerializedScriptValue::SerializeOptions::WasmSerializationPolicy
         wasm_policy,
-    ExceptionState& exception_state) {
+    ExceptionState& exception_state,
+    bool backend_uses_sqlite)
+    : backend_uses_sqlite_(backend_uses_sqlite) {
   SerializedScriptValue::SerializeOptions options;
   options.blob_info = &blob_info_;
   options.for_storage = SerializedScriptValue::kForStorage;
@@ -167,6 +167,10 @@ void IDBValueWrapper::DoneCloning() {
 }
 
 bool IDBValueWrapper::ShouldCompress(size_t uncompressed_length) const {
+  if (backend_uses_sqlite_) {
+    return false;
+  }
+
   static int field_trial_threshold =
       features::kIndexedDBCompressValuesWithSnappyCompressionThreshold.Get();
   return base::FeatureList::IsEnabled(
@@ -218,6 +222,10 @@ void IDBValueWrapper::MaybeCompress() {
 }
 
 void IDBValueWrapper::MaybeStoreInBlob() {
+  if (backend_uses_sqlite_) {
+    return;
+  }
+
   const unsigned wrapping_threshold =
       wrapping_threshold_override_.value_or(mojom::blink::kIDBWrapThreshold);
   if (wire_data_.size() <= wrapping_threshold) {

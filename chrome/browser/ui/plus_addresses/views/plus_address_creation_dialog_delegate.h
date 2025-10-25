@@ -6,10 +6,11 @@
 #define CHROME_BROWSER_UI_PLUS_ADDRESSES_VIEWS_PLUS_ADDRESS_CREATION_DIALOG_DELEGATE_H_
 
 #include "base/functional/callback_forward.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "chrome/browser/ui/plus_addresses/plus_address_creation_view.h"
-#include "components/plus_addresses/plus_address_types.h"
+#include "components/plus_addresses/core/browser/plus_address_types.h"
 #include "ui/views/bubble/bubble_dialog_delegate_view.h"
 
 namespace content {
@@ -98,6 +99,9 @@ class PlusAddressCreationDialogDelegate : public views::BubbleDialogDelegate,
 
   // The button for confirming the modal dialog.
   raw_ptr<views::MdTextButton> confirm_button_ = nullptr;
+
+  // The button for canceling the modal dialog.
+  raw_ptr<views::MdTextButton> cancel_button_ = nullptr;
 };
 
 }  // namespace plus_addresses

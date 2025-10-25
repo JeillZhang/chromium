@@ -29,7 +29,6 @@
 
 #include <memory>
 
-#include "base/compiler_specific.h"
 #include "base/memory/scoped_refptr.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
@@ -252,8 +251,8 @@ void WorkerClassicScriptLoader::DidReceiveData(base::span<const char> data) {
   if (!decoder_) {
     decoder_ = std::make_unique<TextResourceDecoder>(TextResourceDecoderOptions(
         TextResourceDecoderOptions::kPlainTextContent,
-        response_encoding_.empty() ? UTF8Encoding()
-                                   : WTF::TextEncoding(response_encoding_)));
+        response_encoding_.empty() ? Utf8Encoding()
+                                   : TextEncoding(response_encoding_)));
   }
 
   if (data.empty()) {
@@ -266,7 +265,7 @@ void WorkerClassicScriptLoader::DidReceiveData(base::span<const char> data) {
 void WorkerClassicScriptLoader::DidReceiveCachedMetadata(
     mojo_base::BigBuffer data) {
   cached_metadata_ = std::make_unique<Vector<uint8_t>>(data.size());
-  UNSAFE_TODO(memcpy(cached_metadata_->data(), data.data(), data.size()));
+  base::span(*cached_metadata_).copy_from(base::span(data));
 }
 
 void WorkerClassicScriptLoader::DidFinishLoading(uint64_t identifier) {

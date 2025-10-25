@@ -22,6 +22,8 @@
 
 #include "third_party/blink/renderer/core/layout/svg/layout_svg_viewport_container.h"
 
+#include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-blink.h"
+#include "third_party/blink/renderer/core/dom/shadow_root.h"
 #include "third_party/blink/renderer/core/layout/hit_test_location.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_info.h"
 #include "third_party/blink/renderer/core/layout/svg/svg_layout_support.h"
@@ -67,20 +69,45 @@ SVGLayoutResult LayoutSVGViewportContainer::UpdateSVGLayout(
     float resolved_width;
     float resolved_height;
 
+    const SVGViewportResolver viewport_resolver(*this);
+    const ComputedStyle& style = StyleRef();
+    float resolved_width_from_style = ResolveViewportDimension(
+        style.Width(), viewport_resolver, style, SVGLengthMode::kWidth);
+    float resolved_height_from_style = ResolveViewportDimension(
+        style.Height(), viewport_resolver, style, SVGLengthMode::kHeight);
+
     if (RuntimeEnabledFeatures::
             WidthAndHeightAsPresentationAttributesOnNestedSvgEnabled()) {
-      const SVGViewportResolver viewport_resolver(*this);
-      const ComputedStyle& style = StyleRef();
+      resolved_width = resolved_width_from_style;
+      resolved_height = resolved_height_from_style;
 
-      resolved_width = ResolveViewportDimension(
-          style.Width(), viewport_resolver, style, SVGLengthMode::kWidth);
+      if (RuntimeEnabledFeatures::
+              WidthAndHeightStylePropertiesOnUseAndSymbolEnabled() &&
+          svg->InUseShadowTree() && IsAtShadowBoundary(svg)) {
+        const ComputedStyle& parent_style = Parent()->StyleRef();
 
-      resolved_height = ResolveViewportDimension(
-          style.Height(), viewport_resolver, style, SVGLengthMode::kHeight);
+        if (!parent_style.Width().IsAuto()) {
+          resolved_width =
+              ValueForLength(parent_style.Width(), viewport_resolver,
+                             parent_style, SVGLengthMode::kWidth);
+        }
+
+        if (!parent_style.Height().IsAuto()) {
+          resolved_height =
+              ValueForLength(parent_style.Height(), viewport_resolver,
+                             parent_style, SVGLengthMode::kHeight);
+        }
+      }
 
     } else {
       resolved_width = svg->width()->CurrentValue()->Value(length_context);
       resolved_height = svg->height()->CurrentValue()->Value(length_context);
+    }
+
+    if (resolved_height_from_style != resolved_height ||
+        resolved_width_from_style != resolved_width) {
+      UseCounter::Count(GetDocument(),
+                        WebFeature::kNestedSvgCssSizingProperties);
     }
 
     viewport_.SetRect(resolved_x, resolved_y, resolved_width, resolved_height);
@@ -158,9 +185,10 @@ AffineTransform LayoutSVGViewportContainer::ComputeViewboxTransform() const {
 
 void LayoutSVGViewportContainer::StyleDidChange(
     StyleDifference diff,
-    const ComputedStyle* old_style) {
+    const ComputedStyle* old_style,
+    const StyleChangeContext& style_change_context) {
   NOT_DESTROYED();
-  LayoutSVGContainer::StyleDidChange(diff, old_style);
+  LayoutSVGContainer::StyleDidChange(diff, old_style, style_change_context);
   const ComputedStyle& style = StyleRef();
 
   if (old_style && (SVGLayoutSupport::IsOverflowHidden(*old_style) !=

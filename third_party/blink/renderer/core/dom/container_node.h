@@ -32,6 +32,7 @@
 #include "third_party/blink/renderer/core/dom/node.h"
 #include "third_party/blink/renderer/core/dom/static_node_list.h"
 #include "third_party/blink/renderer/core/html/collection_type.h"
+#include "third_party/blink/renderer/platform/heap/heap_traits.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
 #include "third_party/blink/renderer/platform/wtf/vector.h"
 
@@ -42,8 +43,10 @@ class ExceptionState;
 class GetHTMLOptions;
 class HTMLCollection;
 class RadioNodeList;
+class ScriptState;
 class StyleRecalcContext;
 class WhitespaceAttacher;
+class WritableStream;
 
 using StaticElementList = StaticNodeTypeList<Element>;
 
@@ -180,7 +183,9 @@ class CORE_EXPORT ContainerNode : public Node {
 
   void RemoveChildren();
 
-  void CloneChildNodesFrom(const ContainerNode&, NodeCloningData&);
+  void CloneChildNodesFrom(const ContainerNode&,
+                           NodeCloningData&,
+                           CustomElementRegistry*);
 
   using Node::DetachLayoutTree;
   void AttachLayoutTree(AttachContext&) override;
@@ -470,6 +475,12 @@ class CORE_EXPORT ContainerNode : public Node {
   // only.
   String getHTML(const GetHTMLOptions*, ExceptionState&) const;
 
+  WritableStream* patchSelf(ScriptState*, ExceptionState&);
+  WritableStream* patchAfter(ScriptState*, Node* a, ExceptionState&);
+  WritableStream* patchBefore(ScriptState*, Node* b, ExceptionState&);
+  WritableStream* patchBetween(ScriptState*, Node* a, Node* b, ExceptionState&);
+  WritableStream* patchAll(ScriptState*);
+
   // DocumentOrElementEventHandlers:
   // These event listeners are only actually web-exposed on interfaces that
   // include the DocumentOrElementEventHandlers mixin in their idl.
@@ -571,9 +582,6 @@ class CORE_EXPORT ContainerNode : public Node {
   inline bool CheckParserAcceptChild(const Node& new_child) const;
   inline bool IsHostIncludingInclusiveAncestorOfThis(const Node&,
                                                      ExceptionState&) const;
-
-  void CheckSoftNavigationHeuristicsTracking(const Document& document,
-                                             Node& inserted_node);
 
   Member<Node> first_child_;
   Member<Node> last_child_;

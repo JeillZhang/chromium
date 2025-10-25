@@ -16,11 +16,11 @@
 @protocol AutofillAgentDelegate;
 @protocol AutofillCommands;
 @protocol FormSuggestionProvider;
-class ProfileIOS;
 @protocol SnackbarCommands;
 @class UIViewController;
 
 namespace autofill {
+class AutofillClientIOS;
 class ChromeAutofillClientIOS;
 }
 
@@ -43,9 +43,7 @@ class AutofillTabHelper : public web::WebStateObserver,
   // Returns an object that can provide Autofill suggestions.
   id<FormSuggestionProvider> GetSuggestionProvider();
 
-  autofill::ChromeAutofillClientIOS* autofill_client() {
-    return autofill_client_.get();
-  }
+  autofill::AutofillClientIOS* autofill_client();
 
  private:
   friend class web::WebStateUserData<AutofillTabHelper>;
@@ -53,13 +51,11 @@ class AutofillTabHelper : public web::WebStateObserver,
   explicit AutofillTabHelper(web::WebState* web_state);
 
   // web::WebStateObserver implementation.
+  void WebStateRealized(web::WebState* web_state) override;
   void WebStateDestroyed(web::WebState* web_state) override;
 
   // autofill::ChildFrameRegistrarObserver implementation.
   void OnDidDoubleRegistration(autofill::LocalFrameToken local) override;
-
-  // The BrowserState associated with this WebState.
-  raw_ptr<ProfileIOS> profile_;
 
   // The delegate for the AutofillAgent.
   __strong id<AutofillAgentDelegate> autofill_agent_delegate_;
@@ -72,6 +68,10 @@ class AutofillTabHelper : public web::WebStateObserver,
 
   // The WebState holding this instance of the helper.
   raw_ptr<web::WebState> web_state_;
+
+  // Scoped WebState observation.
+  base::ScopedObservation<web::WebState, web::WebStateObserver>
+      web_state_observation_{this};
 };
 
 #endif  // IOS_CHROME_BROWSER_AUTOFILL_MODEL_AUTOFILL_TAB_HELPER_H_

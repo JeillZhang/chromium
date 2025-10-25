@@ -28,8 +28,8 @@
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/ash/components/account_manager/account_manager_factory.h"
 #include "components/account_manager_core/account_manager_facade.h"
-#include "components/account_manager_core/chromeos/account_manager_facade_factory.h"
 #include "components/signin/public/base/consent_level.h"
+#include "components/signin/public/identity_manager/tribool.h"
 #include "components/user_manager/user.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "google_apis/gaia/gaia_id.h"
@@ -333,7 +333,7 @@ base::Value::List AccountManagerUIHandler::GetSecondaryGaiaAccounts(
         .SetFullName(maybe_account_info.full_name)
         .SetEmail(stored_account.raw_email)
         .SetUnmigrated(!is_child_user && account_token_pair.second)
-        .SetIsManaged(maybe_account_info.IsManaged())
+        .SetIsManaged(maybe_account_info.IsManaged() == signin::Tribool::kTrue)
         .SetIsSignedIn(!identity_manager_
                             ->HasAccountWithRefreshTokenInPersistentErrorState(
                                 maybe_account_info.account_id));
@@ -361,7 +361,8 @@ base::Value::List AccountManagerUIHandler::GetSecondaryGaiaAccounts(
 
 void AccountManagerUIHandler::HandleAddAccount(const base::Value::List& args) {
   AllowJavascript();
-  ::GetAccountManagerFacade(profile_->GetPath().value())
+  AccountManagerFactory::Get()
+      ->GetAccountManagerFacade(profile_->GetPath().value())
       ->ShowAddAccountDialog(
           account_manager::AccountManagerFacade::AccountAdditionSource::
               kSettingsAddAccountButton);
@@ -374,7 +375,8 @@ void AccountManagerUIHandler::HandleReauthenticateAccount(
   CHECK(!args.empty());
   const std::string& account_email = args[0].GetString();
 
-  ::GetAccountManagerFacade(profile_->GetPath().value())
+  AccountManagerFactory::Get()
+      ->GetAccountManagerFacade(profile_->GetPath().value())
       ->ShowReauthAccountDialog(
           account_manager::AccountManagerFacade::AccountAdditionSource::
               kSettingsReauthAccountButton,

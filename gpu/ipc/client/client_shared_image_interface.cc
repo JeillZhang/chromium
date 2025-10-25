@@ -26,7 +26,7 @@ ClientSharedImageInterface::ClientSharedImageInterface(
     : gpu_channel_(std::move(channel)),
       proxy_(proxy),
       shared_memory_pool_(
-#if BUILDFLAG(IS_WIN)
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
           base::MakeRefCounted<base::UnsafeSharedMemoryPool>()
 #else
           nullptr
@@ -86,6 +86,15 @@ void ClientSharedImageInterface::VerifySyncToken(gpu::SyncToken& sync_token) {
   proxy_->VerifySyncToken(sync_token);
 }
 
+bool ClientSharedImageInterface::CanVerifySyncToken(
+    const gpu::SyncToken& sync_token) {
+  return proxy_->CanVerifySyncToken(sync_token);
+}
+
+void ClientSharedImageInterface::VerifyFlush() {
+  return proxy_->VerifyFlush();
+}
+
 void ClientSharedImageInterface::WaitSyncToken(
     const gpu::SyncToken& sync_token) {
   proxy_->WaitSyncToken(sync_token);
@@ -140,6 +149,8 @@ scoped_refptr<ClientSharedImage> ClientSharedImageInterface::CreateSharedImage(
 
   // Copy which can be modified.
   SharedImageInfo si_info_copy = si_info;
+  // Set CPU read/write usage based on buffer usage.
+  si_info_copy.meta.usage |= GetCpuSIUsage(buffer_usage);
   auto mailbox = proxy_->CreateSharedImage(si_info_copy, buffer_usage,
                                            std::move(pool_id), &buffer_handle);
   if (mailbox.IsZero()) {
@@ -149,9 +160,7 @@ scoped_refptr<ClientSharedImage> ClientSharedImageInterface::CreateSharedImage(
   CHECK(!buffer_handle.is_null());
   return base::MakeRefCounted<ClientSharedImage>(
       AddMailbox(mailbox), si_info_copy, GenUnverifiedSyncToken(),
-      GpuMemoryBufferHandleInfo(std::move(buffer_handle),
-                                si_info_copy.meta.format,
-                                si_info_copy.meta.size, buffer_usage),
+      GpuMemoryBufferHandleInfo(std::move(buffer_handle), buffer_usage),
       holder_, shared_memory_pool_);
 }
 
@@ -168,13 +177,16 @@ scoped_refptr<ClientSharedImage> ClientSharedImageInterface::CreateSharedImage(
   CHECK(!si_info.meta.format.PrefersExternalSampler())
       << si_info.meta.format.ToString();
 #endif
+  // Copy which can be modified.
+  SharedImageInfo si_info_copy = si_info;
+  // Set CPU read/write usage based on buffer usage.
+  si_info_copy.meta.usage |= GetCpuSIUsage(buffer_usage);
   auto client_buffer_handle = buffer_handle.Clone();
-  auto mailbox = proxy_->CreateSharedImage(si_info, std::move(buffer_handle));
+  auto mailbox =
+      proxy_->CreateSharedImage(si_info_copy, std::move(buffer_handle));
   return base::MakeRefCounted<ClientSharedImage>(
-      AddMailbox(mailbox), si_info, GenUnverifiedSyncToken(),
-      GpuMemoryBufferHandleInfo(std::move(client_buffer_handle),
-                                si_info.meta.format, si_info.meta.size,
-                                buffer_usage),
+      AddMailbox(mailbox), si_info_copy, GenUnverifiedSyncToken(),
+      GpuMemoryBufferHandleInfo(std::move(client_buffer_handle), buffer_usage),
       holder_, shared_memory_pool_);
 }
 
@@ -252,17 +264,24 @@ void ClientSharedImageInterface::UpdateSharedImage(
     const Mailbox& mailbox) {
   proxy_->UpdateSharedImage(sync_token, std::move(d3d_shared_fence), mailbox);
 }
+#endif  // BUILDFLAG(IS_WIN)
 
+#if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
 void ClientSharedImageInterface::CopyNativeGmbToSharedMemoryAsync(
     gfx::GpuMemoryBufferHandle buffer_handle,
     base::UnsafeSharedMemoryRegion memory_region,
     base::OnceCallback<void(bool)> callback) {
+#if BUILDFLAG(IS_WIN)
   CHECK_EQ(buffer_handle.type, gfx::GpuMemoryBufferType::DXGI_SHARED_HANDLE);
+#elif BUILDFLAG(IS_ANDROID)
+  CHECK_EQ(buffer_handle.type,
+           gfx::GpuMemoryBufferType::ANDROID_HARDWARE_BUFFER);
+#endif
   CHECK(memory_region.IsValid());
   proxy_->CopyNativeGmbToSharedMemoryAsync(
       std::move(buffer_handle), std::move(memory_region), std::move(callback));
 }
-#endif  // BUILDFLAG(IS_WIN)
+#endif  // BUILDFLAG(IS_WIN) || BUILDFLAG(IS_ANDROID)
 
 ClientSharedImageInterface::SwapChainSharedImages
 ClientSharedImageInterface::CreateSwapChain(viz::SharedImageFormat format,

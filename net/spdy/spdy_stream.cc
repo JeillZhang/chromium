@@ -388,6 +388,8 @@ void SpdyStream::OnHeadersReceived(
           if (io_state_ == STATE_IDLE) {
             const std::string error("Response received before request sent.");
             LogStreamError(ERR_HTTP2_PROTOCOL_ERROR, error);
+            DVLOG(1) << "Response received before request sent, possibly "
+                        "crbug.com/41180906";
             session_->ResetStream(stream_id_, ERR_HTTP2_PROTOCOL_ERROR, error);
             return;
           }
@@ -711,6 +713,15 @@ bool SpdyStream::GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const {
       recv_first_byte_time_for_non_informational_response_;
   load_timing_info->first_early_hints_time = first_early_hints_time_;
   return result;
+}
+
+base::Value::Dict SpdyStream::GetInfoAsValue() const {
+  base::Value::Dict dict;
+  dict.Set("stream_id", static_cast<int>(stream_id_));
+  dict.Set("io_state", DescribeState(io_state_));
+  dict.Set("send_stalled_by_flow_control", send_stalled_by_flow_control_);
+  dict.Set("pending_send_status", pending_send_status_);
+  return dict;
 }
 
 void SpdyStream::QueueNextDataFrame() {

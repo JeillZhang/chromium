@@ -440,8 +440,8 @@ bool AXSelection::Select(const AXSelectionBehavior selection_behavior) {
 }
 
 String AXSelection::ToString() const {
-  return WTF::StrCat({IsValid() ? "" : "Invalid ", "AXSelection from ",
-                      Anchor().ToString(), " to ", Focus().ToString()});
+  return StrCat({IsValid() ? "" : "Invalid ", "AXSelection from ",
+                 Anchor().ToString(), " to ", Focus().ToString()});
 }
 
 std::optional<AXSelection::TextControlSelection>
@@ -469,10 +469,6 @@ AXSelection::AsTextControlSelection() const {
 bool operator==(const AXSelection& a, const AXSelection& b) {
   DCHECK(a.IsValid() && b.IsValid());
   return a.Anchor() == b.Anchor() && a.Focus() == b.Focus();
-}
-
-bool operator!=(const AXSelection& a, const AXSelection& b) {
-  return !(a == b);
 }
 
 std::ostream& operator<<(std::ostream& ostream, const AXSelection& selection) {

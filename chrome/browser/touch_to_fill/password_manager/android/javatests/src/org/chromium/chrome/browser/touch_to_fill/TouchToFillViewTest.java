@@ -74,7 +74,9 @@ import org.chromium.chrome.browser.touch_to_fill.common.FillableItemCollectionIn
 import org.chromium.chrome.browser.touch_to_fill.data.Credential;
 import org.chromium.chrome.browser.touch_to_fill.data.WebauthnCredential;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
+import org.chromium.chrome.test.transit.ChromeTransitTestRules;
+import org.chromium.chrome.test.transit.FreshCtaTransitTestRule;
+import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController.SheetState;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetTestSupport;
@@ -146,13 +148,15 @@ public class TouchToFillViewTest {
     private TouchToFillView mTouchToFillView;
     private BottomSheetController mBottomSheetController;
     private BottomSheetTestSupport mSheetTestSupport;
+    private WebPageStation mPage;
 
     @Rule
-    public ChromeTabbedActivityTestRule mActivityTestRule = new ChromeTabbedActivityTestRule();
+    public FreshCtaTransitTestRule mActivityTestRule =
+            ChromeTransitTestRules.freshChromeTabbedActivityRule();
 
     @Before
     public void setUp() throws InterruptedException {
-        mActivityTestRule.startMainActivityOnBlankPage();
+        mPage = mActivityTestRule.startOnBlankPage();
         mBottomSheetController =
                 mActivityTestRule
                         .getActivity()
@@ -173,6 +177,13 @@ public class TouchToFillViewTest {
                 () -> {
                     AccessibilityState.setIsTouchExplorationEnabledForTesting(false);
                 });
+    }
+
+    @Test
+    @MediumTest
+    public void testInitializesHomeScreen() {
+        assertNotNull(mTouchToFillView.getSheetItemListView());
+        assertNotNull(mTouchToFillView.getSheetItemListView().getAdapter());
     }
 
     @Test
@@ -702,6 +713,43 @@ public class TouchToFillViewTest {
                 getCredentials().getChildAt(0).getContentDescription(),
                 getActivity()
                         .getString(R.string.touch_to_fill_a11y_item_collection_info, label, 1, 1));
+    }
+
+    @Test
+    @MediumTest
+    public void testRecoveryPasswordCredentialAccessibilityDescription() {
+        ThreadUtils.runOnUiThreadBlocking(
+                () -> {
+                    mModel.get(SHEET_ITEMS)
+                            .addAll(
+                                    asList(
+                                            buildCredentialItem(
+                                                    NIK, new FillableItemCollectionInfo(1, 2)),
+                                            buildCredentialItem(
+                                                    NIK_BACKUP,
+                                                    new FillableItemCollectionInfo(2, 2)),
+                                            buildFooterItem(false)));
+                    mModel.set(VISIBLE, true);
+                });
+
+        BottomSheetTestSupport.waitForOpen(mBottomSheetController);
+
+        assertNotNull(getCredentials().getChildAt(1));
+        String expected_label =
+                getActivity()
+                        .getString(
+                                R.string
+                                        .touch_to_fill_recovery_password_credential_accessibility_description_with_url,
+                                NIK_BACKUP.getFormattedUsername(),
+                                NIK_BACKUP.getDisplayName());
+        assertEquals(
+                getCredentials().getChildAt(1).getContentDescription(),
+                getActivity()
+                        .getString(
+                                R.string.touch_to_fill_a11y_item_collection_info,
+                                expected_label,
+                                2,
+                                2));
     }
 
     @Test

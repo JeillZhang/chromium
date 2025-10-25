@@ -91,6 +91,10 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
   void StopDeferringCommits(LocalFrame& main_frame,
                             cc::PaintHoldingCommitTrigger) override;
   void SetShouldThrottleFrameRate(bool flag, LocalFrame& main_frame) override;
+  void RequestMainFrameOnCompositorAnimation(
+      LocalFrame&,
+      cc::PropertyChangeForcesCommitCriteria
+          property_change_forces_commit_criteria) override;
   std::unique_ptr<cc::ScopedPauseRendering> PauseRendering(
       LocalFrame&) override;
   std::optional<int> GetMaxRenderBufferBounds(LocalFrame&) const override;
@@ -101,6 +105,7 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
                      const gfx::Vector2d& cursor_offset,
                      const gfx::Rect& drag_obj_rect) override;
   bool AcceptsLoadDrops() const override;
+  std::optional<bool> GetWebRTCPostQuantumKeyAgreement() const override;
   Page* CreateWindowDelegate(LocalFrame*,
                              const FrameLoadRequest&,
                              const AtomicString& name,
@@ -158,6 +163,7 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
   float WindowToViewportScalar(LocalFrame*, const float) const override;
   const display::ScreenInfo& GetScreenInfo(LocalFrame&) const override;
   const display::ScreenInfos& GetScreenInfos(LocalFrame&) const override;
+  const display::ScreenInfo& GetOriginalScreenInfo(LocalFrame&) const override;
   float InputEventsScaleForEmulation() const override;
   void ContentsSizeChanged(LocalFrame*, const gfx::Size&) const override;
   bool DoubleTapToZoomEnabled() const override;
@@ -286,6 +292,7 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
 
   void OnMouseDown(Node&) override;
   void DidUpdateBrowserControls() const override;
+  void DidUpdateLoadProgress(float) override;
 
   void DidUpdateMaxSafeAreaInsets(
       const gfx::InsetsF& max_safe_area_insets) const override;
@@ -303,13 +310,8 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
                      base::OnceCallback<void(bool)>,
                      bool speculative) override;
 
-  bool SpeculativeDecodeRequestInFlight(LocalFrame*) const override;
-
   void NotifyPresentationTime(LocalFrame& frame,
                               ReportTimeCallback callback) override;
-
-  void RequestBeginMainFrameNotExpected(LocalFrame& frame,
-                                        bool request) override;
 
   void DidUpdateTextAutosizerPageInfo(
       const mojom::blink::TextAutosizerPageInfo& page_info) override;
@@ -326,7 +328,7 @@ class CORE_EXPORT ChromeClientImpl final : public ChromeClient {
 
   float ZoomFactorForViewportLayout() override;
 
-  void OnFirstContentfulPaint() override;
+  void OnFirstContentfulPaint(const base::TimeDelta& duration) override;
 
  private:
   bool IsChromeClientImpl() const override { return true; }

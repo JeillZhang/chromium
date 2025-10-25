@@ -219,7 +219,7 @@ void InstallApp(UpdaterScope scope,
                 const base::Version& version) {
   RegistrationRequest registration;
   registration.app_id = app_id;
-  registration.version = version;
+  registration.version = version.GetString();
   RegisterApp(scope, registration);
 }
 
@@ -251,6 +251,17 @@ void ExpectAppVersion(UpdaterScope scope,
           ->GetProductVersion(app_id);
   EXPECT_TRUE(app_version.IsValid());
   EXPECT_EQ(version, app_version);
+}
+
+void SetAppAllowsUsageStats(UpdaterScope scope,
+                            const std::string& identifier,
+                            bool allowed) {
+  ADD_FAILURE() << "Usage statistics are not supported on Linux.";
+}
+
+void ClearAppAllowsUsageStats(UpdaterScope scope,
+                              const std::string& identifier) {
+  ADD_FAILURE() << "Usage statistics are not supported on Linux.";
 }
 
 }  // namespace updater::test

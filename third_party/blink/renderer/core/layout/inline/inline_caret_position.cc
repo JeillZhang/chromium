@@ -463,8 +463,8 @@ InlineCaretPosition ComputeInlineCaretPosition(
     if (auto* data = DynamicTo<Text>(position.AnchorNode())) {
       DCHECK_EQ(data->length(), 0u);
     } else {
-      // TODO(xiaochengh): Investigate if we reach here.
-      NOTREACHED();
+      // TODO(crbug.com/444003274): This branch is reachable unexpectedly,
+      // however we don't know how to reproduce it.
     }
   }
 
@@ -482,7 +482,7 @@ InlineCaretPosition ComputeInlineCaretPosition(
   // See AccessibilitySelectionTest.FromCurrentSelectionInTextareaWithAffinity
   const unsigned adjusted_offset =
       affinity == TextAffinity::kUpstream && offset &&
-              mapping->GetText()[offset - 1] == kZeroWidthSpaceCharacter
+              mapping->GetText()[offset - 1] == uchar::kZeroWidthSpace
           ? offset - 1
           : offset;
   return ComputeInlineCaretPosition(*context, adjusted_offset, affinity,

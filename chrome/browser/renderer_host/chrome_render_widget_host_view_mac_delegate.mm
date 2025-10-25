@@ -8,6 +8,7 @@
 
 #include "base/auto_reset.h"
 #include "base/strings/sys_string_conversions.h"
+#include "chrome/browser/actor/ui/actor_overlay_ui.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/profiles/profile.h"
 #import "chrome/browser/renderer_host/chrome_render_widget_host_view_mac_history_swiper.h"
@@ -24,6 +25,7 @@
 #include "components/spellcheck/common/spellcheck_panel.mojom.h"
 #include "components/tabs/public/tab_interface.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
+#include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/preloading.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
@@ -35,8 +37,8 @@
 #include "services/service_manager/public/cpp/interface_provider.h"
 
 #if BUILDFLAG(ENABLE_GLIC)
-#include "chrome/browser/glic/glic_enabling.h"
-#include "chrome/browser/glic/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
 #endif
 
 @interface ChromeRenderWidgetHostViewMacDelegate () <HistorySwiperDelegate>
@@ -67,6 +69,9 @@
     _widgetProcessId = renderWidgetHost->GetProcess()->GetDeprecatedID();
     _widgetRoutingId = renderWidgetHost->GetRoutingID();
     _historySwiper = [[HistorySwiper alloc] initWithDelegate:self];
+    // Clip bounds so history swiper navigation layer doesn't overflow the
+    // bounds when in Split View or with a Side Panel open.
+    [self viewThatWantsHistoryOverlay].clipsToBounds = YES;
   }
   return self;
 }
@@ -405,10 +410,15 @@
   }
 }
 
-- (AcceptMouseEventsOption)acceptsMouseEventsOption {
+- (AcceptMouseEvents)acceptsMouseEventsOption {
   content::WebContents* webContents = self.webContents;
   if (!webContents) {
-    return kAcceptMouseEventsInActiveWindow;
+    return AcceptMouseEvents::kWhenInActiveWindow;
+  }
+
+  // Allow mouse move events in inactive windows when inspecting.
+  if (content::DevToolsAgentHost::IsDebuggerAttached(webContents)) {
+    return AcceptMouseEvents::kWhenInActiveApp;
   }
 
   // If this web contents is in a tab, and the tab wants to accept mouse events
@@ -420,7 +430,7 @@
               features->inactive_window_mouse_event_controller()) {
         if (inactive_event_controller
                 ->ShouldAcceptMouseEventsWhileWindowInactive()) {
-          return kAcceptMouseEventsInActiveApp;
+          return AcceptMouseEvents::kWhenInActiveApp;
         }
       }
     }
@@ -431,7 +441,7 @@
   // mimics the behavior of views UI.
   if (IsTopChromeWebUIURL(webContents->GetVisibleURL()) ||
       IsTopChromeUntrustedWebUIURL(webContents->GetVisibleURL())) {
-    return kAcceptMouseEventsInActiveApp;
+    return AcceptMouseEvents::kWhenInActiveApp;
   }
 
 #if BUILDFLAG(ENABLE_GLIC)
@@ -442,11 +452,17 @@
   glic::GlicKeyedService* glic_service = glic::GlicKeyedService::Get(
       Profile::FromBrowserContext(webContents->GetBrowserContext()));
   if (glic_service && glic_service->IsActiveWebContents(webContents)) {
-    return kAcceptMouseEventsInActiveApp;
+    return AcceptMouseEvents::kWhenInActiveApp;
   }
 #endif
 
-  return kAcceptMouseEventsInActiveWindow;
+  // If the WebContents are from the ActorOverlayUI WebUIController, we should
+  // accept mouse events when any part of the application is active.
+  if (actor::ui::ActorOverlayUI::IsActorOverlayWebContents(webContents)) {
+    return AcceptMouseEvents::kWhenInActiveApp;
+  }
+
+  return AcceptMouseEvents::kWhenInActiveWindow;
 }
 
 @end

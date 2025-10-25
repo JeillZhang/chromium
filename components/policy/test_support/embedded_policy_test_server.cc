@@ -24,6 +24,7 @@
 #include "components/policy/test_support/request_handler_for_check_android_management.h"
 #include "components/policy/test_support/request_handler_for_chrome_desktop_report.h"
 #include "components/policy/test_support/request_handler_for_client_cert_provisioning.h"
+#include "components/policy/test_support/request_handler_for_determine_promotion_eligibility.h"
 #include "components/policy/test_support/request_handler_for_device_attribute_update.h"
 #include "components/policy/test_support/request_handler_for_device_attribute_update_permission.h"
 #include "components/policy/test_support/request_handler_for_device_initial_enrollment_state.h"
@@ -122,6 +123,8 @@ EmbeddedPolicyTestServer::EmbeddedPolicyTestServer()
   RegisterHandler(
       std::make_unique<RequestHandlerForClientCertProvisioning>(this));
   RegisterHandler(
+      std::make_unique<RequestHandlerForDeterminePromotionEligibility>(this));
+  RegisterHandler(
       std::make_unique<RequestHandlerForDeviceAttributeUpdate>(this));
   RegisterHandler(
       std::make_unique<RequestHandlerForDeviceAttributeUpdatePermission>(this));
@@ -198,7 +201,7 @@ std::unique_ptr<HttpResponse> EmbeddedPolicyTestServer::HandleRequest(
   GURL url = request.GetURL();
   LOG(INFO) << "Request URL: " << url;
 
-  if (url.path() == kExternalPolicyDataPath) {
+  if (url.GetPath() == kExternalPolicyDataPath) {
     return HandleExternalPolicyDataRequest(url);
   }
 
@@ -228,7 +231,7 @@ std::unique_ptr<HttpResponse> EmbeddedPolicyTestServer::HandleRequest(
 
 std::unique_ptr<HttpResponse>
 EmbeddedPolicyTestServer::HandleExternalPolicyDataRequest(const GURL& url) {
-  DCHECK_EQ(url.path(), kExternalPolicyDataPath);
+  DCHECK_EQ(url.GetPath(), kExternalPolicyDataPath);
   std::string policy_type = KeyValueFromUrl(url, kExternalPolicyTypeParam);
   std::string entity_id = KeyValueFromUrl(url, kExternalEntityIdParam);
   std::string policy_payload =

@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_PRIVACY_SANDBOX_PRIVACY_SANDBOX_SERVICE_IMPL_H_
 
 // clang-format off
+#include "chrome/browser/privacy_sandbox/notice/notice_definitions.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_countries.h"
 #include "chrome/browser/privacy_sandbox/privacy_sandbox_service.h"
 // clang-format on
@@ -18,11 +19,9 @@
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/privacy_sandbox/canonical_topic.h"
-#include "components/privacy_sandbox/privacy_sandbox_prefs.h"
 #include "components/privacy_sandbox/privacy_sandbox_settings.h"
 #include "components/privacy_sandbox/tracking_protection_settings.h"
 #include "components/profile_metrics/browser_profile_type.h"
-#include "components/signin/public/identity_manager/identity_manager.h"
 #include "components/user_education/common/product_messaging_controller.h"
 #include "content/public/browser/interest_group_manager.h"
 #include "net/base/schemeful_site.h"
@@ -68,6 +67,9 @@ class PrivacySandboxServiceImpl : public PrivacySandboxService {
 
   ~PrivacySandboxServiceImpl() override;
 
+  // KeyedService:
+  void Shutdown() override;
+
   // PrivacySandboxService:
   PromptType GetRequiredPromptType(SurfaceType surface_type) override;
   void PromptActionOccurred(PromptAction action,
@@ -111,7 +113,7 @@ class PrivacySandboxServiceImpl : public PrivacySandboxService {
   bool PrivacySandboxPrivacyGuideShouldShowAdTopicsCard() override;
   bool ShouldUsePrivacyPolicyChinaDomain() override;
   void TopicsToggleChanged(bool new_value) const override;
-  bool TopicsConsentRequired() const override;
+  bool TopicsConsentRequired() override;
   bool TopicsHasActiveConsent() const override;
   privacy_sandbox::TopicsConsentUpdateSource TopicsConsentLastUpdateSource()
       const override;
@@ -120,6 +122,10 @@ class PrivacySandboxServiceImpl : public PrivacySandboxService {
   void UpdateTopicsApiResult(bool value) override;
   void UpdateProtectedAudienceApiResult(bool value) override;
   void UpdateMeasurementApiResult(bool value) override;
+  privacy_sandbox::EligibilityLevel GetTopicsApiEligibility() override;
+  privacy_sandbox::EligibilityLevel GetProtectedAudienceApiEligibility()
+      override;
+  privacy_sandbox::EligibilityLevel GetAdMeasurementApiEligibility() override;
 
  protected:
   friend class PrivacySandboxServiceTest;
@@ -309,14 +315,26 @@ class PrivacySandboxServiceImpl : public PrivacySandboxService {
 #endif  // !BUILDFLAG(IS_ANDROID)
 
  private:
+  // Determines whether Privacy Sandbox Ads consent is required.
+  bool IsConsentRequired();
+  // Determines whether a Privacy Sandbox Ads notice is required.
+  bool IsNoticeRequired();
+  // Determines whether the Privacy Sandbox Ads Restricted notice is required.
+  bool IsRestrictedNoticeRequired();
   // Checks if a prompt should be suppressed and updates the suppression
   // reason preference if a new reason is determined.
   // Returns true if the prompt should be suppressed (due to an existing
   // or newly set reason), false otherwise.
   bool UpdateAndGetSuppressionReason();
 
+  // Returns whether the prompt should be disabled.
+  bool ShouldDisablePrompt();
+
   // Helper function to set the prompt suppression reason.
   void SetPromptSuppressedReason(PromptSuppressedReason reason);
+
+  // Internal implementation for `GetRequiredPromptType`.
+  PromptType GetRequiredPromptTypeInternal(SurfaceType surface_type);
 
   raw_ptr<Profile> profile_;
   raw_ptr<privacy_sandbox::PrivacySandboxSettings> privacy_sandbox_settings_;

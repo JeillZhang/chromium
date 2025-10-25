@@ -19,7 +19,6 @@
 #import "ios/chrome/browser/toolbar/ui_bundled/buttons/toolbar_tab_group_state.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_constants.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/public/toolbar_utils.h"
-#import "ios/chrome/browser/toolbar/ui_bundled/tab_groups/tab_group_indicator_features_utils.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/tab_groups/ui/tab_group_indicator_constants.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/tab_groups/ui/tab_group_indicator_view.h"
 #import "ios/chrome/browser/toolbar/ui_bundled/toolbar_progress_bar.h"
@@ -161,6 +160,7 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
 @synthesize backButton = _backButton;
 @synthesize forwardButton = _forwardButton;
 @synthesize tabGridButton = _tabGridButton;
+@synthesize diamondPrototypeButton = _diamondPrototypeButton;
 @synthesize stopButton = _stopButton;
 @synthesize reloadButton = _reloadButton;
 @synthesize locationBarContainer = _locationBarContainer;
@@ -174,6 +174,7 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
 @synthesize contractedConstraints = _contractedConstraints;
 @synthesize contractedNoMarginConstraints = _contractedNoMarginConstraints;
 @synthesize contentView = _contentView;
+@synthesize locationBarHeight = _locationBarHeight;
 
 #pragma mark - Public
 
@@ -205,14 +206,10 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
   [self setUpBannerPromo];
 
   [self setUpConstraints];
-
-  if (@available(iOS 17, *)) {
-    [self registerForTraitChanges:@[
-      UITraitVerticalSizeClass.class, UITraitHorizontalSizeClass.class
-    ]
-                       withAction:@selector(updateViews:
-                                      previousTraitCollection:)];
-  }
+  [self
+      registerForTraitChanges:
+          @[ UITraitVerticalSizeClass.class, UITraitHorizontalSizeClass.class ]
+                   withAction:@selector(updateViews:previousTraitCollection:)];
 }
 
 - (void)setHidden:(BOOL)hidden {
@@ -242,7 +239,7 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
   }
   self.tabGroupIndicatorView.showSeparator = !isTopOmnibox;
 
-  BOOL canShowTabStrip = IsRegularXRegularSizeClass(self.superview);
+  BOOL canShowTabStrip = CanShowTabStrip(self.superview);
   BOOL isAvailable = !IsCompactHeight(self.superview) && !canShowTabStrip;
   self.tabGroupIndicatorView.available = isAvailable;
 }
@@ -321,6 +318,17 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
   return _bannerPromo.intrinsicContentSize.height * progress;
 }
 
+- (void)setLocationBarHeight:(CGFloat)locationBarHeight {
+  /// Location bar height is only handled by this property in multiline omnibox.
+  CHECK(IsMultilineBrowserOmniboxEnabled(), base::NotFatalUntil::M200);
+  if (locationBarHeight == _locationBarHeight) {
+    return;
+  }
+  _locationBarHeight = locationBarHeight;
+  self.locationBarContainerHeight.constant = locationBarHeight;
+  [self invalidateIntrinsicContentSize];
+}
+
 #pragma mark - Properties
 
 - (void)setMatchNTPHeight:(BOOL)matchNTPHeight {
@@ -362,10 +370,16 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
 
   BOOL isTopOmnibox = self.locationBarView != nil;
   if (isTopOmnibox) {
-    height += self.matchNTPHeight
-                  ? content_suggestions::FakeToolbarHeight()
-                  : ToolbarExpandedHeight(
-                        self.traitCollection.preferredContentSizeCategory);
+    if (self.matchNTPHeight) {
+      height += content_suggestions::FakeToolbarHeight();
+    } else if (IsMultilineBrowserOmniboxEnabled()) {
+      height += self.locationBarHeight +
+                LocationBarVerticalMargins(
+                    self.traitCollection.preferredContentSizeCategory);
+    } else {
+      height += ToolbarExpandedHeight(
+          self.traitCollection.preferredContentSizeCategory);
+    }
   }
 
   if (IsDefaultBrowserBannerPromoEnabled() && _bannerPromoDisplayed) {
@@ -380,7 +394,7 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
     height += kTabGroupIndicatorHeight;
     // If the Omnibox is not at the top, remove the top vertical margin to avoid
     // extra space when the tab group indicator is present.
-    if (!isTopOmnibox && !HasTabGroupIndicatorBelowOmnibox()) {
+    if (!isTopOmnibox) {
       height -= kTopToolbarUnsplitMargin;
     }
   }
@@ -395,18 +409,6 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
   // superview's layout context.
   [self updateTabGroupIndicatorAvailability];
 }
-
-#if !defined(__IPHONE_17_0) || __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_17_0
-- (void)traitCollectionDidChange:(UITraitCollection*)previousTraitCollection {
-  [super traitCollectionDidChange:previousTraitCollection];
-  // iOS 17 and later introduce a new way to handle trait changes. If the OS
-  // version is iOS 17 or later, skip the old way of updating views.
-  if (@available(iOS 17, *)) {
-    return;
-  }
-  [self updateViews:self previousTraitCollection:previousTraitCollection];
-}
-#endif
 
 #pragma mark - Setup
 
@@ -759,13 +761,6 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
   CGFloat alphaValue = fmax(progress * 2 - 1, 0);
   _bannerPromoBackground.alpha = alphaValue;
 
-  if (!_tabGroupIndicatorView.hidden && HasTabGroupIndicatorBelowOmnibox()) {
-    CGFloat tabgroupIndicatorHeight =
-        self.tabGroupIndicatorView.hidden
-            ? 0
-            : kTabGroupIndicatorHeight * alphaValue;
-    _tabGroupIndicatorHeightConstraint.constant = tabgroupIndicatorHeight;
-  }
   self.tabGroupIndicatorView.alpha = alphaValue;
 
   _bannerPromoBackgroundHeightConstraint.constant =
@@ -841,23 +836,12 @@ const CGFloat kBannerPromoVerticalSpacing = 8;
   _tabGroupIndicatorTopOmniboxConstraint.active = NO;
   _tabGroupIndicatorBottomOmniboxConstraint.active = NO;
 
-  BOOL isTopOmnibox = self.locationBarView != nil;
+  [self updateConstraintsForIndicatorBelowOmnibox:NO];
 
-  // If the tab group indicator is below the omnibox.
-  if (HasTabGroupIndicatorBelowOmnibox() && isTopOmnibox) {
-    [self updateConstraintsForIndicatorBelowOmnibox:YES];
-
-    _tabGroupIndicatorTopOmniboxConstraint =
-        [self.tabGroupIndicatorView.topAnchor
-            constraintEqualToAnchor:self.locationBarContainer.bottomAnchor];
-  } else {
-    [self updateConstraintsForIndicatorBelowOmnibox:NO];
-
-    _tabGroupIndicatorTopOmniboxConstraint =
-        [self.tabGroupIndicatorView.bottomAnchor
-            constraintEqualToAnchor:self.locationBarContainer.topAnchor
-                           constant:-kAdaptiveLocationBarVerticalMargin];
-  }
+  _tabGroupIndicatorTopOmniboxConstraint =
+      [self.tabGroupIndicatorView.bottomAnchor
+          constraintEqualToAnchor:self.locationBarContainer.topAnchor
+                         constant:-kAdaptiveLocationBarVerticalMargin];
 
   _tabGroupIndicatorBottomOmniboxConstraint =
       [self.tabGroupIndicatorView.bottomAnchor

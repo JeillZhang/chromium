@@ -110,6 +110,8 @@ class CORE_EXPORT HTMLInputElement
   // Returns true if the type is email, number, password, search, tel, text,
   // or url.
   bool IsTextField() const;
+  // Returns true if type is text, search, url, tel, or password.
+  bool InputSupportsSelectionAPI() const;
   bool IsTelephone() const;
   // To override from TextControlElement
   bool IsAutoDirectionalityFormAssociated() const final;
@@ -149,7 +151,7 @@ class CORE_EXPORT HTMLInputElement
   RadioButtonGroupScope* GetRadioButtonGroupScope() const;
 
   unsigned size() const;
-  bool SizeShouldIncludeDecoration(int& preferred_size) const;
+  bool GetSizeWithDecoration(int& preferred_size) const;
 
   void setType(const AtomicString&);
 
@@ -291,6 +293,9 @@ class CORE_EXPORT HTMLInputElement
   void SetNonAttributeValue(const String&);
   void SetNonAttributeValueByUserEdit(const String&);
   void UpdateView();
+
+  void UpdateViewWithPendingNonConvertedValue();
+
   bool NeedsToUpdateViewValue() const { return needs_to_update_view_value_; }
   void SetInnerEditorValue(const String&) override;
 
@@ -382,18 +387,8 @@ class CORE_EXPORT HTMLInputElement
                              CommandEventType command) override;
 
   void SetFocused(bool is_focused, mojom::blink::FocusType) override;
-
-  // These methods are used to determine what the nearest ancestor <select>
-  // element is and whether this is the first <input> in tree order within that
-  // <select>. These are populated lazily by the select element's
-  // MutationObserver and are not guaranteed to be correct all of the time
-  // since that MutationObserver only runs when the select element has base
-  // appearance.
-  bool IsFirstTextInputInAncestorSelect() const;
-  HTMLSelectElement* FirstAncestorSelectElement() const;
-  void SetFirstAncestorSelectElement(HTMLSelectElement* select) {
-    first_ancestor_select_ = select;
-  }
+  bool IsKeyboardFocusableSlow(UpdateBehavior update_behavior =
+                                   UpdateBehavior::kStyleAndLayout) const final;
 
  protected:
   void DefaultEventHandler(Event&) override;
@@ -410,8 +405,6 @@ class CORE_EXPORT HTMLInputElement
   bool HasActivationBehavior() const override;
 
   bool HasCustomFocusLogic() const final;
-  bool IsKeyboardFocusableSlow(UpdateBehavior update_behavior =
-                                   UpdateBehavior::kStyleAndLayout) const final;
   bool MayTriggerVirtualKeyboard() const final;
   bool ShouldHaveFocusAppearance() const final;
   bool IsEnumeratable() const final;
@@ -496,9 +489,14 @@ class CORE_EXPORT HTMLInputElement
 
   void MaybeReportPiiMetrics();
 
+  void DidChangeIsCanvasOrInCanvasSubtree() final;
+
   AtomicString name_;
   // The value string in |value| value mode.
   String non_attribute_value_;
+  // Stores pending value string during parsing.
+  // Used by UpdateViewWithPendingNonConvertedValue().
+  String pending_non_converted_value_;
   unsigned size_;
   // https://html.spec.whatwg.org/C/#concept-input-value-dirty-flag
   unsigned has_dirty_value_ : 1;
@@ -526,7 +524,6 @@ class CORE_EXPORT HTMLInputElement
   // element lives on.
   Member<HTMLImageLoader> image_loader_;
   Member<ListAttributeTargetObserver> list_attribute_target_observer_;
-  Member<HTMLSelectElement> first_ancestor_select_;
 
   FRIEND_TEST_ALL_PREFIXES(HTMLInputElementTest, RadioKeyDownDCHECKFailure);
 };

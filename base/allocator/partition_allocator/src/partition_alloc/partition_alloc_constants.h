@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifdef UNSAFE_BUFFERS_BUILD
+// TODO(crbug.com/40284755): Remove this and spanify to fix the errors.
+#pragma allow_unsafe_buffers
+#endif
+
 #ifndef PARTITION_ALLOC_PARTITION_ALLOC_CONSTANTS_H_
 #define PARTITION_ALLOC_PARTITION_ALLOC_CONSTANTS_H_
 
@@ -64,7 +69,9 @@ enum class FreeFlags {
   kNoHooks = 1 << 1,  // Internal.
   // Quarantine for a while to ensure no UaF from on-stack pointers.
   kSchedulerLoopQuarantine = 1 << 2,
-  kMaxValue = kSchedulerLoopQuarantine,
+  // Quarantine for a while to ensure no UaF from on-stack pointers.
+  kSchedulerLoopQuarantineForAdvancedMemorySafetyChecks = 1 << 3,
+  kMaxValue = kSchedulerLoopQuarantineForAdvancedMemorySafetyChecks,
 };
 PA_DEFINE_OPERATORS_FOR_FLAGS(FreeFlags);
 }  // namespace internal
@@ -105,7 +112,7 @@ PA_ALWAYS_INLINE PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR size_t
 PartitionPageShift() {
   return PageAllocationGranularityShift() + 2;
 }
-#elif defined(_MIPS_ARCH_LOONGSON) || PA_BUILDFLAG(PA_ARCH_CPU_LOONGARCH64)
+#elif defined(_MIPS_ARCH_LOONGSON)
 PA_ALWAYS_INLINE PAGE_ALLOCATOR_CONSTANTS_DECLARE_CONSTEXPR size_t
 PartitionPageShift() {
   return 16;  // 64 KiB

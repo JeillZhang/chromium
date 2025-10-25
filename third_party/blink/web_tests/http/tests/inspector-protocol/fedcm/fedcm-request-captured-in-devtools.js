@@ -11,7 +11,9 @@
 
   // Create a Map to capture request and response params
   const urlByRequestId = new Map();
+  const requestIdByUrl = new Map();
   const responseStatusByUrl = new Map();
+  const requestPayloadByUrl = new Map();
 
   // Array to store SuccessUrls
   const networkLoadingFinishedUrls = [];
@@ -37,6 +39,12 @@
     if ((cachedLoaderId === loaderId) && (cachedFramedId === frameId) && (initiatorType === "FedCM")) {
       // Insert into the Map with key as params.requestId and value as params.request.url
       urlByRequestId.set(params.requestId, params.request.url);
+      requestIdByUrl.set(params.request.url, params.requestId);
+
+      // Capture payload only if it exists
+      if (params.request.hasPostData && params.request.postData) {
+        requestPayloadByUrl.set(params.request.url, params.request.postData);
+      }
     }
   });
 
@@ -48,7 +56,8 @@
     const status = params.response.status + '::' + statusText;
     const loaderId = event.params.loaderId;
     const frameId = event.params.frameId;
-    if ((cachedLoaderId === loaderId) && (cachedFramedId === frameId)) {
+    const type = event.params.type;
+    if ((cachedLoaderId === loaderId) && (cachedFramedId === frameId) && (type === "FedCM")) {
       // Insert into the Map with key as params.response.url, and value as status
       responseStatusByUrl.set(params.response.url, status);
     }
@@ -64,7 +73,10 @@
   dp.Network.onLoadingFailed(event => {
     const requestId = event.params.requestId;
     const errorText = event.params.errorText;
-    networkLoadingFailedUrlsWithStatus.set(urlByRequestId.get(requestId), errorText);
+    const type = event.params.type;
+    if (type === "FedCM") {
+      networkLoadingFailedUrlsWithStatus.set(urlByRequestId.get(requestId), errorText);
+    }
   });
 
   // Enable FedCM domain
@@ -88,10 +100,30 @@
   testRunner.log('urls loaded');
   networkLoadingFinishedUrls.sort();
 
-  networkLoadingFinishedUrls.forEach((item, index) => {
+  for (const item of networkLoadingFinishedUrls) {
     const status = sortedResponseStatusByUrl.get(item);
     testRunner.log(`Url: ${item}, Status: ${status}`);
-  });
+
+    const payload = requestPayloadByUrl.get(item);
+    if (payload) {
+      testRunner.log(`  Payload from requestWillBeSent: ${payload}`);
+    }
+
+    // Try getRequestPostData for this URL's request ID
+    const requestId = requestIdByUrl.get(item);
+    if (requestId && payload) {  // Only try if we have both requestId and know there's POST data
+      try {
+        const postDataResponse = await dp.Network.getRequestPostData({requestId: requestId});
+        if (postDataResponse.result?.postData) {
+          testRunner.log(`  POST data from getRequestPostData: ${postDataResponse.result.postData}`);
+        } else {
+          testRunner.log(`  getRequestPostData did not capture POST data for ${item}`);
+        }
+      } catch (error) {
+        testRunner.log(`  getRequestPostData failed to capture for ${item}: ${error.message}`);
+      }
+    }
+  }
 
   testRunner.log('urls failed');
   const sortedFailedUrlsWithStatus = new Map([...networkLoadingFailedUrlsWithStatus.entries()].sort((a, b) => a[0].localeCompare(b[0])));

@@ -47,18 +47,17 @@ TabFavicon::TabFavicon(JNIEnv* env,
 TabFavicon::~TabFavicon() = default;
 
 void TabFavicon::SetWebContents(JNIEnv* env,
-                                const JavaParamRef<jobject>& obj,
                                 const JavaParamRef<jobject>& jweb_contents) {
   active_web_contents_ =
       content::WebContents::FromJavaWebContents(jweb_contents);
   favicon_driver_ =
       favicon::ContentFaviconDriver::FromWebContents(active_web_contents_);
-  if (favicon_driver_)
+  if (favicon_driver_) {
     favicon_driver_->AddObserver(this);
+  }
 }
 
-void TabFavicon::ResetWebContents(JNIEnv* env,
-                                  const JavaParamRef<jobject>& obj) {
+void TabFavicon::ResetWebContents(JNIEnv* env) {
   active_web_contents_ = nullptr;
   if (favicon_driver_) {
     favicon_driver_->RemoveObserver(this);
@@ -66,13 +65,11 @@ void TabFavicon::ResetWebContents(JNIEnv* env,
   }
 }
 
-void TabFavicon::OnDestroyed(JNIEnv* env, const JavaParamRef<jobject>& obj) {
+void TabFavicon::OnDestroyed(JNIEnv* env) {
   delete this;
 }
 
-ScopedJavaLocalRef<jobject> TabFavicon::GetFavicon(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
+ScopedJavaLocalRef<jobject> TabFavicon::GetFavicon(JNIEnv* env) {
   ScopedJavaLocalRef<jobject> bitmap;
 
   if (!favicon_driver_ || !favicon_driver_->FaviconIsValid()) {
@@ -83,7 +80,7 @@ ScopedJavaLocalRef<jobject> TabFavicon::GetFavicon(
   SkBitmap favicon = favicon_driver_->GetFavicon().AsBitmap();
   if (!favicon.empty()) {
     const float device_scale_factor =
-        display::Screen::GetScreen()->GetPrimaryDisplay().device_scale_factor();
+        display::Screen::Get()->GetPrimaryDisplay().device_scale_factor();
     int target_size_dip = device_scale_factor * gfx::kFaviconSize;
     if (favicon.width() != target_size_dip ||
         favicon.height() != target_size_dip) {
@@ -108,8 +105,9 @@ void TabFavicon::OnFaviconUpdated(favicon::FaviconDriver* favicon_driver,
   }
 
   SkBitmap favicon = image.AsImageSkia().GetRepresentation(1.0f).GetBitmap();
-  if (favicon.empty())
+  if (favicon.empty()) {
     return;
+  }
 
   JNIEnv* env = base::android::AttachCurrentThread();
 
@@ -123,7 +121,7 @@ void TabFavicon::OnFaviconUpdated(favicon::FaviconDriver* favicon_driver,
         env, jobj_, gfx::ConvertToJavaBitmap(favicon), j_icon_url);
   }
   if (content::BackForwardTransitionAnimationManager::
-          AreBackForwardTransitionsEnabled()) {
+          ShouldAnimateBackForwardTransitions()) {
     CHECK(active_web_contents_);
     if (static_cast<bool>(
             Java_TabFavicon_shouldUpdateFaviconForNavigationTransitions(

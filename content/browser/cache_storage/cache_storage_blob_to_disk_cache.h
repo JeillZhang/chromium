@@ -6,7 +6,7 @@
 #define CONTENT_BROWSER_CACHE_STORAGE_CACHE_STORAGE_BLOB_TO_DISK_CACHE_H_
 
 #include "base/functional/callback.h"
-#include "base/memory/ref_counted.h"
+#include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/cache_storage/scoped_writable_entry.h"
 #include "content/common/content_export.h"
@@ -67,7 +67,7 @@ class CONTENT_EXPORT CacheStorageBlobToDiskCache
 
   void OnDataPipeReadable(MojoResult result);
 
-  int cache_entry_offset_ = 0;
+  uint64_t cache_entry_offset_ = 0;
   ScopedWritableEntry entry_;
 
   int disk_cache_body_index_ = 0;

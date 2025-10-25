@@ -29,8 +29,11 @@
 #include "extensions/browser/service_worker/worker_id.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/browser/warning_service.h"
+#include "extensions/buildflags/buildflags.h"
 #include "extensions/common/command.h"
 #include "extensions/common/extension_id.h"
+
+static_assert(BUILDFLAG(ENABLE_EXTENSIONS_CORE));
 
 namespace extensions {
 
@@ -254,13 +257,13 @@ void DeveloperPrivateEventRouterShared::OnExtensionAllowlistWarningStateChanged(
 
 void DeveloperPrivateEventRouterShared::OnExtensionCommandAdded(
     const ExtensionId& extension_id,
-    const Command& added_command) {
+    const std::string& command_name) {
   BroadcastItemStateChanged(developer::EventType::kCommandAdded, extension_id);
 }
 
 void DeveloperPrivateEventRouterShared::OnExtensionCommandRemoved(
     const ExtensionId& extension_id,
-    const Command& removed_command) {
+    const std::string& command_name) {
   BroadcastItemStateChanged(developer::EventType::kCommandRemoved,
                             extension_id);
 }

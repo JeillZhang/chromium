@@ -8,12 +8,9 @@
 
 namespace crypto::features {
 
-BASE_FEATURE(kProcessBoundStringEncryption,
-             "ProcessBoundStringEncryption",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kIsHardwareBackedFixEnabled, base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kIsHardwareBackedFixEnabled,
-             "IsHardwareBackedFixEnabled",
+BASE_FEATURE(kMigrateIOSKeychainAccessibility,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace crypto::features

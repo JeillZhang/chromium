@@ -40,6 +40,15 @@ std::string_view COMPONENT_EXPORT(NETWORK_CPP)
 mojom::IPAddressSpace COMPONENT_EXPORT(NETWORK_CPP)
     IPAddressToIPAddressSpace(const net::IPAddress& address);
 
+// Returns the `IPAddressSpace` to which `endpoint` belongs.
+// Returns `kUnknown` for invalid IP addresses.
+//
+// WARNING: Most callers will want to use `TransportInfoToIPAddressSpace()`
+// below instead, as this does not properly account for proxies. It does account
+// for command-line overrides though.
+mojom::IPAddressSpace COMPONENT_EXPORT(NETWORK_CPP)
+    IPEndPointToIPAddressSpace(const net::IPEndPoint& endpoint);
+
 // Returns the `IPAddressSpace` to which the endpoint of `transport` belongs.
 //
 // When the transport is a proxied connection, returns `kUnknown`. See
@@ -70,21 +79,21 @@ mojom::IPAddressSpace COMPONENT_EXPORT(NETWORK_CPP)
 //
 //  - public and unknown (equivalent)
 //  - private
-//  - local
+//  - loopback
 //
 bool COMPONENT_EXPORT(NETWORK_CPP)
     IsLessPublicAddressSpace(mojom::IPAddressSpace lhs,
                              mojom::IPAddressSpace rhs);
 
 // Returns whether `lhs` is less public than `rhs`, but collapses the private
-// and local address spaces into the same bucket.
+// and loopback address spaces into the same bucket.
 //
 // This comparator is compatible with std::less.
 //
 // Address spaces go from most public to least public in the following order:
 //
 //  - public and unknown (equivalent)
-//  - private and local (equivalent)
+//  - private and loopback (equivalent)
 //
 bool COMPONENT_EXPORT(NETWORK_CPP)
     IsLessPublicAddressSpaceLNA(mojom::IPAddressSpace lhs,

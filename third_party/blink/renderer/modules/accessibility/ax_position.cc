@@ -790,7 +790,7 @@ const AXPosition AXPosition::AsValidDOMPosition(
     return {};
   }
 
-  // At this point, if a non-pseudo element DOM node is associated with our
+  // At this point, if a non-pseudo-element DOM node is associated with our
   // container, then the corresponding DOM position should be valid.
   const Node* container_node = container->GetClosestNode();
   if (container_node->IsPseudoElement()) {
@@ -919,6 +919,16 @@ const PositionWithAffinity AXPosition::ToPositionWithAffinity(
   // or "display=inline-block". It also supports out-of-flow elements, which
   // should not be relevant to text positions in the accessibility tree.
   const LayoutObject* layout_object = container_node->GetLayoutObject();
+  // If `adjusted_position.container_object_` is a StaticText node with
+  // preserve whitespace style, text offset matches DOM offset (no collapsing).
+  // Return directly without further offset mapping.
+  if (adjusted_position.container_object_->RoleValue() ==
+          ax::mojom::blink::Role::kStaticText &&
+      layout_object && layout_object->StyleRef().ShouldPreserveWhiteSpaces()) {
+    return PositionWithAffinity(
+        Position(*container_node, adjusted_position.TextOffset()), affinity_);
+  }
+
   // TODO(crbug.com/567964): LayoutObject::IsAtomicInlineLevel() also includes
   // block-level replaced elements. We need to explicitly exclude them via
   // LayoutObject::IsInline().
@@ -1009,10 +1019,10 @@ String AXPosition::ToString() const {
 // static
 bool AXPosition::IsIgnoredCharacter(UChar character) {
   switch (character) {
-    case kZeroWidthSpaceCharacter:
-    case kLeftToRightIsolateCharacter:
-    case kRightToLeftIsolateCharacter:
-    case kPopDirectionalIsolateCharacter:
+    case uchar::kZeroWidthSpace:
+    case uchar::kLeftToRightIsolate:
+    case uchar::kRightToLeftIsolate:
+    case uchar::kPopDirectionalIsolate:
       return true;
     default:
       return false;
@@ -1099,10 +1109,6 @@ bool operator==(const AXPosition& a, const AXPosition& b) {
     return a.ChildIndex() == b.ChildIndex();
   NOTREACHED() << "AXPosition objects having the same container object should "
                   "have the same type.";
-}
-
-bool operator!=(const AXPosition& a, const AXPosition& b) {
-  return !(a == b);
 }
 
 bool operator<(const AXPosition& a, const AXPosition& b) {

@@ -2,6 +2,7 @@ This test documents Blink's web-exposed policy-controlled features.
 All changes to this list should go through Blink's feature review process: http://www.chromium.org/blink#new-features
 
 accelerometer
+aria-notify
 attribution-reporting
 autoplay
 browsing-topics
@@ -36,6 +37,7 @@ compute-pressure
 cross-origin-isolated
 deferred-fetch
 deferred-fetch-minimal
+digital-credentials-get
 display-capture
 encrypted-media
 fullscreen
@@ -50,9 +52,11 @@ join-ad-interest-group
 keyboard-map
 language-detector
 local-fonts
+local-network-access
 magnetometer
 microphone
 midi
+on-device-speech-recognition
 otp-credentials
 payment
 picture-in-picture
@@ -61,7 +65,6 @@ private-state-token-issuance
 private-state-token-redemption
 publickey-credentials-create
 publickey-credentials-get
-rewriter
 run-ad-auction
 screen-wake-lock
 serial
@@ -74,6 +77,5 @@ translator
 unload
 usb
 window-management
-writer
 xr-spatial-tracking
 

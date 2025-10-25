@@ -21,10 +21,6 @@
 namespace media {
 class VideoDecodePerfHistory;
 class WebrtcVideoPerfHistory;
-namespace learning {
-class LearningSession;
-class LearningSessionImpl;
-}  // namespace learning
 }  // namespace media
 
 namespace storage {
@@ -42,10 +38,13 @@ class BrowserContextImpl;
 class BrowsingDataRemoverImpl;
 class DownloadManager;
 class InMemoryFederatedPermissionContext;
-class NavigationEntryScreenshotManager;
 class PermissionController;
 class PrefetchService;
 class StoragePartitionImplMap;
+
+#if BUILDFLAG(IS_ANDROID)
+class NavigationEntryScreenshotManager;
+#endif  // BUILDFLAG(IS_ANDROID)
 
 // content-internal parts of BrowserContext.
 //
@@ -75,8 +74,6 @@ class CONTENT_EXPORT BrowserContextImpl {
 
   BrowsingDataRemoverImpl* GetBrowsingDataRemover();
 
-  media::learning::LearningSession* GetLearningSession();
-
   storage::ExternalMountPoints* GetMountPoints();
 
   DownloadManager* GetDownloadManager();
@@ -104,7 +101,9 @@ class CONTENT_EXPORT BrowserContextImpl {
   void SetPrefetchServiceForTesting(
       std::unique_ptr<PrefetchService> prefetch_service);
 
+#if BUILDFLAG(IS_ANDROID)
   NavigationEntryScreenshotManager* GetNavigationEntryScreenshotManager();
+#endif  // BUILDFLAG(IS_ANDROID)
 
   InMemoryFederatedPermissionContext* GetFederatedPermissionContext();
   void ResetFederatedPermissionContext();
@@ -161,12 +160,13 @@ class CONTENT_EXPORT BrowserContextImpl {
   std::unique_ptr<PermissionController> permission_controller_;
   scoped_refptr<BackgroundSyncScheduler> background_sync_scheduler_;
   std::unique_ptr<PrefetchService> prefetch_service_;
+#if BUILDFLAG(IS_ANDROID)
   std::unique_ptr<NavigationEntryScreenshotManager>
       nav_entry_screenshot_manager_;
+#endif  // BUILDFLAG(IS_ANDROID)
   std::unique_ptr<InMemoryFederatedPermissionContext>
       federated_permission_context_;
 
-  std::unique_ptr<media::learning::LearningSessionImpl> learning_session_;
   std::unique_ptr<media::VideoDecodePerfHistory> video_decode_perf_history_;
   std::unique_ptr<media::WebrtcVideoPerfHistory> webrtc_video_perf_history_;
 

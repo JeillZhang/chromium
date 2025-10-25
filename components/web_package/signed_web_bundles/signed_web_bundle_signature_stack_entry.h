@@ -6,9 +6,9 @@
 #define COMPONENTS_WEB_PACKAGE_SIGNED_WEB_BUNDLES_SIGNED_WEB_BUNDLE_SIGNATURE_STACK_ENTRY_H_
 
 #include <variant>
+#include <vector>
 
 #include "base/types/expected.h"
-#include "components/web_package/mojom/web_bundle_parser.mojom-forward.h"
 #include "components/web_package/signed_web_bundles/ecdsa_p256_public_key.h"
 #include "components/web_package/signed_web_bundles/ecdsa_p256_sha256_signature.h"
 #include "components/web_package/signed_web_bundles/ed25519_public_key.h"

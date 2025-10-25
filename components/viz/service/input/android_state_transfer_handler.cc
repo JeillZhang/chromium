@@ -8,7 +8,9 @@
 
 #include "base/check_deref.h"
 #include "base/notreached.h"
-#include "ui/events/android/motion_event_android_native.h"
+#include "components/viz/service/input/input_on_viz_state_processing_result.h"
+#include "ui/events/android/events_android_utils.h"
+#include "ui/events/android/motion_event_android_factory.h"
 
 namespace viz {
 
@@ -19,6 +21,17 @@ base::TimeTicks GetEventDowntime(const base::android::ScopedInputEvent& event) {
       AMotionEvent_getDownTime(event.a_input_event()) /
       base::Time::kNanosecondsPerMillisecond);
 }
+
+// LINT.IfChange(VizSequenceDroppedReason)
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused.
+enum class VizSequenceDroppedReason {
+  kOlderSequenceInQueue = 0,
+  kMaxValue = kOlderSequenceInQueue,
+};
+
+// LINT.ThenChange(//tools/metrics/histograms/metadata/android/enums.xml:VizSequenceDroppedReason)
 
 }  // namespace
 
@@ -56,12 +69,22 @@ void AndroidStateTransferHandler::StateOnTouchTransfer(
        (state->down_time_ms <
         pending_transferred_states_.back().transfer_state->down_time_ms));
 
-  CHECK(!state_received_out_of_order);
+  if (state_received_out_of_order) {
+    // We don't expect to receive `StateOnTouchTransfer` mojo calls coming out
+    // of order. But it's possible the timestamps provided by Android platform
+    // are the issue.
+    TRACE_EVENT_INSTANT("viz", "OutOfOrderTransferStateDropped");
+    EmitStateProcessingResultHistogram(
+        InputOnVizStateProcessingResult::kDroppedOutOfOrderDownTime);
+    return;
+  }
 
   MaybeDropEventsFromEarlierSequences(state);
 
   pending_transferred_states_.emplace(rir_support, std::move(state));
   if (pending_transferred_states_.size() > kMaxPendingTransferredStates) {
+    EmitStateProcessingResultHistogram(
+        InputOnVizStateProcessingResult::kDroppedTooManyPendingStates);
     pending_transferred_states_.pop();
   }
 
@@ -100,6 +123,13 @@ bool AndroidStateTransferHandler::OnMotionEvent(
 
   const int action = AMotionEvent_getAction(input_event.a_input_event()) &
                      AMOTION_EVENT_ACTION_MASK;
+
+  // Viz only handles touch events, actions like button press/release are not
+  // supported and should ideally not be arriving.
+  if (!IsExpectedMotionEventAction(action)) {
+    return true;
+  }
+
   if (ignore_remaining_touch_sequence_) {
     if (action == AMOTION_EVENT_ACTION_CANCEL ||
         action == AMOTION_EVENT_ACTION_UP) {
@@ -134,6 +164,24 @@ bool AndroidStateTransferHandler::OnMotionEvent(
   return true;
 }
 
+bool AndroidStateTransferHandler::IsExpectedMotionEventAction(int action) {
+  switch (action) {
+    case AMOTION_EVENT_ACTION_DOWN:
+    case AMOTION_EVENT_ACTION_UP:
+    case AMOTION_EVENT_ACTION_MOVE:
+    case AMOTION_EVENT_ACTION_CANCEL:
+    case AMOTION_EVENT_ACTION_POINTER_DOWN:
+    case AMOTION_EVENT_ACTION_POINTER_UP:
+      return true;
+    default:
+      break;
+  }
+
+  base::UmaHistogramEnumeration(kDroppedNonTouchActions,
+                                ui::FromAndroidAction(action));
+  return false;
+}
+
 bool AndroidStateTransferHandler::CanStartProcessingVizEvents(
     const base::android::ScopedInputEvent& event) {
   CHECK(!state_for_curr_sequence_.has_value());
@@ -150,6 +198,8 @@ bool AndroidStateTransferHandler::CanStartProcessingVizEvents(
   while (!pending_transferred_states_.empty() &&
          (pending_transferred_states_.front().transfer_state->down_time_ms <
           event_down_time)) {
+    EmitStateProcessingResultHistogram(
+        InputOnVizStateProcessingResult::kDroppedUnusedOlderStates);
     pending_transferred_states_.pop();
   }
 
@@ -162,8 +212,19 @@ bool AndroidStateTransferHandler::CanStartProcessingVizEvents(
   // processed before next sequence starts.
   if (event_down_time == state.transfer_state->down_time_ms) {
     if (state.transfer_state->browser_would_have_handled) {
-      client_->TransferInputBackToBrowser();
+      if (client_->TransferInputBackToBrowser()) {
+        EmitStateProcessingResultHistogram(
+            InputOnVizStateProcessingResult::
+                kTransferBackToBrowserSuccessfully);
+      } else {
+        EmitStateProcessingResultHistogram(
+            InputOnVizStateProcessingResult::
+                kDroppedTransferBackToBrowserFailed);
+      }
       ignore_remaining_touch_sequence_ = true;
+    } else {
+      EmitStateProcessingResultHistogram(
+          InputOnVizStateProcessingResult::kProcessedSuccessfully);
     }
     state_for_curr_sequence_.emplace(std::move(state));
     pending_transferred_states_.pop();
@@ -177,8 +238,17 @@ void AndroidStateTransferHandler::MaybeDropEventsFromEarlierSequences(
   if (events_buffer_.empty()) {
     return;
   }
+
   while (!events_buffer_.empty() &&
          GetEventDowntime(events_buffer_.front()) < state->down_time_ms) {
+    const int action =
+        AMotionEvent_getAction(events_buffer_.front().a_input_event()) &
+        AMOTION_EVENT_ACTION_MASK;
+    if (action == AMOTION_EVENT_ACTION_DOWN) {
+      base::UmaHistogramEnumeration(
+          "Android.InputOnViz.Viz.SequenceDroppedReason",
+          VizSequenceDroppedReason::kOlderSequenceInQueue);
+    }
     events_buffer_.pop();
   }
 }
@@ -229,16 +299,15 @@ void AndroidStateTransferHandler::HandleTouchEvent(
     return;
   }
 
-  std::optional<ui::MotionEventAndroidNative::EventTimes> event_times =
-      std::nullopt;
+  std::optional<ui::MotionEventAndroid::EventTimes> event_times = std::nullopt;
   if (action == AMOTION_EVENT_ACTION_DOWN) {
-    event_times = ui::MotionEventAndroidNative::EventTimes();
+    event_times = ui::MotionEventAndroid::EventTimes();
     // AMotionEvent_getDownTime returns down time in nanoseconds precision.
     event_times->latest = base::TimeTicks::FromJavaNanoTime(
         AMotionEvent_getDownTime(input_event.a_input_event()));
     event_times->oldest = event_times->latest;
   }
-  auto event = ui::MotionEventAndroidNative::Create(
+  auto event = ui::MotionEventAndroidFactory::CreateFromNative(
       std::move(input_event),
       1.f / state_for_curr_sequence_->transfer_state->dip_scale,
       state_for_curr_sequence_->transfer_state->web_contents_y_offset_pix,

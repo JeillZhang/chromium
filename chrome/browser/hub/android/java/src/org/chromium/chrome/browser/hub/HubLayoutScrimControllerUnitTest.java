@@ -18,6 +18,7 @@ import android.view.View;
 import android.widget.FrameLayout;
 
 import androidx.annotation.ColorInt;
+import androidx.core.content.ContextCompat;
 import androidx.test.ext.junit.rules.ActivityScenarioRule;
 import androidx.test.filters.SmallTest;
 
@@ -34,8 +35,9 @@ import org.robolectric.shadows.ShadowLooper;
 
 import org.chromium.base.supplier.ObservableSupplierImpl;
 import org.chromium.base.test.BaseRobolectricTestRunner;
-import org.chromium.chrome.browser.theme.SurfaceColorUpdateUtils;
+import org.chromium.components.browser_ui.styles.SemanticColorUtils;
 import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager.ScrimClient;
 import org.chromium.components.browser_ui.widget.scrim.ScrimProperties;
 import org.chromium.ui.base.TestActivity;
 import org.chromium.ui.modelutil.PropertyModel;
@@ -70,7 +72,7 @@ public class HubLayoutScrimControllerUnitTest {
         mAnchorView = new View(mActivity);
         rootView.addView(mAnchorView);
 
-        mScrimManager = spy(new ScrimManager(mActivity, rootView));
+        mScrimManager = spy(new ScrimManager(mActivity, rootView, ScrimClient.NONE));
 
         mIsIncognitoSupplier = new ObservableSupplierImpl<>(false);
 
@@ -136,7 +138,9 @@ public class HubLayoutScrimControllerUnitTest {
         assertFalse(model.get(ScrimProperties.SHOW_IN_FRONT_OF_ANCHOR_VIEW));
         assertTrue(model.get(ScrimProperties.AFFECTS_STATUS_BAR));
         final @ColorInt int scrimColor =
-                SurfaceColorUpdateUtils.getGridTabSwitcherBackgroundColor(mActivity, isIncognito);
+                isIncognito
+                        ? ContextCompat.getColor(mActivity, R.color.default_bg_color_dark)
+                        : SemanticColorUtils.getDefaultBgColor(mActivity);
         assertEquals(scrimColor, model.get(ScrimProperties.BACKGROUND_COLOR));
     }
 }

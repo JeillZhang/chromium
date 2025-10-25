@@ -13,6 +13,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
+#include "base/notimplemented.h"
 #include "base/notreached.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/strcat.h"
@@ -190,6 +191,11 @@ void LogSyncOptInOffered(AccessPoint access_point) {
   base::UmaHistogramEnumeration("Signin.SyncOptIn.Offered", access_point);
 }
 
+void LogHistorySyncOptInOffered(AccessPoint access_point) {
+  base::UmaHistogramEnumeration("Signin.HistorySyncOptIn.Offered",
+                                access_point);
+}
+
 void LogSyncSettingsOpened(AccessPoint access_point) {
   base::UmaHistogramEnumeration("Signin.SyncOptIn.OpenedSyncSettings",
                                 access_point);
@@ -270,7 +276,7 @@ void LogCookieJarCounts(const int signed_in,
 void LogAccountRelation(const AccountRelation relation,
                         const ReportingType type) {
   INVESTIGATOR_HISTOGRAM_ENUMERATION(
-      "Signin.CookieJar.ChromeAccountRelation", type,
+      "Signin.CookieJar.ChromeAccountRelation2", type,
       static_cast<int>(relation),
       static_cast<int>(AccountRelation::HISTOGRAM_COUNT));
 }
@@ -343,6 +349,14 @@ void RecordReauthFlowEventInSigninFlow(signin_metrics::AccessPoint access_point,
                                        ReauthFlowEvent event) {
   base::UmaHistogramEnumeration(
       base::StrCat({"Signin.Reauth.InSigninFlow",
+                    ReauthFlowEventToHistogramSuffix(event)}),
+      access_point);
+}
+
+void RecordReauthFlowEventInExplicitFlow(ReauthAccessPoint access_point,
+                                         ReauthFlowEvent event) {
+  base::UmaHistogramEnumeration(
+      base::StrCat({"Signin.Reauth.InExplicitFlow",
                     ReauthFlowEventToHistogramSuffix(event)}),
       access_point);
 }
@@ -424,7 +438,7 @@ void RecordSigninUserActionForAccessPoint(AccessPoint access_point) {
       base::RecordAction(
           base::UserMetricsAction("Signin_Signin_FromDevicesPage"));
       break;
-    case AccessPoint::kSigninPromo:
+    case AccessPoint::kFullscreenSigninPromo:
       base::RecordAction(
           base::UserMetricsAction("Signin_Signin_FromSigninPromo"));
       break;
@@ -615,10 +629,6 @@ void RecordSigninUserActionForAccessPoint(AccessPoint access_point) {
       base::RecordAction(base::UserMetricsAction(
           "Signin_Signin_FromHistorySyncOptinExpansionPillOnStartup"));
       break;
-    case AccessPoint::kHistorySyncOptinExpansionPillOnInactivity:
-      base::RecordAction(base::UserMetricsAction(
-          "Signin_Signin_FromHistorySyncOptinExpansionPillOnInactivity"));
-      break;
     case AccessPoint::kNonModalSigninPasswordPromo:
       base::RecordAction(base::UserMetricsAction(
           "Signin_Signin_FromNonModalSigninPasswordPromo"));
@@ -626,6 +636,26 @@ void RecordSigninUserActionForAccessPoint(AccessPoint access_point) {
     case AccessPoint::kNonModalSigninBookmarkPromo:
       base::RecordAction(base::UserMetricsAction(
           "Signin_Signin_FromNonModalSigninBookmarkPromo"));
+      break;
+    case AccessPoint::kUserManagerWithPrefilledEmail:
+      base::RecordAction(base::UserMetricsAction(
+          "Signin_Signin_FromUserManagerWithPrefilledEmail"));
+      break;
+    case AccessPoint::kEnterpriseManagementDisclaimerAtStartup:
+      base::RecordAction(base::UserMetricsAction(
+          "Signin_Signin_FromEnterpriseManagementDisclaimerAtStartup"));
+      break;
+    case AccessPoint::kEnterpriseManagementDisclaimerAfterBrowserFocus:
+      base::RecordAction(base::UserMetricsAction(
+          "Signin_Signin_FromEnterpriseManagementDisclaimerAfterBrowserFocus"));
+      break;
+    case AccessPoint::kEnterpriseManagementDisclaimerAfterSignin:
+      base::RecordAction(base::UserMetricsAction(
+          "Signin_Signin_FromEnterpriseManagementDisclaimerAfterSignin"));
+      break;
+    case AccessPoint::kNtpFeaturePromo:
+      base::RecordAction(
+          base::UserMetricsAction("Signin_Signin_FromNtpFeaturePromo"));
       break;
   }
 }
@@ -666,7 +696,7 @@ void RecordSigninImpressionUserActionForAccessPoint(AccessPoint access_point) {
       base::RecordAction(
           base::UserMetricsAction("Signin_Impression_FromDevicesPage"));
       break;
-    case AccessPoint::kSigninPromo:
+    case AccessPoint::kFullscreenSigninPromo:
       base::RecordAction(
           base::UserMetricsAction("Signin_Impression_FromSigninPromo"));
       break;
@@ -758,6 +788,10 @@ void RecordSigninImpressionUserActionForAccessPoint(AccessPoint access_point) {
       base::RecordAction(
           base::UserMetricsAction("Signin_Impression_FromAddressBubble"));
       break;
+    case AccessPoint::kUserManagerWithPrefilledEmail:
+      base::RecordAction(base::UserMetricsAction(
+          "Signin_Impression_FromUserManagerWithPrefilledEmail"));
+      break;
     case AccessPoint::kEnterpriseSignoutCoordinator:
     case AccessPoint::kExtensions:
     case AccessPoint::kSupervisedUser:
@@ -798,11 +832,14 @@ void RecordSigninImpressionUserActionForAccessPoint(AccessPoint access_point) {
     case AccessPoint::kHistorySyncOptinExpansionPillOnStartup:
     case AccessPoint::kWidget:
     case AccessPoint::kCollaborationLeaveOrDeleteTabGroup:
-    case AccessPoint::kHistorySyncOptinExpansionPillOnInactivity:
     case AccessPoint::kHistorySyncEducationalTip:
     case AccessPoint::kManagedProfileAutoSigninIos:
     case AccessPoint::kNonModalSigninPasswordPromo:
     case AccessPoint::kNonModalSigninBookmarkPromo:
+    case AccessPoint::kEnterpriseManagementDisclaimerAtStartup:
+    case AccessPoint::kEnterpriseManagementDisclaimerAfterBrowserFocus:
+    case AccessPoint::kEnterpriseManagementDisclaimerAfterSignin:
+    case AccessPoint::kNtpFeaturePromo:
       NOTREACHED() << "Signin_Impression_From* user actions are not recorded "
                       "for access point "
                    << static_cast<int>(access_point);

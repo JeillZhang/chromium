@@ -15,13 +15,13 @@
 #include "base/task/thread_pool.h"
 #include "base/token.h"
 #include "base/unguessable_token.h"
+#include "components/url_pattern/simple_url_pattern_matcher.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/disk_cache.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "services/network/public/cpp/request_destination.h"
 #include "services/network/shared_dictionary/shared_dictionary_cache.h"
 #include "services/network/shared_dictionary/shared_dictionary_storage_on_disk.h"
-#include "services/network/shared_dictionary/simple_url_pattern_matcher.h"
 
 namespace network {
 namespace {
@@ -493,10 +493,6 @@ SharedDictionaryManagerOnDisk::SharedDictionaryManagerOnDisk(
           base::CommandLine::ForCurrentProcess()->HasSwitch(
               switches::kDisableSharedDictionaryStorageCleanupForTesting)) {
   dictionary_cache_ = base::MakeRefCounted<SharedDictionaryCache>();
-  memory_pressure_listener_ = std::make_unique<base::MemoryPressureListener>(
-      FROM_HERE,
-      base::BindRepeating(&SharedDictionaryManagerOnDisk::OnMemoryPressure,
-                          weak_factory_.GetWeakPtr()));
   disk_cache_.Initialize(cache_directory_path,
 #if BUILDFLAG(IS_ANDROID)
                          app_status_listener_getter,
@@ -504,6 +500,9 @@ SharedDictionaryManagerOnDisk::SharedDictionaryManagerOnDisk(
                          std::move(file_operations_factory));
   MaybePostExpiredDictionaryDeletionTask();
   if (cache_max_size_ != 0u) {
+    base::UmaHistogramMemoryMB(
+        "Net.SharedDictionaryManagerOnDisk.PolicySpecifiedCacheMaxSize",
+        cache_max_size_ / (1000 * 1000));
     MaybePostCacheEvictionTask();
   }
 }
@@ -522,6 +521,8 @@ SharedDictionaryManagerOnDisk::CreateStorage(
 }
 
 void SharedDictionaryManagerOnDisk::SetCacheMaxSize(uint64_t cache_max_size) {
+  base::UmaHistogramMemoryMB("Net.SharedDictionaryManagerOnDisk.CacheMaxSize",
+                             cache_max_size_ / (1000 * 1000));
   cache_max_size_ = cache_max_size;
   MaybePostExpiredDictionaryDeletionTask();
   MaybePostCacheEvictionTask();
@@ -584,6 +585,13 @@ void SharedDictionaryManagerOnDisk::GetOriginsBetween(
                 result.value_or(std::vector<url::Origin>()));
           },
           std::move(callback)));
+}
+
+void SharedDictionaryManagerOnDisk::HandleMemoryPressure(
+    base::MemoryPressureLevel level) {
+  if (level != base::MEMORY_PRESSURE_LEVEL_NONE) {
+    dictionary_cache_->Clear();
+  }
 }
 
 scoped_refptr<SharedDictionaryWriter>
@@ -662,11 +670,11 @@ void SharedDictionaryManagerOnDisk::OnDictionaryWrittenInDatabase(
     return;
   }
 
-  base::UmaHistogramMemoryKB(
-      "Net.SharedDictionaryManagerOnDisk.DictionarySizeKB", info.size());
-  base::UmaHistogramMemoryKB(
-      "Net.SharedDictionaryManagerOnDisk.TotalDictionarySizeKBWhenAdded",
-      result.value().total_dictionary_size());
+  base::UmaHistogramMemoryKB("Net.SharedDictionaryManagerOnDisk.DictionarySize",
+                             info.size());
+  base::UmaHistogramMemoryMB(
+      "Net.SharedDictionaryManagerOnDisk.TotalDictionarySizeWhenAdded",
+      result.value().total_dictionary_size() / (1000 * 1000));
   base::UmaHistogramCounts1000(
       "Net.SharedDictionaryManagerOnDisk.TotalDictionaryCountWhenAdded",
       result.value().total_dictionary_count());
@@ -695,9 +703,21 @@ void SharedDictionaryManagerOnDisk::OnDictionaryWrittenInDatabase(
 
 void SharedDictionaryManagerOnDisk::UpdateDictionaryLastFetchTime(
     net::SharedDictionaryInfo& info,
-    base::Time last_fetch_time) {
+    base::Time last_fetch_time,
+    const std::optional<base::TimeDelta>& ttl) {
   info.set_last_fetch_time(last_fetch_time);
   CHECK(info.primary_key_in_database());
+  if (ttl) {
+    // If there is an explicit ttl, it is relative to the last time the
+    // resource was fetched so we reset the base time of the response to
+    // be the last fetch.
+    info.set_response_time(last_fetch_time);
+    metadata_store_.UpdateDictionaryResponseTimeAndLastFetchTime(
+        *info.primary_key_in_database(), info.last_fetch_time(),
+        base::BindOnce(
+            [](net::SQLitePersistentSharedDictionaryStore::Error) {}));
+    return;
+  }
   metadata_store_.UpdateDictionaryLastFetchTime(
       *info.primary_key_in_database(), info.last_fetch_time(),
       base::BindOnce([](net::SQLitePersistentSharedDictionaryStore::Error) {}));
@@ -812,13 +832,6 @@ void SharedDictionaryManagerOnDisk::MaybePostExpiredDictionaryDeletionTask() {
             }
           },
           weak_factory_.GetWeakPtr())));
-}
-
-void SharedDictionaryManagerOnDisk::OnMemoryPressure(
-    base::MemoryPressureListener::MemoryPressureLevel level) {
-  if (level != base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE) {
-    dictionary_cache_->Clear();
-  }
 }
 
 }  // namespace network

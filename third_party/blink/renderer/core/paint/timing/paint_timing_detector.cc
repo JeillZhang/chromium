@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 #include "third_party/blink/renderer/core/paint/timing/paint_timing_detector.h"
 
+#include "base/check_deref.h"
 #include "base/metrics/histogram_functions.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/input/web_input_event.h"
@@ -29,7 +30,9 @@
 #include "third_party/blink/renderer/core/style/style_fetched_image.h"
 #include "third_party/blink/renderer/core/svg/graphics/svg_image.h"
 #include "third_party/blink/renderer/core/timing/dom_window_performance.h"
+#include "third_party/blink/renderer/core/timing/navigation_id_generator.h"
 #include "third_party/blink/renderer/core/timing/soft_navigation_heuristics.h"
+#include "third_party/blink/renderer/core/timing/window_performance.h"
 #include "third_party/blink/renderer/platform/graphics/bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/graphics_context.h"
 #include "third_party/blink/renderer/platform/graphics/image.h"
@@ -128,6 +131,23 @@ void ReportImagePixelInaccuracy(HTMLImageElement* image_element) {
   }
 }
 
+const char* ScrollTypeToString(mojom::blink::ScrollType scroll_type) {
+  switch (scroll_type) {
+    case mojom::blink::ScrollType::kUser:
+      return "user";
+    case mojom::blink::ScrollType::kProgrammatic:
+      return "programmatic";
+    case mojom::blink::ScrollType::kClamping:
+      return "clamping";
+    case mojom::blink::ScrollType::kCompositor:
+      return "compositor";
+    case mojom::blink::ScrollType::kAnchoring:
+      return "anchoring";
+    case mojom::blink::ScrollType::kScrollStart:
+      return "scrollstart";
+  }
+}
+
 }  // namespace
 
 PaintTimingDetector::PaintTimingDetector(LocalFrameView* frame_view)
@@ -151,8 +171,7 @@ void PaintTimingDetector::NotifyPaintFinished() {
     visualizer_.reset();
   }
 
-  LocalDOMWindow* window = frame_view_->GetFrame().DomWindow();
-  if (window) {
+  if (LocalDOMWindow* window = DomWindow()) {
     DOMWindowPerformance::performance(*window)->OnPaintFinished();
 
     if (auto* heuristics = window->GetSoftNavigationHeuristics()) {
@@ -180,17 +199,6 @@ bool PaintTimingDetector::NotifyBackgroundImagePaint(
     return false;
   }
 
-  PaintTimingDetector& paint_timing_detector =
-      frame_view->GetPaintTimingDetector();
-  if (paint_timing_detector.IsUnrelatedSoftNavigationPaint(node)) {
-    return false;
-  }
-  ImagePaintTimingDetector& image_paint_timing_detector =
-      paint_timing_detector.GetImagePaintTimingDetector();
-  if (!image_paint_timing_detector.IsRecordingLargestImagePaint()) {
-    return false;
-  }
-
   if (!IsBackgroundImageContentful(*object, image)) {
     return false;
   }
@@ -200,9 +208,10 @@ bool PaintTimingDetector::NotifyBackgroundImagePaint(
   // TODO(yoav): |image| and |cached_image.GetImage()| are not the same here in
   // the case of SVGs. Figure out why and if we can remove this footgun.
 
-  return image_paint_timing_detector.RecordImage(
-      *object, image.Size(), *cached_image, current_paint_chunk_properties,
-      &style_image, image_border);
+  return frame_view->GetPaintTimingDetector()
+      .GetImagePaintTimingDetector()
+      .RecordImage(*object, image.Size(), *cached_image,
+                   current_paint_chunk_properties, &style_image, image_border);
 }
 
 // static
@@ -219,19 +228,7 @@ bool PaintTimingDetector::NotifyImagePaint(
   if (!frame_view) {
     return false;
   }
-  PaintTimingDetector& paint_timing_detector =
-      frame_view->GetPaintTimingDetector();
-  ImagePaintTimingDetector& image_paint_timing_detector =
-      paint_timing_detector.GetImagePaintTimingDetector();
-  if (!image_paint_timing_detector.IsRecordingLargestImagePaint()) {
-    return false;
-  }
-
   Node* image_node = object.GetNode();
-  if (image_node &&
-      paint_timing_detector.IsUnrelatedSoftNavigationPaint(*image_node)) {
-    return false;
-  }
   HTMLImageElement* element = DynamicTo<HTMLImageElement>(image_node);
 
   if (element) {
@@ -239,15 +236,53 @@ bool PaintTimingDetector::NotifyImagePaint(
     ReportImagePixelInaccuracy(element);
   }
 
-  return image_paint_timing_detector.RecordImage(
-      object, intrinsic_size, media_timing, current_paint_chunk_properties,
-      nullptr, image_border);
+  return frame_view->GetPaintTimingDetector()
+      .GetImagePaintTimingDetector()
+      .RecordImage(object, intrinsic_size, media_timing,
+                   current_paint_chunk_properties, nullptr, image_border);
+}
+
+// static
+void PaintTimingDetector::NotifyFirstVideoFrame(
+    const LayoutObject& object,
+    const gfx::Size& intrinsic_size,
+    const MediaTiming& media_timing,
+    const PropertyTreeStateOrAlias& current_paint_chunk_properties,
+    const gfx::Rect& image_border) {
+  if (NotifyImagePaint(object, intrinsic_size, media_timing,
+                       current_paint_chunk_properties, image_border)) {
+    LocalFrameView* frame_view = object.GetFrameView();
+    CHECK(frame_view);
+    // crbug.com/434659231: Recording this as an LCP candidate and setting the
+    // presentation time (without ReportFirstFrameTimeAsRenderTime) depends on
+    // the next main frame, which we request here. This is flag-guarded for hard
+    // LCP, since it might move metrics; for soft navs, do this unconditionally
+    // since this is still experimental and we want accurate behavior for origin
+    // trial along with attributing video src changes (crbug.com/434215966).
+    if (RuntimeEnabledFeatures::RequestMainFrameAfterFirstVideoFrameEnabled() ||
+        !frame_view->GetPaintTimingDetector()
+             .GetImagePaintTimingDetector()
+             .IsRecordingLargestImagePaint()) {
+      frame_view->ScheduleAnimation();
+    }
+  }
+}
+
+// static
+void PaintTimingDetector::NotifyInteractionTriggeredVideoSrcChange(
+    const LayoutObject& object) {
+  LocalFrameView* frame_view = object.GetFrameView();
+  if (!frame_view) {
+    return;
+  }
+  frame_view->GetPaintTimingDetector()
+      .GetImagePaintTimingDetector()
+      .NotifyInteractionTriggeredVideoSrcChange(object);
 }
 
 void PaintTimingDetector::NotifyImageFinished(const LayoutObject& object,
                                               const MediaTiming* media_timing) {
-  if (IgnorePaintTimingScope::ShouldIgnore() ||
-      !image_paint_timing_detector_->IsRecordingLargestImagePaint()) {
+  if (IgnorePaintTimingScope::ShouldIgnore()) {
     return;
   }
   image_paint_timing_detector_->NotifyImageFinished(object, media_timing);
@@ -261,17 +296,21 @@ void PaintTimingDetector::LayoutObjectWillBeDestroyed(
 void PaintTimingDetector::NotifyImageRemoved(
     const LayoutObject& object,
     const ImageResourceContent* cached_image) {
-  if (image_paint_timing_detector_->IsRecordingLargestImagePaint()) {
-    image_paint_timing_detector_->NotifyImageRemoved(object, cached_image);
-  }
+  image_paint_timing_detector_->NotifyImageRemoved(object, cached_image);
 }
 
 void PaintTimingDetector::OnInputOrScroll() {
-  // If we have already stopped and we're no longer recording the largest image
-  // paint, then abort.
-  if (!image_paint_timing_detector_->IsRecordingLargestImagePaint()) {
+  if (LocalDOMWindow* window = DomWindow()) {
+    if (auto* heuristics = window->GetSoftNavigationHeuristics()) {
+      heuristics->OnInputOrScroll();
+    }
+  }
+
+  // Set first_input_or_scroll_notified_timestamp_ only once.
+  if (!first_input_or_scroll_notified_timestamp_.is_null()) {
     return;
   }
+  first_input_or_scroll_notified_timestamp_ = base::TimeTicks::Now();
 
   // TextPaintTimingDetector is used for both Largest Contentful Paint and for
   // Element Timing. Therefore, here we only want to stop recording Largest
@@ -282,12 +321,6 @@ void PaintTimingDetector::OnInputOrScroll() {
   image_paint_timing_detector_->StopRecordEntries();
   image_paint_timing_detector_->StopRecordingLargestImagePaint();
   largest_contentful_paint_calculator_ = nullptr;
-  record_lcp_to_metrics_ = false;
-
-  // Set first_input_or_scroll_notified_timestamp_ only once.
-  if (first_input_or_scroll_notified_timestamp_ == base::TimeTicks()) {
-    first_input_or_scroll_notified_timestamp_ = base::TimeTicks::Now();
-  }
 
   DidChangePerformanceTiming();
 }
@@ -306,6 +339,10 @@ void PaintTimingDetector::NotifyInputEvent(WebInputEvent::Type type) {
 }
 
 void PaintTimingDetector::NotifyScroll(mojom::blink::ScrollType scroll_type) {
+  // TODO(crbug.com/330709851): Remove once we're sure scroll restoration is
+  // handled properly for soft navs.
+  TRACE_EVENT("loading", "PaintTimingDetector::NotifyScroll", "type",
+              ScrollTypeToString(scroll_type));
   if (scroll_type != mojom::blink::ScrollType::kUser &&
       scroll_type != mojom::blink::ScrollType::kCompositor) {
     return;
@@ -313,94 +350,36 @@ void PaintTimingDetector::NotifyScroll(mojom::blink::ScrollType scroll_type) {
   OnInputOrScroll();
 }
 
-bool PaintTimingDetector::NeedToNotifyInputOrScroll() const {
-  DCHECK(text_paint_timing_detector_);
-  return text_paint_timing_detector_->IsRecordingLargestTextPaint() ||
-         image_paint_timing_detector_;
-}
-
-void PaintTimingDetector::RestartRecordingLCP() {
-  text_paint_timing_detector_->RestartRecordingLargestTextPaint();
-  image_paint_timing_detector_->RestartRecordingLargestImagePaint();
-  lcp_was_restarted_ = true;
-  soft_navigation_was_detected_ = false;
-  GetLargestContentfulPaintCalculator()->ResetMetricsLcp();
-}
-
-void PaintTimingDetector::SoftNavigationDetected(LocalDOMWindow* window) {
-  soft_navigation_was_detected_ = true;
-  auto* lcp_calculator = GetLargestContentfulPaintCalculator();
-  // If the window is detached (no calculator) or we haven't yet got any
-  // presentation times for neither a text record nor an image one, bail. The
-  // web exposed entry will get updated when the presentation times callback
-  // will be called.
-  if (!lcp_calculator || (!potential_soft_navigation_text_record_ &&
-                          !potential_soft_navigation_image_record_)) {
-    return;
-  }
-  if (!lcp_was_restarted_ ||
-      RuntimeEnabledFeatures::SoftNavigationHeuristicsEnabled(window)) {
-    lcp_calculator->UpdateWebExposedLargestContentfulPaintIfNeeded(
-        potential_soft_navigation_text_record_,
-        potential_soft_navigation_image_record_,
-        /*is_triggered_by_soft_navigation=*/lcp_was_restarted_);
-  }
-
-  // Report the soft navigation LCP to metrics.
-  CHECK(record_soft_navigation_lcp_for_metrics_);
-  soft_navigation_lcp_details_for_metrics_ =
-      largest_contentful_paint_calculator_->LatestLcpDetails();
-  DidChangePerformanceTiming();
-}
-
-void PaintTimingDetector::RestartRecordingLCPToUkm() {
-  text_paint_timing_detector_->RestartRecordingLargestTextPaint();
-  image_paint_timing_detector_->RestartRecordingLargestImagePaint();
-  record_soft_navigation_lcp_for_metrics_ = true;
-  // Reset the lcp candidate and the soft navigation LCP for reporting to UKM
-  // when a new soft navigation happens. When this resetting happens, the
-  // previous lcp details should already be updated.
-  soft_navigation_lcp_details_for_metrics_ = LargestContentfulPaintDetails();
-}
-
 LargestContentfulPaintCalculator*
 PaintTimingDetector::GetLargestContentfulPaintCalculator() {
+  // Do not create an LCP calculator once we stop measuring hard LCP.
+  if (!first_input_or_scroll_notified_timestamp_.is_null()) {
+    return nullptr;
+  }
   if (largest_contentful_paint_calculator_) {
     return largest_contentful_paint_calculator_.Get();
   }
 
-  auto* dom_window = frame_view_->GetFrame().DomWindow();
+  auto* dom_window = DomWindow();
   if (!dom_window) {
     return nullptr;
   }
 
   largest_contentful_paint_calculator_ =
       MakeGarbageCollected<LargestContentfulPaintCalculator>(
-          DOMWindowPerformance::performance(*dom_window));
+          DOMWindowPerformance::performance(*dom_window), this);
   return largest_contentful_paint_calculator_.Get();
 }
 
 void PaintTimingDetector::UpdateMetricsLcp() {
   // The DidChangePerformanceTiming method which triggers the reporting of
   // metrics LCP would not be called when we are not recording metrics LCP.
-  if (!record_lcp_to_metrics_ && !record_soft_navigation_lcp_for_metrics_) {
+  if (!first_input_or_scroll_notified_timestamp_.is_null()) {
     return;
   }
 
-  if (record_lcp_to_metrics_) {
-    auto latest_lcp_details =
-        GetLargestContentfulPaintCalculator()->LatestLcpDetails();
-    lcp_details_for_metrics_ = latest_lcp_details;
-  }
-
-  // If we're waiting on a softnav and it wasn't detected yet, keep on waiting
-  // and don't update.
-  if (record_soft_navigation_lcp_for_metrics_ &&
-      soft_navigation_was_detected_) {
-    auto latest_lcp_details =
-        GetLargestContentfulPaintCalculator()->LatestLcpDetails();
-    soft_navigation_lcp_details_for_metrics_ = latest_lcp_details;
-  }
+  lcp_details_for_metrics_ =
+      GetLargestContentfulPaintCalculator()->LatestLcpDetails();
 
   DidChangePerformanceTiming();
 }
@@ -472,45 +451,26 @@ void PaintTimingDetector::UpdateLcpCandidate() {
     return;
   }
 
+  CHECK_EQ(first_input_or_scroll_notified_timestamp_.is_null(),
+           image_paint_timing_detector_->IsRecordingLargestImagePaint());
+  CHECK_EQ(first_input_or_scroll_notified_timestamp_.is_null(),
+           text_paint_timing_detector_->IsRecordingLargestTextPaint());
+
   // * nullptr means there is no new candidate update, which could be caused by
   // user input or no content show up on the page.
   // * Record.paint_time == 0 means there is an image but the image is still
   // loading. The perf API should wait until the paint-time is available.
-  std::pair<TextRecord*, bool> text_update_result = {nullptr, false};
-  std::pair<ImageRecord*, bool> image_update_result = {nullptr, false};
-
-  if (text_paint_timing_detector_->IsRecordingLargestTextPaint()) {
-    text_update_result = text_paint_timing_detector_->UpdateMetricsCandidate();
-  }
-
-  if (image_paint_timing_detector_->IsRecordingLargestImagePaint()) {
-    image_update_result =
-        image_paint_timing_detector_->UpdateMetricsCandidate();
-  }
+  std::pair<TextRecord*, bool> text_update_result =
+      text_paint_timing_detector_->UpdateMetricsCandidate();
+  std::pair<ImageRecord*, bool> image_update_result =
+      image_paint_timing_detector_->UpdateMetricsCandidate();
 
   if (image_update_result.second || text_update_result.second) {
     UpdateMetricsLcp();
   }
-  // If we stopped and then restarted LCP measurement (to support soft
-  // navigations), and didn't yet detect a soft navigation, put aside the
-  // records as potential soft navigation LCP ones, and don't update the web
-  // exposed entries just yet. We'll do that once we actually detect the soft
-  // navigation.
-  if (lcp_was_restarted_ && !soft_navigation_was_detected_) {
-    potential_soft_navigation_text_record_ = text_update_result.first;
-    potential_soft_navigation_image_record_ = image_update_result.first;
-    return;
-  }
-  potential_soft_navigation_text_record_ = nullptr;
-  potential_soft_navigation_image_record_ = nullptr;
 
-  // If we're still recording the initial LCP, or if LCP was explicitly
-  // restarted for soft navigations, fire the web exposed entry.
-  if (record_lcp_to_metrics_ || lcp_was_restarted_) {
-    lcp_calculator->UpdateWebExposedLargestContentfulPaintIfNeeded(
-        text_update_result.first, image_update_result.first,
-        /*is_triggered_by_soft_navigation=*/lcp_was_restarted_);
-  }
+  lcp_calculator->UpdateWebExposedLargestContentfulPaintIfNeeded(
+      text_update_result.first, image_update_result.first);
 }
 
 void PaintTimingDetector::ReportIgnoredContent() {
@@ -525,8 +485,16 @@ PaintTimingDetector::LatestLcpDetailsForTest() {
   return GetLargestContentfulPaintCalculator()->LatestLcpDetails();
 }
 
-bool PaintTimingDetector::IsUnrelatedSoftNavigationPaint(const Node& node) {
-  return false;
+void PaintTimingDetector::EmitPerformanceEntry(
+    const DOMPaintTimingInfo& paint_timing_info,
+    uint64_t paint_size,
+    base::TimeTicks load_time,
+    const AtomicString& id,
+    const String& url,
+    Element* element) {
+  DOMWindowPerformance::performance(CHECK_DEREF(DomWindow()))
+      ->OnLargestContentfulPaintUpdated(paint_timing_info, paint_size,
+                                        load_time, id, url, element);
 }
 
 ScopedPaintTimingDetectorBlockPaintHook*
@@ -586,8 +554,10 @@ void PaintTimingDetector::Trace(Visitor* visitor) const {
   visitor->Trace(image_paint_timing_detector_);
   visitor->Trace(frame_view_);
   visitor->Trace(largest_contentful_paint_calculator_);
-  visitor->Trace(potential_soft_navigation_image_record_);
-  visitor->Trace(potential_soft_navigation_text_record_);
+}
+
+LocalDOMWindow* PaintTimingDetector::DomWindow() const {
+  return frame_view_->GetFrame().DomWindow();
 }
 
 }  // namespace blink

@@ -16,6 +16,7 @@
 
 #include "base/base_export.h"
 #include "base/containers/span.h"
+#include "base/strings/string_view_util.h"
 #include "base/types/supports_ostream_operator.h"
 #include "base/types/supports_to_string.h"
 
@@ -92,7 +93,7 @@ template <typename T>
   requires(!SupportsOstreamOperator<const T&> && SupportsToString<const T&>)
 struct ToStringHelper<T> {
   static void Stringify(const T& v, std::ostringstream& ss) {
-    // .ToString() may not return a std::string, e.g. blink::WTF::String.
+    // .ToString() may not return a std::string, e.g. blink::String.
     ToStringHelper<decltype(v.ToString())>::Stringify(v.ToString(), ss);
   }
 };

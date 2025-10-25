@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/ui/tabs/tab_style.h"
 #include "chrome/browser/ui/views/tabs/glow_hover_controller.h"
 #include "ui/base/metadata/base_type_conversion.h"
@@ -28,6 +29,12 @@ namespace gfx {
 class Canvas;
 }
 
+struct TabPathFlags {
+  bool force_active = false;
+  TabStyle::RenderUnits render_units = TabStyle::RenderUnits::kPixels;
+  bool should_paint_extension = true;
+};
+
 // Holds Views-specific logic for rendering and sizing tabs.
 class TabStyleViews {
  public:
@@ -44,9 +51,7 @@ class TabStyleViews {
   //  tab.
   virtual SkPath GetPath(TabStyle::PathType path_type,
                          float scale,
-                         bool force_active = false,
-                         TabStyle::RenderUnits render_units =
-                             TabStyle::RenderUnits::kPixels) const = 0;
+                         const TabPathFlags& flags) const = 0;
 
   // Paints the tab.
   virtual void PaintTab(gfx::Canvas* canvas) const = 0;
@@ -77,6 +82,8 @@ class TabStyleViews {
 
   // Returns the progress (0 to 1) of the hover animation.
   virtual double GetHoverAnimationValue() const = 0;
+
+  virtual GlowHoverController* GetHoverControllerForTesting() = 0;
 
   const TabStyle* tab_style() const { return tab_style_; }
 

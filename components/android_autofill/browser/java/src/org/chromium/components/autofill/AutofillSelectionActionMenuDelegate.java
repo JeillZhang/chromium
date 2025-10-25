@@ -5,11 +5,13 @@
 package org.chromium.components.autofill;
 
 import android.content.pm.ResolveInfo;
+import android.view.View;
 
 import org.chromium.build.annotations.NullMarked;
 import org.chromium.build.annotations.Nullable;
 import org.chromium.content_public.browser.SelectionMenuItem;
 import org.chromium.content_public.browser.SelectionPopupController;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.selection.SelectionActionMenuDelegate;
 
 import java.util.ArrayList;
@@ -58,5 +60,12 @@ public class AutofillSelectionActionMenuDelegate implements SelectionActionMenuD
 
     public void setAutofillSelectionMenuItemHelper(AutofillSelectionMenuItemHelper provider) {
         mAutofillSelectionMenuItemHelper = provider;
+    }
+
+    @Override
+    public boolean handleMenuItemClick(
+            SelectionMenuItem item, WebContents webContents, @Nullable View containerView) {
+        return mAutofillSelectionMenuItemHelper != null
+                && mAutofillSelectionMenuItemHelper.handleMenuItemClick(item);
     }
 }

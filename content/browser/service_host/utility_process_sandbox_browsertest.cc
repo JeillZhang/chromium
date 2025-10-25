@@ -19,17 +19,16 @@
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/test_service.mojom.h"
 #include "content/test/sandbox_status.test-mojom.h"
-#include "media/gpu/buildflags.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "ppapi/buildflags/buildflags.h"
 #include "sandbox/policy/linux/sandbox_linux.h"
 #include "sandbox/policy/mojom/sandbox.mojom.h"
 #include "sandbox/policy/sandbox_type.h"
 #include "sandbox/policy/switches.h"
 
-#if BUILDFLAG(IS_CHROMEOS)
-#include "chromeos/ash/components/assistant/buildflags.h"
-#endif  // BUILDFLAG(IS_CHROMEOS)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+#include "media/gpu/buildflags.h"
+#include "media/media_buildflags.h"
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 
 using sandbox::mojom::Sandbox;
 using sandbox::policy::SandboxLinux;
@@ -104,9 +103,6 @@ class UtilityProcessSandboxBrowserTest
         break;
 
       case Sandbox::kCdm:
-#if BUILDFLAG(ENABLE_PPAPI)
-      case Sandbox::kPpapi:
-#endif
       case Sandbox::kOnDeviceModelExecution:
       case Sandbox::kPrintCompositor:
       case Sandbox::kService:
@@ -121,20 +117,21 @@ class UtilityProcessSandboxBrowserTest
       }
 
       case Sandbox::kAudio:
-#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
+#if BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
+      case Sandbox::kShapeDetection:
+#if BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
       case Sandbox::kHardwareVideoDecoding:
+#endif  // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER)
+#if BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
       case Sandbox::kHardwareVideoEncoding:
-#endif
+#endif  // BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
+#endif  // BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)
 #if BUILDFLAG(IS_CHROMEOS)
       case Sandbox::kIme:
       case Sandbox::kTts:
       case Sandbox::kNearby:
-#if BUILDFLAG(ENABLE_CROS_LIBASSISTANT)
-      case Sandbox::kLibassistant:
-#endif  // BUILDFLAG(ENABLE_CROS_LIBASSISTANT)
 #endif  // BUILDFLAG(IS_CHROMEOS)
 #if BUILDFLAG(IS_LINUX)
-      case Sandbox::kVideoEffects:
       case Sandbox::kOnDeviceTranslation:
 #endif
       case Sandbox::kNetwork:
@@ -168,7 +165,8 @@ class UtilityProcessSandboxBrowserTest
 };
 
 IN_PROC_BROWSER_TEST_P(UtilityProcessSandboxBrowserTest, VerifySandboxType) {
-#if BUILDFLAG(IS_LINUX) && BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION)
+#if BUILDFLAG(IS_LINUX) && (BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION) || \
+                            BUILDFLAG(ALLOW_OOP_VIDEO_DECODER))
   if (GetParam() == Sandbox::kHardwareVideoDecoding) {
     // TODO(b/195769334): On Linux, this test fails with
     // Sandbox::kHardwareVideoDecoding because the pre-sandbox hook needs Ozone
@@ -185,7 +183,8 @@ IN_PROC_BROWSER_TEST_P(UtilityProcessSandboxBrowserTest, VerifySandboxType) {
     // need to remove the Ozone dependency and re-enable this test.
     GTEST_SKIP();
   }
-#endif
+#endif  // BUILDFLAG(IS_LINUX) && (BUILDFLAG(USE_LINUX_VIDEO_ACCELERATION) ||
+        // BUILDFLAG(ALLOW_OOP_VIDEO_DECODER))
   RunUtilityProcess();
 }
 

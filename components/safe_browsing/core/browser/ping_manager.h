@@ -147,6 +147,7 @@ class PingManager : public KeyedService {
   void OnThreatDetailsReportURLLoaderComplete(
       network::SimpleURLLoader* source,
       bool has_access_token,
+      ClientSafeBrowsingReportRequest::ReportType report_type,
       std::unique_ptr<std::string> response_body);
 
   // Report to Google when a SafeBrowsing warning is shown to the user.
@@ -210,10 +211,20 @@ class PingManager : public KeyedService {
   // Sanitizes the URLs in the hit report.
   void SanitizeHitReport(HitReport* hit_report);
 
+  // Finalizes the report with additional data, and then serializes it to
+  // |out_serialized_report|. On success, this returns SUCCESS. On failure, it
+  // returns an error code detailing the cause.
+  ReportThreatDetailsResult FinalizeAndSerializeReport(
+      ClientSafeBrowsingReportRequest* report,
+      std::string* out_serialized_report);
+
   // Once the user's access_token has been fetched by ReportThreatDetails (or
-  // intentionally not fetched), attaches the token and sends the report.
-  void ReportThreatDetailsOnGotAccessToken(const std::string& serialized_report,
-                                           const std::string& access_token);
+  // intentionally not fetched), attaches the token and sends the report. The
+  // `report_type` is included for logging purposes.
+  void ReportThreatDetailsOnGotAccessToken(
+      const std::string& serialized_report,
+      ClientSafeBrowsingReportRequest::ReportType report_type,
+      const std::string& access_token);
 
   // Reads persisted reports from disk.
   void ReadPersistedReports();
@@ -235,9 +246,9 @@ class PingManager : public KeyedService {
   // based on whether they're a signed-in ESB user.
   base::RepeatingCallback<bool()> get_should_fetch_access_token_;
 
-  // WebUIInfoSingleton extends PingManager::WebUIDelegate to enable the
-  // workaround of calling methods in WebUIInfoSingleton without /core having a
-  // dependency on /content.
+  // WebUIContentInfoSingleton extends PingManager::WebUIDelegate to enable the
+  // workaround of calling methods in WebUIContentInfoSingleton without /core
+  // having a dependency on /content.
   raw_ptr<WebUIDelegate> webui_delegate_;
 
   // The task runner for the UI thread.

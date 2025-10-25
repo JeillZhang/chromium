@@ -7,13 +7,13 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/android/build_info.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/check_op.h"
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/metrics/histogram_functions.h"
+#include "base/no_destructor.h"
 #include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -27,7 +27,6 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_constraints.h"
 #include "components/content_settings/core/common/content_settings_metadata.h"
-#include "components/content_settings/core/common/content_settings_partition_key.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/search_engines/template_url_service.h"
@@ -40,7 +39,6 @@
 #include "chrome/browser/notifications/jni_headers/NotificationSettingsBridge_jni.h"
 
 using base::android::AttachCurrentThread;
-using base::android::BuildInfo;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::JavaParamRef;
@@ -252,13 +250,6 @@ void NotificationChannelsProviderAndroid::RegisterProfilePrefs(
                                 false);
 }
 
-// static
-bool NotificationChannelsProviderAndroid::
-    IsListeningToNotificationChannelChanges() {
-  return base::android::BuildInfo::GetInstance()->sdk_int() >=
-         base::android::SDK_VERSION_P;
-}
-
 NotificationChannel::NotificationChannel(const std::string& id,
                                          const std::string& origin,
                                          const base::Time& timestamp,
@@ -302,9 +293,8 @@ void NotificationChannelsProviderAndroid::MigrateToChannelsIfNecessary(
 
   // If there are no existing rules, no need to migrate.
   std::unique_ptr<content_settings::RuleIterator> it(
-      pref_provider->GetRuleIterator(
-          ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
-          content_settings::PartitionKey::WipGetDefault()));
+      pref_provider->GetRuleIterator(ContentSettingsType::NOTIFICATIONS,
+                                     false /* off_the_record */));
   if (!it || !it->HasNext()) {
     return;
   }
@@ -322,9 +312,8 @@ void NotificationChannelsProviderAndroid::MigrateToChannelsIfNecessaryImpl(
   // Collect the existing rules and create channels for them.
   {
     std::unique_ptr<content_settings::RuleIterator> it(
-        pref_provider->GetRuleIterator(
-            ContentSettingsType::NOTIFICATIONS, false /* off_the_record */,
-            content_settings::PartitionKey::WipGetDefault()));
+        pref_provider->GetRuleIterator(ContentSettingsType::NOTIFICATIONS,
+                                       false /* off_the_record */));
 
     while (it && it->HasNext()) {
       std::unique_ptr<content_settings::Rule> rule = it->Next();
@@ -335,9 +324,9 @@ void NotificationChannelsProviderAndroid::MigrateToChannelsIfNecessaryImpl(
   }
 
   for (const auto& pattern : patterns) {
-    pref_provider->SetWebsiteSetting(
-        pattern.first, pattern.second, ContentSettingsType::NOTIFICATIONS,
-        base::Value(), {}, content_settings::PartitionKey::WipGetDefault());
+    pref_provider->SetWebsiteSetting(pattern.first, pattern.second,
+                                     ContentSettingsType::NOTIFICATIONS,
+                                     base::Value(), {});
   }
 
   if (pref_service_) {
@@ -416,8 +405,7 @@ void NotificationChannelsProviderAndroid::OnChannelStateChanged(
                        weak_factory_.GetWeakPtr(),
                        ContentSettingsPattern::Wildcard(),
                        ContentSettingsPattern::Wildcard(),
-                       ContentSettingsType::NOTIFICATIONS,
-                       /*partition_key=*/nullptr));
+                       ContentSettingsType::NOTIFICATIONS));
   }
 
   EnsureUpdatedSettings(base::DoNothing());
@@ -426,8 +414,7 @@ void NotificationChannelsProviderAndroid::OnChannelStateChanged(
 std::unique_ptr<content_settings::RuleIterator>
 NotificationChannelsProviderAndroid::GetRuleIterator(
     ContentSettingsType content_type,
-    bool off_the_record,
-    const content_settings::PartitionKey& partition_key) const {
+    bool off_the_record) const {
   if (content_type != ContentSettingsType::NOTIFICATIONS || off_the_record) {
     return nullptr;
   }
@@ -458,18 +445,11 @@ NotificationChannelsProviderAndroid::GetRuleIterator(
     }
   }
 
+  // Since Android P, Chrome listens to blocked state changes for all
+  // notification channels, thus the returned RuleIterator is up-to-date.
   std::vector<NotificationChannel> channels;
   for (const auto& channel : origin_channel_map) {
     channels.push_back(channel.second);
-  }
-
-  // On Android P+, Chrome listens to blocked state changes for all notification
-  // channels. Thus the returned RuleIterator is up-to-date. However, for
-  // devices below P, the RuleIterator might not contain up-to-date information
-  // if user has just modified notification settings. As a result, schedule an
-  // channel update to inform all observers if something has changed.
-  if (!IsListeningToNotificationChannelChanges()) {
-    provider->EnsureUpdatedSettings(base::DoNothing());
   }
 
   return channels.empty()
@@ -492,8 +472,7 @@ bool NotificationChannelsProviderAndroid::SetWebsiteSetting(
     const ContentSettingsPattern& secondary_pattern,
     ContentSettingsType content_type,
     base::Value&& value,
-    const content_settings::ContentSettingConstraints& constraints,
-    const content_settings::PartitionKey& partition_key) {
+    const content_settings::ContentSettingConstraints& constraints) {
   if (content_type != ContentSettingsType::NOTIFICATIONS) {
     return false;
   }
@@ -527,8 +506,7 @@ bool NotificationChannelsProviderAndroid::SetWebsiteSetting(
       weak_factory_.GetWeakPtr(), primary_pattern, secondary_pattern,
       content_type, setting, constraints.Clone(), channel));
   if (rule_changed) {
-    NotifyObservers(primary_pattern, secondary_pattern, content_type,
-                    /*partition_key=*/nullptr);
+    NotifyObservers(primary_pattern, secondary_pattern, content_type);
   }
 
   if (setting == CONTENT_SETTING_DEFAULT) {
@@ -601,8 +579,7 @@ void NotificationChannelsProviderAndroid::UpdateChannelForWebsiteImpl(
 }
 
 void NotificationChannelsProviderAndroid::ClearAllContentSettingsRules(
-    ContentSettingsType content_type,
-    const content_settings::PartitionKey& partition_key) {
+    ContentSettingsType content_type) {
   if (content_type != ContentSettingsType::NOTIFICATIONS) {
     return;
   }
@@ -629,8 +606,7 @@ void NotificationChannelsProviderAndroid::ClearAllContentSettingsRules(
 
   if (rule_changed) {
     NotifyObservers(ContentSettingsPattern::Wildcard(),
-                    ContentSettingsPattern::Wildcard(), content_type,
-                    /*partition_key=*/nullptr);
+                    ContentSettingsPattern::Wildcard(), content_type);
   }
 
   ScheduleGetChannels(
@@ -673,8 +649,7 @@ bool NotificationChannelsProviderAndroid::UpdateLastUsedTime(
     const GURL& primary_url,
     const GURL& secondary_url,
     ContentSettingsType content_type,
-    const base::Time time,
-    const content_settings::PartitionKey& partition_key) {
+    const base::Time time) {
   // Last used tracking is not implemented for this type.
   return false;
 }
@@ -682,8 +657,7 @@ bool NotificationChannelsProviderAndroid::UpdateLastUsedTime(
 bool NotificationChannelsProviderAndroid::ResetLastVisitTime(
     const ContentSettingsPattern& primary_pattern,
     const ContentSettingsPattern& secondary_pattern,
-    ContentSettingsType content_type,
-    const content_settings::PartitionKey& partition_key) {
+    ContentSettingsType content_type) {
   // Last visited tracking is not implemented for this type.
   return false;
 }
@@ -691,8 +665,7 @@ bool NotificationChannelsProviderAndroid::ResetLastVisitTime(
 bool NotificationChannelsProviderAndroid::UpdateLastVisitTime(
     const ContentSettingsPattern& primary_pattern,
     const ContentSettingsPattern& secondary_pattern,
-    ContentSettingsType content_type,
-    const content_settings::PartitionKey& partition_key) {
+    ContentSettingsType content_type) {
   // Last visited tracking is not implemented for this type.
   return false;
 }
@@ -702,8 +675,7 @@ NotificationChannelsProviderAndroid::RenewContentSetting(
     const GURL& primary_url,
     const GURL& secondary_url,
     ContentSettingsType content_type,
-    std::optional<ContentSetting> setting_to_match,
-    const content_settings::PartitionKey& partition_key) {
+    std::optional<ContentSetting> setting_to_match) {
   // Setting renewal is not implemented for this type.
   return std::nullopt;
 }
@@ -786,8 +758,7 @@ void NotificationChannelsProviderAndroid::UpdateCachedChannelsImpl(
                          weak_factory_.GetWeakPtr(),
                          ContentSettingsPattern::Wildcard(),
                          ContentSettingsPattern::Wildcard(),
-                         ContentSettingsType::NOTIFICATIONS,
-                         /*partition_key=*/nullptr));
+                         ContentSettingsType::NOTIFICATIONS));
       cached_channels_ = std::move(updated_channels_map);
     }
   }

@@ -28,7 +28,7 @@
 #include "chrome/browser/permissions/permission_actions_history_factory.h"
 #include "chrome/browser/permissions/permission_decision_auto_blocker_factory.h"
 #include "chrome/browser/permissions/permission_revocation_request.h"
-#include "chrome/browser/permissions/prediction_based_permission_ui_selector.h"
+#include "chrome/browser/permissions/prediction_service/permissions_ai_ui_selector.h"
 #include "chrome/browser/permissions/pref_based_quiet_permission_ui_selector.h"
 #include "chrome/browser/permissions/quiet_notification_permission_ui_config.h"
 #include "chrome/browser/permissions/system/system_permission_settings.h"
@@ -43,6 +43,7 @@
 #include "chrome/browser/ui/hats/hats_service.h"
 #include "chrome/browser/ui/hats/hats_service_factory.h"
 #include "chrome/browser/ui/hats/survey_config.h"
+#include "chrome/browser/ui/page_info/page_info_infobar_delegate.h"
 #include "chrome/browser/usb/usb_chooser_context.h"
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
 #include "chrome/common/channel_info.h"
@@ -51,8 +52,12 @@
 #include "chrome/grit/branded_strings.h"
 #include "components/content_settings/core/browser/content_settings_type_set.h"
 #include "components/content_settings/core/browser/cookie_settings.h"
+#include "components/content_settings/core/browser/permission_settings_info.h"
+#include "components/content_settings/core/browser/permission_settings_registry.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/google/core/common/google_util.h"
+#include "components/infobars/content/content_infobar_manager.h"
+#include "components/infobars/core/infobar_manager.h"
 #include "components/permissions/constants.h"
 #include "components/permissions/contexts/bluetooth_chooser_context.h"
 #include "components/permissions/features.h"
@@ -69,12 +74,17 @@
 #include "components/subresource_filter/content/browser/subresource_filter_profile_context.h"
 #include "components/unified_consent/pref_names.h"
 #include "components/version_info/version_info.h"
+#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/buildflags/buildflags.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/origin.h"
+
+#if !BUILDFLAG(IS_ANDROID)
+#include "chrome/browser/actor/actor_keyed_service.h"
+#endif
 
 #if BUILDFLAG(IS_ANDROID)
 #include "chrome/browser/android/resource_mapper.h"
@@ -96,6 +106,7 @@
 #include "chrome/browser/ash/app_mode/web_app/kiosk_web_app_data.h"
 #include "chrome/browser/ash/app_mode/web_app/kiosk_web_app_manager.h"
 #include "chromeos/ash/components/browser_context_helper/browser_context_types.h"
+#include "chromeos/components/kiosk/kiosk_utils.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #endif
@@ -105,11 +116,16 @@
 #endif
 
 #if BUILDFLAG(SAFE_BROWSING_AVAILABLE)
-#include "chrome/browser/permissions/contextual_notification_permission_ui_selector.h"
+#include "chrome/browser/permissions/prediction_service/contextual_notification_permission_ui_selector.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #endif
 
 namespace {
+
+using permissions::PermissionPromptDisposition;
+using permissions::PermissionPromptDispositionReason;
+using permissions::PermissionRequest;
+using permissions::PermissionRequestGestureType;
 
 #if BUILDFLAG(IS_ANDROID)
 bool ShouldUseQuietUI(content::WebContents* web_contents,
@@ -117,7 +133,7 @@ bool ShouldUseQuietUI(content::WebContents* web_contents,
   auto* manager =
       permissions::PermissionRequestManager::FromWebContents(web_contents);
   if (type != ContentSettingsType::NOTIFICATIONS &&
-      type != ContentSettingsType::GEOLOCATION) {
+      type != permissions::PermissionUtil::GetGeolocationType()) {
     return false;
   }
   return manager->ShouldCurrentRequestUseQuietUI();
@@ -125,19 +141,9 @@ bool ShouldUseQuietUI(content::WebContents* web_contents,
 #endif
 
 #if BUILDFLAG(IS_CHROMEOS)
-bool IsWebKiosk() {
-  return user_manager::UserManager::IsInitialized() &&
-         user_manager::UserManager::Get()->IsLoggedInAsKioskWebApp();
-}
-
-bool IsIwaKiosk() {
-  return ash::features::IsIsolatedWebAppKioskEnabled() &&
-         user_manager::UserManager::IsInitialized() &&
-         user_manager::UserManager::Get()->IsLoggedInAsKioskIWA();
-}
 
 std::optional<url::Origin> GetCurrentKioskOrigin() {
-  if (IsWebKiosk()) {
+  if (chromeos::IsWebKioskSession()) {
     const AccountId& account_id =
         user_manager::UserManager::Get()->GetPrimaryUser()->GetAccountId();
     DCHECK(ash::KioskWebAppManager::IsInitialized());
@@ -147,7 +153,7 @@ std::optional<url::Origin> GetCurrentKioskOrigin() {
     return url::Origin::Create(app_data->install_url());
   }
 
-  if (IsIwaKiosk()) {
+  if (chromeos::IsIwaKioskSession()) {
     const AccountId& account_id =
         user_manager::UserManager::Get()->GetPrimaryUser()->GetAccountId();
     const ash::KioskIwaData* iwa_data =
@@ -160,14 +166,53 @@ std::optional<url::Origin> GetCurrentKioskOrigin() {
 
 #endif
 
-bool IsPermissionSetByAdministator(ContentSetting setting,
-                                   const content_settings::SettingInfo& info) {
-  return ((setting == ContentSetting::CONTENT_SETTING_BLOCK ||
-           setting == ContentSetting::CONTENT_SETTING_ALLOW) &&
-          (info.source == content_settings::SettingSource::kPolicy ||
-           info.source == content_settings::SettingSource::kSupervised));
+bool IsPermissionSetByAdministator(
+    PermissionSetting setting,
+    const content_settings::PermissionSettingsInfo* permission_info,
+    const content_settings::SettingInfo& info) {
+  return !permission_info->delegate().IsUndecided(setting) &&
+         (info.source == content_settings::SettingSource::kPolicy ||
+          info.source == content_settings::SettingSource::kSupervised);
 }
 
+#if !BUILDFLAG(IS_ANDROID)
+// Infobar exists only on Desktop platforms.
+bool ShouldShowInfobarOnPromptResolved(
+    content::WebContents* web_contents,
+    const PermissionRequest* request,
+    std::optional<permissions::PermissionsClient::QuietUiReason>
+        quiet_ui_reason,
+    permissions::PermissionAction action) {
+  if (!quiet_ui_reason ||
+      (action != permissions::PermissionAction::GRANTED &&
+       action != permissions::PermissionAction::GRANTED_ONCE) ||
+      (request->request_type() != permissions::RequestType::kNotifications &&
+       request->request_type() != permissions::RequestType::kGeolocation)) {
+    return false;
+  }
+  content::PermissionController* permission_controller =
+      web_contents->GetBrowserContext()->GetPermissionController();
+  if (!permission_controller) {
+    return false;
+  }
+
+  if (request->IsSourceSubscribedToPermissionChangeEvent(
+          permission_controller)) {
+    return false;
+  }
+  return true;
+}
+
+void ShowInfobar(content::WebContents* web_contents) {
+  infobars::ContentInfoBarManager* infobar_manager =
+      infobars::ContentInfoBarManager::FromWebContents(web_contents);
+  if (!infobar_manager) {
+    return;
+  }
+
+  PageInfoInfoBarDelegate::Create(infobar_manager);
+}
+#endif
 }  // namespace
 
 // static
@@ -273,8 +318,9 @@ void ChromePermissionsClient::AreSitesImportant(
         net::registry_controlled_domains::GetDomainAndRegistry(
             origin,
             net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-    if (registerable_domain.empty())
+    if (registerable_domain.empty()) {
       registerable_domain = host;  // IP address or internal hostname.
+    }
     entry.second = base::Contains(important_domains, registerable_domain,
                                   &site_engagement::ImportantSitesUtil::
                                       ImportantDomainInfo::registerable_domain);
@@ -286,8 +332,9 @@ void ChromePermissionsClient::AreSitesImportant(
 bool ChromePermissionsClient::IsCookieDeletionDisabled(
     content::BrowserContext* browser_context,
     const GURL& origin) {
-  if (!Profile::FromBrowserContext(browser_context)->IsChild())
+  if (!Profile::FromBrowserContext(browser_context)->IsChild()) {
     return false;
+  }
 
   return google_util::IsYoutubeDomainUrl(origin, google_util::ALLOW_SUBDOMAIN,
                                          google_util::ALLOW_NON_STANDARD_PORTS);
@@ -322,8 +369,9 @@ permissions::IconId ChromePermissionsClient::GetOverrideIconId(
     permissions::RequestType request_type) {
 #if BUILDFLAG(IS_CHROMEOS)
   // TODO(xhwang): fix this icon, see crbug.com/446263.
-  if (request_type == permissions::RequestType::kProtectedMediaIdentifier)
+  if (request_type == permissions::RequestType::kProtectedMediaIdentifier) {
     return vector_icons::kProductIcon;
+  }
 #endif
   return PermissionsClient::GetOverrideIconId(request_type);
 }
@@ -334,9 +382,9 @@ void ChromePermissionsClient::TriggerPromptHatsSurveyIfEnabled(
     content::WebContents* web_contents,
     permissions::RequestType request_type,
     std::optional<permissions::PermissionAction> action,
-    permissions::PermissionPromptDisposition prompt_disposition,
-    permissions::PermissionPromptDispositionReason prompt_disposition_reason,
-    permissions::PermissionRequestGestureType gesture_type,
+    PermissionPromptDisposition prompt_disposition,
+    PermissionPromptDispositionReason prompt_disposition_reason,
+    PermissionRequestGestureType gesture_type,
     std::optional<base::TimeDelta> prompt_display_duration,
     bool is_post_prompt,
     const GURL& gurl,
@@ -344,9 +392,7 @@ void ChromePermissionsClient::TriggerPromptHatsSurveyIfEnabled(
         pepc_prompt_position,
     ContentSetting initial_permission_status,
     base::OnceCallback<void()> hats_shown_callback,
-    std::optional<
-        permissions::PermissionHatsTriggerHelper::PreviewParametersForHats>
-        preview_parameters) {
+    PromptOptions prompt_options) {
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   std::optional<GURL> recorded_gurl =
@@ -366,7 +412,7 @@ void ChromePermissionsClient::TriggerPromptHatsSurveyIfEnabled(
           permissions::PermissionHatsTriggerHelper::
               GetOneTimePromptsDecidedBucket(profile->GetPrefs()),
           recorded_gurl, pepc_prompt_position, initial_permission_status,
-          preview_parameters);
+          prompt_options);
 
   if (!permissions::PermissionHatsTriggerHelper::
           ArePromptTriggerCriteriaSatisfied(prompt_parameters)) {
@@ -426,27 +472,26 @@ ChromePermissionsClient::CreatePermissionUiSelectors(
 #endif
   selectors.emplace_back(std::make_unique<PrefBasedQuietPermissionUiSelector>(
       Profile::FromBrowserContext(browser_context)));
-  selectors.emplace_back(std::make_unique<PredictionBasedPermissionUiSelector>(
+  selectors.emplace_back(std::make_unique<PermissionsAiUiSelector>(
       Profile::FromBrowserContext(browser_context)));
   return selectors;
 }
 
 void ChromePermissionsClient::OnPromptResolved(
-    permissions::RequestType request_type,
+    const PermissionRequest* request,
     permissions::PermissionAction action,
-    const GURL& origin,
-    permissions::PermissionPromptDisposition prompt_disposition,
-    permissions::PermissionPromptDispositionReason prompt_disposition_reason,
-    permissions::PermissionRequestGestureType gesture_type,
+    PermissionPromptDisposition prompt_disposition,
+    PermissionPromptDispositionReason prompt_disposition_reason,
     std::optional<QuietUiReason> quiet_ui_reason,
     base::TimeDelta prompt_display_duration,
     std::optional<permissions::feature_params::PermissionElementPromptPosition>
         pepc_prompt_position,
     ContentSetting initial_permission_status,
-    content::WebContents* web_contents,
-    std::optional<
-        permissions::PermissionHatsTriggerHelper::PreviewParametersForHats>
-        preview_parameters) {
+    content::WebContents* web_contents) {
+  permissions::RequestType request_type = request->request_type();
+  const GURL& origin = request->requesting_origin();
+  PermissionRequestGestureType gesture_type = request->GetGestureType();
+
   Profile* profile =
       Profile::FromBrowserContext(web_contents->GetBrowserContext());
   PermissionActionsHistoryFactory::GetForProfile(profile)->RecordAction(
@@ -478,6 +523,20 @@ void ChromePermissionsClient::OnPromptResolved(
 #endif
   }
 
+#if !BUILDFLAG(IS_ANDROID)
+  // Infobar exists only on Desktop platforms.
+  if (base::FeatureList::IsEnabled(
+          permissions::features::kPermissionPromiseLifetimeModulation)) {
+    bool should_show_infobar = ShouldShowInfobarOnPromptResolved(
+        web_contents, request, quiet_ui_reason, action);
+    permissions::PermissionUmaUtil::RecordPageReloadInfoBarShown(
+        should_show_infobar);
+    if (should_show_infobar) {
+      ShowInfobar(web_contents);
+    }
+  }
+#endif
+
   auto content_setting_type = RequestTypeToContentSettingsType(request_type);
   if (content_setting_type.has_value()) {
     permissions::PermissionHatsTriggerHelper::
@@ -491,7 +550,7 @@ void ChromePermissionsClient::OnPromptResolved(
       std::make_optional(prompt_display_duration), /*is_post_prompt=*/true,
       web_contents->GetPrimaryMainFrame()->GetLastCommittedOrigin().GetURL(),
       pepc_prompt_position, initial_permission_status, base::DoNothing(),
-      preview_parameters);
+      request->prompt_options());
 }
 
 std::optional<bool>
@@ -548,7 +607,7 @@ ChromePermissionsClient::GetAutoApprovalStatus(
           permissions::features::kAllowMultipleOriginsForWebKioskPermissions)) {
     Profile* profile = Profile::FromBrowserContext(browser_context);
     if (IsWebKioskOriginAllowed(profile->GetPrefs(), origin)) {
-      return permissions::PermissionAction::GRANTED;
+      return permissions::PermissionAction::GRANTED_ONCE;
     }
   }
 
@@ -573,8 +632,9 @@ bool ChromePermissionsClient::CanBypassEmbeddingOriginCheck(
   // Extensions are excluded from origin checks as currently they can request
   // permission from iframes when embedded in non-secure contexts
   // (https://crbug.com/530507).
-  if (requesting_origin.SchemeIs(extensions::kExtensionScheme))
+  if (requesting_origin.SchemeIs(extensions::kExtensionScheme)) {
     return true;
+  }
 #endif
 
   // The New Tab Page is excluded from origin checks as its effective
@@ -652,11 +712,11 @@ void ChromePermissionsClient::RepromptForAndroidPermissions(
     const std::vector<std::string>& required_permissions,
     const std::vector<std::string>& optional_permissions,
     PermissionsUpdatedCallback callback) {
-    PermissionUpdateMessageController::CreateForWebContents(web_contents);
-    PermissionUpdateMessageController::FromWebContents(web_contents)
-        ->ShowMessage(content_settings_types, filtered_content_settings_types,
-                      required_permissions, optional_permissions,
-                      std::move(callback));
+  PermissionUpdateMessageController::CreateForWebContents(web_contents);
+  PermissionUpdateMessageController::FromWebContents(web_contents)
+      ->ShowMessage(content_settings_types, filtered_content_settings_types,
+                    required_permissions, optional_permissions,
+                    std::move(callback));
 }
 
 int ChromePermissionsClient::MapToJavaDrawableId(int resource_id) {
@@ -708,11 +768,14 @@ bool ChromePermissionsClient::CanRequestDevicePermission(
 // methods are needed to show the appropriate policy screen.
 bool ChromePermissionsClient::IsPermissionBlockedByDevicePolicy(
     content::WebContents* web_contents,
-    ContentSetting setting,
+    PermissionSetting setting,
     const content_settings::SettingInfo& info,
     ContentSettingsType type) const {
-  if (IsPermissionSetByAdministator(setting, info) &&
-      setting == CONTENT_SETTING_BLOCK) {
+  auto* permission_info =
+      content_settings::PermissionSettingsRegistry::GetInstance()->Get(type);
+
+  if (IsPermissionSetByAdministator(setting, permission_info, info) &&
+      permission_info->delegate().IsBlocked(setting)) {
     return true;
   }
 
@@ -737,11 +800,13 @@ bool ChromePermissionsClient::IsPermissionBlockedByDevicePolicy(
 
 bool ChromePermissionsClient::IsPermissionAllowedByDevicePolicy(
     content::WebContents* web_contents,
-    ContentSetting setting,
+    PermissionSetting setting,
     const content_settings::SettingInfo& info,
     ContentSettingsType type) const {
-  if (IsPermissionSetByAdministator(setting, info) &&
-      setting == CONTENT_SETTING_ALLOW) {
+  auto* permission_info =
+      content_settings::PermissionSettingsRegistry::GetInstance()->Get(type);
+  if (IsPermissionSetByAdministator(setting, permission_info, info) &&
+      permission_info->delegate().IsAnyPermissionAllowed(setting)) {
     return true;
   }
 
@@ -771,4 +836,21 @@ bool ChromePermissionsClient::IsSystemDenied(ContentSettingsType type) const {
 bool ChromePermissionsClient::CanPromptSystemPermission(
     ContentSettingsType type) const {
   return system_permission_settings::CanPrompt(type);
+}
+
+bool ChromePermissionsClient::IsActorOperatingOnWebContents(
+    content::WebContents* web_contents) const {
+#if !BUILDFLAG(IS_ANDROID)
+  auto* actor_service =
+      actor::ActorKeyedService::Get(web_contents->GetBrowserContext());
+  if (!actor_service) {
+    return false;
+  }
+
+  const auto* tab_interface =
+      tabs::TabInterface::MaybeGetFromContents(web_contents);
+  return tab_interface && actor_service->IsActiveOnTab(*tab_interface);
+#else
+  return false;
+#endif
 }

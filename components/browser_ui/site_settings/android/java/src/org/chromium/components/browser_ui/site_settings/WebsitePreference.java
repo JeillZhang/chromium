@@ -32,8 +32,8 @@ import org.chromium.url.GURL;
 /**
  * A preference that displays a website's favicon and URL and, optionally, the amount of local
  * storage used by the site. This preference can also display an additional icon on the right side
- * of the preference. See {@link ChromeImageViewPreference} for more details on how this icon
- * can be used.
+ * of the preference. See {@link ChromeImageViewPreference} for more details on how this icon can be
+ * used.
  */
 @NullMarked
 class WebsitePreference extends ChromeImageViewPreference {
@@ -124,7 +124,7 @@ class WebsitePreference extends ChromeImageViewPreference {
             return mSite.getTitleForPreferenceRow();
         }
 
-        return mSite.getTitle();
+        return mSite.getTitleForContentSetting(mCategory.getContentSettingsType());
     }
 
     protected String buildExpirationSummary(ContentSettingException exception) {

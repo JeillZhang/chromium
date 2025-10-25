@@ -18,6 +18,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "components/input/native_web_keyboard_event.h"
+#include "content/browser/android/ime_text_span.h"
 #include "content/browser/android/text_suggestion_host_android.h"
 #include "content/browser/renderer_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_delegate.h"
@@ -40,6 +41,7 @@ using base::android::ConvertJavaStringToUTF16;
 using base::android::ConvertUTF16ToJavaString;
 using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
+using base::android::ToJavaArrayOfStrings;
 
 namespace content {
 namespace {
@@ -210,6 +212,12 @@ void ImeAdapterAndroid::UpdateState(const ui::mojom::TextInputState& state) {
   ScopedJavaLocalRef<jobject> obj = java_ime_adapter_.get(env);
   if (obj.is_null())
     return;
+  base::android::ScopedJavaLocalRef<jobjectArray> j_ime_text_spans;
+
+  if (base::FeatureList::IsEnabled(
+          blink::features::kAndroidSpellcheckFullApiBlink)) {
+    j_ime_text_spans = ToImeTextSpanJniArray(env, state.ime_text_spans_info);
+  }
 
   ScopedJavaLocalRef<jstring> jstring_text =
       ConvertUTF16ToJavaString(env, state.value.value_or(std::u16string()));
@@ -222,7 +230,7 @@ void ImeAdapterAndroid::UpdateState(const ui::mojom::TextInputState& state) {
       state.composition ? state.composition.value().end() : -1,
       state.reply_to_request,
       static_cast<int>(state.last_vk_visibility_request),
-      static_cast<int>(state.vk_policy));
+      static_cast<int>(state.vk_policy), j_ime_text_spans);
 }
 
 void ImeAdapterAndroid::UpdateOnTouchDown() {
@@ -278,7 +286,6 @@ void ImeAdapterAndroid::OnRenderFrameMetadataChangedAfterActivation(
 
 bool ImeAdapterAndroid::SendKeyEvent(
     JNIEnv* env,
-    const JavaParamRef<jobject>&,
     const JavaParamRef<jobject>& original_key_event,
     int type,
     int modifiers,
@@ -355,13 +362,56 @@ void ImeAdapterAndroid::CommitText(JNIEnv* env,
                       relative_cursor_pos);
 }
 
-void ImeAdapterAndroid::FinishComposingText(JNIEnv* env,
-                                            const JavaParamRef<jobject>&) {
+void ImeAdapterAndroid::ReplaceText(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    int start,
+    int end,
+    const base::android::JavaParamRef<jstring>& text_str,
+    int relative_cursor_pos) {
+  RenderWidgetHostImpl* rwhi = GetFocusedWidget();
+  if (!rwhi) {
+    return;
+  }
+
+  std::u16string text16 = ConvertJavaStringToUTF16(env, text_str);
+
+  std::vector<ui::ImeTextSpan> ime_text_spans =
+      GetImeTextSpansFromJava(env, obj, text_str, text16);
+
+  // relative_cursor_pos is as described in the Android API for
+  // InputConnection#commitText, whereas the parameters for
+  // ImeConfirmComposition are relative to the end of the composition.
+  if (relative_cursor_pos > 0) {
+    relative_cursor_pos--;
+  } else {
+    relative_cursor_pos -= text16.length();
+  }
+
+  rwhi->ImeCommitText(text16, ime_text_spans, gfx::Range(start, end),
+                      relative_cursor_pos);
+}
+
+void ImeAdapterAndroid::FinishComposingText(JNIEnv* env) {
   RenderWidgetHostImpl* rwhi = GetFocusedWidget();
   if (!rwhi)
     return;
 
   rwhi->ImeFinishComposingText(true);
+}
+
+bool ImeAdapterAndroid::InsertMediaFromURL(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    const base::android::JavaParamRef<jstring>& url) {
+  auto* input_handler = GetFocusedFrameWidgetInputHandler();
+  if (!input_handler) {
+    return false;
+  }
+
+  input_handler->ExecuteEditCommand("PasteFromImageURL",
+                                    ConvertJavaStringToUTF16(env, url));
+  return true;
 }
 
 void ImeAdapterAndroid::CancelComposition() {
@@ -409,7 +459,6 @@ void ImeAdapterAndroid::OnEditElementFocusedForStylusWriting(
 
 void ImeAdapterAndroid::HandleStylusWritingGestureAction(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>&,
     const jint id,
     const base::android::JavaParamRef<jobject>& jgesture_data_byte_buffer) {
   auto* input_handler = GetFocusedFrameWidgetInputHandler();
@@ -417,8 +466,7 @@ void ImeAdapterAndroid::HandleStylusWritingGestureAction(
     return;
   blink::mojom::StylusWritingGestureDataPtr gesture_data;
   if (!blink::mojom::StylusWritingGestureData::Deserialize(
-          base::android::JavaByteBufferToSpan(env,
-                                              jgesture_data_byte_buffer.obj()),
+          base::android::JavaByteBufferToSpan(env, jgesture_data_byte_buffer),
           &gesture_data)) {
     NOTREACHED();
   }
@@ -457,9 +505,7 @@ void ImeAdapterAndroid::SetImeRenderWidgetHost() {
   rwhva_->PassImeRenderWidgetHost(std::move(ime_render_widget_host));
 }
 
-void ImeAdapterAndroid::AdvanceFocusForIME(JNIEnv* env,
-                                           const JavaParamRef<jobject>& obj,
-                                           jint focus_type) {
+void ImeAdapterAndroid::AdvanceFocusForIME(JNIEnv* env, jint focus_type) {
   RenderFrameHostImpl* rfh =
       static_cast<RenderFrameHostImpl*>(GetFocusedFrame());
   if (!rfh)
@@ -469,11 +515,27 @@ void ImeAdapterAndroid::AdvanceFocusForIME(JNIEnv* env,
       static_cast<blink::mojom::FocusType>(focus_type));
 }
 
-void ImeAdapterAndroid::SetEditableSelectionOffsets(
-    JNIEnv*,
-    const JavaParamRef<jobject>&,
-    int start,
-    int end) {
+ScopedJavaLocalRef<jobjectArray> ImeAdapterAndroid::GetSupportedMimeTypes(
+    JNIEnv* env) {
+  RenderFrameHostImpl* render_frame_host =
+      static_cast<RenderFrameHostImpl*>(GetFocusedFrame());
+
+  if (!render_frame_host) {
+    return ScopedJavaLocalRef<jobjectArray>();
+  }
+
+  std::vector<std::string> supported_mime_types;
+
+  if (render_frame_host->has_focused_richly_editable_element()) {
+    supported_mime_types.push_back("image/*");
+  }
+
+  return ToJavaArrayOfStrings(env, supported_mime_types);
+}
+
+void ImeAdapterAndroid::SetEditableSelectionOffsets(JNIEnv*,
+                                                    int start,
+                                                    int end) {
   auto* input_handler = GetFocusedFrameWidgetInputHandler();
   if (!input_handler)
     return;
@@ -481,10 +543,7 @@ void ImeAdapterAndroid::SetEditableSelectionOffsets(
   input_handler->SetEditableSelectionOffsets(start, end);
 }
 
-void ImeAdapterAndroid::SetComposingRegion(JNIEnv*,
-                                           const JavaParamRef<jobject>&,
-                                           int start,
-                                           int end) {
+void ImeAdapterAndroid::SetComposingRegion(JNIEnv*, int start, int end) {
   auto* input_handler = GetFocusedFrameWidgetInputHandler();
   if (!input_handler)
     return;
@@ -499,30 +558,23 @@ void ImeAdapterAndroid::SetComposingRegion(JNIEnv*,
   input_handler->SetCompositionFromExistingText(start, end, ime_text_spans);
 }
 
-void ImeAdapterAndroid::DeleteSurroundingText(JNIEnv*,
-                                              const JavaParamRef<jobject>&,
-                                              int before,
-                                              int after) {
+void ImeAdapterAndroid::DeleteSurroundingText(JNIEnv*, int before, int after) {
   auto* input_handler = GetFocusedFrameWidgetInputHandler();
   if (!input_handler)
     return;
   input_handler->DeleteSurroundingText(before, after);
 }
 
-void ImeAdapterAndroid::DeleteSurroundingTextInCodePoints(
-    JNIEnv*,
-    const JavaParamRef<jobject>&,
-    int before,
-    int after) {
+void ImeAdapterAndroid::DeleteSurroundingTextInCodePoints(JNIEnv*,
+                                                          int before,
+                                                          int after) {
   auto* input_handler = GetFocusedFrameWidgetInputHandler();
   if (!input_handler)
     return;
   input_handler->DeleteSurroundingTextInCodePoints(before, after);
 }
 
-bool ImeAdapterAndroid::RequestTextInputStateUpdate(
-    JNIEnv* env,
-    const JavaParamRef<jobject>&) {
+bool ImeAdapterAndroid::RequestTextInputStateUpdate(JNIEnv* env) {
   RenderWidgetHostImpl* rwhi = GetFocusedWidget();
   if (!rwhi)
     return false;
@@ -530,11 +582,9 @@ bool ImeAdapterAndroid::RequestTextInputStateUpdate(
   return true;
 }
 
-void ImeAdapterAndroid::RequestCursorUpdate(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj,
-    bool immediate_request,
-    bool monitor_request) {
+void ImeAdapterAndroid::RequestCursorUpdate(JNIEnv* env,
+                                            bool immediate_request,
+                                            bool monitor_request) {
   RenderWidgetHostImpl* rwhi = GetFocusedWidget();
   if (!rwhi)
     return;

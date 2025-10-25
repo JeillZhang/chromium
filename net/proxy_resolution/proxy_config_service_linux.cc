@@ -590,7 +590,7 @@ class SettingGetterImplKDE : public ProxyConfigServiceLinux::SettingGetter {
 
         // Reverses the order of paths to store them in ascending order of
         // priority
-        std::reverse(kde_config_dirs_.begin(), kde_config_dirs_.end());
+        std::ranges::reverse(kde_config_dirs_);
       }
     }
   }
@@ -1243,6 +1243,7 @@ ProxyConfigServiceLinux::Delegate::Delegate(
     case base::nix::DESKTOP_ENVIRONMENT_PANTHEON:
     case base::nix::DESKTOP_ENVIRONMENT_UKUI:
     case base::nix::DESKTOP_ENVIRONMENT_UNITY:
+    case base::nix::DESKTOP_ENVIRONMENT_COSMIC:
 #if defined(USE_GIO)
     {
       auto gs_getter = std::make_unique<SettingGetterImplGSettings>();

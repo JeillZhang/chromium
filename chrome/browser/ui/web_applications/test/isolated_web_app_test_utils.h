@@ -15,13 +15,13 @@
 #include "base/threading/thread_restrictions.h"
 #include "base/version.h"
 #include "chrome/browser/ui/web_applications/web_app_browsertest_base.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_source.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_storage_location.h"
-#include "chrome/browser/web_applications/isolated_web_apps/isolated_web_app_update_manager.h"
+#include "chrome/browser/web_applications/isolated_web_apps/update/isolated_web_app_update_manager.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_provider.h"
 #include "components/version_info/channel.h"
 #include "components/webapps/browser/installable/installable_metrics.h"
+#include "components/webapps/isolated_web_apps/types/source.h"
+#include "components/webapps/isolated_web_apps/types/storage_location.h"
 #include "extensions/common/features/feature_channel.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "ui/base/window_open_disposition.h"
@@ -58,10 +58,23 @@ class IsolatedWebAppBrowserTestHarness : public WebAppBrowserTestBase {
  protected:
   std::unique_ptr<net::EmbeddedTestServer> CreateAndStartServer(
       base::FilePath::StringViewType chrome_test_data_relative_root);
+
+  // Overrides the Key Distribution component. Sets managed allowlist of bundle
+  // ids which enables installing and updating Isolated Web Apps from policy.
+  // CAUTION: This function fully overrides all fields of the Key Distribution
+  // component (see IwaKeyDistributionInfoProvider::ComponentData), take care to
+  // not override other fields important for a testing feature or previously
+  // allowlisted bundles. CAUTION: Subsequent calls must use a higher
+  // `component_version`.
+  void SetIwaManagedAllowlist(
+      const std::vector<web_package::SignedWebBundleId>& managed_allowlist,
+      const base::Version& component_version);
+
   IsolatedWebAppUrlInfo InstallDevModeProxyIsolatedWebApp(
       const url::Origin& origin);
-  content::RenderFrameHost* OpenApp(const webapps::AppId& app_id,
-                                    std::string_view path = "");
+  content::RenderFrameHost* OpenApp(
+      const webapps::AppId& app_id,
+      std::optional<std::string_view> path = std::nullopt);
   content::RenderFrameHost* NavigateToURLInNewTab(
       Browser* window,
       const GURL& url,
@@ -105,8 +118,8 @@ class UpdateDiscoveryTaskResultWaiter
 
 class UpdateApplyTaskResultWaiter
     : public IsolatedWebAppUpdateManager::Observer {
-  using TaskResultCallback = base::OnceCallback<void(
-      IsolatedWebAppUpdateApplyTask::CompletionStatus status)>;
+  using TaskResultCallback =
+      base::OnceCallback<void(IsolatedWebAppApplyUpdateCommandResult status)>;
 
  public:
   UpdateApplyTaskResultWaiter(WebAppProvider& provider,
@@ -117,7 +130,7 @@ class UpdateApplyTaskResultWaiter
   // IsolatedWebAppUpdateManager::Observer:
   void OnUpdateApplyTaskCompleted(
       const webapps::AppId& app_id,
-      IsolatedWebAppUpdateApplyTask::CompletionStatus status) override;
+      IsolatedWebAppApplyUpdateCommandResult status) override;
 
  private:
   const webapps::AppId expected_app_id_;
@@ -136,9 +149,10 @@ IsolatedWebAppUrlInfo InstallDevModeProxyIsolatedWebApp(
     Profile* profile,
     const url::Origin& proxy_origin);
 
-content::RenderFrameHost* OpenIsolatedWebApp(Profile* profile,
-                                             const webapps::AppId& app_id,
-                                             std::string_view path = "");
+content::RenderFrameHost* OpenIsolatedWebApp(
+    Profile* profile,
+    const webapps::AppId& app_id,
+    std::optional<std::string_view> path = std::nullopt);
 
 void CreateIframe(content::RenderFrameHost* parent_frame,
                   const std::string& iframe_id,

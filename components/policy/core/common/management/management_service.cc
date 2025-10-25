@@ -107,11 +107,12 @@ void ManagementService::RefreshCache(CacheRefreshCallback callback) {
     if (provider->RequiresCache()) {
       provider->UpdateCache(provider->FetchAuthority());
     }
+  }
 
-    ManagementAuthorityTrustworthiness next =
-        GetManagementAuthorityTrustworthiness();
-    if (callback)
-      std::move(callback).Run(previous, next);
+  ManagementAuthorityTrustworthiness next =
+      GetManagementAuthorityTrustworthiness();
+  if (callback) {
+    std::move(callback).Run(previous, next);
   }
 }
 
@@ -228,6 +229,12 @@ void ManagementService::AddManagementStatusProvider(
 void ManagementService::NotifyEnterpriseLabelUpdated() {
   for (auto& observer : observers_) {
     observer.OnEnterpriseLabelUpdated();
+  }
+}
+
+void ManagementService::NotifyEnterpriseLogoForBrowserUpdated() {
+  for (auto& observer : observers_) {
+    observer.OnEnterpriseLogoUpdatedForBrowser();
   }
 }
 

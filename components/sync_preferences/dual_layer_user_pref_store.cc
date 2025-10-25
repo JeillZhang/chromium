@@ -38,32 +38,6 @@ constexpr syncer::UserSelectableTypeSet kInterestingUserSelectableTypes = {
 constexpr std::string_view kUserSelectedTypesPrefName =
     "dual_layer_user_pref_store.user_selected_sync_types";
 
-base::Value::List UserSelectableTypeSetToValueList(
-    syncer::UserSelectableTypeSet user_selected_types) {
-  base::Value::List value_list;
-  for (syncer::UserSelectableType type : user_selected_types) {
-    if (const char* name = syncer::GetUserSelectableTypeName(type)) {
-      value_list.Append(name);
-    }
-  }
-  return value_list;
-}
-
-syncer::UserSelectableTypeSet ValueListToUserSelectableTypeSet(
-    const base::Value::List& value_list) {
-  syncer::UserSelectableTypeSet user_selected_types;
-  for (const base::Value& value : value_list) {
-    if (!value.is_string()) {
-      continue;
-    }
-    if (std::optional<syncer::UserSelectableType> type =
-            syncer::GetUserSelectableTypeFromString(value.GetString())) {
-      user_selected_types.Put(type.value());
-    }
-  }
-  return user_selected_types;
-}
-
 }  // namespace
 
 DualLayerUserPrefStore::UnderlyingPrefStoreObserver::
@@ -175,8 +149,7 @@ bool DualLayerUserPrefStore::IsInitializationComplete() const {
 
 bool DualLayerUserPrefStore::GetValue(std::string_view key,
                                       const base::Value** result) const {
-  const std::string pref_name(key);
-  if (!ShouldGetValueFromAccountStore(pref_name)) {
+  if (!ShouldGetValueFromAccountStore(key)) {
     return local_pref_store_->GetValue(key, result);
   }
 
@@ -194,7 +167,7 @@ bool DualLayerUserPrefStore::GetValue(std::string_view key,
   if (result) {
     // Merge pref if `key` exists in both the stores.
     if (account_value && local_value) {
-      *result = MaybeMerge(pref_name, *local_value, *account_value);
+      *result = MaybeMerge(key, *local_value, *account_value);
       CHECK(*result);
     } else if (account_value) {
       *result = account_value;
@@ -229,24 +202,10 @@ void DualLayerUserPrefStore::SetValue(std::string_view key,
   // Only notify if something actually changed.
   // Note: `value` is still added to the stores in case `key` was missing from
   // any or had a different value.
-  bool should_notify =
+  const bool should_notify =
       !GetValue(key, &initial_value) || (*initial_value != value);
-  {
-    base::AutoReset<bool> setting_prefs(&is_setting_prefs_, true);
-    if (ShouldSetValueInAccountStore(key)) {
-      if (IsPrefKeyMergeable(key)) {
-        auto [new_local_value, new_account_value] =
-            UnmergeValue(key, std::move(value), flags);
-        account_pref_store_->SetValue(key, std::move(new_account_value), flags);
-        local_pref_store_->SetValue(key, std::move(new_local_value), flags);
-      } else {
-        account_pref_store_->SetValue(key, value.Clone(), flags);
-        local_pref_store_->SetValue(key, std::move(value), flags);
-      }
-    } else {
-      local_pref_store_->SetValue(key, std::move(value), flags);
-    }
-  }
+
+  DoSetValue(key, std::move(value), flags, /*notify=*/true);
 
   if (should_notify) {
     for (PrefStore::Observer& observer : observers_) {
@@ -347,24 +306,36 @@ void DualLayerUserPrefStore::ReportValueChanged(std::string_view key,
   }
 }
 
-void DualLayerUserPrefStore::SetValueSilently(std::string_view key,
-                                              base::Value value,
-                                              uint32_t flags) {
+void DualLayerUserPrefStore::DoSetValue(std::string_view key,
+                                        base::Value value,
+                                        uint32_t flags,
+                                        bool notify) {
+  base::AutoReset<bool> setting_prefs(&is_setting_prefs_, true);
+
+  auto set_value_fn = notify ? &WriteablePrefStore::SetValue
+                             : &WriteablePrefStore::SetValueSilently;
+
   if (ShouldSetValueInAccountStore(key)) {
     if (IsPrefKeyMergeable(key)) {
       auto [new_local_value, new_account_value] =
           UnmergeValue(key, std::move(value), flags);
-      account_pref_store_->SetValueSilently(key, std::move(new_account_value),
-                                            flags);
-      local_pref_store_->SetValueSilently(key, std::move(new_local_value),
-                                          flags);
+      (account_pref_store_.get()->*set_value_fn)(
+          key, std::move(new_account_value), flags);
+      (local_pref_store_.get()->*set_value_fn)(key, std::move(new_local_value),
+                                               flags);
     } else {
-      account_pref_store_->SetValueSilently(key, value.Clone(), flags);
-      local_pref_store_->SetValueSilently(key, std::move(value), flags);
+      (account_pref_store_.get()->*set_value_fn)(key, value.Clone(), flags);
+      (local_pref_store_.get()->*set_value_fn)(key, std::move(value), flags);
     }
   } else {
-    local_pref_store_->SetValueSilently(key, std::move(value), flags);
+    (local_pref_store_.get()->*set_value_fn)(key, std::move(value), flags);
   }
+}
+
+void DualLayerUserPrefStore::SetValueSilently(std::string_view key,
+                                              base::Value value,
+                                              uint32_t flags) {
+  DoSetValue(key, std::move(value), flags, /*notify=*/false);
 }
 
 void DualLayerUserPrefStore::RemoveValuesByPrefixSilently(
@@ -796,7 +767,7 @@ void DualLayerUserPrefStore::SetInterestingUserSelectedTypes(
   CHECK(kInterestingUserSelectableTypes.HasAll(user_selected_types));
   local_pref_store_->SetValueSilently(
       kUserSelectedTypesPrefName,
-      base::Value(UserSelectableTypeSetToValueList(user_selected_types)),
+      base::Value(syncer::UserSelectableTypeSetToValueList(user_selected_types)),
       WriteablePrefStore::DEFAULT_PREF_WRITE_FLAGS);
 }
 
@@ -809,7 +780,7 @@ DualLayerUserPrefStore::GetInterestingUserSelectedTypes() const {
       !value->is_list()) {
     return syncer::UserSelectableTypeSet();
   }
-  return base::Intersection(ValueListToUserSelectableTypeSet(value->GetList()),
+  return base::Intersection(syncer::ValueListToUserSelectableTypeSet(value->GetList()),
                             kInterestingUserSelectableTypes);
 }
 

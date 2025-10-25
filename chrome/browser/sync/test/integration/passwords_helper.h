@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "base/memory/raw_ptr.h"
 #include "chrome/browser/sync/test/integration/fake_server_match_status_checker.h"
 #include "chrome/browser/sync/test/integration/multi_client_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
@@ -89,6 +90,10 @@ bool AwaitProfileContainsSamePasswordFormsAsVerifier(int index);
 int GetPasswordCount(int index,
                      password_manager::PasswordForm::Store store =
                          password_manager::PasswordForm::Store::kProfileStore);
+
+// Gets all passwords from the password store of |profile_index|.
+std::vector<password_manager::PasswordForm> GetAllPasswordsForProfile(
+    int profile_index);
 
 // Returns the number of forms in the password store of the verifier profile.
 int GetVerifierPasswordCount();

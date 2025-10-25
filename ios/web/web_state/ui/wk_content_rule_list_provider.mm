@@ -4,232 +4,161 @@
 
 #import "ios/web/web_state/ui/wk_content_rule_list_provider.h"
 
-#import <Foundation/Foundation.h>
 #import <WebKit/WebKit.h>
 
-#import "base/functional/callback.h"
-#import "base/logging.h"
-#import "base/memory/weak_ptr.h"
-#import "ios/web/public/browser_state.h"
-#import "ios/web/web_state/ui/wk_content_rule_list_util.h"
+#import "base/apple/foundation_util.h"
+#import "base/check.h"
+#import "base/files/file_path.h"
+#import "base/functional/bind.h"
+#import "base/functional/callback_helpers.h"
+#import "base/metrics/histogram_functions.h"
+#import "base/sequence_checker.h"
+#import "base/strings/sys_string_conversions.h"
+#import "base/task/sequenced_task_runner.h"
+#import "base/time/time.h"
 
 namespace web {
-namespace {
-NSString* const kScriptBlockingListIdentifier = @"script-blocking-list";
-NSString* const kBlockLocalListIdentifier = @"block-local";
-NSString* const kMixedContentAutoupgradeListIdentifier =
-    @"mixed-content-autoupgrade";
 
-// Number of static rule lists compiled in the constructor.
-const int kInitialStaticListCompilationCount = 2;
-
-}  // namespace
-
-WKContentRuleListProvider::WKContentRuleListProvider()
-    : pending_static_compilations_(kInitialStaticListCompilationCount),
-      weak_ptr_factory_(this) {
-  base::WeakPtr<WKContentRuleListProvider> weak_this =
-      weak_ptr_factory_.GetWeakPtr();
-
-  // Compile "block-local" rules
-  [WKContentRuleListStore.defaultStore
-      compileContentRuleListForIdentifier:kBlockLocalListIdentifier
-                   encodedContentRuleList:CreateLocalBlockingJsonRuleList()
-                        completionHandler:^(WKContentRuleList* rule_list,
-                                            NSError* compile_error) {
-                          if (!weak_this.get()) {
-                            return;
-                          }
-                          if (compile_error) {
-                            LOG(ERROR) << "Error compiling list '"
-                                       << kBlockLocalListIdentifier
-                                       << "': " << compile_error;
-                          }
-                          block_local_rule_list_ = rule_list;
-                          InstallContentRuleLists();
-                          MaybeSignalStaticListsCompiled();
-                        }];
-
-  // Compile "mixed-content-autoupgrade" rules
-  [WKContentRuleListStore.defaultStore
-      compileContentRuleListForIdentifier:kMixedContentAutoupgradeListIdentifier
-                   encodedContentRuleList:
-                       CreateMixedContentAutoUpgradeJsonRuleList()
-                        completionHandler:^(WKContentRuleList* rule_list,
-                                            NSError* compile_error) {
-                          if (!weak_this.get()) {
-                            return;
-                          }
-                          if (compile_error) {
-                            LOG(ERROR) << "Error compiling list '"
-                                       << kMixedContentAutoupgradeListIdentifier
-                                       << "': " << compile_error;
-                          }
-                          mixed_content_autoupgrade_rule_list_ = rule_list;
-                          InstallContentRuleLists();
-                          MaybeSignalStaticListsCompiled();
-                        }];
-
-  // script_blocking_rule_list_ is initialized to nullptr and added later.
+WKContentRuleListProvider::WKContentRuleListProvider(
+    const base::FilePath& state_path) {
+  rule_list_store_ = [WKContentRuleListStore
+      storeWithURL:base::apple::FilePathToNSURL(state_path)];
+  CHECK(rule_list_store_);
 }
 
-WKContentRuleListProvider::~WKContentRuleListProvider() {}
-
-void WKContentRuleListProvider::SetOnAllStaticListsCompiledCallback(
-    base::OnceClosure callback) {
-  // If compilations are already done, run the callback immediately.
-  // Otherwise, store it.
-  if (pending_static_compilations_ == 0) {
-    if (callback) {
-      std::move(callback).Run();
-    }
-  } else {
-    on_all_static_lists_compiled_callback_ = std::move(callback);
-  }
-}
-
-void WKContentRuleListProvider::MaybeSignalStaticListsCompiled() {
-  // This method is called from the completion handler of each static list
-  // compilation.
-  if (pending_static_compilations_ > 0) {
-    pending_static_compilations_--;
-  }
-
-  if (pending_static_compilations_ == 0 &&
-      on_all_static_lists_compiled_callback_) {
-    std::move(on_all_static_lists_compiled_callback_).Run();
-  }
-}
-
-void WKContentRuleListProvider::UpdateContentRuleLists(
-    base::OnceCallback<void(bool)> callback) {
-  if (update_callback_) {
-    std::move(update_callback_).Run(false);
-  }
-  update_callback_ = std::move(callback);
-  // Re-apply all currently configured rules.
-  InstallContentRuleLists();
-
-  if (update_callback_) {
-    std::move(update_callback_).Run(true);
-  }
-}
-
-void WKContentRuleListProvider::UpdateScriptBlockingRuleList(
-    NSString* json_rules,
-    base::OnceCallback<void(NSError* error)> callback) {
-  base::WeakPtr<WKContentRuleListProvider> weak_this =
-      weak_ptr_factory_.GetWeakPtr();
-
-  __block base::OnceCallback<void(NSError * error)> block_callback =
-      std::move(callback);
-
-  // Handle removal
-  if (!json_rules) {
-    if (!script_blocking_rule_list_) {  // List already nil, considered success.
-      std::move(block_callback).Run(nil);
-      return;
-    }
-
-    if (user_content_controller_) {
-      [user_content_controller_
-          removeContentRuleList:script_blocking_rule_list_];
-    }
-
-    [WKContentRuleListStore.defaultStore
-        removeContentRuleListForIdentifier:kScriptBlockingListIdentifier
-                         completionHandler:^(NSError* remove_error) {
-                           if (!weak_this.get()) {
-                             return;
-                           }
-                           if (remove_error) {
-                             LOG(ERROR) << "Error removing list '"
-                                        << kScriptBlockingListIdentifier
-                                        << "' from store: " << remove_error;
-                           } else {
-                             script_blocking_rule_list_ = nil;
-                           }
-                           std::move(block_callback).Run(remove_error);
-                         }];
-    return;
-  }
-
-  // Handle compilation and installation
-  [WKContentRuleListStore.defaultStore
-      compileContentRuleListForIdentifier:kScriptBlockingListIdentifier
-                   encodedContentRuleList:json_rules
-                        completionHandler:^(WKContentRuleList* new_rule_list,
-                                            NSError* compile_error) {
-                          if (!weak_this.get()) {
-                            return;
-                          }
-
-                          if (compile_error) {
-                            LOG(ERROR) << "Error compiling list '"
-                                       << kScriptBlockingListIdentifier
-                                       << "': " << compile_error
-                                       << ". Keeping existing list if list was "
-                                          "present.";
-                            std::move(block_callback).Run(compile_error);
-                          } else {
-                            UninstallContentRuleLists();
-                            script_blocking_rule_list_ = new_rule_list;
-                            InstallContentRuleLists();
-                            std::move(block_callback).Run(nil);
-                          }
-                        }];
-}
-
-void WKContentRuleListProvider::InstallContentRuleLists() {
-  // Uninstall all lists managed by this provider to ensure a clean slate.
-  // This prevents adding the same list multiple times if Install is called
-  // repeatedly.
-  UninstallContentRuleLists();
-
-  // Add the current lists.
-  if (block_local_rule_list_) {
-    [user_content_controller_ addContentRuleList:block_local_rule_list_];
-  }
-  if (mixed_content_autoupgrade_rule_list_) {
-    [user_content_controller_
-        addContentRuleList:mixed_content_autoupgrade_rule_list_];
-  }
-  if (script_blocking_rule_list_) {
-    [user_content_controller_ addContentRuleList:script_blocking_rule_list_];
-  }
-}
-
-void WKContentRuleListProvider::UninstallContentRuleLists() {
-  // It's safe to call remove even if the list wasn't added or is nil.
-  if (block_local_rule_list_) {
-    [user_content_controller_ removeContentRuleList:block_local_rule_list_];
-  }
-  if (mixed_content_autoupgrade_rule_list_) {
-    [user_content_controller_
-        removeContentRuleList:mixed_content_autoupgrade_rule_list_];
-  }
-  if (script_blocking_rule_list_) {
-    [user_content_controller_ removeContentRuleList:script_blocking_rule_list_];
-  }
-}
+WKContentRuleListProvider::~WKContentRuleListProvider() = default;
 
 void WKContentRuleListProvider::SetUserContentController(
     WKUserContentController* user_content_controller) {
-  if (user_content_controller_ == user_content_controller) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  // Remove all managed rule lists from the existing controller.
+  UninstallAllRuleLists();
+  user_content_controller_ = user_content_controller;
+  // Install all rule lists into the new controller.
+  InstallAllRuleLists();
+}
+
+void WKContentRuleListProvider::UpdateRuleList(RuleListKey key,
+                                               std::string json_rules,
+                                               OperationCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+
+  NSString* identifier = base::SysUTF8ToNSString(key);
+  NSString* rules = base::SysUTF8ToNSString(json_rules);
+
+  void (^completion_handler)(WKContentRuleList*, NSError*) =
+      base::CallbackToBlock(
+          base::BindOnce(&WKContentRuleListProvider::OnRuleListCompiled,
+                         weak_ptr_factory_.GetWeakPtr(), key,
+                         std::move(callback), base::TimeTicks::Now()));
+
+  [rule_list_store_ compileContentRuleListForIdentifier:identifier
+                                 encodedContentRuleList:rules
+                                      completionHandler:completion_handler];
+}
+
+void WKContentRuleListProvider::RemoveRuleList(RuleListKey key,
+                                               OperationCallback callback) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  auto it = compiled_lists_.find(key);
+  if (it == compiled_lists_.end()) {
+    // If the list is not tracked, assume it's not in the store either.
+    // Just run the callback with success.
+    std::move(callback).Run(nil);
     return;
   }
+  // If the list is tracked, remove it from the content controller to
+  // immediately stop its application.
+  [user_content_controller_ removeContentRuleList:it->second];
 
-  // If there was a previous controller, remove rules from it first.
-  if (user_content_controller_) {
-    UninstallContentRuleLists();  // Acts on the old controller.
+  // Now, asynchronously remove it from the persistent WKContentRuleListStore.
+  NSString* identifier = base::SysUTF8ToNSString(key);
+  [rule_list_store_
+      removeContentRuleListForIdentifier:identifier
+                       completionHandler:
+                           base::CallbackToBlock(base::BindOnce(
+                               &WKContentRuleListProvider::OnRuleListRemoved,
+                               weak_ptr_factory_.GetWeakPtr(), key,
+                               std::move(callback)))];
+}
+
+// Private methods
+
+void WKContentRuleListProvider::OnRuleListCompiled(RuleListKey key,
+                                                   OperationCallback callback,
+                                                   base::TimeTicks start_time,
+                                                   WKContentRuleList* rule_list,
+                                                   NSError* error) {
+  const base::TimeDelta duration = base::TimeTicks::Now() - start_time;
+  // This case is not expected. WebKit should return either a list or an
+  // error.
+  if (!rule_list && !error) {
+    error = [NSError
+        errorWithDomain:WKErrorDomain
+                   code:WKErrorUnknown
+               userInfo:@{
+                 NSLocalizedDescriptionKey :
+                     @"Rule list compilation returned no list and no error."
+               }];
   }
 
-  // Update the controller reference.
-  user_content_controller_ = user_content_controller;
+  base::UmaHistogramBoolean(
+      "IOS.ContentRuleListProvider.Compile.Success." + key, error == nil);
 
-  // If a new controller is set, install the current rules into it.
-  if (user_content_controller_) {
-    InstallContentRuleLists();
+  if (error) {
+    base::UmaHistogramSparse("IOS.ContentRuleListProvider.Compile.Error." + key,
+                             error.code);
+  } else {
+    base::UmaHistogramTimes("IOS.ContentRuleListProvider.Compile.Time." + key,
+                            duration);
+
+    // If a list for this key already exists, it's an update. Remove the
+    // old one from the controller before adding the new one.
+    auto it = compiled_lists_.find(key);
+    if (it != compiled_lists_.end()) {
+      [user_content_controller_ removeContentRuleList:it->second];
+    }
+
+    // Store the key for future operations.
+    compiled_lists_[key] = rule_list;
+
+    // Install the newly compiled list into the content controller.
+    [user_content_controller_ addContentRuleList:rule_list];
+  }
+
+  // Notify the original caller of the result.
+  std::move(callback).Run(error);
+}
+
+void WKContentRuleListProvider::OnRuleListRemoved(RuleListKey key,
+                                                  OperationCallback callback,
+                                                  NSError* error) {
+  // A "not found" error is not a failure for a removal operation. The goal is
+  // to ensure the list is gone from the store.
+  if (error && ([error.domain isEqualToString:WKErrorDomain] &&
+                error.code == WKErrorContentRuleListStoreLookUpFailed)) {
+    error = nil;
+  }
+
+  base::UmaHistogramBoolean("IOS.ContentRuleListProvider.Remove.Success." + key,
+                            error == nil);
+
+  // Only remove from the internal map on success.
+  if (!error) {
+    compiled_lists_.erase(key);
+  }
+  std::move(callback).Run(error);
+}
+
+void WKContentRuleListProvider::InstallAllRuleLists() {
+  for (const auto& [key, rule_list] : compiled_lists_) {
+    [user_content_controller_ addContentRuleList:rule_list];
+  }
+}
+
+void WKContentRuleListProvider::UninstallAllRuleLists() {
+  for (const auto& [key, rule_list] : compiled_lists_) {
+    [user_content_controller_ removeContentRuleList:rule_list];
   }
 }
 

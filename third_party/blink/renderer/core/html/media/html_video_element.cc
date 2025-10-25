@@ -29,6 +29,7 @@
 
 #include "base/functional/callback_helpers.h"
 #include "base/metrics/histogram_functions.h"
+#include "cc/layers/layer.h"
 #include "cc/paint/paint_canvas.h"
 #include "media/base/video_frame.h"
 #include "third_party/blink/public/common/features.h"
@@ -334,8 +335,8 @@ void HTMLVideoElement::CreateVisibilityTrackerIfNeeded() {
 
   // Callback used by |MediaVideoVisibilityTracker| to report whether |this|
   // meets/does not meet the visibility threshold (kVisibilityThreshold).
-  auto report_visibility_cb = WTF::BindRepeating(
-      &HTMLVideoElement::ReportVisibility, WrapWeakPersistent(this));
+  auto report_visibility_cb = BindRepeating(&HTMLVideoElement::ReportVisibility,
+                                            WrapWeakPersistent(this));
 
   visibility_tracker_ = MakeGarbageCollected<MediaVideoVisibilityTracker>(
       *this, kVisibilityThreshold, std::move(report_visibility_cb));
@@ -384,8 +385,8 @@ void HTMLVideoElement::OnLoadFinished() {
   if (web_media_player_->DidLazyLoad() && !PotentiallyPlaying()) {
     lazy_load_intersection_observer_ = IntersectionObserver::Create(
         GetDocument(),
-        WTF::BindRepeating(&HTMLVideoElement::OnIntersectionChangedForLazyLoad,
-                           WrapWeakPersistent(this)),
+        BindRepeating(&HTMLVideoElement::OnIntersectionChangedForLazyLoad,
+                      WrapWeakPersistent(this)),
         LocalFrameUkmAggregator::kMediaIntersectionObserver,
         IntersectionObserver::Params{
             .thresholds = {IntersectionObserver::kMinimumThreshold}});
@@ -466,10 +467,8 @@ void HTMLVideoElement::OnFirstFrame(base::TimeTicks frame_time,
     video_timing->SetIsSufficientContentLoadedForPaint();
     video_timing->SetUrl(currentSrc());
     video_timing->SetContentSizeForEntropy(bytes_to_first_frame);
-    video_timing->SetTimingAllowPassed(
-        GetWebMediaPlayer()->PassedTimingAllowOriginCheck());
 
-    PaintTimingDetector::NotifyImagePaint(
+    PaintTimingDetector::NotifyFirstVideoFrame(
         *layout_object, videoVisibleSize(), *video_timing,
         layout_object->FirstFragment().LocalBorderBoxProperties(),
         layout_object->AbsoluteBoundingBoxRect());
@@ -479,7 +478,7 @@ void HTMLVideoElement::OnFirstFrame(base::TimeTicks frame_time,
 void HTMLVideoElement::EnterFullscreen() {
   if (!IsFullscreen()) {
     FullscreenOptions* options = FullscreenOptions::Create();
-    options->setNavigationUI("hide");
+    options->setNavigationUI(V8FullscreenNavigationUI::Enum::kHide);
     Fullscreen::RequestFullscreen(*this, options,
                                   FullscreenRequestType::kPrefixed);
   }
@@ -613,9 +612,7 @@ scoped_refptr<StaticBitmapImage> HTMLVideoElement::CreateStaticBitmapImage(
                                      FROM_HERE);
 
   auto image = CreateImageFromVideoFrame(
-      std::move(media_video_frame),
-      /*allow_zero_copy_images=*/true, resource_provider_.get(), video_renderer,
-      gfx::Rect(dest_size),
+      std::move(media_video_frame), resource_provider_.get(), video_renderer,
       /*prefer_tagged_orientation=*/true, reinterpret_as_srgb);
   if (image)
     image->SetOriginClean(!WouldTaintOrigin());
@@ -832,8 +829,7 @@ void HTMLVideoElement::OnIntersectionChangedForLazyLoad(
 
   GetDocument()
       .GetTaskRunner(TaskType::kInternalMedia)
-      ->PostTask(FROM_HERE,
-                 WTF::BindOnce(notify_visible, WrapWeakPersistent(this)));
+      ->PostTask(FROM_HERE, BindOnce(notify_visible, WrapWeakPersistent(this)));
 }
 
 void HTMLVideoElement::OnWebMediaPlayerCreated() {

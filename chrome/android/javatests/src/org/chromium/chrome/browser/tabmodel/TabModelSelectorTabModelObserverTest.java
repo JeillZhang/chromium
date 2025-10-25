@@ -30,6 +30,9 @@ import java.util.concurrent.TimeoutException;
  * Integration tests for the TabModelSelectorTabModelObserver. See
  * TabModelSelectorTabModelObserverUnitTest.java for unit tests.
  */
+// TODO(crbug.com/454298057): TabModelImpl & TabGroupModelFilterImpl will be deleted (replaced by
+// TabCollectionTabModelImpl). The scenarios that rely on these classes will need to be migrated to
+// TabCollectionTabModelImpl.
 @RunWith(BaseJUnit4ClassRunner.class)
 @Batch(Batch.PER_CLASS)
 public class TabModelSelectorTabModelObserverTest {
@@ -71,8 +74,8 @@ public class TabModelSelectorTabModelObserverTest {
                     public void requestToShowTab(Tab tab, int type) {}
 
                     @Override
-                    public boolean isSessionRestoreInProgress() {
-                        return false;
+                    public boolean isTabModelRestored() {
+                        return true;
                     }
 
                     @Override
@@ -92,11 +95,10 @@ public class TabModelSelectorTabModelObserverTest {
                         registrationCompleteCallback.notifyCalled();
                     }
                 };
-        TabUngrouperFactory factory =
-                (isIncognitoBranded, tabGroupModelFilterSupplier) ->
-                        new PassthroughTabUngrouper(tabGroupModelFilterSupplier);
         mSelector.initialize(
-                sTestRule.getNormalTabModel(), sTestRule.getIncognitoTabModel(), factory);
+                TabModelHolderFactory.createTabModelHolderForTesting(sTestRule.getNormalTabModel()),
+                TabModelHolderFactory.createIncognitoTabModelHolderForTesting(
+                        sTestRule.getIncognitoTabModel()));
         registrationCompleteCallback.waitForCallback(0);
         assertAllModelsHaveObserver(mSelector, observer);
     }

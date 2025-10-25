@@ -43,7 +43,10 @@
 #include "net/websockets/websocket_frame.h"  // for WebSocketFrameHeader::OpCode
 #include "net/websockets/websocket_handshake_request_info.h"
 #include "net/websockets/websocket_handshake_response_info.h"
+#include "services/network/private_network_access_checker.h"
+#include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/ip_address_space_util.h"
+#include "services/network/public/cpp/private_network_access_check_result.h"
 #include "services/network/throttling/throttling_controller.h"
 #include "services/network/throttling/throttling_network_interceptor.h"
 #include "services/network/websocket_factory.h"
@@ -123,6 +126,47 @@ mojom::WebSocketHandshakeResponsePtr ToMojo(
   return response_to_pass;
 }
 
+bool IsValidSubprotocolCharacter(char character) {
+  constexpr auto kMinimumProtocolCharacter = '!';  // U+0021.
+  constexpr auto kMaximumProtocolCharacter = '~';  // U+007E.
+  // Set to true if character does not matches "separators" ABNF defined in
+  // RFC2616. SP and HT are excluded since the range check excludes them.
+  const bool is_separator =
+      character == '"' || character == '(' || character == ')' ||
+      character == ',' || character == '/' ||
+      (character >= ':' &&
+       character <=
+           '@')  // U+003A - U+0040 (':', ';', '<', '=', '>', '?', '@').
+      || (character >= '[' &&
+          character <= ']')  // U+005B - U+005D ('[', '\\', ']').
+      || character == '{' || character == '}';
+  return character >= kMinimumProtocolCharacter &&
+         character <= kMaximumProtocolCharacter && !is_separator;
+}
+
+bool IsValidSubprotocolString(const std::string& protocol) {
+  if (protocol.empty()) {
+    return false;
+  }
+  return std::ranges::all_of(protocol, IsValidSubprotocolCharacter);
+}
+
+bool IsValidProtocols(const std::vector<std::string>& requested_protocols) {
+  // Fail if not all elements in |protocols| are valid.
+  if (!std::ranges::all_of(requested_protocols, IsValidSubprotocolString)) {
+    return false;
+  }
+
+  // Fail if there're duplicated elements in |protocols|.
+  std::vector<std::string> protocols = requested_protocols;
+  std::ranges::sort(protocols);
+  if (std::ranges::adjacent_find(protocols) != protocols.end()) {
+    return false;
+  }
+
+  return true;
+}
+
 }  // namespace
 
 // Implementation of net::WebSocketEventInterface. Receives events from our
@@ -140,8 +184,9 @@ class WebSocket::WebSocketEventHandler final
   // net::WebSocketEventInterface implementation
 
   void OnCreateURLRequest(net::URLRequest* url_request) override;
-  void OnURLRequestConnected(net::URLRequest* request,
-                             const net::TransportInfo& info) override;
+  int OnURLRequestConnected(net::URLRequest* request,
+                            const net::TransportInfo& info,
+                            net::CompletionOnceCallback callback) override;
   void OnAddChannelResponse(
       std::unique_ptr<net::WebSocketHandshakeResponseInfo> response,
       const std::string& selected_subprotocol,
@@ -195,22 +240,72 @@ void WebSocket::WebSocketEventHandler::OnCreateURLRequest(
                            std::make_unique<UnownedPointer>(impl_));
   if (impl_->throttling_profile_id_) {
     impl_->frame_interceptor_ = std::make_unique<WebSocketInterceptor>(
-        url_request->net_log().source().id, impl_->throttling_profile_id_);
+        url_request->net_log().source().id, url_request->url(),
+        impl_->throttling_profile_id_);
   }
 }
 
-void WebSocket::WebSocketEventHandler::OnURLRequestConnected(
+int WebSocket::WebSocketEventHandler::OnURLRequestConnected(
     net::URLRequest* request,
-    const net::TransportInfo& info) {
+    const net::TransportInfo& info,
+    net::CompletionOnceCallback callback) {
+  // Grab Metrics first, then do acutal LNA checks.
   if (impl_->url_loader_network_observer_) {
-    mojom::IPAddressSpace ip_address_space =
-        TransportInfoToIPAddressSpace(info);
-    if (ip_address_space == network::mojom::IPAddressSpace::kLocal ||
-        ip_address_space == network::mojom::IPAddressSpace::kPrivate) {
-      impl_->url_loader_network_observer_->OnWebSocketConnectedToPrivateNetwork(
-          ip_address_space);
-    }
+    impl_->url_loader_network_observer_->OnWebSocketConnectedToPrivateNetwork(
+        request->url(), TransportInfoToIPAddressSpace(info));
   }
+
+  // Currently this function only does LNA checks, so if those are not enabled,
+  // return net::OK and skip the rest.
+  if (!base::FeatureList::IsEnabled(
+          features::kLocalNetworkAccessChecksWebSockets)) {
+    return net::OK;
+  }
+
+  // target_ip_address_space is always kUnknown as LNA doesn't do preflights.
+  //
+  // required_ip_address_space is always kUnknown as websockets API doesn't have
+  // a targetAddressSpace parameter like fetch() does to bypass mixed content
+  // checks.
+  PrivateNetworkAccessChecker checker(
+      request->url(),
+      /*target_ip_address_space=*/network::mojom::IPAddressSpace::kUnknown,
+      request->initiator(),
+      /*required_ip_address_space=*/network::mojom::IPAddressSpace::kUnknown,
+      impl_->client_security_state_.get(), impl_->options_);
+
+  PrivateNetworkAccessCheckResult check_result = checker.Check(info);
+  std::optional<mojom::CorsError> cors_error =
+      PrivateNetworkAccessCheckResultToCorsError(check_result);
+  if (!cors_error.has_value()) {
+    return net::OK;
+  }
+
+  if (impl_->url_loader_network_observer_ &&
+      check_result == PrivateNetworkAccessCheckResult::kLNAPermissionRequired) {
+    impl_->url_loader_network_observer_->OnLocalNetworkAccessPermissionRequired(
+        base::BindOnce(
+            [](base::WeakPtr<WebSocket> weak_self,
+               net::CompletionOnceCallback callback, bool permission_granted) {
+              if (!weak_self) {
+                // Checking the weak ptr not to call the `callback` after
+                // `this` is destructed. This is needed because the
+                // observer's pipe may outlive `this` and the owner
+                // `WebSocket`.
+                return;
+              }
+              std::move(callback).Run(
+                  permission_granted
+                      ? net::OK
+                      : net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS);
+            },
+            impl_->weak_ptr_factory_.GetWeakPtr(), std::move(callback)));
+    return net::ERR_IO_PENDING;
+  }
+
+  // Otherwise, if there was a Local Network Access CORS error, block by
+  // default.
+  return net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS;
 }
 
 void WebSocket::WebSocketEventHandler::OnAddChannelResponse(
@@ -429,6 +524,7 @@ WebSocket::WebSocket(
     const net::IsolationInfo& isolation_info,
     std::vector<mojom::HttpHeaderPtr> additional_headers,
     const url::Origin& origin,
+    network::mojom::ClientSecurityStatePtr client_security_state,
     uint32_t options,
     net::NetworkTrafficAnnotationTag traffic_annotation,
     HasRawHeadersAccess has_raw_headers_access,
@@ -451,6 +547,7 @@ WebSocket::WebSocket(
       options_(options),
       traffic_annotation_(traffic_annotation),
       origin_(std::move(origin)),
+      client_security_state_(std::move(client_security_state)),
       site_for_cookies_(site_for_cookies),
       isolation_info_(isolation_info),
       has_raw_headers_access_(has_raw_headers_access),
@@ -654,6 +751,18 @@ void WebSocket::AddChannel(
       new WebSocketEventHandler(this));
   channel_ = std::make_unique<net::WebSocketChannel>(
       std::move(event_interface), factory_->GetURLRequestContext());
+
+  if (!socket_url.SchemeIsWSOrWSS()) {
+    mojo::ReportBadMessage("Invalid scheme.");
+    Reset();
+    return;
+  }
+
+  if (!IsValidProtocols(requested_protocols)) {
+    mojo::ReportBadMessage("Invalid protocols.");
+    Reset();
+    return;
+  }
 
   net::HttpRequestHeaders headers_to_pass;
   for (const auto& header : additional_headers) {

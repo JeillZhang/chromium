@@ -31,7 +31,6 @@
 #import "ios/chrome/browser/shared/model/web_state_list/tab_group.h"
 #import "ios/chrome/browser/shared/model/web_state_list/test/web_state_list_builder_from_description.h"
 #import "ios/chrome/browser/shared/model/web_state_list/web_state_list.h"
-#import "ios/chrome/browser/shared/public/features/features.h"
 #import "ios/chrome/browser/snapshots/model/snapshot_browser_agent.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_collection_drag_drop_metrics.h"
 #import "ios/chrome/browser/tab_switcher/ui_bundled/tab_grid/grid/grid_mediator_test.h"
@@ -82,12 +81,12 @@ class TabGroupMediatorTest : public GridMediatorTestClass {
  public:
   void SetUp() override {
     scoped_feature_list_.InitWithFeatures(
-        {kTabGroupSync, data_sharing::features::kDataSharingFeature}, {});
+        {data_sharing::features::kDataSharingFeature}, {});
 
     GridMediatorTestClass::SetUp();
 
     WebStateList* web_state_list = browser_->GetWebStateList();
-    CloseAllWebStates(*web_state_list, WebStateList::CLOSE_NO_FLAGS);
+    CloseAllWebStates(*web_state_list, WebStateList::ClosingReason::kDefault);
     builder_ =
         std::make_unique<WebStateListBuilderFromDescription>(web_state_list);
     ASSERT_TRUE(builder_->BuildWebStateListFromDescription(
@@ -124,7 +123,8 @@ class TabGroupMediatorTest : public GridMediatorTestClass {
                     consumer:tab_group_consumer_
                 gridConsumer:consumer_
                   modeHolder:mode_holder_
-            messagingService:&messaging_backend_];
+            messagingService:&messaging_backend_
+            tabGroupDelegate:nil];
     mediator_.browser = browser_.get();
   }
 
@@ -143,7 +143,7 @@ class TabGroupMediatorTest : public GridMediatorTestClass {
  protected:
   TestTabGroupMediator* mediator_;
   id<TabGroupConsumer> tab_group_consumer_;
-  raw_ptr<const TabGroup> tab_group_;
+  raw_ptr<const TabGroup, DanglingUntriaged> tab_group_;
   std::unique_ptr<WebStateListBuilderFromDescription> builder_;
   std::unique_ptr<ShareKitService> share_kit_service_;
   std::unique_ptr<collaboration::MockCollaborationService>
@@ -324,15 +324,15 @@ TEST_F(TabGroupMediatorTest, CreateAnotherGroupAndCloseTabs) {
   EXPECT_EQ("| f [ 1 a* b c ] [ _ d e ]",
             builder_->GetWebStateListDescription());
 
-  web_state_list->CloseWebStateAt(4, WebStateList::CLOSE_USER_ACTION);
-  web_state_list->CloseWebStateAt(4, WebStateList::CLOSE_USER_ACTION);
+  web_state_list->CloseWebStateAt(4, WebStateList::ClosingReason::kUserAction);
+  web_state_list->CloseWebStateAt(4, WebStateList::ClosingReason::kUserAction);
   EXPECT_EQ("| f [ 1 a* b c ]", builder_->GetWebStateListDescription());
 }
 
 // Tests that CollaborationIDChangedForGroup does not update facePile UI when
 // the group id does not match.
 TEST_F(TabGroupMediatorTest, CollaborationIDChangedForInvalidGroup) {
-  OCMReject([tab_group_consumer_ setFacePileView:OCMOCK_ANY]);
+  OCMReject([tab_group_consumer_ setFacePileProvider:OCMOCK_ANY]);
 
   SavedTabGroup other_saved_group(
       u"other group", tab_groups::TabGroupColorId::kOrange, {},
@@ -350,7 +350,7 @@ TEST_F(TabGroupMediatorTest, CollaborationIDChangedForInvalidGroup) {
 // Tests that CollaborationIDChangedForGroup correctly updates the facePile UI
 // when the group is shared.
 TEST_F(TabGroupMediatorTest, CollaborationIDChangedForGroupShared) {
-  OCMExpect([tab_group_consumer_ setFacePileView:OCMOCK_ANY]);
+  OCMExpect([tab_group_consumer_ setFacePileProvider:OCMOCK_ANY]);
 
   const SavedTabGroup saved_group =
       tab_group_sync_service_->GetGroup(tab_group_->tab_group_id()).value();

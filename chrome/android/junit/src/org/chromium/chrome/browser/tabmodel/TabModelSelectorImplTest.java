@@ -41,6 +41,7 @@ import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Features.EnableFeatures;
 import org.chromium.chrome.browser.flags.ActivityType;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.profiles.ProfileProvider;
 import org.chromium.chrome.browser.tab.MockTab;
@@ -64,6 +65,9 @@ import java.lang.ref.WeakReference;
 /** Unit tests for {@link TabModelSelectorImpl}. */
 @RunWith(BaseRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
+// TODO(crbug.com/454298057): TabModelImpl & TabGroupModelFilterImpl will be deleted (replaced by
+// TabCollectionTabModelImpl). The scenarios that rely on these classes will need to be migrated
+// to mocks, fakes, or instrumentation tests.
 public class TabModelSelectorImplTest {
     // Test activity type that does not restore tab on cold restart.
     // Any type other than ActivityType.TABBED works.
@@ -78,6 +82,7 @@ public class TabModelSelectorImplTest {
     @Mock private TabDelegateFactory mTabDelegateFactory;
     @Mock private NextTabPolicySupplier mNextTabPolicySupplier;
     @Mock private ModalDialogManager mModalDialogManager;
+    @Mock private MultiInstanceManager mMultiInstanceManager;
 
     @Mock
     private IncognitoTabModelObserver.IncognitoReauthDialogDelegate
@@ -115,6 +120,7 @@ public class TabModelSelectorImplTest {
                         mProfileProviderSupplier,
                         mTabCreatorManager,
                         mNextTabPolicySupplier,
+                        mMultiInstanceManager,
                         mAsyncTabParamsManager,
                         /* supportUndo= */ false,
                         NO_RESTORE_TYPE,
@@ -145,7 +151,9 @@ public class TabModelSelectorImplTest {
 
         mTabCreatorManager.initialize(mTabModelSelector);
         mTabModelSelector.onNativeLibraryReadyInternal(
-                mMockTabContentManager, mRegularTabModel, mIncognitoTabModel);
+                mMockTabContentManager,
+                TabModelHolderFactory.createTabModelHolderForTesting(mRegularTabModel),
+                TabModelHolderFactory.createIncognitoTabModelHolderForTesting(mIncognitoTabModel));
 
         assertEquals(
                 mTabModelSelector.getModel(/* incognito= */ false),
@@ -467,15 +475,15 @@ public class TabModelSelectorImplTest {
                         mProfileProviderSupplier,
                         mTabCreatorManager,
                         mNextTabPolicySupplier,
+                        mMultiInstanceManager,
                         mAsyncTabParamsManager,
                         /* supportUndo= */ false,
                         NO_RESTORE_TYPE,
                         /* startIncognito= */ false);
         when(regularModel.isActiveModel()).thenReturn(true);
-        TabUngrouperFactory factory =
-                (isIncognitoBranded, tabGroupModelFilterSupplier) ->
-                        new PassthroughTabUngrouper(tabGroupModelFilterSupplier);
-        mTabModelSelector.initializeForTesting(regularModel, mIncognitoTabModel, factory);
+        mTabModelSelector.initializeForTesting(
+                TabModelHolderFactory.createTabModelHolderForTesting(regularModel),
+                TabModelHolderFactory.createIncognitoTabModelHolderForTesting(mIncognitoTabModel));
         TabModelSelectorObserver observer =
                 new TabModelSelectorObserver() {
                     @Override
@@ -513,15 +521,15 @@ public class TabModelSelectorImplTest {
                         mProfileProviderSupplier,
                         mTabCreatorManager,
                         mNextTabPolicySupplier,
+                        mMultiInstanceManager,
                         mAsyncTabParamsManager,
                         /* supportUndo= */ false,
                         NO_RESTORE_TYPE,
                         /* startIncognito= */ false);
         when(regularModel.isActiveModel()).thenReturn(true);
-        TabUngrouperFactory factory =
-                (isIncognitoBranded, tabGroupModelFilterSupplier) ->
-                        new PassthroughTabUngrouper(tabGroupModelFilterSupplier);
-        mTabModelSelector.initializeForTesting(regularModel, mIncognitoTabModel, factory);
+        mTabModelSelector.initializeForTesting(
+                TabModelHolderFactory.createTabModelHolderForTesting(regularModel),
+                TabModelHolderFactory.createIncognitoTabModelHolderForTesting(mIncognitoTabModel));
         mTabModelSelector.markTabStateInitialized();
         verify(regularModel, never()).broadcastSessionRestoreComplete();
     }

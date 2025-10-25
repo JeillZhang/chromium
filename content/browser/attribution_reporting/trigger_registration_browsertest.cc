@@ -17,6 +17,7 @@
 #include "content/browser/attribution_reporting/attribution_test_utils.h"
 #include "content/browser/attribution_reporting/test/mock_attribution_manager.h"
 #include "content/browser/web_contents/web_contents_impl.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_utils.h"
@@ -55,9 +56,7 @@ class AttributionTriggerRegistrationBrowserTest
     const bool enable_in_browser_migration = GetParam();
     if (enable_in_browser_migration) {
       scoped_feature_list_.InitWithFeatures(
-          {blink::features::kKeepAliveInBrowserMigration,
-           blink::features::kAttributionReportingInBrowserMigration},
-          {});
+          {blink::features::kKeepAliveInBrowserMigration}, {});
     } else {
       scoped_feature_list_.InitAndDisableFeature(
           {blink::features::kKeepAliveInBrowserMigration});

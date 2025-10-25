@@ -487,13 +487,20 @@ TEST_F(AutofillExperimentsTest,
 
   std::string output_js;
   ASSERT_TRUE(base::JSONWriter::Write(dictionary, &output_js));
-  EXPECT_EQ(dictionary, *base::JSONReader::Read(output_js));
+  EXPECT_EQ(dictionary, *base::JSONReader::Read(
+                            output_js, base::JSON_PARSE_CHROMIUM_EXTENSIONS));
 }
 
 #if BUILDFLAG(IS_ANDROID)
 TEST_F(AutofillExperimentsTest,
        FacilitatedPaymentsPixPref_DefaultValueSetToTrue) {
   EXPECT_TRUE(pref_service_.GetBoolean(prefs::kFacilitatedPaymentsPix));
+}
+
+TEST_F(AutofillExperimentsTest,
+       FacilitatedPaymentsPixAccountLinkingPref_DefaultValueSetToTrue) {
+  EXPECT_TRUE(
+      pref_service_.GetBoolean(prefs::kFacilitatedPaymentsPixAccountLinking));
 }
 #endif  // BUILDFLAG(IS_ANDROID)
 

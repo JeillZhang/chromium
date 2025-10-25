@@ -62,6 +62,7 @@
 #include "third_party/blink/renderer/platform/loader/link_header.h"
 #include "third_party/blink/renderer/platform/loader/subresource_integrity.h"
 #include "third_party/blink/renderer/platform/network/mime/mime_type_registry.h"
+#include "third_party/blink/renderer/platform/runtime_enabled_features.h"
 #include "third_party/blink/renderer/platform/weborigin/security_origin.h"
 
 namespace blink {
@@ -313,7 +314,7 @@ void PreloadHelper::DnsPrefetchIfNeeded(
             MakeGarbageCollected<ConsoleMessage>(
                 mojom::blink::ConsoleMessageSource::kOther,
                 mojom::blink::ConsoleMessageLevel::kVerbose,
-                String("DNS prefetch triggered for " + params.href.Host())),
+                StrCat({"DNS prefetch triggered for ", params.href.Host()})),
             document, frame);
       }
       WebPrescientNetworking* web_prescient_networking =
@@ -344,18 +345,17 @@ void PreloadHelper::PreconnectIfNeeded(
           MakeGarbageCollected<ConsoleMessage>(
               mojom::blink::ConsoleMessageSource::kOther,
               mojom::blink::ConsoleMessageLevel::kVerbose,
-              String("Preconnect triggered for ") + params.href.GetString()),
+              StrCat({"Preconnect triggered for ", params.href.GetString()})),
           document, frame);
       if (params.cross_origin != kCrossOriginAttributeNotSet) {
         SendMessageToConsoleForPossiblyNullDocument(
             MakeGarbageCollected<ConsoleMessage>(
                 mojom::blink::ConsoleMessageSource::kOther,
                 mojom::blink::ConsoleMessageLevel::kVerbose,
-                String("Preconnect CORS setting is ") +
-                    String(
+                StrCat({"Preconnect CORS setting is ",
                         (params.cross_origin == kCrossOriginAttributeAnonymous)
                             ? "anonymous"
-                            : "use-credentials")),
+                            : "use-credentials"})),
             document, frame);
       }
     }
@@ -533,7 +533,8 @@ void PreloadHelper::PreloadIfNeeded(
   link_fetch_params.SetContentSecurityPolicyNonce(params.nonce);
   Settings* settings = document.GetSettings();
   if (settings && settings->GetLogPreload()) {
-    String message = "Preload triggered for " + url.Host() + url.GetPath();
+    String message =
+        StrCat({"Preload triggered for ", url.Host(), url.GetPath()});
     String fetch_priority_message;
     if (!params.fetch_priority_hint.empty()) {
       mojom::blink::FetchPriorityHint hint =
@@ -555,7 +556,7 @@ void PreloadHelper::PreloadIfNeeded(
     document.AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
         mojom::blink::ConsoleMessageSource::kOther,
         mojom::blink::ConsoleMessageLevel::kVerbose,
-        message + fetch_priority_message));
+        StrCat({message, fetch_priority_message})));
   }
   link_fetch_params.SetLinkPreload(true);
   link_fetch_params.SetRenderBlockingBehavior(
@@ -617,16 +618,15 @@ void PreloadHelper::ModulePreloadIfNeeded(
     document.AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
         mojom::blink::ConsoleMessageSource::kOther,
         mojom::blink::ConsoleMessageLevel::kWarning,
-        String("<link rel=modulepreload> has an invalid `as` value " +
-               params.as)));
+        StrCat({"<link rel=modulepreload> has an invalid `as` value ",
+                params.as})));
     // This triggers the same logic as Step 11 asynchronously, which will fire
     // the error event.
     if (client) {
       modulator->TaskRunner()->PostTask(
-          FROM_HERE,
-          WTF::BindOnce(&SingleModuleClient::NotifyModuleLoadFinished,
-                        WrapPersistent(client), nullptr,
-                        ModuleImportPhase::kEvaluation));
+          FROM_HERE, BindOnce(&SingleModuleClient::NotifyModuleLoadFinished,
+                              WrapPersistent(client), nullptr,
+                              ModuleImportPhase::kEvaluation));
     }
     return;
   }
@@ -643,8 +643,8 @@ void PreloadHelper::ModulePreloadIfNeeded(
     document.AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
         mojom::blink::ConsoleMessageSource::kOther,
         mojom::blink::ConsoleMessageLevel::kWarning,
-        "<link rel=modulepreload> has an invalid `href` value " +
-            params.href.GetString()));
+        StrCat({"<link rel=modulepreload> has an invalid `href` value ",
+                params.href.GetString()})));
     return;
   }
 
@@ -700,8 +700,10 @@ void PreloadHelper::ModulePreloadIfNeeded(
                          params.referrer_policy,
                          mojom::blink::FetchPriorityHint::kAuto,
                          RenderBlockingBehavior::kNonBlocking),
-      Referrer::NoReferrer(), TextPosition::MinimumPosition(),
-      ModuleImportPhase::kEvaluation);
+      RuntimeEnabledFeatures::ModulePreloadReferrerEnabled()
+          ? Referrer::ClientReferrerString()
+          : Referrer::NoReferrer(),
+      TextPosition::MinimumPosition(), ModuleImportPhase::kEvaluation);
 
   // Step 13. "Fetch a modulepreload module script graph given url, destination,
   // settings object, and options. Wait until the algorithm asynchronously
@@ -719,8 +721,8 @@ void PreloadHelper::ModulePreloadIfNeeded(
     document.AddConsoleMessage(MakeGarbageCollected<ConsoleMessage>(
         mojom::blink::ConsoleMessageSource::kOther,
         mojom::blink::ConsoleMessageLevel::kVerbose,
-        "Module preload triggered for " + params.href.Host() +
-            params.href.GetPath()));
+        StrCat({"Module preload triggered for ", params.href.Host(),
+                params.href.GetPath()})));
   }
 
   // Asynchronously continue processing after
@@ -780,13 +782,6 @@ void PreloadHelper::PrefetchIfNeeded(const LinkLoadParameters& params,
   resource_request.SetReferrerPolicy(params.referrer_policy);
   resource_request.SetFetchPriorityHint(
       GetFetchPriorityAttributeValue(params.fetch_priority_hint));
-
-  if (base::FeatureList::IsEnabled(features::kPrefetchPrivacyChanges)) {
-    resource_request.SetRedirectMode(network::mojom::RedirectMode::kError);
-    resource_request.SetReferrerPolicy(network::mojom::ReferrerPolicy::kNever);
-    // TODO(domfarolino): Implement more privacy-preserving prefetch changes.
-    // See crbug.com/988956.
-  }
 
   ResourceLoaderOptions options(
       document.GetExecutionContext()->GetCurrentWorld());
@@ -969,11 +964,6 @@ void PreloadHelper::FetchCompressionDictionaryIfNeeded(
     const LinkLoadParameters& params,
     Document& document,
     PendingLinkPreload* pending_preload) {
-  if (!CompressionDictionaryTransportFullyEnabled(
-          document.GetExecutionContext())) {
-    return;
-  }
-
   if (!document.Loader() || document.Loader()->Archive()) {
     return;
   }

@@ -75,7 +75,7 @@ class UserActivityPowerManagerNotifier;
 }  // namespace ui
 
 namespace views {
-class NonClientFrameView;
+class FrameView;
 class Widget;
 namespace corewm {
 class TooltipController;
@@ -114,7 +114,6 @@ class AshColorProvider;
 class AshDBusServices;
 class AshFocusRules;
 class AshTouchTransformController;
-class AssistantControllerImpl;
 class AudioEffectsController;
 class AutoclickController;
 class AutozoomControllerImpl;
@@ -184,7 +183,6 @@ class KeyAccessibilityEnabler;
 class KeyboardBacklightColorController;
 class KeyboardBrightnessControlDelegate;
 class KeyboardControllerImpl;
-class KeyboardModifierMetricsRecorder;
 class LaserPointerController;
 class LobsterController;
 class LocalAuthenticationRequestController;
@@ -200,9 +198,9 @@ class MessageCenterController;
 class MouseCursorEventFilter;
 class MouseKeysController;
 class MruWindowTracker;
-class MultiCaptureService;
 class MultiDeviceNotificationPresenter;
 class MultiDisplayMetricsController;
+class MultiUserWindowManager;
 class NearbyShareControllerImpl;
 class NearbyShareDelegate;
 class NightLightControllerImpl;
@@ -267,6 +265,7 @@ class SystemTrayNotifier;
 class TabletModeController;
 class ToastManagerImpl;
 class ToplevelWindowEventHandler;
+class ClipboardImageModelFactory;
 class ClipboardHistoryControllerImpl;
 class TouchDevicesController;
 class UserEducationController;
@@ -290,10 +289,6 @@ class TasksController;
 namespace diagnostics {
 class DiagnosticsLogController;
 }  // namespace diagnostics
-
-namespace federated {
-class FederatedServiceControllerImpl;
-}  // namespace federated
 
 namespace quick_pair {
 class Mediator;
@@ -384,9 +379,9 @@ class ASH_EXPORT Shell : public SessionObserver,
   void TrackInputMethodBounds(ArcInputMethodBoundsTracker* tracker);
   void UntrackTrackInputMethodBounds(ArcInputMethodBoundsTracker* tracker);
 
-  // Creates a default views::NonClientFrameView for use by windows in the
+  // Creates a default views::FrameView for use by windows in the
   // Ash environment.
-  std::unique_ptr<views::NonClientFrameView> CreateDefaultNonClientFrameView(
+  std::unique_ptr<views::FrameView> CreateDefaultFrameView(
       views::Widget* widget);
 
   // Called when a casting session is started or stopped.
@@ -404,7 +399,7 @@ class ASH_EXPORT Shell : public SessionObserver,
   // Called when dictation is ended.
   void OnDictationEnded();
 
-  // DEPRECATED. Use display::Screen::GetScreen()->InTabletMode() instead.
+  // DEPRECATED. Use display::Screen::Get()->InTabletMode() instead.
   // TODO(crbug.com/40942452): Remove this.
   //
   // Returns whether the device is currently in tablet mode.
@@ -450,9 +445,6 @@ class ASH_EXPORT Shell : public SessionObserver,
     return ash_accelerator_configuration_.get();
   }
   AcceleratorLookup* accelerator_lookup() { return accelerator_lookup_.get(); }
-  AssistantControllerImpl* assistant_controller() {
-    return assistant_controller_.get();
-  }
   AudioEffectsController* audio_effects_controller() {
     return audio_effects_controller_.get();
   }
@@ -571,10 +563,6 @@ class ASH_EXPORT Shell : public SessionObserver,
     return event_transformation_handler_.get();
   }
 
-  federated::FederatedServiceControllerImpl* federated_service_controller() {
-    return federated_service_controller_.get();
-  }
-
   FirmwareUpdateNotificationController*
   firmware_update_notification_controller() {
     return firmware_update_notification_controller_.get();
@@ -633,9 +621,6 @@ class ASH_EXPORT Shell : public SessionObserver,
   KeyboardControllerImpl* keyboard_controller() {
     return keyboard_controller_.get();
   }
-  KeyboardModifierMetricsRecorder* keyboard_modifier_metrics_recorder() {
-    return keyboard_modifier_metrics_recorder_.get();
-  }
   TouchscreenMetricsRecorder* touchscreen_metrics_recorder() {
     return touchscreen_metrics_recorder_.get();
   }
@@ -682,6 +667,9 @@ class ASH_EXPORT Shell : public SessionObserver,
   MultiDisplayMetricsController* multi_display_metrics_controller() {
     return multi_display_metrics_controller_.get();
   }
+  MultiUserWindowManager* multi_user_window_manager() {
+    return multi_user_window_manager_.get();
+  }
   NearbyShareControllerImpl* nearby_share_controller() {
     return nearby_share_controller_.get();
   }
@@ -724,9 +712,6 @@ class ASH_EXPORT Shell : public SessionObserver,
   }
   quick_pair::Mediator* quick_pair_mediator() {
     return quick_pair_mediator_.get();
-  }
-  MultiCaptureService* multi_capture_service() {
-    return multi_capture_service_.get();
   }
   ResizeShadowController* resize_shadow_controller() {
     return resize_shadow_controller_.get();
@@ -952,6 +937,10 @@ class ASH_EXPORT Shell : public SessionObserver,
     return login_unlock_throughput_recorder_.get();
   }
 
+  // Workaround for testing to simulat user sign-out without Chrome process
+  // termination, which conflicts with production behavior.
+  void RecreateMultiUserWindowManagerForTesting();
+
  private:
   FRIEND_TEST_ALL_PREFIXES(ExtendedDesktopTest, TestCursor);
   FRIEND_TEST_ALL_PREFIXES(WindowManagerTest, MouseEventCursors);
@@ -980,6 +969,9 @@ class ASH_EXPORT Shell : public SessionObserver,
 
   // Initializes the root window so that it can host browser windows.
   void InitRootWindow(aura::Window* root_window);
+
+  // Close All windows that are considered application windows.
+  void CloseAllAppWindows();
 
   // Destroys all child windows including widgets across all roots.
   void CloseAllRootWindowChildWindows();
@@ -1021,8 +1013,6 @@ class ASH_EXPORT Shell : public SessionObserver,
   std::unique_ptr<InputDeviceSettingsDispatcher>
       input_device_settings_dispatcher_;
   std::unique_ptr<InputDeviceTracker> input_device_tracker_;
-  std::unique_ptr<KeyboardModifierMetricsRecorder>
-      keyboard_modifier_metrics_recorder_;
   std::unique_ptr<TouchscreenMetricsRecorder> touchscreen_metrics_recorder_;
   std::unique_ptr<InputDeviceKeyAliasManager> input_device_key_alias_manager_;
   std::unique_ptr<ShortcutInputHandler> shortcut_input_handler_;
@@ -1046,7 +1036,6 @@ class ASH_EXPORT Shell : public SessionObserver,
   // May be null in tests or when running on linux-chromeos.
   scoped_refptr<dbus::Bus> dbus_bus_;
   std::unique_ptr<AshDBusServices> ash_dbus_services_;
-  std::unique_ptr<AssistantControllerImpl> assistant_controller_;
   std::unique_ptr<AudioEffectsController> audio_effects_controller_;
   std::unique_ptr<AutozoomControllerImpl> autozoom_controller_;
   std::unique_ptr<BacklightsForcedOffSetter> backlights_forced_off_setter_;
@@ -1110,6 +1099,7 @@ class ASH_EXPORT Shell : public SessionObserver,
       multi_display_metrics_controller_;
   std::unique_ptr<MultiDeviceNotificationPresenter>
       multidevice_notification_presenter_;
+  std::unique_ptr<MultiUserWindowManager> multi_user_window_manager_;
   std::unique_ptr<chromeos::MultitaskMenuNudgeController::Delegate>
       multitask_menu_nudge_delegate_;
   std::unique_ptr<NearbyShareControllerImpl> nearby_share_controller_;
@@ -1157,6 +1147,7 @@ class ASH_EXPORT Shell : public SessionObserver,
   std::unique_ptr<SystemSoundsDelegate> system_sounds_delegate_;
   std::unique_ptr<api::TasksController> tasks_controller_;
   std::unique_ptr<ToastManagerImpl> toast_manager_;
+  std::unique_ptr<ClipboardImageModelFactory> clipboard_image_model_factory_;
   std::unique_ptr<ClipboardHistoryControllerImpl> clipboard_history_controller_;
   std::unique_ptr<TouchDevicesController> touch_devices_controller_;
   std::unique_ptr<UserEducationController> user_education_controller_;
@@ -1300,11 +1291,6 @@ class ASH_EXPORT Shell : public SessionObserver,
   std::unique_ptr<UnlockThroughputRecorder> unlock_throughput_recorder_;
 
   std::unique_ptr<OcclusionTrackerPauser> occlusion_tracker_pauser_;
-
-  std::unique_ptr<MultiCaptureService> multi_capture_service_;
-
-  std::unique_ptr<federated::FederatedServiceControllerImpl>
-      federated_service_controller_;
 
   std::unique_ptr<quick_pair::Mediator> quick_pair_mediator_;
 

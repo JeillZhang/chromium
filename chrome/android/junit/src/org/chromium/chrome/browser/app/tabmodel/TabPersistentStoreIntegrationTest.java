@@ -42,6 +42,7 @@ import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.homepage.HomepageManager;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
+import org.chromium.chrome.browser.multiwindow.MultiInstanceManager;
 import org.chromium.chrome.browser.ntp.RecentlyClosedBridge;
 import org.chromium.chrome.browser.ntp.RecentlyClosedBridgeJni;
 import org.chromium.chrome.browser.price_tracking.PriceTrackingFeatures;
@@ -62,6 +63,7 @@ import org.chromium.chrome.browser.tab_group_sync.TabGroupSyncServiceFactory;
 import org.chromium.chrome.browser.tab_ui.TabContentManager;
 import org.chromium.chrome.browser.tabmodel.ChromeTabCreator;
 import org.chromium.chrome.browser.tabmodel.MismatchedIndicesHandler;
+import org.chromium.chrome.browser.tabmodel.NextTabPolicy;
 import org.chromium.chrome.browser.tabmodel.NextTabPolicy.NextTabPolicySupplier;
 import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
@@ -69,9 +71,8 @@ import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelJniBridge;
 import org.chromium.chrome.browser.tabmodel.TabModelJniBridgeJni;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
-import org.chromium.chrome.browser.tabmodel.TabPersistentStore;
-import org.chromium.chrome.browser.tabmodel.TabPersistentStore.TabModelSelectorMetadata;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore.TabPersistentStoreObserver;
+import org.chromium.chrome.browser.tabmodel.TabPersistentStoreImpl;
 import org.chromium.components.tab_group_sync.TabGroupSyncService;
 import org.chromium.ui.modaldialog.ModalDialogManager;
 
@@ -86,24 +87,30 @@ import java.util.concurrent.atomic.AtomicInteger;
 @EnableFeatures({ChromeFeatureList.PROCESS_RANK_POLICY_ANDROID})
 @DisableFeatures({
     ChromeFeatureList.ANDROID_TAB_DECLUTTER_RESCUE_KILLSWITCH,
-    ChromeFeatureList.CHANGE_UNFOCUSED_PRIORITY
+    ChromeFeatureList.CHANGE_UNFOCUSED_PRIORITY,
+    // TODO(crbug.com/454298057): This test should use a mock TabModel or be changed to an
+    // instrumentation test. A unit test is not compatible with TabCollectionTabModelImpl as it
+    // requires native initialization.
+    ChromeFeatureList.TAB_COLLECTION_ANDROID
 })
 public class TabPersistentStoreIntegrationTest {
     public @Rule MockitoRule mMockitoRule = MockitoJUnit.rule().strictness(Strictness.LENIENT);
 
     private static final int TAB_ID = 42;
     private static final WebContentsState WEB_CONTENTS_STATE =
-            new WebContentsState(ByteBuffer.allocateDirect(100));
+            new WebContentsState(
+                    ByteBuffer.allocateDirect(100),
+                    WebContentsState.CONTENTS_STATE_CURRENT_VERSION);
 
-    private TabbedModeTabModelOrchestrator mOrchestrator;
     private TabModelSelector mTabModelSelector;
-    private TabPersistentStore mTabPersistentStore;
+    private TabPersistentStoreImpl mTabPersistentStore;
 
     @Mock private ChromeTabbedActivity mChromeActivity;
     @Mock private ModalDialogManager mModalDialogManager;
     @Mock private TabCreatorManager mTabCreatorManager;
     @Mock private ChromeTabCreator mChromeTabCreator;
     @Mock private NextTabPolicySupplier mNextTabPolicySupplier;
+    @Mock private MultiInstanceManager mMultiInstanceManager;
     @Mock private MismatchedIndicesHandler mMismatchedIndicesHandler;
     @Mock private TabContentManager mTabContentManager;
     @Mock private Profile mProfile;
@@ -128,6 +135,7 @@ public class TabPersistentStoreIntegrationTest {
         when(mResources.getInteger(org.chromium.ui.R.integer.min_screen_width_bucket))
                 .thenReturn(1);
         when(mTabCreatorManager.getTabCreator(anyBoolean())).thenReturn(mChromeTabCreator);
+        when(mNextTabPolicySupplier.get()).thenReturn(NextTabPolicy.LOCATIONAL);
 
         // Pretend native was loaded, creating TabModelImpls.
         OneshotSupplierImpl<ProfileProvider> profileProviderSupplier = new OneshotSupplierImpl<>();
@@ -136,28 +144,29 @@ public class TabPersistentStoreIntegrationTest {
         when(mProfile.getOriginalProfile()).thenReturn(mProfile);
         PriceTrackingFeatures.setPriceAnnotationsEnabledForTesting(false);
 
-        mOrchestrator =
+        TabbedModeTabModelOrchestrator orchestrator =
                 new TabbedModeTabModelOrchestrator(
                         /* tabMergingEnabled= */ true,
                         mActivityLifecycleDispatcher,
                         new CipherFactory());
-        mOrchestrator.createTabModels(
+        orchestrator.createTabModels(
                 mChromeActivity,
                 mModalDialogManager,
                 profileProviderSupplier,
                 mTabCreatorManager,
                 mNextTabPolicySupplier,
+                mMultiInstanceManager,
                 mMismatchedIndicesHandler,
                 0);
-        mTabModelSelector = mOrchestrator.getTabModelSelector();
-        mTabPersistentStore = mOrchestrator.getTabPersistentStore();
+        mTabModelSelector = orchestrator.getTabModelSelector();
+        mTabPersistentStore = (TabPersistentStoreImpl) orchestrator.getTabPersistentStore();
 
         TabModelJniBridgeJni.setInstanceForTesting(mTabModelJniBridgeJni);
         RecentlyClosedBridgeJni.setInstanceForTesting(mRecentlyClosedBridgeJni);
         PersistedTabDataJni.setInstanceForTesting(mPersistedTabDataJni);
         TabGroupSyncServiceFactory.setForTesting(mTabGroupSyncService);
         TabTestUtils.mockTabJni();
-        mOrchestrator.onNativeLibraryReady(mTabContentManager);
+        orchestrator.onNativeLibraryReady(mTabContentManager);
     }
 
     @After
@@ -442,8 +451,7 @@ public class TabPersistentStoreIntegrationTest {
         TabPersistentStoreObserver observer =
                 new TabPersistentStoreObserver() {
                     @Override
-                    public void onMetadataSavedAsynchronously(
-                            TabModelSelectorMetadata modelSelectorMetadata) {
+                    public void onMetadataSavedAsynchronously() {
                         timesMetadataSaved.incrementAndGet();
                     }
                 };

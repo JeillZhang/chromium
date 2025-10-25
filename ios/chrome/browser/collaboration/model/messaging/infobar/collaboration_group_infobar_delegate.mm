@@ -99,14 +99,11 @@ Browser* GetBrowserFromInstantMessage(
     case CollaborationEvent::TAB_GROUP_REMOVED:
     case CollaborationEvent::UNDEFINED:
     case CollaborationEvent::COLLABORATION_REMOVED:
-    case CollaborationEvent::VERSION_OUT_OF_DATE:
       use_first_available_browser = true;
       break;
   }
 
   for (Browser* browser : browsers) {
-    // TODO(crbug.com/375595834): Handle cases where the `local_tab_group_id` is
-    // not set.
     if (!local_tab_group_id.has_value() || use_first_available_browser) {
       // If `local_tab_group_id` is empty, use the first available browser.
       return browser;
@@ -171,8 +168,16 @@ void CollaborationGroupInfoBarDelegate::ClearCollaborationGroupInfobars(
   const auto& infobars = infobar_manager->infobars();
   for (int i = static_cast<int>(infobars.size()) - 1; i >= 0; --i) {
     infobars::InfoBar* infobar = infobars[i];
+
+    InfoBarIOS* infobar_ios = static_cast<InfoBarIOS*>(infobar);
+    if (infobar_ios->infobar_type() !=
+        InfobarType::kInfobarTypeCollaborationGroup) {
+      continue;
+    }
+
     CollaborationGroupInfoBarDelegate* delegate =
-        static_cast<CollaborationGroupInfoBarDelegate*>(infobar->delegate());
+        static_cast<CollaborationGroupInfoBarDelegate*>(
+            infobar_ios->delegate());
     if (!delegate) {
       continue;
     }
@@ -218,7 +223,7 @@ CollaborationGroupInfoBarDelegate::GetInstantMessageIdentifier() const {
 
 infobars::InfoBarDelegate::InfoBarIdentifier
 CollaborationGroupInfoBarDelegate::GetIdentifier() const {
-  return TAB_SHARING_INFOBAR_DELEGATE;
+  return COLLABORATION_GROUP_UPDATE_INFOBAR_DELEGATE;
 }
 
 std::u16string CollaborationGroupInfoBarDelegate::GetMessageText() const {
@@ -252,8 +257,6 @@ std::u16string CollaborationGroupInfoBarDelegate::GetButtonLabel(
     case CollaborationEvent::COLLABORATION_ADDED:
     case CollaborationEvent::COLLABORATION_REMOVED:
     case CollaborationEvent::COLLABORATION_MEMBER_REMOVED:
-    case CollaborationEvent::VERSION_OUT_OF_DATE:
-      // TODO(crbug.com/422424386): Implement for versioning.
       return l10n_util::GetStringUTF16(
           IDS_IOS_COLLABORATION_GROUP_DEFAULT_PRIMARY_TOOLBAR_BUTTON);
   }
@@ -277,8 +280,6 @@ bool CollaborationGroupInfoBarDelegate::Accept() {
     case CollaborationEvent::COLLABORATION_ADDED:
     case CollaborationEvent::COLLABORATION_REMOVED:
     case CollaborationEvent::COLLABORATION_MEMBER_REMOVED:
-    case CollaborationEvent::VERSION_OUT_OF_DATE:
-      // TODO(crbug.com/422424386): Implement for versioning.
       break;
   }
 
@@ -353,8 +354,6 @@ UIImage* CollaborationGroupInfoBarDelegate::GetSymbolImage() {
       break;
     case CollaborationEvent::TAB_GROUP_REMOVED:
     case CollaborationEvent::COLLABORATION_REMOVED:
-    case CollaborationEvent::VERSION_OUT_OF_DATE:
-      // TODO(crbug.com/422424386): Implement for versioning.
       symbolName = kTabGroupsSymbol;
       break;
   }

@@ -11,10 +11,11 @@
 #include "base/containers/flat_set.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/values.h"
+#include "components/optimization_guide/core/delivery/model_info.h"
 #include "components/optimization_guide/core/model_execution/feature_keys.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_adaptation_loader.h"
 #include "components/optimization_guide/core/model_execution/on_device_model_service_controller.h"
-#include "components/optimization_guide/core/model_info.h"
 #include "components/optimization_guide/proto/on_device_model_execution_config.pb.h"
 #include "components/optimization_guide/proto/text_safety_model_metadata.pb.h"
 #include "services/on_device_model/public/cpp/model_assets.h"
@@ -29,11 +30,14 @@ class FakeBaseModelAsset {
   struct Content {
     uint32_t weight = 0;
     proto::OnDeviceModelExecutionConfig config;
-    std::string version = "0.0.1";
     uint32_t cache_weight = 0;
+    uint32_t encoder_cache_weight = 0;
+    uint32_t adapter_cache_weight = 0;
   };
   FakeBaseModelAsset();
   explicit FakeBaseModelAsset(Content&& content);
+  explicit FakeBaseModelAsset(
+      const std::vector<proto::OnDeviceModelPerformanceHint>& hints);
   explicit FakeBaseModelAsset(
       proto::OnDeviceModelValidationConfig&& validation_config);
   ~FakeBaseModelAsset();
@@ -43,6 +47,7 @@ class FakeBaseModelAsset {
 
   const base::FilePath& path() const { return temp_dir_.GetPath(); }
 
+  void set_version(const std::string& version) { version_ = version; }
   const std::string& version() const { return version_; }
 
   // Returns a fake manifest content for this asset.
@@ -52,7 +57,8 @@ class FakeBaseModelAsset {
   void SetReadyIn(OnDeviceModelComponentStateManager& manager) const;
 
  private:
-  std::string version_;
+  std::string version_ = "0.0.1";
+  base::Value::List supported_performance_hints_;
   base::ScopedTempDir temp_dir_;
 };
 
@@ -62,21 +68,25 @@ class FakeAdaptationAsset {
   struct Content {
     proto::OnDeviceModelExecutionFeatureConfig config;
     std::optional<uint32_t> weight;
+    proto::OnDeviceBaseModelMetadata metadata;
   };
   explicit FakeAdaptationAsset(Content&& content);
   ~FakeAdaptationAsset();
 
   int64_t version() const { return 12345; }
   ModelBasedCapabilityKey feature() const { return feature_; }
-  std::unique_ptr<OnDeviceModelAdaptationMetadata> metadata() const {
-    return std::make_unique<OnDeviceModelAdaptationMetadata>(*metadata_);
-  }
+  OnDeviceModelAdaptationMetadata metadata() const { return *metadata_; }
+
+  const ModelInfo& model_info() { return *model_info_; }
 
   void SendTo(OnDeviceModelServiceController& controller) const;
+
+  base::FilePath dir() { return temp_dir_.GetPath(); }
 
  private:
   base::ScopedTempDir temp_dir_;
   ModelBasedCapabilityKey feature_;
+  std::unique_ptr<ModelInfo> model_info_;
   std::unique_ptr<on_device_model::AdaptationAssetPaths> paths_;
   std::unique_ptr<OnDeviceModelAdaptationMetadata> metadata_;
 };
@@ -88,6 +98,7 @@ class FakeLanguageModelAsset {
   ~FakeLanguageModelAsset();
 
   const ModelInfo& model_info() { return *model_info_; }
+  base::FilePath model_path() const;
 
  private:
   base::ScopedTempDir temp_dir_;

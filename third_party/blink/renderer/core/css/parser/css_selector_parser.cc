@@ -37,6 +37,7 @@ namespace blink {
 static void RecordUsageAndDeprecationsOneSelector(
     const CSSSelector* selector,
     const CSSParserContext* context,
+    CSSNestingType nesting_type,
     bool* has_visited_pseudo);
 
 namespace {
@@ -53,11 +54,11 @@ bool IsHostPseudoSelector(const CSSSelector& selector) {
          selector.GetPseudoType() == CSSSelector::kPseudoHostContext;
 }
 
-// Some pseudo elements behave as if they have an implicit combinator to their
+// Some pseudo-elements behave as if they have an implicit combinator to their
 // left even though they are written without one. This method returns the
 // correct implicit combinator. If no new combinator should be used,
 // it returns RelationType::kSubSelector.
-CSSSelector::RelationType GetImplicitShadowCombinatorForMatching(
+CSSSelector::RelationType GetImplicitCombinatorForMatching(
     CSSSelector::PseudoType pseudo_type) {
   switch (pseudo_type) {
     case CSSSelector::PseudoType::kPseudoSlotted:
@@ -73,13 +74,21 @@ CSSSelector::RelationType GetImplicitShadowCombinatorForMatching(
       return CSSSelector::RelationType::kUAShadow;
     case CSSSelector::PseudoType::kPseudoPart:
       return CSSSelector::RelationType::kShadowPart;
+    case CSSSelector::PseudoType::kPseudoBefore:
+    case CSSSelector::PseudoType::kPseudoAfter:
+    case CSSSelector::PseudoType::kPseudoMarker:
+      // TODO(crbug.com/444386484): Support additional pseudo-elements.
+      if (RuntimeEnabledFeatures::CSSLogicalCombinationPseudoEnabled()) {
+        return CSSSelector::RelationType::kPseudoChild;
+      }
+      [[fallthrough]];
     default:
       return CSSSelector::RelationType::kSubSelector;
   }
 }
 
-bool NeedsImplicitShadowCombinatorForMatching(const CSSSelector& selector) {
-  return GetImplicitShadowCombinatorForMatching(selector.GetPseudoType()) !=
+bool NeedsImplicitCombinatorForMatching(const CSSSelector& selector) {
+  return GetImplicitCombinatorForMatching(selector.GetPseudoType()) !=
          CSSSelector::RelationType::kSubSelector;
 }
 
@@ -135,7 +144,7 @@ base::span<CSSSelector> CSSSelectorParser::ParseSelector(
     return {};
   }
 
-  parser.RecordUsageAndDeprecations(result);
+  parser.RecordUsageAndDeprecations(result, nesting_type);
   return result;
 }
 
@@ -157,7 +166,7 @@ base::span<CSSSelector> CSSSelectorParser::ConsumeSelector(
   ResultFlags result_flags = 0;
   base::span<CSSSelector> result = parser.ConsumeComplexSelectorList(
       stream, observer, nesting_type, result_flags);
-  parser.RecordUsageAndDeprecations(result, has_visited_style);
+  parser.RecordUsageAndDeprecations(result, nesting_type, has_visited_style);
   return result;
 }
 
@@ -181,7 +190,7 @@ base::span<CSSSelector> CSSSelectorParser::ParseScopeBoundary(
   if (result.empty() || !stream.AtEnd()) {
     return {};
   }
-  parser.RecordUsageAndDeprecations(result);
+  parser.RecordUsageAndDeprecations(result, nesting_type);
   return result;
 }
 
@@ -548,7 +557,7 @@ CSSSelectorList* CSSSelectorParser::ConsumeForgivingRelativeSelectorList(
   }
 
   // :has() is not allowed in the pseudos accepting only compound selectors, or
-  // not allowed after pseudo elements.
+  // not allowed after pseudo-elements.
   // (e.g. '::slotted(:has(.a))', '::part(foo):has(:hover)')
   if (inside_compound_pseudo_ ||
       restricting_pseudo_element_ != CSSSelector::kPseudoUnknown ||
@@ -581,7 +590,7 @@ CSSSelectorList* CSSSelectorParser::ConsumeRelativeSelectorList(
   }
 
   // :has() is not allowed in the pseudos accepting only compound selectors, or
-  // not allowed after pseudo elements.
+  // not allowed after pseudo-elements.
   // (e.g. '::slotted(:has(.a))', '::part(foo):has(:hover)')
   if (inside_compound_pseudo_ ||
       restricting_pseudo_element_ != CSSSelector::kPseudoUnknown ||
@@ -603,7 +612,7 @@ unsigned ExtractCompoundFlags(const CSSSelector& simple_selector,
   if (simple_selector.Match() != CSSSelector::kPseudoElement) {
     return 0;
   }
-  // We don't restrict what follows custom ::-webkit-* pseudo elements in UA
+  // We don't restrict what follows custom ::-webkit-* pseudo-elements in UA
   // sheets. We currently use selectors in mediaControls.css like this:
   //
   // video::-webkit-media-text-track-region-container.scrolling
@@ -653,8 +662,7 @@ base::span<CSSSelector> CSSSelectorParser::ConsumeRelativeSelector(
   }
 
   // See ConsumeComplexSelector().
-  std::reverse(reset_vector.AddedElements().begin(),
-               reset_vector.AddedElements().end());
+  std::ranges::reverse(reset_vector.AddedElements());
 
   MarkAsEntireComplexSelector(reset_vector.AddedElements());
   return reset_vector.CommitAddedElements();
@@ -773,7 +781,7 @@ static std::optional<CSSSelector> MaybeCreateImplicitDescendantAnchor(
 // ConsumeRelativeSelector() (but we don't use the kRelative* relations,
 // as they have different matching semantics). There's an implicit anchor
 // compound in front, which for CSSNestingType::kNesting is the nesting
-// selector (&) and for CSSNestingType::kScope is the :scope pseudo class.
+// selector (&) and for CSSNestingType::kScope is the :scope pseudo-class.
 // E.g. given CSSNestingType::kNesting, “> .a” is parsed as “& > .a” ().
 base::span<CSSSelector> CSSSelectorParser::ConsumeNestedRelativeSelector(
     CSSParserTokenStream& stream,
@@ -793,8 +801,7 @@ base::span<CSSSelector> CSSSelectorParser::ConsumeNestedRelativeSelector(
     return {};
   }
 
-  std::reverse(reset_vector.AddedElements().begin(),
-               reset_vector.AddedElements().end());
+  std::ranges::reverse(reset_vector.AddedElements());
 
   MarkAsEntireComplexSelector(reset_vector.AddedElements());
   return reset_vector.CommitAddedElements();
@@ -821,7 +828,7 @@ base::span<CSSSelector> CSSSelectorParser::ConsumeComplexSelector(
 
   // Reverse the compound selector, so that it comes out properly
   // after we reverse everything below.
-  std::reverse(compound_selector.begin(), compound_selector.end());
+  std::ranges::reverse(compound_selector);
 
   if (CSSSelector::RelationType combinator = ConsumeCombinator(stream)) {
     result_flags |= kContainsComplexSelector;
@@ -854,8 +861,7 @@ base::span<CSSSelector> CSSSelectorParser::ConsumeComplexSelector(
   // The boundaries between the compound selectors are implicit; they are given
   // by having a Relation() not equal to kSubSelector, so they follow
   // automatically when we do the reversal.
-  std::reverse(reset_vector.AddedElements().begin(),
-               reset_vector.AddedElements().end());
+  std::ranges::reverse(reset_vector.AddedElements());
 
   if (nesting_type != CSSNestingType::kNone) {
     // In nested top-level rules, if we do not have a & anywhere in the list,
@@ -902,7 +908,7 @@ bool CSSSelectorParser::ConsumePartialComplexSelector(
     compound_selector.back().SetRelation(combinator);
 
     // See ConsumeComplexSelector().
-    std::reverse(compound_selector.begin(), compound_selector.end());
+    std::ranges::reverse(compound_selector);
 
     if (previous_compound_flags & kHasPseudoElementForRightmostCompound) {
       // If we've already seen a compound that needs to be rightmost, and still
@@ -938,112 +944,11 @@ CSSSelector::PseudoType CSSSelectorParser::ParsePseudoType(
   return CSSSelector::PseudoType::kPseudoUnknown;
 }
 
-namespace {
-PseudoId ParsePseudoElementLegacy(const String& selector_string,
-                                  const Node* parent) {
-  CSSParserTokenStream stream(selector_string);
-
-  int number_of_colons = 0;
-  while (!stream.AtEnd() && stream.Peek().GetType() == kColonToken) {
-    number_of_colons++;
-    stream.Consume();
-  }
-
-  // TODO(crbug.com/1197620): allowing 0 or 1 preceding colons is not aligned
-  // with specs.
-  if (stream.AtEnd() || number_of_colons > 2) {
-    return kPseudoIdNone;
-  }
-
-  if (stream.Peek().GetType() == kIdentToken) {
-    CSSParserToken selector_name_token = stream.Consume();
-    PseudoId pseudo_id =
-        CSSSelector::GetPseudoId(CSSSelectorParser::ParsePseudoType(
-            selector_name_token.Value().ToAtomicString(),
-            /*has_arguments=*/false,
-            parent ? &parent->GetDocument() : nullptr));
-
-    if (stream.AtEnd() && PseudoElement::IsWebExposed(pseudo_id, parent)) {
-      return pseudo_id;
-    } else {
-      return kPseudoIdNone;
-    }
-  }
-
-  if (stream.Peek().GetType() == kFunctionToken) {
-    CSSParserToken selector_name_token = stream.Peek();
-    PseudoId pseudo_id =
-        CSSSelector::GetPseudoId(CSSSelectorParser::ParsePseudoType(
-            selector_name_token.Value().ToAtomicString(),
-            /*has_arguments=*/true, parent ? &parent->GetDocument() : nullptr));
-
-    if (!PseudoElementHasArguments(pseudo_id) ||
-        !PseudoElement::IsWebExposed(pseudo_id, parent)) {
-      return kPseudoIdNone;
-    }
-
-    {
-      CSSParserTokenStream::BlockGuard guard(stream);
-      if (stream.Peek().GetType() != kIdentToken) {
-        return kPseudoIdNone;
-      }
-      stream.Consume();
-      if (!stream.AtEnd()) {
-        return kPseudoIdNone;
-      }
-    }
-    return stream.AtEnd() ? pseudo_id : kPseudoIdNone;
-  }
-
-  return kPseudoIdNone;
-}
-
-AtomicString ParsePseudoElementArgument(const String& selector_string) {
-  CSSParserTokenStream stream(selector_string);
-
-  int number_of_colons = 0;
-  while (!stream.AtEnd() && stream.Peek().GetType() == kColonToken) {
-    number_of_colons++;
-    stream.Consume();
-  }
-
-  // TODO(crbug.com/1197620): allowing 0 or 1 preceding colons is not aligned
-  // with specs.
-  if (number_of_colons > 2 || stream.Peek().GetType() != kFunctionToken) {
-    return g_null_atom;
-  }
-
-  AtomicString ret;
-  {
-    CSSParserTokenStream::BlockGuard guard(stream);
-    if (stream.Peek().GetType() != kIdentToken) {
-      return g_null_atom;
-    }
-    ret = stream.Consume().Value().ToAtomicString();
-    if (!stream.AtEnd()) {
-      return g_null_atom;
-    }
-  }
-  if (!stream.AtEnd()) {
-    return g_null_atom;
-  }
-  return ret;
-}
-}  // namespace
 
 // static
 PseudoId CSSSelectorParser::ParsePseudoElement(const String& selector_string,
                                                const Node* parent,
                                                AtomicString& argument) {
-  if (!RuntimeEnabledFeatures::
-          CSSComputedStyleFullPseudoElementParserEnabled()) {
-    PseudoId pseudo_id = ParsePseudoElementLegacy(selector_string, parent);
-    if (PseudoElementHasArguments(pseudo_id)) {
-      argument = ParsePseudoElementArgument(selector_string);
-    }
-    return pseudo_id;
-  }
-
   // For old pseudos (before, after, first-letter, first-line), we
   // allow the legacy behavior of single-colon / no-colon.
   {
@@ -1204,7 +1109,7 @@ bool IsUserActionPseudoClassAllowedAfterPseudoElement(
       return true;
     default:
       // TODO(crbug.com/40824273): User action pseudos should be allowed more
-      // generally after pseudo elements.
+      // generally after pseudo-elements.
       return false;
   }
 }
@@ -1245,7 +1150,9 @@ bool IsPseudoClassValidAfterPseudoElement(
     case CSSSelector::kPseudoScrollMarkerGroup:
       return pseudo_class == CSSSelector::kPseudoFocusWithin;
     case CSSSelector::kPseudoScrollMarker:
-      return pseudo_class == CSSSelector::kPseudoTargetCurrent;
+      return pseudo_class == CSSSelector::kPseudoTargetCurrent ||
+             pseudo_class == CSSSelector::kPseudoTargetBefore ||
+             pseudo_class == CSSSelector::kPseudoTargetAfter;
     case CSSSelector::kPseudoScrollButton:
       return pseudo_class == CSSSelector::kPseudoDisabled ||
              pseudo_class == CSSSelector::kPseudoEnabled;
@@ -1427,7 +1334,7 @@ base::span<CSSSelector> CSSSelectorParser::ConsumeCompoundSelector(
     selector.SetRelation(CSSSelector::kSubSelector);
   }
 
-  SplitCompoundAtImplicitShadowCrossingCombinator(reset_vector.AddedElements());
+  SplitCompoundAtImplicitCombinator(reset_vector.AddedElements());
   return reset_vector.CommitAddedElements();
 }
 
@@ -1682,7 +1589,10 @@ bool CSSSelectorParser::ConsumePseudo(CSSParserTokenStream& stream,
 
   switch (selector.GetPseudoType()) {
     case CSSSelector::kPseudoIs: {
-      DisallowPseudoElementsScope scope(this);
+      std::optional<DisallowPseudoElementsScope> disallow_pseudo_elements;
+      if (!RuntimeEnabledFeatures::CSSLogicalCombinationPseudoEnabled()) {
+        disallow_pseudo_elements.emplace(this);
+      }
       base::AutoReset<bool> resist_namespace(&resist_default_namespace_, true);
       CSSSelectorList* selector_list =
           ConsumeForgivingNestedSelectorList(stream, result_flags);
@@ -1694,7 +1604,10 @@ bool CSSSelectorParser::ConsumePseudo(CSSParserTokenStream& stream,
       return true;
     }
     case CSSSelector::kPseudoWhere: {
-      DisallowPseudoElementsScope scope(this);
+      std::optional<DisallowPseudoElementsScope> disallow_pseudo_elements;
+      if (!RuntimeEnabledFeatures::CSSLogicalCombinationPseudoEnabled()) {
+        disallow_pseudo_elements.emplace(this);
+      }
       base::AutoReset<bool> resist_namespace(&resist_default_namespace_, true);
       CSSSelectorList* selector_list =
           ConsumeForgivingNestedSelectorList(stream, result_flags);
@@ -1761,7 +1674,10 @@ bool CSSSelectorParser::ConsumePseudo(CSSParserTokenStream& stream,
       return true;
     }
     case CSSSelector::kPseudoNot: {
-      DisallowPseudoElementsScope scope(this);
+      std::optional<DisallowPseudoElementsScope> disallow_pseudo_elements;
+      if (!RuntimeEnabledFeatures::CSSLogicalCombinationPseudoEnabled()) {
+        disallow_pseudo_elements.emplace(this);
+      }
       base::AutoReset<bool> resist_namespace(&resist_default_namespace_, true);
       CSSSelectorList* selector_list =
           ConsumeNestedSelectorList(stream, result_flags);
@@ -1774,11 +1690,6 @@ bool CSSSelectorParser::ConsumePseudo(CSSParserTokenStream& stream,
       return true;
     }
     case CSSSelector::kPseudoPicker:
-      /* This can't check for origin trials, unfortunately. */
-      if (!HTMLSelectElement::CustomizableSelectEnabledNoDocument()) {
-        return false;
-      }
-      [[fallthrough]];
     case CSSSelector::kPseudoDir:
     case CSSSelector::kPseudoState: {
       const CSSParserToken& ident = stream.Peek();
@@ -2004,7 +1915,7 @@ bool CSSSelectorParser::ConsumeNestingParent(CSSParserTokenStream& stream,
       CSSSelector(parent_rule_for_nesting_, /*is_implicit=*/false));
 
   result_flags |= kContainsScopeOrParent;
-  // In case that a nesting parent selector is inside a :has() pseudo class,
+  // In case that a nesting parent selector is inside a :has() pseudo-class,
   // mark the :has() containing a pseudo selector and a complex selector
   // so that the StyleEngine can invalidate the anchor element of the :has()
   // for a pseudo state change (crbug.com/1517866) or a complex selector
@@ -2270,7 +2181,7 @@ void CSSSelectorParser::PrependTypeSelectorIfNeeded(
       output_[start_index_of_compound_selector];
 
   if (!has_q_name && DefaultNamespace() == g_star_atom &&
-      !NeedsImplicitShadowCombinatorForMatching(compound_selector)) {
+      !NeedsImplicitCombinatorForMatching(compound_selector)) {
     return;
   }
 
@@ -2292,16 +2203,16 @@ void CSSSelectorParser::PrependTypeSelectorIfNeeded(
   // otherwise we can't tell the difference between *:host and just :host.
   //
   // Also, selectors where we use a ShadowPseudo combinator between the
-  // element and the pseudo element for matching (custom pseudo elements,
+  // element and the pseudo-element for matching (custom pseudo-elements,
   // ::cue, ::shadow), we need a universal selector to set the combinator
   // (relation) on in the cases where there are no simple selectors preceding
-  // the pseudo element.
+  // the pseudo-element.
   bool is_host_pseudo = IsHostPseudoSelector(compound_selector);
   if (is_host_pseudo && !has_q_name && namespace_prefix.IsNull()) {
     return;
   }
   if (tag != AnyQName() || is_host_pseudo ||
-      NeedsImplicitShadowCombinatorForMatching(compound_selector)) {
+      NeedsImplicitCombinatorForMatching(compound_selector)) {
     const bool is_implicit =
         determined_prefix == g_null_atom &&
         determined_element_name == CSSSelector::UniversalSelectorAtom() &&
@@ -2312,17 +2223,34 @@ void CSSSelectorParser::PrependTypeSelectorIfNeeded(
   }
 }
 
-// If we have a compound that implicitly crosses a shadow root, rewrite it to
-// have a shadow-crossing combinator (kUAShadow, which has no symbol, but let's
-// call it >> for the same of the argument) instead of kSubSelector. E.g.:
+// Pseudo-element selectors essentially contain a "built-in" combinator;
+// the "foo" and "bar" parts of a selector like `foo::bar` target two
+// different elements, just like `foo > bar` would. Due to how CSSSelectors
+// are stored in memory (reverse compound order), we sometimes need to create
+// an impliit combinator preceding each pseudo-element selector in order
+// to start the matching process in the right place. For example:
 //
-//   video::-webkit-video-controls => video >> ::webkit-video-controls
+//   .somehost::part(mypart)
 //
-// This is required because the element matching ::-webkit-video-controls is
-// not the video element itself, but an element somewhere down in <video>'s
-// shadow DOM tree. Note that since we store compounds right-to-left, this may
-// require rearranging elements in memory (see the comment below).
-void CSSSelectorParser::SplitCompoundAtImplicitShadowCrossingCombinator(
+// This selector should match some element (e.g. <div part=mypart>) inside
+// a shadow tree hosted by e.g. <div class=somehost>, and we need to check
+// this selector while holding the <div part=mypart> element as the context
+// element [1]. However, without a combinator split, this is a single compound
+// selector, and selector evaluation would start at the .somehost part,
+// which is really targeting a *different element* (the host).
+//
+// Therefore, we basically rewrite this selector to:
+//
+//   .somehost >> ::part(mypart)
+//
+// (Where >> is an imaginary "part" combinator.)
+//
+// This allows matching to begin with the correct selector (::part(mypart)),
+// and we change the context element to the host when processing the '>>'
+// combinator.
+//
+// [1] SelectorCheckingContext::element
+void CSSSelectorParser::SplitCompoundAtImplicitCombinator(
     base::span<CSSSelector> selectors) {
   // The simple selectors are stored in an array that stores
   // combinator-separated compound selectors from right-to-left. Yet, within a
@@ -2331,7 +2259,7 @@ void CSSSelectorParser::SplitCompoundAtImplicitShadowCrossingCombinator(
   // ".a.b > div#id" is stored as [div, #id, .a, .b], each element in the list
   // stored with an associated relation (combinator or SubSelector).
   //
-  // ::cue, ::shadow, and custom pseudo elements have an implicit ShadowPseudo
+  // ::cue, ::shadow, and custom pseudo-elements have an implicit ShadowPseudo
   // combinator to their left, which really makes for a new compound selector,
   // yet it's consumed by the selector parser as a single compound selector.
   //
@@ -2339,7 +2267,7 @@ void CSSSelectorParser::SplitCompoundAtImplicitShadowCrossingCombinator(
   //
   // input#x::-webkit-clear-button -> [ ::-webkit-clear-button, input, #x ]
   //
-  // Likewise, ::slotted() pseudo element has an implicit ShadowSlot combinator
+  // Likewise, ::slotted() pseudo-element has an implicit ShadowSlot combinator
   // to its left for finding matching slot element in other TreeScope.
   //
   // ::part has a implicit ShadowPart combinator to its left finding the host
@@ -2349,16 +2277,16 @@ void CSSSelectorParser::SplitCompoundAtImplicitShadowCrossingCombinator(
   //
   // slot[name=foo]::slotted(div) -> [ ::slotted(div), slot, [name=foo] ]
   for (size_t i = 1; i < selectors.size(); ++i) {
-    if (NeedsImplicitShadowCombinatorForMatching(selectors[i])) {
+    if (NeedsImplicitCombinatorForMatching(selectors[i])) {
       CSSSelector::RelationType relation =
-          GetImplicitShadowCombinatorForMatching(selectors[i].GetPseudoType());
+          GetImplicitCombinatorForMatching(selectors[i].GetPseudoType());
       std::rotate(selectors.begin(), selectors.begin() + i, selectors.end());
 
       base::span<CSSSelector> remaining = selectors.first(selectors.size() - i);
       // We might need to split the compound multiple times, since a number of
       // the relevant pseudo-elements can be combined, and they all need an
       // implicit combinator for matching.
-      SplitCompoundAtImplicitShadowCrossingCombinator(remaining);
+      SplitCompoundAtImplicitCombinator(remaining);
       remaining.back().SetRelation(relation);
       break;
     }
@@ -2502,8 +2430,14 @@ WebFeature FeatureForWebKitCustomPseudoElement(const AtomicString& name) {
 static void RecordUsageAndDeprecationsOneSelector(
     const CSSSelector* selector,
     const CSSParserContext* context,
+    CSSNestingType nesting_type,
     bool* has_visited_pseudo) {
+  // Both the classic WebFeature and the newer WebDXFeature use counters can be
+  // recorded. Some WebFeature counters are mapped to WebDXFeature counters in
+  // webdx_feature_maps.cc. For new features, it's OK to only add a WebDXFeature
+  // counter instead of adding a classic counter and mapping it.
   std::optional<WebFeature> feature;
+  std::optional<WebDXFeature> webdx_feature;
   switch (selector->GetPseudoType()) {
     case CSSSelector::kPseudoAny:
       feature = WebFeature::kCSSSelectorPseudoAny;
@@ -2599,6 +2533,24 @@ static void RecordUsageAndDeprecationsOneSelector(
     case CSSSelector::kPseudoOpen:
       feature = WebFeature::kCSSPseudoOpen;
       break;
+    case CSSSelector::kPseudoNot:
+      feature = WebFeature::kCSSSelectorPseudoNot;
+      break;
+    case CSSSelector::kPseudoAutofill:
+      webdx_feature = WebDXFeature::kAutofill;
+      break;
+    case CSSSelector::kPseudoDetailsContent:
+      webdx_feature = WebDXFeature::kDetailsContent;
+      break;
+    case CSSSelector::kPseudoPastCue:
+    case CSSSelector::kPseudoFutureCue:
+      webdx_feature = WebDXFeature::kTimeRelativeSelectors;
+      break;
+    case CSSSelector::kPseudoParent:
+      if (nesting_type == CSSNestingType::kScope) {
+        feature = WebFeature::kCSSPseudoParentInScope;
+      }
+      break;
     default:
       break;
   }
@@ -2609,13 +2561,16 @@ static void RecordUsageAndDeprecationsOneSelector(
       context->Count(*feature);
     }
   }
+  if (webdx_feature.has_value()) {
+    context->Count(*webdx_feature);
+  }
   if (selector->Relation() == CSSSelector::kIndirectAdjacent) {
     context->Count(WebFeature::kCSSSelectorIndirectAdjacent);
   }
   if (selector->SelectorList()) {
     for (const CSSSelector* current = selector->SelectorList()->First();
          current; current = current->NextSimpleSelector()) {
-      RecordUsageAndDeprecationsOneSelector(current, context,
+      RecordUsageAndDeprecationsOneSelector(current, context, nesting_type,
                                             has_visited_pseudo);
     }
   }
@@ -2623,6 +2578,7 @@ static void RecordUsageAndDeprecationsOneSelector(
 
 void CSSSelectorParser::RecordUsageAndDeprecations(
     const base::span<CSSSelector> selector_vector,
+    CSSNestingType nesting_type,
     bool* has_visited_pseudo) {
   if (!context_->IsUseCounterRecordingEnabled()) {
     return;
@@ -2632,7 +2588,7 @@ void CSSSelectorParser::RecordUsageAndDeprecations(
   }
 
   for (const CSSSelector& current : selector_vector) {
-    RecordUsageAndDeprecationsOneSelector(&current, context_,
+    RecordUsageAndDeprecationsOneSelector(&current, context_, nesting_type,
                                           has_visited_pseudo);
   }
 }

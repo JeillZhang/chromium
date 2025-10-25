@@ -5,6 +5,8 @@
 #ifndef IOS_CHROME_BROWSER_AUTOFILL_MODEL_AUTOFILL_IMAGE_FETCHER_IMPL_H_
 #define IOS_CHROME_BROWSER_AUTOFILL_MODEL_AUTOFILL_IMAGE_FETCHER_IMPL_H_
 
+#include <CoreFoundation/CoreFoundation.h>
+
 #include "components/autofill/core/browser/ui/autofill_image_fetcher.h"
 #include "components/keyed_service/core/keyed_service.h"
 
@@ -35,6 +37,7 @@ class AutofillImageFetcherImpl : public AutofillImageFetcher,
   // AutofillImageFetcher:
   gfx::Image ResolveCardArtImage(const GURL& card_art_url,
                                  const gfx::Image& card_art_image) override;
+  gfx::Image ResolveValuableImage(const gfx::Image& valuable_image) override;
 
  private:
   std::unique_ptr<image_fetcher::ImageFetcher> image_fetcher_;

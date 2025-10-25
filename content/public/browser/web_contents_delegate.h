@@ -22,11 +22,13 @@
 #include "content/public/browser/fullscreen_types.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/media_stream_request.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/preloading.h"
 #include "content/public/browser/preloading_trigger_type.h"
 #include "content/public/browser/preview_cancel_reason.h"
 #include "content/public/browser/select_audio_output_request.h"
 #include "content/public/browser/serial_chooser.h"
-#include "content/public/browser/web_contents.h"
+#include "content/public/browser/storage_partition_config.h"
 #include "content/public/common/window_container_type.mojom-forward.h"
 #include "third_party/blink/public/common/input/web_mouse_event.h"
 #include "third_party/blink/public/common/mediastream/media_stream_request.h"
@@ -42,7 +44,7 @@
 #include "ui/base/ui_base_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/rect_f.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include "base/android/scoped_java_ref.h"
@@ -59,7 +61,7 @@ namespace blink {
 namespace mojom {
 class FileChooserParams;
 class WindowFeatures;
-}
+}  // namespace mojom
 }  // namespace blink
 
 namespace device {
@@ -71,7 +73,7 @@ class GeolocationContext;
 namespace gfx {
 class Rect;
 class Size;
-}
+}  // namespace gfx
 
 namespace input {
 struct NativeWebKeyboardEvent;
@@ -87,9 +89,8 @@ class Origin;
 
 namespace blink {
 class WebGestureEvent;
-class WebMouseEvent;
 enum class ProtocolHandlerSecurityLevel;
-}
+}  // namespace blink
 
 namespace content {
 
@@ -104,9 +105,9 @@ class RenderFrameHost;
 class RenderWidgetHost;
 class SessionStorageNamespace;
 class SiteInstance;
+class WebContents;
 struct ContextMenuParams;
 struct DropData;
-struct MediaPlayerWatchTime;
 struct OpenURLParams;
 struct Referrer;
 
@@ -192,6 +193,14 @@ class CONTENT_EXPORT WebContentsDelegate {
   // Selects the specified contents, bringing its container to the front.
   virtual void ActivateContents(WebContents* contents) {}
 
+  // A WebContents within a browser is considered active if it is the "active"
+  // tab in the browser's tab strip. A non-active WebContents cannot have focus,
+  // but it is possible for an active WebContents to not be focused if focus is
+  // elsewhere in the browser.Just because a WebContents is visible, doesn't
+  // mean it is active due to the SplitView feature. WebContents outside a
+  // browser are always considered active.
+  virtual bool IsContentsActive(WebContents* contents);
+
   // Notifies the delegate that this contents is starting or is done loading
   // some resource. The delegate should use this notification to represent
   // loading feedback. See WebContents::IsLoading()
@@ -215,8 +224,7 @@ class CONTENT_EXPORT WebContentsDelegate {
   }
 
   // Notification that the target URL has changed.
-  virtual void UpdateTargetURL(WebContents* source,
-                               const GURL& url) {}
+  virtual void UpdateTargetURL(WebContents* source, const GURL& url) {}
 
   // Notification that a mouse `event` was dispatched to the WebContents's view.
   virtual void ContentsMouseEvent(WebContents* source, const ui::Event& event) {
@@ -283,8 +291,7 @@ class CONTENT_EXPORT WebContentsDelegate {
   // This is called when WebKit tells us that it is done tabbing through
   // controls on the page. Provides a way for WebContentsDelegates to handle
   // this. Returns true if the delegate successfully handled it.
-  virtual bool TakeFocus(WebContents* source,
-                         bool reverse);
+  virtual bool TakeFocus(WebContents* source, bool reverse);
 
   // Asks the delegate if the given tab can download.
   // Invoking the |callback| synchronously is OK.
@@ -302,15 +309,14 @@ class CONTENT_EXPORT WebContentsDelegate {
   virtual bool HandleContextMenu(RenderFrameHost& render_frame_host,
                                  const ContextMenuParams& params);
 
-  // Allows delegates to handle mouse events before sending to the renderer.
-  // Returns true if the event was handled, false otherwise. A true value means
-  // no more processing should happen on the event. The default return value is
-  // false.
-  virtual bool PreHandleMouseEvent(WebContents* source,
-                                   const blink::WebMouseEvent& event);
+  // Allows delegates to handle mouse drag events before sending to the
+  // renderer. Returns true if the event was handled, false otherwise. A true
+  // value means no more processing should happen on the event. The default
+  // return value is false.
   virtual void PreHandleDragUpdate(const DropData& drop_data,
                                    const gfx::PointF& client_pt) {}
   virtual void PreHandleDragExit() {}
+  virtual void HandleDragEnded() {}
 
   // Allows delegates to handle keyboard events before sending to the renderer.
   // See enum for description of return values.
@@ -330,9 +336,8 @@ class CONTENT_EXPORT WebContentsDelegate {
   // by the renderer's event handler. Note that the touch events that create
   // the gesture are always passed to the renderer since the gesture is created
   // and dispatched after the touches return without being "preventDefault()"ed.
-  virtual bool PreHandleGestureEvent(
-      WebContents* source,
-      const blink::WebGestureEvent& event);
+  virtual bool PreHandleGestureEvent(WebContents* source,
+                                     const blink::WebGestureEvent& event);
 
   // Called when an external drag event enters the web contents window. Return
   // true to allow dragging and dropping on the web contents window or false to
@@ -768,9 +773,11 @@ class CONTENT_EXPORT WebContentsDelegate {
   // WebContents::StartPrerendering().
   virtual int AllowedPrerenderingCount(WebContents& web_contents);
 
-  // Returns whether to override user agent for prerendering navigation.
+  // Returns whether to override user agent for prerendering navigation. `url`
+  // is the target URL of the request. This function can be called repeatedly
+  // for each URL in the redirect chain.
   virtual NavigationController::UserAgentOverrideOption
-  ShouldOverrideUserAgentForPrerender2();
+  ShouldOverrideUserAgentForPreloading(const GURL& url);
 
   // Returns true if the embedder allows initiator and transition type mismatch
   // for prerender activation navigations that are embedder-initiated and have
@@ -786,9 +793,6 @@ class CONTENT_EXPORT WebContentsDelegate {
   // eviction and displayed until a new frame is generated. If false, a white
   // solid color is displayed instead.
   virtual bool ShouldShowStaleContentOnEviction(WebContents* source);
-
-  // Invoked when media playback is interrupted or completed.
-  virtual void MediaWatchTimeChanged(const MediaPlayerWatchTime& watch_time) {}
 
   // Returns a  InstalledWebappGeolocationContext if this web content is running
   // in a installed webapp and geolocation should be deleagted from the
@@ -873,6 +877,10 @@ class CONTENT_EXPORT WebContentsDelegate {
   // https://wicg.github.io/manifest-incubations/index.html#related_applications-member
   virtual std::vector<blink::mojom::RelatedApplicationPtr>
   GetSavedRelatedApplications(WebContents* web_contents);
+
+  // If this returns non-null, overrides the behavior of
+  // WebContents::GetResponsibleWebContents.
+  virtual WebContents* GetResponsibleWebContents(WebContents* web_contents);
 
  protected:
   virtual ~WebContentsDelegate();

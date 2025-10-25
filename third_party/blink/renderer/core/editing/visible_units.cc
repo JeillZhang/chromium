@@ -495,6 +495,10 @@ bool HasRenderedNonAnonymousDescendantsWithHeight(
     // [2] editing/inserting/return-with-object-element.html
     if (const InlineNodeData* inline_data = block_flow->GetInlineNodeData()) {
       if (inline_data->ItemsData(false).text_content.empty() &&
+          // Out-of-flow objects (floating and out-of-flow positioned) used to
+          // represent a U+FFFC Object Replacement Character. Keep the
+          // historical behavior.
+          !inline_data->HasFloatingOrOutOfFlowPositioned() &&
           block_flow->HasLineIfEmpty()) {
         return false;
       }
@@ -619,7 +623,7 @@ bool EndsOfNodeAreVisuallyDistinctPositions(const Node* node) {
   // There is a VisiblePosition inside an empty inline-block container.
   return layout_object->IsAtomicInlineLevel() &&
          CanHaveChildrenForEditing(node) &&
-         !To<LayoutBox>(layout_object)->Size().IsEmpty() &&
+         !To<LayoutBox>(layout_object)->StitchedSize().IsEmpty() &&
          !HasRenderedNonAnonymousDescendantsWithHeight(layout_object);
 }
 
@@ -1165,7 +1169,7 @@ static bool IsVisuallyEquivalentCandidateAlgorithm(
     return false;
 
   if (layout_object->IsLayoutBlockFlow() || layout_object->IsFlexibleBox() ||
-      layout_object->IsLayoutGrid()) {
+      layout_object->IsLayoutGridOrMasonry()) {
     if (To<LayoutBlock>(layout_object)->LogicalHeight() ||
         anchor_node->GetDocument().body() == anchor_node) {
       if (!HasRenderedNonAnonymousDescendantsWithHeight(layout_object))
@@ -1420,8 +1424,10 @@ static PositionTemplate<Strategy> SkipWhitespaceAlgorithm(
   // it as trailing white space.
   for (; char_it.length(); char_it.Advance(1)) {
     UChar c = char_it.CharacterAt(0);
-    if ((!IsSpaceOrNewline(c) && c != kNoBreakSpaceCharacter) || c == '\n')
+    if ((!unicode::IsSpaceOrNewline(c) && c != uchar::kNoBreakSpace) ||
+        c == '\n') {
       return runner;
+    }
     runner = char_it.EndPosition();
   }
   return runner;

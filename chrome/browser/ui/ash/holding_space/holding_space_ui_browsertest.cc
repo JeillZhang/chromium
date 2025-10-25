@@ -7,7 +7,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "ash/constants/ash_features.h"
 #include "ash/public/cpp/capture_mode/capture_mode_test_api.h"
 #include "ash/public/cpp/holding_space/holding_space_client.h"
 #include "ash/public/cpp/holding_space/holding_space_constants.h"
@@ -46,7 +45,6 @@
 #include "base/task/single_thread_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/test/scoped_locale.h"
 #include "base/uuid.h"
 #include "build/build_config.h"
@@ -66,7 +64,6 @@
 #include "chrome/browser/ui/ash/holding_space/holding_space_util.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/test/base/ash/util/ash_test_util.h"
-#include "chromeos/constants/chromeos_features.h"
 #include "components/download/public/common/mock_download_item.h"
 #include "components/user_manager/user.h"
 #include "content/public/browser/download_item_utils.h"
@@ -1304,13 +1301,12 @@ class HoldingSpaceUiInProgressDownloadsBrowserTest
               new testing::NiceMock<content::MockDownloadManager>();
 
           // Mock `content::DownloadManager::Shutdown()`.
-          ON_CALL(*download_manager_, Shutdown)
-              .WillByDefault(testing::Invoke([&]() {
-                if (download_manager_->GetDelegate()) {
-                  download_manager_->GetDelegate()->Shutdown();
-                  download_manager_->SetDelegate(nullptr);
-                }
-              }));
+          ON_CALL(*download_manager_, Shutdown).WillByDefault([&]() {
+            if (download_manager_->GetDelegate()) {
+              download_manager_->GetDelegate()->Shutdown();
+              download_manager_->SetDelegate(nullptr);
+            }
+          });
 
           // Mock `content::DownloadManager::IsManagerInitialized()`.
           ON_CALL(*download_manager_, IsManagerInitialized())
@@ -1336,15 +1332,14 @@ class HoldingSpaceUiInProgressDownloadsBrowserTest
 
           // Mock `content::DownloadManager::SetDelegate()`.
           ON_CALL(*download_manager_, SetDelegate)
-              .WillByDefault(testing::Invoke(
-                  [&](content::DownloadManagerDelegate* delegate) {
-                    download_manager_delegate_ = delegate;
-                  }));
+              .WillByDefault([&](content::DownloadManagerDelegate* delegate) {
+                download_manager_delegate_ = delegate;
+              });
 
           // Mock `content::DownloadManager::GetDelegate()`.
-          ON_CALL(*download_manager_, GetDelegate)
-              .WillByDefault(testing::Invoke(
-                  [&]() { return download_manager_delegate_; }));
+          ON_CALL(*download_manager_, GetDelegate).WillByDefault([&]() {
+            return download_manager_delegate_;
+          });
 
           // Swap out the production download manager for the mock.
           context->SetDownloadManagerForTesting(
@@ -1525,14 +1520,14 @@ class HoldingSpaceUiInProgressDownloadsBrowserTest
 
     // Mock `download::DownloadItem::GetFullPath()`.
     ON_CALL(*ash_download_item, GetFullPath)
-        .WillByDefault(testing::Invoke(
+        .WillByDefault(
             [ash_download_item = ash_download_item.get(),
              file_path = base::FilePath(file_path)]() -> const base::FilePath& {
               return ash_download_item->GetState() ==
                              download::DownloadItem::COMPLETE
                          ? ash_download_item->GetTargetFilePath()
                          : file_path;
-            }));
+            });
 
     // Mock `download::DownloadItem::GetGuid()`.
     ON_CALL(*ash_download_item, GetGuid)
@@ -1540,10 +1535,10 @@ class HoldingSpaceUiInProgressDownloadsBrowserTest
             base::Uuid::GenerateRandomV4().AsLowercaseString()));
 
     // Mock `download::DownloadItem::GetId()`.
-    ON_CALL(*ash_download_item, GetId).WillByDefault(testing::Invoke([]() {
+    ON_CALL(*ash_download_item, GetId).WillByDefault([]() {
       static uint32_t kNextId = 1u;
       return kNextId++;
-    }));
+    });
 
     // Mock `download::DownloadItem::GetLastModifiedTime()`.
     ON_CALL(*ash_download_item, GetLastModifiedTime)
@@ -1552,14 +1547,14 @@ class HoldingSpaceUiInProgressDownloadsBrowserTest
     // Mock `download::DownloadItem::GetLastReason()`.
     ON_CALL(*ash_download_item, GetLastReason)
         .WillByDefault(
-            testing::Invoke([ash_download_item = ash_download_item.get()]() {
+            [ash_download_item = ash_download_item.get()]() {
               return ash_download_item->GetState() ==
                              download::DownloadItem::CANCELLED
                          ? download::DownloadInterruptReason::
                                DOWNLOAD_INTERRUPT_REASON_USER_CANCELED
                          : download::DownloadInterruptReason::
                                DOWNLOAD_INTERRUPT_REASON_NONE;
-            }));
+            });
 
     // Mock `download::DownloadItem::GetOpenWhenComplete()`.
     auto open_when_complete = std::make_unique<bool>(false);
@@ -1612,11 +1607,10 @@ class HoldingSpaceUiInProgressDownloadsBrowserTest
 
     // Mock `download::DownloadItem::IsDone()`.
     ON_CALL(*ash_download_item, IsDone)
-        .WillByDefault(
-            testing::Invoke([ash_download_item = ash_download_item.get()]() {
-              return ash_download_item->GetState() ==
-                     download::DownloadItem::COMPLETE;
-            }));
+        .WillByDefault([ash_download_item = ash_download_item.get()]() {
+          return ash_download_item->GetState() ==
+                 download::DownloadItem::COMPLETE;
+        });
 
     // Mock `download::DownloadItem::IsPaused()`.
     auto paused = std::make_unique<bool>(false);
@@ -1676,7 +1670,6 @@ class HoldingSpaceUiInProgressDownloadsBrowserTest
     ash_download->NotifyObserversDownloadUpdated();
   }
 
-  base::test::ScopedFeatureList scoped_feature_list_;
   raw_ptr<testing::NiceMock<content::MockDownloadManager>, DanglingUntriaged>
       download_manager_ = nullptr;
   raw_ptr<content::DownloadManagerDelegate> download_manager_delegate_ =
@@ -2627,11 +2620,6 @@ IN_PROC_BROWSER_TEST_P(HoldingSpaceScreenRecordingUiBrowserTest,
 // Used to check the holding space suggestion feature.
 class HoldingSpaceSuggestionUiBrowserTest : public HoldingSpaceUiBrowserTest {
  public:
-  HoldingSpaceSuggestionUiBrowserTest() {
-    scoped_feature_list_.InitAndEnableFeature(
-        features::kHoldingSpaceSuggestions);
-  }
-
   // HoldingSpaceUiBrowserTest:
   void SetUpOnMainThread() override {
     HoldingSpaceUiBrowserTest::SetUpOnMainThread();
@@ -2675,8 +2663,6 @@ class HoldingSpaceSuggestionUiBrowserTest : public HoldingSpaceUiBrowserTest {
   }
 
  private:
-  base::test::ScopedFeatureList scoped_feature_list_;
-
   // The directory that hosts local files.
   base::ScopedTempDir local_file_directory_;
 };

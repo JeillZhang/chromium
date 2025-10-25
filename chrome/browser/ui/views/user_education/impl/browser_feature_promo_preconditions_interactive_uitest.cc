@@ -13,8 +13,11 @@
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
+#include "chrome/browser/ui/interaction/browser_elements.h"
+#include "chrome/browser/ui/omnibox/omnibox_controller.h"
 #include "chrome/browser/ui/toolbar_controller_util.h"
 #include "chrome/browser/ui/views/frame/contents_web_view.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
@@ -26,7 +29,6 @@
 #include "chrome/test/interaction/interactive_browser_test.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
 #include "components/omnibox/browser/autocomplete_input.h"
-#include "components/omnibox/browser/omnibox_controller.h"
 #include "components/prefs/pref_service.h"
 #include "components/user_education/common/anchor_element_provider.h"
 #include "components/user_education/common/feature_promo/feature_promo_precondition.h"
@@ -100,7 +102,7 @@ IN_PROC_BROWSER_TEST_F(WindowActivePreconditionUiTest,
       WaitForShow(kToolbarAppMenuButtonElementId),
       SetOnIncompatibleAction(OnIncompatibleAction::kSkipTest,
                               "Linux window activation issues."),
-      InContext(incog->window()->GetElementContext(),
+      InContext(BrowserElements::From(incog)->GetContext(),
                 Steps(WaitForShow(kToolbarAppMenuButtonElementId),
                       ActivateSurface(kToolbarAppMenuButtonElementId))),
       WithElement(kToolbarAppMenuButtonElementId,
@@ -177,34 +179,35 @@ IN_PROC_BROWSER_TEST_F(ContentNotFullscreenPreconditionUiTest,
 
 IN_PROC_BROWSER_TEST_F(ContentNotFullscreenPreconditionUiTest, Fullscreen) {
   DEFINE_LOCAL_ELEMENT_IDENTIFIER_VALUE(kTabId);
-  RunTestSequence(
-      InstrumentTab(kTabId),
-      NavigateWebContents(kTabId,
-                          GURL(chrome::kChromeUIUserEducationInternalsURL)),
-      WithElement(kTabId,
-                  [this](ui::TrackedElement* tab) {
-                    browser()
-                        ->exclusive_access_manager()
-                        ->fullscreen_controller()
-                        ->EnterFullscreenModeForTab(
-                            AsInstrumentedWebContents(tab)
-                                ->web_contents()
-                                ->GetPrimaryMainFrame());
-                  }),
-      CheckResult(
-          [this]() {
-            return browser()
-                ->exclusive_access_manager()
-                ->fullscreen_controller()
-                ->IsTabFullscreen();
-          },
-          true),
-      CheckResult(
-          [this]() {
-            ContentNotFullscreenPrecondition precond(*browser());
-            return precond.CheckPrecondition(data_);
-          },
-          user_education::FeaturePromoResult::kBlockedByUi));
+  RunTestSequence(InstrumentTab(kTabId),
+                  NavigateWebContents(
+                      kTabId, GURL(chrome::kChromeUIUserEducationInternalsURL)),
+                  WithElement(kTabId,
+                              [this](ui::TrackedElement* tab) {
+                                browser()
+                                    ->GetFeatures()
+                                    .exclusive_access_manager()
+                                    ->fullscreen_controller()
+                                    ->EnterFullscreenModeForTab(
+                                        AsInstrumentedWebContents(tab)
+                                            ->web_contents()
+                                            ->GetPrimaryMainFrame());
+                              }),
+                  CheckResult(
+                      [this]() {
+                        return browser()
+                            ->GetFeatures()
+                            .exclusive_access_manager()
+                            ->fullscreen_controller()
+                            ->IsTabFullscreen();
+                      },
+                      true),
+                  CheckResult(
+                      [this]() {
+                        ContentNotFullscreenPrecondition precond(*browser());
+                        return precond.CheckPrecondition(data_);
+                      },
+                      user_education::FeaturePromoResult::kBlockedByUi));
 }
 
 IN_PROC_BROWSER_TEST_F(ContentNotFullscreenPreconditionUiTest, ExitFullscreen) {
@@ -216,7 +219,8 @@ IN_PROC_BROWSER_TEST_F(ContentNotFullscreenPreconditionUiTest, ExitFullscreen) {
       WithElement(kTabId,
                   [this](ui::TrackedElement* tab) {
                     browser()
-                        ->exclusive_access_manager()
+                        ->GetFeatures()
+                        .exclusive_access_manager()
                         ->fullscreen_controller()
                         ->EnterFullscreenModeForTab(
                             AsInstrumentedWebContents(tab)
@@ -226,7 +230,8 @@ IN_PROC_BROWSER_TEST_F(ContentNotFullscreenPreconditionUiTest, ExitFullscreen) {
       WithElement(kTabId,
                   [this](ui::TrackedElement* tab) {
                     browser()
-                        ->exclusive_access_manager()
+                        ->GetFeatures()
+                        .exclusive_access_manager()
                         ->fullscreen_controller()
                         ->ExitFullscreenModeForTab(
                             AsInstrumentedWebContents(tab)->web_contents());
@@ -234,7 +239,8 @@ IN_PROC_BROWSER_TEST_F(ContentNotFullscreenPreconditionUiTest, ExitFullscreen) {
       CheckResult(
           [this]() {
             return browser()
-                ->exclusive_access_manager()
+                ->GetFeatures()
+                .exclusive_access_manager()
                 ->fullscreen_controller()
                 ->IsTabFullscreen();
           },

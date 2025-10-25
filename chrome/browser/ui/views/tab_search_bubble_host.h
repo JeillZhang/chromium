@@ -27,7 +27,7 @@ class Widget;
 class BrowserWindowInterface;
 class Profile;
 class TabOrganizationService;
-class TabStrip;
+class TabSearchBubbleHostObserver;
 
 // TabSearchBubbleHost assumes responsibility for configuring its button,
 // showing / hiding the tab search bubble and handling metrics collection.
@@ -35,15 +35,8 @@ class TabSearchBubbleHost : public views::WidgetObserver,
                             public TabOrganizationObserver,
                             public WebUIBubbleManagerObserver {
  public:
-  class Observer : public base::CheckedObserver {
-   public:
-    virtual void OnBubbleInitializing() {}
-    virtual void OnBubbleDestroying() {}
-  };
-
   TabSearchBubbleHost(views::Button* button,
-                      BrowserWindowInterface* browser_window_interface,
-                      base::WeakPtr<TabStrip> tab_strip);
+                      BrowserWindowInterface* browser_window_interface);
   TabSearchBubbleHost(const TabSearchBubbleHost&) = delete;
   TabSearchBubbleHost& operator=(const TabSearchBubbleHost&) = delete;
   ~TabSearchBubbleHost() override;
@@ -53,14 +46,14 @@ class TabSearchBubbleHost : public views::WidgetObserver,
   void OnWidgetDestroying(views::Widget* widget) override;
 
   // TabOrganizationObserver:
-  void OnOrganizationAccepted(const Browser* browser) override;
+  void OnOrganizationAccepted(Browser* browser) override;
   void OnUserInvokedFeature(const Browser* browser) override;
 
   // WebUIBubbleManagerObserver:
   void BeforeBubbleWidgetShowed(views::Widget* widget) override;
 
-  void AddObserver(Observer* observer);
-  void RemoveObserver(Observer* observer);
+  void AddObserver(TabSearchBubbleHostObserver* observer);
+  void RemoveObserver(TabSearchBubbleHostObserver* observer);
 
   // When this is called the bubble may already be showing or be loading in.
   // This returns true if the method call results in the creation of a new Tab
@@ -102,9 +95,7 @@ class TabSearchBubbleHost : public views::WidgetObserver,
   // Timestamp for when the current bubble was created.
   std::optional<base::TimeTicks> bubble_created_time_;
 
-  base::ObserverList<Observer> observers_;
-
-  raw_ptr<views::MenuButtonController> menu_button_controller_ = nullptr;
+  base::ObserverList<TabSearchBubbleHostObserver> observers_;
 
   // A lock to keep its `button_` pressed while |bubble_| is showing or in the
   // process of being shown.
@@ -118,8 +109,6 @@ class TabSearchBubbleHost : public views::WidgetObserver,
 
   base::ScopedObservation<WebUIBubbleManager, WebUIBubbleManagerObserver>
       webui_bubble_manager_observer_{this};
-
-  base::WeakPtr<TabStrip> tab_strip_;
 };
 
 #endif  // CHROME_BROWSER_UI_VIEWS_TAB_SEARCH_BUBBLE_HOST_H_

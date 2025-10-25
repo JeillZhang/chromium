@@ -35,8 +35,8 @@ class ScriptTimingInfo : public GarbageCollected<ScriptTimingInfo> {
   // even in simple cases. We often only need the URL (e.g script blocks) so
   // this is a lighter-weight version.
   struct ScriptSourceLocation {
-    WTF::String url;
-    WTF::String function_name;
+    String url;
+    String function_name;
     int char_position = -1;
     int line_number = -1;
     int column_number = -1;
@@ -78,8 +78,8 @@ class ScriptTimingInfo : public GarbageCollected<ScriptTimingInfo> {
 
  private:
   InvokerType invoker_type_;
-  AtomicString class_like_name_ = WTF::g_empty_atom;
-  AtomicString property_like_name_ = WTF::g_empty_atom;
+  AtomicString class_like_name_ = g_empty_atom;
+  AtomicString property_like_name_ = g_empty_atom;
   base::TimeTicks start_time_;
   base::TimeTicks execution_start_time_;
   base::TimeTicks end_time_;

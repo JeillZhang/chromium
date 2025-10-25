@@ -146,9 +146,6 @@ BASE_DECLARE_FEATURE(kRelatedWebsiteSetsDevUI);
 
 // Privacy UX features start
 
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-BASE_DECLARE_FEATURE(kAlwaysBlock3pcsIncognito);
-
 // Enables fingerprinting protection setting UX.
 COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
 BASE_DECLARE_FEATURE(kFingerprintingProtectionUx);
@@ -161,29 +158,19 @@ BASE_DECLARE_FEATURE(kIpProtectionUx);
 COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
 BASE_DECLARE_FEATURE(kActUserBypassUx);
 
-// Enables TRACKING_PROTECTION content settings to control 3pcb.
+// Enables showing RWS UI.
 COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-BASE_DECLARE_FEATURE(kTrackingProtectionContentSettingFor3pcb);
+BASE_DECLARE_FEATURE(kRelatedWebsiteSetsUi);
 
-// Enables showing new RWS UI.
+// Feature for rolling back Mode B.
 COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-BASE_DECLARE_FEATURE(kPrivacySandboxRelatedWebsiteSetsUi);
+BASE_DECLARE_FEATURE(kRollBackModeB);
+
+// Forces Mode B rollback without checking the 3pcd onboarding pref.
+COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
+extern const base::FeatureParam<bool> kRollBackModeBForced;
 
 // Privacy UX features end
-
-#if BUILDFLAG(IS_ANDROID)
-// Enables UserBypass logic for Progressive Web Apps on Android
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-BASE_DECLARE_FEATURE(kTrackingProtectionUserBypassPwa);
-
-// Triggers UserBypass logic for Progressive Web Apps on Android
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-BASE_DECLARE_FEATURE(kTrackingProtectionUserBypassPwaTrigger);
-
-// Enables wildcard display on the Clank content settings UI.
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-BASE_DECLARE_FEATURE(kDisplayWildcardInContentSettings);
-#endif  // BUILDFLAG(IS_ANDROID)
 
 // Enables the notice storage for pref storage.
 COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
@@ -195,6 +182,10 @@ BASE_DECLARE_FEATURE(kPrivacySandboxActivityTypeStorage);
 
 COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
 extern const char kPrivacySandboxActivityTypeStorageLastNLaunchesName[];
+
+// GetRequiredPrompt returns the NoticeService's output.
+COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
+BASE_DECLARE_FEATURE(kPrivacySandboxGetPromptFromNoticeService);
 
 // Enables chrome://privacy-sandbox-internals/private-state-tokens DevUI
 // page. Relies on PrivacySandboxInternalsDevUI also being enabled.
@@ -233,50 +224,6 @@ extern const base::FeatureParam<std::string>
     kPrivacySandboxSentimentSurveyTriggerId;
 
 #if BUILDFLAG(IS_ANDROID)
-// Enables the Ads notice survey on CCT.
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-BASE_DECLARE_FEATURE(kPrivacySandboxCctAdsNoticeSurvey);
-
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-extern const base::FeatureParam<std::string>
-    kPrivacySandboxCctAdsNoticeSurveyControlEeaTriggerId;
-
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-extern const base::FeatureParam<std::string>
-    kPrivacySandboxCctAdsNoticeSurveyAcceptedEeaTriggerId;
-
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-extern const base::FeatureParam<std::string>
-    kPrivacySandboxCctAdsNoticeSurveyDeclinedEeaTriggerId;
-
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-extern const base::FeatureParam<std::string>
-    kPrivacySandboxCctAdsNoticeSurveyControlRowTriggerId;
-
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-extern const base::FeatureParam<std::string>
-    kPrivacySandboxCctAdsNoticeSurveyAcknowledgedRowTriggerId;
-
-// Used to set the probability rate for the `Accepted EEA` survey.
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-extern const base::FeatureParam<double>
-    kPrivacySandboxCctAdsNoticeSurveyAcceptedConsentTriggerRate;
-
-// Used to set the probability rate for the `Declined EEA` survey.
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-extern const base::FeatureParam<double>
-    kPrivacySandboxCctAdsNoticeSurveyDeclineConsentTriggerRate;
-
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-extern const base::FeatureParam<std::string>
-    kPrivacySandboxCctAdsNoticeSurveyAppId;
-
-// The delay in milliseconds from ads notice close to the attempt to surface a
-// survey.
-COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)
-extern const base::FeatureParam<int>
-    kPrivacySandboxCctAdsNoticeSurveyDelaysMilliseconds;
-
 // The delay in milliseconds between the first click and the next accepted
 // click.
 COMPONENT_EXPORT(PRIVACY_SANDBOX_FEATURES)

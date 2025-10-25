@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/342213636): Remove this and spanify to fix the errors.
-#pragma allow_unsafe_buffers
-#endif
 
 #import "content/app_shim_remote_cocoa/render_widget_host_view_cocoa.h"
 
@@ -26,6 +22,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "components/input/web_input_event_builders_mac.h"
 #include "components/remote_cocoa/app_shim/ns_view_ids.h"
 #import "content/browser/cocoa/system_hotkey_helper_mac.h"
@@ -59,7 +56,7 @@
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/platform/platform_event_source.h"
 #include "ui/gfx/mac/coordinate_conversion.h"
-#include "ui/gfx/native_widget_types.h"
+#include "ui/gfx/native_ui_types.h"
 
 using blink::WebGestureEvent;
 using blink::WebInputEvent;
@@ -663,7 +660,7 @@ void ExtractUnderlines(NSAttributedString* string,
   _availableTextChangeCounter++;
   _textSelectionRange = range;
   _substitutionWasApplied = NO;
-  [NSSpellChecker.sharedSpellChecker dismissCorrectionIndicatorForView:self];
+  [self.spellChecker dismissCorrectionIndicatorForView:self];
   if (_shouldRequestTextSubstitutions && !_substitutionWasApplied &&
       _textSelectionRange.is_empty()) {
     _shouldRequestTextSubstitutions = NO;
@@ -765,11 +762,11 @@ void ExtractUnderlines(NSAttributedString* string,
   _canBeKeyView = can;
 }
 
-- (AcceptMouseEventsOption)acceptsMouseEventsOption {
+- (AcceptMouseEvents)acceptsMouseEventsOption {
   // Always-on-top windows, e.g picture-in-picture window, accepts all mouse
   // events even if the window or the application is inactive.
-  if ([[self window] level] > NSNormalWindowLevel) {
-    return kAcceptMouseEventsAlways;
+  if (self.window.level > NSNormalWindowLevel) {
+    return AcceptMouseEvents::kAlways;
   }
 
   // By default, only active window accepts mouse events. The embedder may
@@ -780,12 +777,13 @@ void ExtractUnderlines(NSAttributedString* string,
   }
 
   // By default, only active window accepts mouse events.
-  return kAcceptMouseEventsInActiveWindow;
+  return AcceptMouseEvents::kWhenInActiveWindow;
 }
 
 - (BOOL)acceptsFirstMouse:(NSEvent*)theEvent {
-  // Enable "click-through" if mouse clicks are accepted in inactive windows
-  return [self acceptsMouseEventsOption] > kAcceptMouseEventsInActiveWindow;
+  // Enable "click-through" if mouse clicks are accepted in inactive windows.
+  return
+      [self acceptsMouseEventsOption] > AcceptMouseEvents::kWhenInActiveWindow;
 }
 
 - (void)setCloseOnDeactivate:(BOOL)b {
@@ -904,28 +902,30 @@ void ExtractUnderlines(NSAttributedString* string,
 }
 
 - (BOOL)shouldIgnoreMouseEvent:(NSEvent*)theEvent {
-  NSWindow* window = [self window];
-  if ([theEvent type] == NSEventTypeMouseMoved) {
-    bool inActiveWindow = [window isMainWindow] || [window isKeyWindow];
-    bool inActiveApp = [[NSApplication sharedApplication] isActive];
-    AcceptMouseEventsOption option = [self acceptsMouseEventsOption];
+  NSWindow* window = self.window;
+  if (theEvent.type == NSEventTypeMouseMoved) {
+    AcceptMouseEvents option = [self acceptsMouseEventsOption];
+
     // If events are accepted only in active window but this window is inactive,
     // ignore this event. This is the default behavior.
-    if (option == kAcceptMouseEventsInActiveWindow && !inActiveWindow) {
+    bool inActiveWindow = window.mainWindow || window.keyWindow;
+    if (option == AcceptMouseEvents::kWhenInActiveWindow && !inActiveWindow) {
       return YES;
     }
+
     // If events are accepted in active app but the app in active, ignore this
     // event. This only happens if the content embedder overrides the default
     // behavior.
-    if (option == kAcceptMouseEventsInActiveApp && !inActiveApp) {
+    bool inActiveApp = NSApplication.sharedApplication.active;
+    if (option == AcceptMouseEvents::kWhenInActiveApp && !inActiveApp) {
       return YES;
     }
   }
 
-  NSView* contentView = [window contentView];
-  // hitTest: assumes using superview's coodinate.
+  NSView* contentView = window.contentView;
+  // -hitTest: assumes use of the superview's coordinate system.
   NSPoint pointForHitTestInContentView =
-      [contentView.superview convertPoint:[theEvent locationInWindow]
+      [contentView.superview convertPoint:theEvent.locationInWindow
                                  fromView:nil];
   NSView* view = [contentView hitTest:pointForHitTestInContentView];
   // Traverse the superview hierarchy as the hitTest will return the frontmost
@@ -1688,7 +1688,7 @@ void ExtractUnderlines(NSAttributedString* string,
   // properties change to propagate when it does not ensures that screen infos
   // are properly updated when running headless.
   // See // https://crbug.com/375425824.
-  auto* screen = display::Screen::GetScreen();
+  auto* screen = display::Screen::Get();
   const display::ScreenInfos newScreenInfos =
       screen->GetScreenInfosNearestDisplay(
           screen->GetDisplayNearestView(gfx::NativeView(self)).id());
@@ -2091,7 +2091,7 @@ extern NSString* NSTextInputReplacementRangeAttributeName;
 
   uint32_t index = UINT32_MAX;
   _host->SyncGetCharacterIndexAtPoint(rootPoint, &index);
-  // |index| could be WTF::notFound (-1) and its value is different from
+  // |index| could be blink::kNotFound (-1) and its value is different from
   // NSNotFound so we need to convert it.
   if (index == UINT32_MAX)
     return NSNotFound;
@@ -2124,7 +2124,7 @@ extern NSString* NSTextInputReplacementRangeAttributeName;
   // The returned rectangle is in WebKit coordinates (upper left origin), so
   // flip the coordinate system.
   NSRect viewFrame = [self frame];
-  NSRect rect = NSRectFromCGRect(gfxRect.ToCGRect());
+  NSRect rect = gfxRect.ToCGRect();
   rect.origin.y = NSHeight(viewFrame) - NSMaxY(rect);
 
   // Convert into screen coordinates for return.

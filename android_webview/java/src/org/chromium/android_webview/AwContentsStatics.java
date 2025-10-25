@@ -200,6 +200,14 @@ public class AwContentsStatics {
         sDefaultTrafficStatsUid = uid;
     }
 
+    public static void setRendererLibraryPrefetchMode(int mode) {
+        AwContentsStaticsJni.get().setRendererLibraryPrefetchMode(mode);
+    }
+
+    public static int getRendererLibraryPrefetchMode() {
+        return AwContentsStaticsJni.get().getRendererLibraryPrefetchMode();
+    }
+
     @CalledByNative
     static int getDefaultTrafficStatsTag() {
         return sDefaultTrafficStatsTag;
@@ -208,6 +216,12 @@ public class AwContentsStatics {
     @CalledByNative
     static int getDefaultTrafficStatsUid() {
         return sDefaultTrafficStatsUid;
+    }
+
+    public static void forceVariationIdsForTesting( // IN-TEST
+            List<String> variationIds, String commandLineVariationIds) {
+        AwContentsStaticsJni.get()
+                .forceVariationIdsForTesting(variationIds, commandLineVariationIds); // IN-TEST
     }
 
     @NativeMethods
@@ -234,5 +248,13 @@ public class AwContentsStatics {
 
         @JniType("std::string")
         String getVariationsHeader();
+
+        void setRendererLibraryPrefetchMode(int mode);
+
+        int getRendererLibraryPrefetchMode();
+
+        void forceVariationIdsForTesting( // IN-TEST
+                @JniType("std::vector<std::string>") List<String> variationIds,
+                @JniType("std::string") String commandLineVariationIds);
     }
 }

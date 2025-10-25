@@ -1,6 +1,5 @@
 use super::{
-    Bucket, Entries, IndexMap, IntoIter, IntoKeys, IntoValues, Iter, IterMut, Keys, Values,
-    ValuesMut,
+    Bucket, IndexMap, IntoIter, IntoKeys, IntoValues, Iter, IterMut, Keys, Values, ValuesMut,
 };
 use crate::util::{slice_eq, try_simplify_range};
 use crate::GetDisjointMutError;
@@ -94,7 +93,8 @@ impl<K, V> Slice<K, V> {
         self.entries.get(range).map(Slice::from_slice)
     }
 
-    /// Returns a mutable slice of key-value pairs in the given range of indices.
+    /// Returns a mutable slice of key-value pairs in the given range of
+    /// indices.
     ///
     /// Valid indices are `0 <= index < self.len()`.
     pub fn get_range_mut<R: RangeBounds<usize>>(&mut self, range: R) -> Option<&mut Self> {
@@ -125,6 +125,7 @@ impl<K, V> Slice<K, V> {
     /// Divides one slice into two at an index.
     ///
     /// ***Panics*** if `index > len`.
+    #[track_caller]
     pub fn split_at(&self, index: usize) -> (&Self, &Self) {
         let (first, second) = self.entries.split_at(index);
         (Self::from_slice(first), Self::from_slice(second))
@@ -133,6 +134,7 @@ impl<K, V> Slice<K, V> {
     /// Divides one mutable slice into two at an index.
     ///
     /// ***Panics*** if `index > len`.
+    #[track_caller]
     pub fn split_at_mut(&mut self, index: usize) -> (&mut Self, &mut Self) {
         let (first, second) = self.entries.split_at_mut(index);
         (Self::from_mut_slice(first), Self::from_mut_slice(second))
@@ -203,7 +205,8 @@ impl<K, V> Slice<K, V> {
         Values::new(&self.entries)
     }
 
-    /// Return an iterator over mutable references to the the values of the map slice.
+    /// Return an iterator over mutable references to the the values of the map
+    /// slice.
     pub fn values_mut(&mut self) -> ValuesMut<'_, K, V> {
         ValuesMut::new(&mut self.entries)
     }
@@ -215,12 +218,13 @@ impl<K, V> Slice<K, V> {
 
     /// Search over a sorted map for a key.
     ///
-    /// Returns the position where that key is present, or the position where it can be inserted to
-    /// maintain the sort. See [`slice::binary_search`] for more details.
+    /// Returns the position where that key is present, or the position where it
+    /// can be inserted to maintain the sort. See [`slice::binary_search`]
+    /// for more details.
     ///
-    /// Computes in **O(log(n))** time, which is notably less scalable than looking the key up in
-    /// the map this is a slice from using [`IndexMap::get_index_of`], but this can also position
-    /// missing keys.
+    /// Computes in **O(log(n))** time, which is notably less scalable than
+    /// looking the key up in the map this is a slice from using
+    /// [`IndexMap::get_index_of`], but this can also position missing keys.
     pub fn binary_search_keys(&self, x: &K) -> Result<usize, usize>
     where
         K: Ord,
@@ -230,8 +234,9 @@ impl<K, V> Slice<K, V> {
 
     /// Search over a sorted map with a comparator function.
     ///
-    /// Returns the position where that value is present, or the position where it can be inserted
-    /// to maintain the sort. See [`slice::binary_search_by`] for more details.
+    /// Returns the position where that value is present, or the position where
+    /// it can be inserted to maintain the sort. See
+    /// [`slice::binary_search_by`] for more details.
     ///
     /// Computes in **O(log(n))** time.
     #[inline]
@@ -244,8 +249,9 @@ impl<K, V> Slice<K, V> {
 
     /// Search over a sorted map with an extraction function.
     ///
-    /// Returns the position where that value is present, or the position where it can be inserted
-    /// to maintain the sort. See [`slice::binary_search_by_key`] for more details.
+    /// Returns the position where that value is present, or the position where
+    /// it can be inserted to maintain the sort. See
+    /// [`slice::binary_search_by_key`] for more details.
     ///
     /// Computes in **O(log(n))** time.
     #[inline]
@@ -257,8 +263,37 @@ impl<K, V> Slice<K, V> {
         self.binary_search_by(|k, v| f(k, v).cmp(b))
     }
 
-    /// Returns the index of the partition point of a sorted map according to the given predicate
-    /// (the index of the first element of the second partition).
+    /// Checks if the keys of this slice are sorted.
+    #[inline]
+    pub fn is_sorted(&self) -> bool
+    where
+        K: PartialOrd,
+    {
+        self.entries.is_sorted_by(|a, b| a.key <= b.key)
+    }
+
+    /// Checks if this slice is sorted using the given comparator function.
+    #[inline]
+    pub fn is_sorted_by<'a, F>(&'a self, mut cmp: F) -> bool
+    where
+        F: FnMut(&'a K, &'a V, &'a K, &'a V) -> bool,
+    {
+        self.entries.is_sorted_by(move |a, b| cmp(&a.key, &a.value, &b.key, &b.value))
+    }
+
+    /// Checks if this slice is sorted using the given sort-key function.
+    #[inline]
+    pub fn is_sorted_by_key<'a, F, T>(&'a self, mut sort_key: F) -> bool
+    where
+        F: FnMut(&'a K, &'a V) -> T,
+        T: PartialOrd,
+    {
+        self.entries.is_sorted_by_key(move |a| sort_key(&a.key, &a.value))
+    }
+
+    /// Returns the index of the partition point of a sorted map according to
+    /// the given predicate (the index of the first element of the second
+    /// partition).
     ///
     /// See [`slice::partition_point`] for more details.
     ///
@@ -268,13 +303,13 @@ impl<K, V> Slice<K, V> {
     where
         P: FnMut(&K, &V) -> bool,
     {
-        self.entries
-            .partition_point(move |a| pred(&a.key, &a.value))
+        self.entries.partition_point(move |a| pred(&a.key, &a.value))
     }
 
     /// Get an array of `N` key-value pairs by `N` indices
     ///
-    /// Valid indices are *0 <= index < self.len()* and each index needs to be unique.
+    /// Valid indices are *0 <= index < self.len()* and each index needs to be
+    /// unique.
     pub fn get_disjoint_mut<const N: usize>(
         &mut self,
         indices: [usize; N],
@@ -289,7 +324,8 @@ impl<K, V> Slice<K, V> {
         &mut self,
         indices: [Option<usize>; N],
     ) -> Result<[Option<(&K, &mut V)>; N], GetDisjointMutError> {
-        // SAFETY: Can't allow duplicate indices as we would return several mutable refs to the same data.
+        // SAFETY: Can't allow duplicate indices as we would return several mutable refs
+        // to the same data.
         let len = self.len();
         for i in 0..N {
             if let Some(idx) = indices[i] {
@@ -305,8 +341,9 @@ impl<K, V> Slice<K, V> {
         let out = indices.map(|idx_opt| {
             match idx_opt {
                 Some(idx) => {
-                    // SAFETY: The base pointer is valid as it comes from a slice and the reference is always
-                    // in-bounds & unique as we've already checked the indices above.
+                    // SAFETY: The base pointer is valid as it comes from a slice and the reference
+                    // is always in-bounds & unique as we've already checked the
+                    // indices above.
                     let kv = unsafe { (*(entries_ptr.add(idx))).ref_mut() };
                     Some(kv)
                 }
@@ -387,9 +424,7 @@ where
     V: PartialEq<V2>,
 {
     fn eq(&self, other: &Slice<K2, V2>) -> bool {
-        slice_eq(&self.entries, &other.entries, |b1, b2| {
-            b1.key == b2.key && b1.value == b2.value
-        })
+        slice_eq(&self.entries, &other.entries, |b1, b2| b1.key == b2.key && b1.value == b2.value)
     }
 }
 
@@ -627,5 +662,124 @@ mod tests {
                 check_mut(&vec[i..=j], &mut map[i..=j], &mut slice[i..=j]);
             }
         }
+    }
+
+    #[test]
+    fn slice_new() {
+        let slice: &Slice<i32, i32> = Slice::new();
+        assert!(slice.is_empty());
+        assert_eq!(slice.len(), 0);
+    }
+
+    #[test]
+    fn slice_new_mut() {
+        let slice: &mut Slice<i32, i32> = Slice::new_mut();
+        assert!(slice.is_empty());
+        assert_eq!(slice.len(), 0);
+    }
+
+    #[test]
+    fn slice_get_index_mut() {
+        let mut map: IndexMap<i32, i32> = (0..10).map(|i| (i, i * i)).collect();
+        let slice: &mut Slice<i32, i32> = map.as_mut_slice();
+
+        {
+            let (key, value) = slice.get_index_mut(0).unwrap();
+            assert_eq!(*key, 0);
+            assert_eq!(*value, 0);
+
+            *value = 11;
+        }
+
+        assert_eq!(slice[0], 11);
+
+        {
+            let result = slice.get_index_mut(11);
+            assert!(result.is_none());
+        }
+    }
+
+    #[test]
+    fn slice_split_first() {
+        let slice: &mut Slice<i32, i32> = Slice::new_mut();
+        let result = slice.split_first();
+        assert!(result.is_none());
+
+        let mut map: IndexMap<i32, i32> = (0..10).map(|i| (i, i * i)).collect();
+        let slice: &mut Slice<i32, i32> = map.as_mut_slice();
+
+        {
+            let (first, rest) = slice.split_first().unwrap();
+            assert_eq!(first, (&0, &0));
+            assert_eq!(rest.len(), 9);
+        }
+        assert_eq!(slice.len(), 10);
+    }
+
+    #[test]
+    fn slice_split_first_mut() {
+        let slice: &mut Slice<i32, i32> = Slice::new_mut();
+        let result = slice.split_first_mut();
+        assert!(result.is_none());
+
+        let mut map: IndexMap<i32, i32> = (0..10).map(|i| (i, i * i)).collect();
+        let slice: &mut Slice<i32, i32> = map.as_mut_slice();
+
+        {
+            let (first, rest) = slice.split_first_mut().unwrap();
+            assert_eq!(first, (&0, &mut 0));
+            assert_eq!(rest.len(), 9);
+
+            *first.1 = 11;
+        }
+        assert_eq!(slice.len(), 10);
+        assert_eq!(slice[0], 11);
+    }
+
+    #[test]
+    fn slice_split_last() {
+        let slice: &mut Slice<i32, i32> = Slice::new_mut();
+        let result = slice.split_last();
+        assert!(result.is_none());
+
+        let mut map: IndexMap<i32, i32> = (0..10).map(|i| (i, i * i)).collect();
+        let slice: &mut Slice<i32, i32> = map.as_mut_slice();
+
+        {
+            let (last, rest) = slice.split_last().unwrap();
+            assert_eq!(last, (&9, &81));
+            assert_eq!(rest.len(), 9);
+        }
+        assert_eq!(slice.len(), 10);
+    }
+
+    #[test]
+    fn slice_split_last_mut() {
+        let slice: &mut Slice<i32, i32> = Slice::new_mut();
+        let result = slice.split_last_mut();
+        assert!(result.is_none());
+
+        let mut map: IndexMap<i32, i32> = (0..10).map(|i| (i, i * i)).collect();
+        let slice: &mut Slice<i32, i32> = map.as_mut_slice();
+
+        {
+            let (last, rest) = slice.split_last_mut().unwrap();
+            assert_eq!(last, (&9, &mut 81));
+            assert_eq!(rest.len(), 9);
+
+            *last.1 = 100;
+        }
+
+        assert_eq!(slice.len(), 10);
+        assert_eq!(slice[slice.len() - 1], 100);
+    }
+
+    #[test]
+    fn slice_get_range() {
+        let mut map: IndexMap<i32, i32> = (0..10).map(|i| (i, i * i)).collect();
+        let slice: &mut Slice<i32, i32> = map.as_mut_slice();
+        let subslice = slice.get_range(3..6).unwrap();
+        assert_eq!(subslice.len(), 3);
+        assert_eq!(subslice, &[(3, 9), (4, 16), (5, 25)]);
     }
 }

@@ -2,7 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-load("//lib/targets.star", "targets")
+"""Variant declarations
+
+Variants are used to expand tests within a matrix compound suite into multiple
+tests and applying variant-specific modifications to the tests.
+"""
+
+load("@chromium-luci//targets.star", "targets")
 
 targets.variant(
     name = "AMD_RADEON_RX_5500_XT",
@@ -61,21 +67,6 @@ targets.variant(
     identifier = "JACUZZI_RELEASE_LKGM",
     skylab = targets.skylab(
         cros_board = "jacuzzi",
-        use_lkgm = True,
-    ),
-)
-
-targets.variant(
-    name = "CROS_VOLTEER_PUBLIC_RELEASE_ASH_LKGM",
-    identifier = "VOLTEER_PUBLIC_RELEASE_LKGM",
-    generate_pyl_entry = False,
-    skylab = targets.skylab(
-        bucket = "chromiumos-image-archive",
-        cros_board = "volteer",
-        cros_model = "voxel",
-        dut_pool = "chromium",
-        public_builder = "cros_test_platform_public",
-        public_builder_bucket = "testplatform-public",
         use_lkgm = True,
     ),
 )
@@ -209,6 +200,7 @@ targets.variant(
         dimensions = {
             "os": "iOS-18",
             "device": "iPhone16,1",
+            "cpu": "x86|arm64",
         },
     ),
 )
@@ -254,6 +246,21 @@ targets.variant(
     identifier = "NVIDIA GeForce GTX 1660",
     mixins = [
         "nvidia_geforce_gtx_1660",
+    ],
+)
+
+targets.variant(
+    name = "SIM_APPLE_TV_4K_3RD_GENERATION_26_0",
+    identifier = "Apple TV 4K (3rd generation) 26.0",
+    generate_pyl_entry = False,
+    mixins = [
+        "tvos_runtime_cache_26_0",
+    ],
+    args = [
+        "--platform",
+        "Apple TV 4K (3rd generation)",
+        "--version",
+        "26.0",
     ],
 )
 
@@ -318,6 +325,36 @@ targets.variant(
 )
 
 targets.variant(
+    name = "SIM_IPAD_AIR_6TH_GEN_26_0",
+    identifier = "iPad Air (6th generation) 26.0",
+    generate_pyl_entry = False,
+    mixins = [
+        "ios_runtime_cache_26_0",
+    ],
+    args = [
+        "--platform",
+        "iPad Air 11-inch (M2)",
+        "--version",
+        "26.0",
+    ],
+)
+
+targets.variant(
+    name = "SIM_IPAD_AIR_6TH_GEN_26_1",
+    identifier = "iPad Air (6th generation) 26.1",
+    generate_pyl_entry = False,
+    mixins = [
+        "ios_runtime_cache_26_1",
+    ],
+    args = [
+        "--platform",
+        "iPad Air 11-inch (M2)",
+        "--version",
+        "26.1",
+    ],
+)
+
+targets.variant(
     name = "SIM_IPAD_PRO_7TH_GEN_18_5",
     identifier = "iPad Air (6th generation) 18.5",
     generate_pyl_entry = False,
@@ -363,6 +400,21 @@ targets.variant(
 )
 
 targets.variant(
+    name = "SIM_IPAD_PRO_7TH_GEN_26_0",
+    identifier = "iPad Pro 13-inch (M4) 26.0",
+    generate_pyl_entry = False,
+    mixins = [
+        "ios_runtime_cache_26_0",
+    ],
+    args = [
+        "--platform",
+        "iPad Pro 13-inch (M4)",
+        "--version",
+        "26.0",
+    ],
+)
+
+targets.variant(
     name = "SIM_IPAD_10TH_GEN_17_5",
     identifier = "iPad (10th generation) 17.5",
     generate_pyl_entry = False,
@@ -404,6 +456,21 @@ targets.variant(
         "iPad (10th generation)",
         "--version",
         "18.5",
+    ],
+)
+
+targets.variant(
+    name = "SIM_IPAD_10TH_GEN_26_0",
+    identifier = "iPad (10th generation) 26.0",
+    generate_pyl_entry = False,
+    mixins = [
+        "ios_runtime_cache_26_0",
+    ],
+    args = [
+        "--platform",
+        "iPad (10th generation)",
+        "--version",
+        "26.0",
     ],
 )
 
@@ -467,17 +534,32 @@ targets.variant(
 )
 
 targets.variant(
-    name = "SIM_IPHONE_15_18_4",
-    identifier = "iPhone 15 18.4",
+    name = "SIM_IPHONE_15_26_0",
+    identifier = "iPhone 15 26.0",
     generate_pyl_entry = False,
     mixins = [
-        "ios_runtime_cache_18_4",
+        "ios_runtime_cache_26_0",
     ],
     args = [
         "--platform",
         "iPhone 15",
         "--version",
-        "18.4",
+        "26.0",
+    ],
+)
+
+targets.variant(
+    name = "SIM_IPHONE_15_26_1",
+    identifier = "iPhone 15 26.1",
+    generate_pyl_entry = False,
+    mixins = [
+        "ios_runtime_cache_26_1",
+    ],
+    args = [
+        "--platform",
+        "iPhone 15",
+        "--version",
+        "26.1",
     ],
 )
 
@@ -493,6 +575,36 @@ targets.variant(
         "iPhone 15",
         "--version",
         "18.5",
+    ],
+)
+
+targets.variant(
+    name = "SIM_IPHONE_16_26_0",
+    identifier = "iPhone 16 26.0",
+    generate_pyl_entry = False,
+    mixins = [
+        "ios_runtime_cache_26_0",
+    ],
+    args = [
+        "--platform",
+        "iPhone 16",
+        "--version",
+        "26.0",
+    ],
+)
+
+targets.variant(
+    name = "SIM_IPHONE_16_26_1",
+    identifier = "iPhone 16 26.1",
+    generate_pyl_entry = False,
+    mixins = [
+        "ios_runtime_cache_26_1",
+    ],
+    args = [
+        "--platform",
+        "iPhone 16",
+        "--version",
+        "26.1",
     ],
 )
 
@@ -523,6 +635,21 @@ targets.variant(
         "iPhone 14 Plus",
         "--version",
         "18.2",
+    ],
+)
+
+targets.variant(
+    name = "SIM_IPHONE_16_PLUS_26_0",
+    identifier = "iPhone 16 Plus 26.0",
+    generate_pyl_entry = False,
+    mixins = [
+        "ios_runtime_cache_26_0",
+    ],
+    args = [
+        "--platform",
+        "iPhone 16 Plus",
+        "--version",
+        "26.0",
     ],
 )
 
@@ -613,6 +740,36 @@ targets.variant(
         "iPhone SE (3rd generation)",
         "--version",
         "18.5",
+    ],
+)
+
+targets.variant(
+    name = "SIM_IPHONE_SE_3RD_GEN_26_0",
+    identifier = "iPhone SE (3rd generation) 26.0",
+    generate_pyl_entry = False,
+    mixins = [
+        "ios_runtime_cache_26_0",
+    ],
+    args = [
+        "--platform",
+        "iPhone SE (3rd generation)",
+        "--version",
+        "26.0",
+    ],
+)
+
+targets.variant(
+    name = "SIM_IPHONE_SE_3RD_GEN_26_1",
+    identifier = "iPhone SE (3rd generation) 26.1",
+    generate_pyl_entry = False,
+    mixins = [
+        "ios_runtime_cache_26_1",
+    ],
+    args = [
+        "--platform",
+        "iPhone SE (3rd generation)",
+        "--version",
+        "26.1",
     ],
 )
 

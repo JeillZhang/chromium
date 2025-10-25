@@ -67,7 +67,7 @@ class UserCloudPolicyStatusProviderTest
 
     user_store_ = std::make_unique<policy::MockUserCloudPolicyStore>();
     user_core_ = std::make_unique<policy::CloudPolicyCore>(
-        policy::dm_protocol::kChromeUserPolicyType, std::string(),
+        policy::dm_protocol::GetChromeUserPolicyType(), std::string(),
         user_store_.get(), base::SingleThreadTaskRunner::GetCurrentDefault(),
         network::TestNetworkConnectionTracker::CreateGetter());
 
@@ -88,7 +88,7 @@ class UserCloudPolicyStatusProviderTest
         kTestUsername, signin::ConsentLevel::kSignin);
 
     AccountCapabilitiesTestMutator mutator(&account.capabilities);
-    mutator.set_is_subject_to_enterprise_policies(true);
+    mutator.set_is_subject_to_enterprise_features(true);
     account.hosted_domain = kNoHostedDomainFound;
     identity_test_env_.UpdateAccountInfoForAccount(account);
   }
@@ -125,7 +125,7 @@ class UserCloudPolicyStatusProviderTest
   signin::IdentityTestEnvironment identity_test_env_;
   std::unique_ptr<policy::MockUserCloudPolicyStore> user_store_;
   std::unique_ptr<policy::CloudPolicyCore> user_core_;
-  raw_ptr<policy::MockCloudPolicyClient> user_client_;
+  raw_ptr<policy::MockCloudPolicyClient, DanglingUntriaged> user_client_;
   std::unique_ptr<UserCloudPolicyStatusProvider> status_provider_;
 };
 

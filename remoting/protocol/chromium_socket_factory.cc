@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/390223051): Remove C-library calls to fix the errors.
-#pragma allow_unsafe_libc_calls
-#endif
-
 #include "remoting/protocol/chromium_socket_factory.h"
 
 #include <stddef.h>
@@ -15,9 +10,11 @@
 #include <memory>
 #include <string>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
+#include "base/notimplemented.h"
 #include "base/rand_util.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -152,7 +149,7 @@ UdpPacketSocket::PendingPacket::PendingPacket(
     : data(base::MakeRefCounted<net::IOBufferWithSize>(buffer_size)),
       address(address),
       options(options) {
-  memcpy(data->data(), buffer, buffer_size);
+  UNSAFE_TODO(memcpy(data->data(), buffer, buffer_size));
 }
 
 UdpPacketSocket::UdpPacketSocket() {
@@ -339,7 +336,7 @@ void UdpPacketSocket::DoSend() {
   while (!send_pending_ && !send_queue_.empty() && error_ == 0) {
     PendingPacket& packet = send_queue_.front();
     webrtc::ApplyPacketOptions(
-        packet.data->bytes(), packet.data->size(),
+        webrtc::ArrayView<uint8_t>(packet.data->bytes(), packet.data->size()),
         packet.options.packet_time_params,
         (base::TimeTicks::Now() - base::TimeTicks()).InMicroseconds());
     int result = socket_->SendTo(
@@ -452,7 +449,9 @@ ChromiumPacketSocketFactory::ChromiumPacketSocketFactory(
 
 ChromiumPacketSocketFactory::~ChromiumPacketSocketFactory() = default;
 
-webrtc::AsyncPacketSocket* ChromiumPacketSocketFactory::CreateUdpSocket(
+std::unique_ptr<webrtc::AsyncPacketSocket>
+ChromiumPacketSocketFactory::CreateUdpSocket(
+    const webrtc::Environment& /*env*/,
     const webrtc::SocketAddress& local_address,
     uint16_t min_port,
     uint16_t max_port) {
@@ -467,10 +466,12 @@ webrtc::AsyncPacketSocket* ChromiumPacketSocketFactory::CreateUdpSocket(
   if (!result->Init(local_address, min_port, max_port)) {
     return nullptr;
   }
-  return result.release();
+  return result;
 }
 
-webrtc::AsyncListenSocket* ChromiumPacketSocketFactory::CreateServerTcpSocket(
+std::unique_ptr<webrtc::AsyncListenSocket>
+ChromiumPacketSocketFactory::CreateServerTcpSocket(
+    const webrtc::Environment& env,
     const webrtc::SocketAddress& local_address,
     uint16_t min_port,
     uint16_t max_port,
@@ -481,7 +482,9 @@ webrtc::AsyncListenSocket* ChromiumPacketSocketFactory::CreateServerTcpSocket(
   return nullptr;
 }
 
-webrtc::AsyncPacketSocket* ChromiumPacketSocketFactory::CreateClientTcpSocket(
+std::unique_ptr<webrtc::AsyncPacketSocket>
+ChromiumPacketSocketFactory::CreateClientTcpSocket(
+    const webrtc::Environment& /*env*/,
     const webrtc::SocketAddress& local_address,
     const webrtc::SocketAddress& remote_address,
     const webrtc::PacketSocketTcpOptions& opts) {
@@ -489,7 +492,7 @@ webrtc::AsyncPacketSocket* ChromiumPacketSocketFactory::CreateClientTcpSocket(
   if (!socket->InitClientTcp(local_address, remote_address, opts)) {
     return nullptr;
   }
-  return socket.release();
+  return socket;
 }
 
 std::unique_ptr<webrtc::AsyncDnsResolverInterface>

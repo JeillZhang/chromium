@@ -16,12 +16,17 @@
 
 #include "base/base64.h"
 #include "base/check.h"
+#include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/functional/bind.h"
 #include "base/functional/callback_forward.h"
+#include "base/functional/callback_helpers.h"
 #include "base/json/json_reader.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
+#include "base/notreached.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
 #include "base/test/scoped_feature_list.h"
@@ -29,6 +34,11 @@
 #include "base/time/time.h"
 #include "base/types/expected.h"
 #include "base/values.h"
+#include "base/version_info/channel.h"
+#include "components/content_settings/core/common/content_settings.h"
+#include "components/content_settings/core/common/content_settings_metadata.h"
+#include "components/content_settings/core/common/content_settings_pattern.h"
+#include "components/content_settings/core/common/content_settings_rules.h"
 #include "components/content_settings/core/common/content_settings_utils.h"
 #include "components/content_settings/core/common/host_indexed_content_settings.h"
 #include "components/ip_protection/common/ip_protection_core.h"
@@ -50,10 +60,11 @@
 #include "net/base/proxy_chain.h"
 #include "net/base/proxy_server.h"
 #include "net/base/proxy_string_util.h"
-#include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/request_priority.h"
 #include "net/base/schemeful_site.h"
 #include "net/http/http_response_headers.h"
+#include "net/http/http_util.h"
+#include "net/http/structured_headers.h"
 #include "net/proxy_resolution/proxy_info.h"
 #include "net/proxy_resolution/proxy_retry_info.h"
 #include "net/test/gtest_util.h"
@@ -63,6 +74,7 @@
 #include "net/url_request/url_request_test_util.h"
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/resource_request.h"
+#include "services/network/public/cpp/url_loader_completion_status.h"
 #include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
 #include "services/network/public/mojom/network_context.mojom.h"
 #include "services/network/public/mojom/proxy_config.mojom-shared.h"
@@ -70,6 +82,7 @@
 #include "services/network/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/gurl.h"
 
 using net::test::IsError;
 using net::test::IsOk;
@@ -87,14 +100,6 @@ constexpr char kLocalhost[] = "http://localhost";
 
 constexpr char kProxyResolutionHistogram[] =
     "NetworkService.IpProtection.ProxyResolution";
-constexpr char kEligibilityHistogram[] =
-    "NetworkService.IpProtection.RequestIsEligibleForProtection";
-constexpr char kAreAuthTokensAvailableHistogram[] =
-    "NetworkService.IpProtection.AreAuthTokensAvailable";
-constexpr char kIsProxyListAvailableHistogram[] =
-    "NetworkService.IpProtection.IsProxyListAvailable";
-constexpr char kAvailabilityHistogram[] =
-    "NetworkService.IpProtection.ProtectionIsAvailableForRequest";
 constexpr size_t kPRTPlaintextSize = 29;
 
 class MockIpProtectionCore : public IpProtectionCore {
@@ -130,13 +135,6 @@ class MockIpProtectionCore : public IpProtectionCore {
 
   bool AreAuthTokensAvailable() override { return auth_token_.has_value(); }
 
-  bool IsProbabilisticRevealTokenAvailable() override {
-    if (prt_) {
-      return true;
-    }
-    return (prt_manager_ && prt_manager_->IsTokenAvailable());
-  }
-
   bool WereTokenCachesEverFilled() override {
     return were_token_caches_ever_filled_;
   }
@@ -147,12 +145,12 @@ class MockIpProtectionCore : public IpProtectionCore {
   }
 
   std::optional<std::string> GetProbabilisticRevealToken(
-      const std::string& top_level,
-      const std::string& third_party) override {
+      const GURL& url,
+      const net::SchemefulSite& top_frame_site) override {
     if (prt_) {
       return prt_;
     }
-    return prt_manager_ ? prt_manager_->GetToken(top_level, third_party)
+    return prt_manager_ ? prt_manager_->GetToken(url, top_frame_site)
                         : std::nullopt;
   }
 
@@ -214,6 +212,21 @@ class MockIpProtectionCore : public IpProtectionCore {
     return (prt_registry_ && prt_registry_->IsRegistered(request_url));
   }
 
+  IpProxyStatus GetIpProxyStatus() override {
+    return IpProxyStatus::kUnavailable;
+  }
+
+  bool IsProxyBypassed() override { return proxy_is_bypassed_; }
+  void SetBypassProxy(bool bypass_proxy) override {
+    proxy_is_bypassed_ = bypass_proxy;
+  }
+  void RecordTokenDemand(size_t chain_index) override {
+    tokens_demanded_per_chain_index_[chain_index]++;
+  }
+  int GetTokenDemand(size_t chain_index) {
+    return tokens_demanded_per_chain_index_[chain_index];
+  }
+
   void SetIpProtectionEnabled(bool value) { is_ip_protection_enabled_ = value; }
 
   // Set the proxy list returned from `ProxyList()`.
@@ -247,6 +260,8 @@ class MockIpProtectionCore : public IpProtectionCore {
   std::vector<content_settings::HostIndexedContentSettings>
       tp_content_settings_;
   raw_ptr<IpProtectionProbabilisticRevealTokenManager> prt_manager_;
+  bool proxy_is_bypassed_ = false;
+  std::map<size_t, int> tokens_demanded_per_chain_index_;
 };
 
 MaskedDomainListManager CreateMdlManager(
@@ -324,6 +339,12 @@ class TestCustomProxyConnectionObserver
   std::optional<HeadersReceived> headers_received_;
 };
 
+// Tests in ip_protection_url_request_http_job_unittest.cc exercise the delegate
+// by making a network request. This tests the full integration path through
+// the network stack.
+//
+// Therefore, prefer adding new tests to that suite if its simpler
+// MockIpProtectionCore is sufficient.
 class IpProtectionProxyDelegateTest : public testing::Test {
  public:
   IpProtectionProxyDelegateTest() = default;
@@ -379,6 +400,14 @@ class IpProtectionProxyDelegateTest : public testing::Test {
       base::test::TaskEnvironment::TimeSource::MOCK_TIME};
 };
 
+void DoNotCallCallback(
+    base::expected<net::HttpRequestHeaders, net::Error> result) {
+  // This should never be called since
+  // IpProtectionProxyDelegate::OnBeforeTunnelRequest never returns
+  // net::ERR_IO_PENDING.
+  NOTREACHED();
+}
+
 TEST_F(IpProtectionProxyDelegateTest, AddsTokenToTunnelRequest) {
   MaskedDomainListManager mdl_manager = CreateMdlManager(
       /*first_party_map=*/{});
@@ -387,17 +416,18 @@ TEST_F(IpProtectionProxyDelegateTest, AddsTokenToTunnelRequest) {
   ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"})});
   auto delegate = CreateDelegate(ipp_core.get());
 
-  net::HttpRequestHeaders headers;
   auto ip_protection_proxy_chain = net::ProxyChain::ForIpProtection(
       {net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
                                                "proxya", std::nullopt),
        net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
                                                "proxyb", std::nullopt)});
-  EXPECT_THAT(delegate->OnBeforeTunnelRequest(ip_protection_proxy_chain,
-                                              /*chain_index=*/0, &headers),
-              IsOk());
-
-  EXPECT_THAT(headers, Contain("Authorization", "Bearer: a-token"));
+  auto result = delegate->OnBeforeTunnelRequest(
+      ip_protection_proxy_chain,
+      /*chain_index=*/0, base::BindOnce(DoNotCallCallback));
+  ASSERT_TRUE(result.has_value());
+  EXPECT_THAT(result.value(), Contain("Authorization", "Bearer: a-token"));
+  EXPECT_EQ(ipp_core->GetTokenDemand(/*chain_index=*/0), 1);
+  EXPECT_EQ(ipp_core->GetTokenDemand(/*chain_index=*/1), 0);
 }
 
 TEST_F(IpProtectionProxyDelegateTest, ErrorIfConnectionWithNoTokens) {
@@ -408,18 +438,21 @@ TEST_F(IpProtectionProxyDelegateTest, ErrorIfConnectionWithNoTokens) {
   ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"})});
   auto delegate = CreateDelegate(ipp_core.get());
 
-  net::HttpRequestHeaders headers;
   auto ip_protection_proxy_chain = net::ProxyChain::ForIpProtection(
       {net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
                                                "proxya", std::nullopt),
        net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
                                                "proxyb", std::nullopt)});
-  EXPECT_THAT(delegate->OnBeforeTunnelRequest(ip_protection_proxy_chain,
-                                              /*chain_index=*/0, &headers),
-              IsError(net::ERR_TUNNEL_CONNECTION_FAILED));
-  EXPECT_THAT(delegate->OnBeforeTunnelRequest(ip_protection_proxy_chain,
-                                              /*chain_index=*/1, &headers),
-              IsError(net::ERR_TUNNEL_CONNECTION_FAILED));
+  auto result = delegate->OnBeforeTunnelRequest(
+      ip_protection_proxy_chain,
+      /*chain_index=*/0, base::BindOnce(DoNotCallCallback));
+  ASSERT_FALSE(result.has_value());
+  EXPECT_THAT(result.error(), IsError(net::ERR_TUNNEL_CONNECTION_FAILED));
+  result = delegate->OnBeforeTunnelRequest(ip_protection_proxy_chain,
+                                           /*chain_index=*/1,
+                                           base::BindOnce(DoNotCallCallback));
+  ASSERT_FALSE(result.has_value());
+  EXPECT_THAT(result.error(), IsError(net::ERR_TUNNEL_CONNECTION_FAILED));
 }
 
 TEST_F(IpProtectionProxyDelegateTest, AddsDebugExperimentArm) {
@@ -437,103 +470,45 @@ TEST_F(IpProtectionProxyDelegateTest, AddsDebugExperimentArm) {
     ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"})});
     auto delegate = CreateDelegate(ipp_core.get());
 
-    net::HttpRequestHeaders headers;
     auto ip_protection_proxy_chain = net::ProxyChain::ForIpProtection(
         {net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
                                                  "proxya", std::nullopt),
          net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
                                                  "proxyb", std::nullopt)});
-    EXPECT_THAT(delegate->OnBeforeTunnelRequest(ip_protection_proxy_chain,
-                                                chain_index, &headers),
-                IsOk());
-    EXPECT_THAT(headers, Contain("Ip-Protection-Debug-Experiment-Arm", "13"));
+    auto result =
+        delegate->OnBeforeTunnelRequest(ip_protection_proxy_chain, chain_index,
+                                        base::BindOnce(DoNotCallCallback));
+    ASSERT_TRUE(result.has_value());
+    EXPECT_THAT(result.value(),
+                Contain("Ip-Protection-Debug-Experiment-Arm", "13"));
   }
 }
 
-TEST_F(IpProtectionProxyDelegateTest, OnResolveProxyDeprioritizesBadProxies) {
-  std::map<std::string, std::set<std::string>> first_party_map;
-  first_party_map["example.com"] = {};
-  auto masked_domain_list_manager = CreateMdlManager(first_party_map);
+TEST_F(IpProtectionProxyDelegateTest,
+       DoesNotAddDebugExperimentArmToNonIppProxy) {
+  std::map<std::string, std::string> parameters;
+  parameters[net::features::kIpPrivacyDebugExperimentArm.name] = "13";
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      net::features::kEnableIpProtectionProxy, std::move(parameters));
+
+  auto masked_domain_list_manager = CreateMdlManager(
+      /*first_party_map=*/{});
   auto ipp_core =
       std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
-  ipp_core->SetNextAuthToken(MakeAuthToken("Bearer: a-token"));
-  ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"}),
-                          MakeChain({"backup-proxya", "backup-proxyb"})});
-  auto delegate = CreateDelegate(ipp_core.get());
-
-  net::ProxyRetryInfoMap retry_map;
-  net::ProxyRetryInfo& info = retry_map[net::ProxyChain::ForIpProtection(
-      {net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
-                                               "proxya", std::nullopt),
-       net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
-                                               "proxyb", std::nullopt)})];
-  info.try_while_bad = false;
-  info.bad_until = base::TimeTicks::Now() + base::Days(2);
-
-  net::ProxyInfo result;
-  result.UseDirect();
-  delegate->OnResolveProxy(GURL(kHttpsUrl),
-                           net::NetworkAnonymizationKey::CreateCrossSite(
-                               net::SchemefulSite(GURL("https://top.com"))),
-                           "GET", std::move(retry_map), &result);
-
-  net::ProxyList expected_proxy_list;
-  expected_proxy_list.AddProxyChain(net::ProxyChain::ForIpProtection(
-      {net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
-                                               "backup-proxya", std::nullopt),
-       net::ProxyServer::FromSchemeHostAndPort(
-           net::ProxyServer::SCHEME_HTTPS, "backup-proxyb", std::nullopt)}));
-  expected_proxy_list.AddProxyChain(net::ProxyChain::ForIpProtection({}));
-
-  EXPECT_TRUE(result.proxy_list().Equals(expected_proxy_list))
-      << "Got: " << result.proxy_list().ToDebugString();
-  EXPECT_TRUE(result.is_for_ip_protection());
-  histogram_tester_.ExpectUniqueSample(kProxyResolutionHistogram,
-                                       ProxyResolutionResult::kAttemptProxy, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, true,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, true, 1);
-  histogram_tester_.ExpectUniqueSample(kAvailabilityHistogram, true, 1);
-}
-
-TEST_F(IpProtectionProxyDelegateTest, OnResolveProxyAllProxiesBad) {
-  std::map<std::string, std::set<std::string>> first_party_map;
-  first_party_map["example.com"] = {};
-  auto masked_domain_list_manager = CreateMdlManager(first_party_map);
-  auto ipp_core =
-      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  // These will be unused but ensure these not being set isn't the reason for
+  // the header not being added.
   ipp_core->SetNextAuthToken(MakeAuthToken("Bearer: a-token"));
   ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"})});
   auto delegate = CreateDelegate(ipp_core.get());
 
-  net::ProxyRetryInfoMap retry_map;
-  net::ProxyRetryInfo& info = retry_map[net::ProxyChain::ForIpProtection(
-      {net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
-                                               "proxya", std::nullopt),
-       net::ProxyServer::FromSchemeHostAndPort(net::ProxyServer::SCHEME_HTTPS,
-                                               "proxyb", std::nullopt)})];
-  info.try_while_bad = false;
-  info.bad_until = base::TimeTicks::Now() + base::Days(2);
-
-  net::ProxyInfo result;
-  result.UseDirect();
-  delegate->OnResolveProxy(GURL(kHttpsUrl),
-                           net::NetworkAnonymizationKey::CreateCrossSite(
-                               net::SchemefulSite(GURL("https://top.com"))),
-                           "GET", std::move(retry_map), &result);
-
-  EXPECT_TRUE(result.is_direct());
-  EXPECT_TRUE(result.is_for_ip_protection());
-  histogram_tester_.ExpectUniqueSample(kProxyResolutionHistogram,
-                                       ProxyResolutionResult::kAttemptProxy, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, true,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, true, 1);
-  histogram_tester_.ExpectUniqueSample(kAvailabilityHistogram, true, 1);
+  auto non_ipp_chain = net::ProxyChain(net::ProxyServer::FromSchemeHostAndPort(
+      net::ProxyServer::SCHEME_HTTPS, "proxy.com", std::nullopt));
+  auto headers = delegate->OnBeforeTunnelRequest(
+      non_ipp_chain,
+      /*chain_index=*/0, base::BindOnce(DoNotCallCallback));
+  ASSERT_TRUE(headers.has_value());
+  EXPECT_TRUE(headers->IsEmpty());
 }
 
 TEST_F(IpProtectionProxyDelegateTest,
@@ -584,15 +559,8 @@ TEST_F(IpProtectionProxyDelegateTest,
   EXPECT_TRUE(result.Fallback(net::ERR_PROXY_CONNECTION_FAILED,
                               net::NetLogWithSource()));
   EXPECT_TRUE(result.is_for_ip_protection());
-
   histogram_tester_.ExpectUniqueSample(kProxyResolutionHistogram,
                                        ProxyResolutionResult::kAttemptProxy, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, true,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, true, 1);
-  histogram_tester_.ExpectUniqueSample(kAvailabilityHistogram, true, 1);
 }
 
 TEST_F(IpProtectionProxyDelegateTest,
@@ -626,12 +594,6 @@ TEST_F(IpProtectionProxyDelegateTest,
   EXPECT_TRUE(result.is_for_ip_protection());
   histogram_tester_.ExpectUniqueSample(kProxyResolutionHistogram,
                                        ProxyResolutionResult::kAttemptProxy, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, true,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, true, 1);
-  histogram_tester_.ExpectUniqueSample(kAvailabilityHistogram, true, 1);
 }
 
 TEST_F(IpProtectionProxyDelegateTest,
@@ -656,11 +618,6 @@ TEST_F(IpProtectionProxyDelegateTest,
   EXPECT_FALSE(result.is_for_ip_protection());
   histogram_tester_.ExpectUniqueSample(kProxyResolutionHistogram,
                                        ProxyResolutionResult::kNoMdlMatch, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kIneligible, 1);
-  histogram_tester_.ExpectTotalCount(kAreAuthTokensAvailableHistogram, 0);
-  histogram_tester_.ExpectTotalCount(kIsProxyListAvailableHistogram, 0);
-  histogram_tester_.ExpectTotalCount(kAvailabilityHistogram, 0);
 }
 
 TEST_F(IpProtectionProxyDelegateTest, OnResolveProxy_NoAuthTokenEver) {
@@ -682,16 +639,9 @@ TEST_F(IpProtectionProxyDelegateTest, OnResolveProxy_NoAuthTokenEver) {
 
   EXPECT_TRUE(result.is_direct());
   EXPECT_FALSE(result.is_for_ip_protection());
-
   histogram_tester_.ExpectUniqueSample(
       kProxyResolutionHistogram, ProxyResolutionResult::kTokensNeverAvailable,
       1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, false,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, true, 1);
-  histogram_tester_.ExpectUniqueSample(kAvailabilityHistogram, false, 1);
 }
 
 TEST_F(IpProtectionProxyDelegateTest, OnResolveProxy_NoAuthToken_Exhausted) {
@@ -718,15 +668,10 @@ TEST_F(IpProtectionProxyDelegateTest, OnResolveProxy_NoAuthToken_Exhausted) {
 
   EXPECT_TRUE(result.is_direct());
   EXPECT_FALSE(result.is_for_ip_protection());
-
+  EXPECT_EQ(ipp_core->GetTokenDemand(/*chain_index=*/0), 1);
+  EXPECT_EQ(ipp_core->GetTokenDemand(/*chain_index=*/1), 1);
   histogram_tester_.ExpectUniqueSample(
       kProxyResolutionHistogram, ProxyResolutionResult::kTokensExhausted, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, false,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, true, 1);
-  histogram_tester_.ExpectUniqueSample(kAvailabilityHistogram, false, 1);
 }
 
 TEST_F(IpProtectionProxyDelegateTest, OnResolveProxy_NoProxyList) {
@@ -751,13 +696,6 @@ TEST_F(IpProtectionProxyDelegateTest, OnResolveProxy_NoProxyList) {
   histogram_tester_.ExpectUniqueSample(
       kProxyResolutionHistogram, ProxyResolutionResult::kProxyListNotAvailable,
       1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, false,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, false,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kAvailabilityHistogram, false, 1);
 }
 
 TEST_F(IpProtectionProxyDelegateTest, OnResolveProxy_IpProtectionDisabled) {
@@ -782,11 +720,6 @@ TEST_F(IpProtectionProxyDelegateTest, OnResolveProxy_IpProtectionDisabled) {
   EXPECT_FALSE(result.is_for_ip_protection());
   histogram_tester_.ExpectUniqueSample(
       kProxyResolutionHistogram, ProxyResolutionResult::kSettingDisabled, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectTotalCount(kAreAuthTokensAvailableHistogram, 0);
-  histogram_tester_.ExpectTotalCount(kIsProxyListAvailableHistogram, 0);
-  histogram_tester_.ExpectTotalCount(kAvailabilityHistogram, 0);
 }
 
 // When URLs do not match the allow list, the result is direct and not flagged
@@ -811,11 +744,6 @@ TEST_F(IpProtectionProxyDelegateTest, OnResolveProxyIpProtectionNoMatch) {
   EXPECT_FALSE(result.is_for_ip_protection());
   histogram_tester_.ExpectUniqueSample(kProxyResolutionHistogram,
                                        ProxyResolutionResult::kNoMdlMatch, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kIneligible, 1);
-  histogram_tester_.ExpectTotalCount(kAreAuthTokensAvailableHistogram, 0);
-  histogram_tester_.ExpectTotalCount(kIsProxyListAvailableHistogram, 0);
-  histogram_tester_.ExpectTotalCount(kAvailabilityHistogram, 0);
 }
 
 // If the allowlist is empty, this suggests it hasn't yet been populated and
@@ -841,11 +769,6 @@ TEST_F(IpProtectionProxyDelegateTest,
   EXPECT_FALSE(result.is_for_ip_protection());
   histogram_tester_.ExpectUniqueSample(
       kProxyResolutionHistogram, ProxyResolutionResult::kMdlNotPopulated, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kUnknown, 1);
-  histogram_tester_.ExpectTotalCount(kAreAuthTokensAvailableHistogram, 0);
-  histogram_tester_.ExpectTotalCount(kIsProxyListAvailableHistogram, 0);
-  histogram_tester_.ExpectTotalCount(kAvailabilityHistogram, 0);
 }
 
 // When the top frame url has a User Bypass exception, do not attempt to proxy.
@@ -884,14 +807,8 @@ TEST_F(IpProtectionProxyDelegateTest, OnResolveProxy_HasSiteException) {
                            "GET", net::ProxyRetryInfoMap(), &result);
   EXPECT_TRUE(result.is_direct());
   EXPECT_FALSE(result.is_for_ip_protection());
-
   histogram_tester_.ExpectUniqueSample(
       kProxyResolutionHistogram, ProxyResolutionResult::kHasSiteException, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, true,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, true, 1);
 }
 
 // When the top frame url has a User Bypass exception and the user has navigated
@@ -934,14 +851,8 @@ TEST_F(IpProtectionProxyDelegateTest,
                            "GET", net::ProxyRetryInfoMap(), &result);
   EXPECT_TRUE(result.is_direct());
   EXPECT_FALSE(result.is_for_ip_protection());
-
   histogram_tester_.ExpectUniqueSample(
       kProxyResolutionHistogram, ProxyResolutionResult::kHasSiteException, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, true,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, true, 1);
 }
 
 // When the top frame url has a User Bypass exception but the experiment to
@@ -978,11 +889,8 @@ TEST_F(
                            "GET", net::ProxyRetryInfoMap(), &result);
   EXPECT_FALSE(result.is_direct());
   EXPECT_TRUE(result.is_for_ip_protection());
-
   histogram_tester_.ExpectUniqueSample(kProxyResolutionHistogram,
                                        ProxyResolutionResult::kAttemptProxy, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
 }
 
 // When the URL is HTTP and multi-proxy chains are used, the result is flagged
@@ -1006,12 +914,6 @@ TEST_F(IpProtectionProxyDelegateTest,
                            "GET", net::ProxyRetryInfoMap(), &result);
   EXPECT_FALSE(result.is_direct());
   EXPECT_TRUE(result.is_for_ip_protection());
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, true,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, true, 1);
-  histogram_tester_.ExpectUniqueSample(kAvailabilityHistogram, true, 1);
 }
 
 // When URLs match the allow list, and a token is available, the result is
@@ -1037,12 +939,6 @@ TEST_F(IpProtectionProxyDelegateTest, OnResolveProxyIpProtectionSuccess) {
   EXPECT_FALSE(result.prt_header_value().has_value());
   histogram_tester_.ExpectUniqueSample(kProxyResolutionHistogram,
                                        ProxyResolutionResult::kAttemptProxy, 1);
-  histogram_tester_.ExpectUniqueSample(kEligibilityHistogram,
-                                       ProtectionEligibility::kEligible, 1);
-  histogram_tester_.ExpectUniqueSample(kAreAuthTokensAvailableHistogram, true,
-                                       1);
-  histogram_tester_.ExpectUniqueSample(kIsProxyListAvailableHistogram, true, 1);
-  histogram_tester_.ExpectUniqueSample(kAvailabilityHistogram, true, 1);
 }
 
 TEST_F(IpProtectionProxyDelegateTest, OnResolveProxyPRTSuccess) {
@@ -1370,13 +1266,9 @@ TEST_F(IpProtectionProxyDelegateTest, OnResolveProxyPRTIntegration) {
   std::optional<std::string> maybe_header_value = result.prt_header_value();
   ASSERT_TRUE(maybe_header_value.has_value());
 
-  auto const get_etld_plus_one = [](const GURL& url) -> std::string {
-    return net::registry_controlled_domains::GetDomainAndRegistry(
-        url, net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-  };
   std::optional<std::string> maybe_serialized_token =
-      ipp_core->GetProbabilisticRevealToken(get_etld_plus_one(top_level_url),
-                                            get_etld_plus_one(destination_url));
+      ipp_core->GetProbabilisticRevealToken(destination_url,
+                                            net::SchemefulSite(top_level_url));
   ASSERT_TRUE(maybe_serialized_token)
       << "core is expected to return the token in the header";
 
@@ -1412,6 +1304,145 @@ TEST_F(IpProtectionProxyDelegateTest, OnResolveProxyPRTIntegration) {
       << "decrypting obtained PRT failed";
   EXPECT_THAT(plaintexts, testing::Contains(maybe_revealed_token.value()))
       << "revealed token value is not in starting plaintexts";
+}
+
+TEST_F(IpProtectionProxyDelegateTest, OnResolveProxy_UnconditionalProxy_Match) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      net::features::kEnableIpProtectionProxy,
+      {{net::features::kIpPrivacyUnconditionalProxyDomainList.name,
+        "top.com"}});
+
+  // The MDL is empty, so no request would be proxied without the unconditional
+  // proxy feature.
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  ipp_core->SetNextAuthToken(MakeAuthToken("Bearer: a-token"));
+  ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"})});
+  auto delegate = CreateDelegate(ipp_core.get());
+
+  net::ProxyInfo result;
+  result.UseDirect();
+  delegate->OnResolveProxy(GURL(kHttpsUrl),
+                           net::NetworkAnonymizationKey::CreateSameSite(
+                               net::SchemefulSite(GURL("https://top.com"))),
+                           "GET", net::ProxyRetryInfoMap(), &result);
+
+  EXPECT_FALSE(result.is_direct());
+  EXPECT_TRUE(result.is_for_ip_protection());
+  histogram_tester_.ExpectTotalCount(kProxyResolutionHistogram, 0);
+}
+
+TEST_F(IpProtectionProxyDelegateTest,
+       OnResolveProxy_UnconditionalProxy_Match_Subdomain) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      net::features::kEnableIpProtectionProxy,
+      {{net::features::kIpPrivacyUnconditionalProxyDomainList.name,
+        "top.com"}});
+
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  ipp_core->SetNextAuthToken(MakeAuthToken("Bearer: a-token"));
+  ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"})});
+  auto delegate = CreateDelegate(ipp_core.get());
+
+  net::ProxyInfo result;
+  result.UseDirect();
+  delegate->OnResolveProxy(
+      GURL(kHttpsUrl),
+      net::NetworkAnonymizationKey::CreateSameSite(
+          net::SchemefulSite(GURL("https://subdomain.top.com"))),
+      "GET", net::ProxyRetryInfoMap(), &result);
+
+  EXPECT_FALSE(result.is_direct());
+  EXPECT_TRUE(result.is_for_ip_protection());
+  histogram_tester_.ExpectTotalCount(kProxyResolutionHistogram, 0);
+}
+
+TEST_F(IpProtectionProxyDelegateTest,
+       OnResolveProxy_UnconditionalProxy_Match_PublicSuffix) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      net::features::kEnableIpProtectionProxy,
+      {{net::features::kIpPrivacyUnconditionalProxyDomainList.name,
+        "top.co.uk"}});
+
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  ipp_core->SetNextAuthToken(MakeAuthToken("Bearer: a-token"));
+  ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"})});
+  auto delegate = CreateDelegate(ipp_core.get());
+
+  net::ProxyInfo result;
+  result.UseDirect();
+  delegate->OnResolveProxy(GURL(kHttpsUrl),
+                           net::NetworkAnonymizationKey::CreateSameSite(
+                               net::SchemefulSite(GURL("https://top.co.uk"))),
+                           "GET", net::ProxyRetryInfoMap(), &result);
+
+  EXPECT_FALSE(result.is_direct());
+  EXPECT_TRUE(result.is_for_ip_protection());
+  histogram_tester_.ExpectTotalCount(kProxyResolutionHistogram, 0);
+}
+
+TEST_F(IpProtectionProxyDelegateTest,
+       OnResolveProxy_UnconditionalProxy_NoMatch_NoMdlMatch) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      net::features::kEnableIpProtectionProxy,
+      {{net::features::kIpPrivacyUnconditionalProxyDomainList.name,
+        "nottop.com"}});
+
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  ipp_core->SetNextAuthToken(MakeAuthToken("Bearer: a-token"));
+  ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"})});
+  auto delegate = CreateDelegate(ipp_core.get());
+
+  net::ProxyInfo result;
+  result.UseDirect();
+  delegate->OnResolveProxy(GURL(kHttpsUrl),
+                           net::NetworkAnonymizationKey::CreateCrossSite(
+                               net::SchemefulSite(GURL("https://top.com"))),
+                           "GET", net::ProxyRetryInfoMap(), &result);
+
+  EXPECT_TRUE(result.is_direct());
+  EXPECT_FALSE(result.is_for_ip_protection());
+  histogram_tester_.ExpectTotalCount(kProxyResolutionHistogram, 0);
+}
+
+TEST_F(IpProtectionProxyDelegateTest,
+       OnResolveProxy_UnconditionalProxy_NoMatch_MdlMatch) {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeatureWithParameters(
+      net::features::kEnableIpProtectionProxy,
+      {{net::features::kIpPrivacyUnconditionalProxyDomainList.name,
+        "nottop.com"}});
+
+  std::map<std::string, std::set<std::string>> first_party_map;
+  first_party_map["example.com"] = {};
+  auto masked_domain_list_manager = CreateMdlManager(first_party_map);
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  ipp_core->SetNextAuthToken(MakeAuthToken("Bearer: a-token"));
+  ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"})});
+  auto delegate = CreateDelegate(ipp_core.get());
+
+  net::ProxyInfo result;
+  result.UseDirect();
+  delegate->OnResolveProxy(GURL(kHttpsUrl),
+                           net::NetworkAnonymizationKey::CreateCrossSite(
+                               net::SchemefulSite(GURL("https://top.com"))),
+                           "GET", net::ProxyRetryInfoMap(), &result);
+
+  EXPECT_FALSE(result.is_direct());
+  EXPECT_TRUE(result.is_for_ip_protection());
+  histogram_tester_.ExpectTotalCount(kProxyResolutionHistogram, 0);
 }
 
 TEST_F(IpProtectionProxyDelegateTest, OnSuccessfulRequestAfterFailures) {
@@ -1529,6 +1560,330 @@ TEST_F(IpProtectionProxyDelegateTest, MergeProxyRules) {
       chain3,
   };
   EXPECT_EQ(result.AllChains(), expected);
+}
+
+TEST_F(IpProtectionProxyDelegateTest,
+       OnTunnelHeadersReceivedReturnsOkFor200Status) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers =
+      base::MakeRefCounted<net::HttpResponseHeaders>("HTTP/1.1 200 OK");
+
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsOk());
+}
+
+TEST_F(IpProtectionProxyDelegateTest,
+       OnTunnelHeadersReceivedReturnsOkForNonIppProxy) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto non_ipp_chain = net::ProxyChain(net::ProxyServer::FromSchemeHostAndPort(
+      net::ProxyServer::SCHEME_HTTPS, "proxy.com", 443));
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(
+          "HTTP/1.1 502 Bad Gateway\nProxy-Status: proxy; "
+          "error=dns_error;rcode=\"NXDOMAIN\"\n"));
+
+  // For non-IPP chains, the delegate should return `net::OK` to allow the
+  // default network stack handling to process the response.
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(non_ipp_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsOk());
+}
+
+TEST_F(IpProtectionProxyDelegateTest,
+       OnTunnelHeadersReceivedReturnsOkWhenKillswitchEnabled) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndDisableFeature(
+      net::features::kEnableIpPrivacyProxyAdvancedFallbackLogic);
+
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(
+          "HTTP/1.1 502 Bad Gateway\nProxy-Status: proxy; "
+          "error=dns_error;rcode=\"NXDOMAIN\"\n"));
+
+  // When the killswitch is enabled, the delegate should return `net::OK` to
+  // allow the default network stack handling to process the response (even
+  // in the presence of a Proxy-Status header that would otherwise result in the
+  // request not falling back).
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsOk());
+}
+
+TEST_F(
+    IpProtectionProxyDelegateTest,
+    OnTunnelHeadersReceivedReturnsProxyTunnelConnectionFailedForBareDnsError) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(
+          "HTTP/1.1 502 Bad Gateway\nProxy-Status: proxy; "
+          "error=dns_error\n"));
+
+  // We should treat dns_error without a corresponding rcode field as needing
+  // fallback (by returning OK so that the standard proxy fallback logic is
+  // used).
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsOk());
+}
+
+TEST_F(
+    IpProtectionProxyDelegateTest,
+    OnTunnelHeadersReceivedReturnsProxyTunnelConnectionFailedForDnsServFail) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(
+          "HTTP/1.1 502 Bad Gateway\nProxy-Status: proxy; "
+          "error=dns_error;rcode=\"SERVFAIL\"\n"));
+
+  // All rcodes except NXDOMAIN indicate server failure and should trigger
+  // fallback (by returning OK so that the standard proxy fallback logic is
+  // used).
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsOk());
+}
+
+TEST_F(IpProtectionProxyDelegateTest,
+       OnTunnelHeadersReceivedReturnsTunnelConnectionFailedForDnsNxdomain) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(
+          "HTTP/1.1 502 Bad Gateway\nProxy-Status: proxy; "
+          "error=dns_error;rcode=\"NXDOMAIN\"\n"));
+
+  // An NXDOMAIN rcode should not trigger fallback.
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsError(net::ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION));
+}
+
+TEST_F(IpProtectionProxyDelegateTest,
+       OnTunnelHeadersReceivedReturnsTunnelConnectionFailedForDnsNodata) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(
+          "HTTP/1.1 502 Bad Gateway\nProxy-Status: proxy; "
+          "error=dns_error;rcode=\"NODATA\"\n"));
+
+  // An NODATA rcode should not trigger fallback.
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsError(net::ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION));
+}
+
+TEST_F(
+    IpProtectionProxyDelegateTest,
+    OnTunnelHeadersReceivedReturnsProxyTunnelRequestFailedWithoutProxyStatusHeader) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      "HTTP/1.1 500 Internal Server Error");
+
+  // An ambiguous error without a Proxy-Status header should be treated as a
+  // proxy failure, warranting fallback (by returning OK so that the standard
+  // proxy fallback logic is used).
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsOk());
+}
+
+TEST_F(
+    IpProtectionProxyDelegateTest,
+    OnTunnelHeadersReceivedReturnsProxyTunnelRequestFailedForMalformedProxyStatusHeader) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders("HTTP/1.1 502 Bad Gateway\n"
+                                        "Proxy-Status: !@#$\n"));
+
+  // A malformed header is ambiguous, so we assume a proxy failure and fallback.
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsOk());
+}
+
+TEST_F(
+    IpProtectionProxyDelegateTest,
+    OnTunnelHeadersReceivedReturnsProxyTunnelRequestFailedForProxyStatusWithNoRelevantError) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(
+          "HTTP/1.1 502 Bad Gateway\n"
+          "Proxy-Status: PxyA; info=\"healthy\"\n"));
+
+  // A valid Proxy-Status header that does not contain a recognized destination
+  // error is treated as a proxy failure (by returning OK so that the standard
+  // proxy fallback logic is used).
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsOk());
+}
+
+TEST_F(
+    IpProtectionProxyDelegateTest,
+    OnTunnelHeadersReceivedReturnsProxyTunnelRequestFailedForProxySideError) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(
+          "HTTP/1.1 502 Bad Gateway\n"
+          "Proxy-Status: proxy; error=\"proxy_internal_error\"\n"));
+
+  // A non-destination error in the Proxy-Status header indicates a proxy
+  // failure, so we should fall back (by returning OK so that the standard proxy
+  // fallback logic is used).
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsOk());
+}
+
+class IpProtectionProxyDelegateOnTunnelHeadersReceivedTest
+    : public IpProtectionProxyDelegateTest,
+      public testing::WithParamInterface<const char*> {};
+
+// This parameterized test verifies that for all specified destination-side
+// errors, we return the error that does NOT cause fallback.
+TEST_P(IpProtectionProxyDelegateOnTunnelHeadersReceivedTest,
+       ReturnsTunnelConnectionFailedForDestinationErrors) {
+  const char* error_token = GetParam();
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(base::StringPrintf(
+          "HTTP/1.1 502 Bad Gateway\nProxy-Status: proxy; error=%s\n",
+          error_token)));
+
+  // Destination-side errors should prevent fallback.
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsError(net::ERR_PROXY_UNABLE_TO_CONNECT_TO_DESTINATION));
+}
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         IpProtectionProxyDelegateOnTunnelHeadersReceivedTest,
+                         testing::Values("destination_not_found",
+                                         "destination_unavailable",
+                                         "destination_ip_unroutable",
+                                         "connection_refused",
+                                         "connection_terminated",
+                                         "connection_timeout",
+                                         "proxy_loop_detected"),
+                         [](const testing::TestParamInfo<const char*>& info) {
+                           return info.param;
+                         });
+
+TEST_F(
+    IpProtectionProxyDelegateTest,
+    OnTunnelHeadersReceivedReturnsTunnelConnectionFailedForMultiEntryHeader) {
+  auto masked_domain_list_manager = CreateMdlManager({});
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+  auto delegate = CreateDelegate(ipp_core.get());
+  auto ip_protection_proxy_chain = MakeChain({"proxy.com"});
+  auto headers = base::MakeRefCounted<net::HttpResponseHeaders>(
+      net::HttpUtil::AssembleRawHeaders(
+          "HTTP/1.1 502 Bad Gateway\n"
+          "Proxy-Status: PxyA; info=\"ok\", Invalid; error=dns_error\n"));
+
+  // For IP Protection there is only ever one proxy in the path for any given
+  // connection, so treat multiple entities in the Proxy-Status line as invalid
+  // (and return OK so that the standard proxy fallback logic is used).
+  EXPECT_THAT(delegate->OnTunnelHeadersReceived(ip_protection_proxy_chain,
+                                                /*chain_index=*/0, *headers,
+                                                base::DoNothing()),
+              IsOk());
+}
+
+TEST_F(IpProtectionProxyDelegateTest, OnResolveProxyBypassesWhenSet) {
+  // Enable the feature flag required for the bypass logic.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitWithFeaturesAndParameters(
+      {{net::features::kEnableIpProtectionProxy,
+        {{"IpPrivacyEnableUserBypass", "true"},
+         {"IpPrivacyEnableIppPanelInDevTools", "true"}}}},
+      {});
+
+  std::map<std::string, std::set<std::string>> first_party_map;
+  first_party_map["example.com"] = {};
+  auto masked_domain_list_manager = CreateMdlManager(first_party_map);
+  auto ipp_core =
+      std::make_unique<MockIpProtectionCore>(&masked_domain_list_manager);
+
+  // Set up a valid environment for a proxied request to test the bypass.
+  ipp_core->SetNextAuthToken(MakeAuthToken("Bearer: a-token"));
+  ipp_core->SetProxyList({MakeChain({"proxya", "proxyb"})});
+  auto delegate = CreateDelegate(ipp_core.get());
+
+  ipp_core->SetBypassProxy(true);
+
+  net::ProxyInfo result;
+  result.UseDirect();
+  delegate->OnResolveProxy(GURL(kHttpsUrl),
+                           net::NetworkAnonymizationKey::CreateCrossSite(
+                               net::SchemefulSite(GURL("https://top.com"))),
+                           "GET", /*proxy_retry_info=*/{}, &result);
+
+  EXPECT_TRUE(result.is_direct());
+  EXPECT_FALSE(result.is_for_ip_protection());
+  histogram_tester_.ExpectUniqueSample(
+      kProxyResolutionHistogram, ProxyResolutionResult::kBypassedByDevTools, 1);
 }
 
 }  // namespace ip_protection

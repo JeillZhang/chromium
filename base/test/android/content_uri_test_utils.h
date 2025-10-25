@@ -9,6 +9,7 @@
 
 namespace base {
 class FilePath;
+class ScopedTempDir;
 
 namespace test::android {
 
@@ -34,6 +35,22 @@ std::optional<FilePath> GetInMemoryContentDocumentUriFromCacheDirFilePath(
 // DocumentsProvider will work with ACTION_OPEN_DOCUMENT_TREE.
 std::optional<FilePath> GetInMemoryContentTreeUriFromCacheDirDirectory(
     const FilePath& directory);
+
+// Returns a virtual document path for the specified directory which must be
+// under the cache dir, else returns std::nullopt.
+std::optional<FilePath> GetVirtualDocumentPathFromCacheDirDirectory(
+    const FilePath& path);
+
+// Copies a source directory into an existing ScopedTempDir and generates a
+// content URI for it.
+//
+// This is a workaround for Android security policies that prevent loading
+// extensions directly from the file system. This function enables tests by
+// copying the extension directory to a temporary location and resolving it to
+// a content URI, which can then be used for extension packing.
+std::optional<FilePath> CreateCacheCopyAndGetContentUri(
+    const FilePath& source_path,
+    const ScopedTempDir& temp_dir);
 
 }  // namespace test::android
 }  // namespace base

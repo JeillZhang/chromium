@@ -251,12 +251,6 @@ UIView* IconInSquare(NSString* symbol,
 // Creates the type-specific icon for this item.
 - (UIView*)createTypeIcon {
   switch (_type) {
-    case SetUpListItemType::kSignInSync: {
-      return _inSquare ? IconInSquare(kPersonCropCircleSymbol, _compactLayout,
-                                      kGreen500Color)
-                       : IconInCircle(kPersonCropCircleSymbol, _compactLayout,
-                                      kGreen500Color);
-    }
     case SetUpListItemType::kDefaultBrowser: {
       UIImageView* iconImage = DefaultBrowserIcon(_compactLayout || _inSquare);
       if (_inSquare) {
@@ -280,9 +274,6 @@ UIView* IconInSquare(NSString* symbol,
           kCheckmarkSealFillSymbol, _compactLayout,
           @[ [UIColor whiteColor], [UIColor colorNamed:kBlue500Color] ]);
     }
-    case SetUpListItemType::kFollow:
-      // TODO(crbug.com/40262090): Add a Follow item to the Set Up List.
-      NOTREACHED();
   }
 }
 

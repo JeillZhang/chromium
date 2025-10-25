@@ -25,6 +25,7 @@
 #include "cc/metrics/events_metrics_manager.h"
 #include "cc/metrics/frame_sequence_metrics.h"
 #include "cc/paint/element_id.h"
+#include "cc/trees/scroll_source_type.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "ui/events/types/scroll_input_type.h"
 #include "ui/events/types/scroll_types.h"
@@ -380,17 +381,17 @@ class CC_EXPORT InputHandler : public InputDelegateForCompositor {
   virtual bool HasBlockingWheelEventHandlerAt(
       const gfx::Point& viewport_point) const;
 
-  // It returns the type of a touch start or move event listener at
-  // |viewport_point|. Whether the page should be given the opportunity to
-  // suppress scrolling by consuming touch events that started at
-  // |viewport_point|, and whether |viewport_point| is on the currently
-  // scrolling layer.
-  // |out_touch_action| is assigned the allowed touch action for the
-  // |viewport_point|. In the case there are no touch handlers or touch action
-  // regions, |out_touch_action| is assigned TouchAction::kAuto since the
-  // default touch action is auto.
+  // It returns the type of a touch start or move event listener that intersects
+  // with |viewport_touch_rect|. Whether the page should be given the
+  // opportunity to suppress scrolling by consuming touch events that started at
+  // |viewport_touch_rect|, and whether |viewport_touch_rect| is on the
+  // currently scrolling layer.
+  // |out_touch_action| is assigned the allowed touch
+  // action for the |viewport_touch_rect|. In the case there are no touch
+  // handlers or touch action regions, |out_touch_action| is assigned
+  // TouchAction::kAuto since the default touch action is auto.
   virtual TouchStartOrMoveEventListenerType
-  EventListenerTypeForTouchStartOrMoveAt(const gfx::Point& viewport_point,
+  EventListenerTypeForTouchStartOrMoveAt(const gfx::Rect& viewport_touch_rect,
                                          TouchAction* out_touch_action);
 
   // Calling `CreateLatencyInfoSwapPromiseMonitor()` to get a scoped
@@ -464,14 +465,19 @@ class CC_EXPORT InputHandler : public InputDelegateForCompositor {
                        const ScrollNode& scroll_node);
   // Returns the amount of delta that can be applied to scroll_node, taking
   // page scale into account.
-  gfx::Vector2dF ComputeScrollDelta(const ScrollNode& scroll_node,
-                                    const gfx::Vector2dF& delta);
+  gfx::Vector2dF ComputeScrollDelta(
+      const ScrollNode& scroll_node,
+      const gfx::Vector2dF& delta,
+      const ScrollState* scroll_state = nullptr) const;
 
   gfx::Vector2dF ScrollSingleNode(const ScrollNode& scroll_node,
                                   const gfx::Vector2dF& delta,
                                   const gfx::Point& viewport_point,
                                   bool is_direct_manipulation);
 
+  // Returns the size of one page of the given scroll node in physical pixels
+  // for the purposes of scrolling.
+  gfx::Size PageSize(const ScrollNode& scroll_node) const;
   float LineStep() const;
 
   // Resolves a delta in the given granularity for the |scroll_node| into
@@ -546,6 +552,7 @@ class CC_EXPORT InputHandler : public InputDelegateForCompositor {
   void DidUnregisterScrollbar(ElementId scroll_element_id,
                               ScrollbarOrientation orientation) override;
   void ScrollOffsetAnimationFinished(ElementId element_id) override;
+  void ElasticOverscrollAnimationFinished() override;
   void SetPrefersReducedMotion(bool prefers_reduced_motion) override;
   bool IsCurrentlyScrolling() const override;
   ActivelyScrollingType GetActivelyScrollingType() const override;
@@ -558,7 +565,8 @@ class CC_EXPORT InputHandler : public InputDelegateForCompositor {
                            AbortAnimatedScrollBeforeStartingAutoscroll);
   FRIEND_TEST_ALL_PREFIXES(LayerTreeHostImplTest, AnimatedScrollYielding);
   FRIEND_TEST_ALL_PREFIXES(LayerTreeHostImplTest, AutoscrollOnDeletedScrollbar);
-  FRIEND_TEST_ALL_PREFIXES(LayerTreeHostImplTest, ThumbDragAfterJumpClick);
+  FRIEND_TEST_ALL_PREFIXES(LayerTreeHostImplTest,
+                           ThumbDragAfterJumpClickOrThumbClick);
   FRIEND_TEST_ALL_PREFIXES(LayerTreeHostImplTest, ScrollOnLargeThumb);
   FRIEND_TEST_ALL_PREFIXES(LayerTreeHostImplTest, AutoscrollTaskAbort);
 
@@ -740,6 +748,12 @@ class CC_EXPORT InputHandler : public InputDelegateForCompositor {
   // |CurrentlyScrollingNode()|.
   void ScrollEnd(ScrollNode* scroll_node, bool should_snap = false);
 
+  void LimitDeltaToScrollerSize(const ScrollState& scroll_state,
+                                const ScrollNode& scroll_node,
+                                gfx::Vector2dF& delta) const;
+
+  void UpdateLastLatchedScrollSourceType();
+
   // The input handler is owned by the delegate so their lifetimes are tied
   // together.
   const raw_ref<CompositorDelegateForInput> compositor_delegate_;
@@ -816,11 +830,6 @@ class CC_EXPORT InputHandler : public InputDelegateForCompositor {
   // over.
   bool deferred_scroll_end_ = false;
 
-  // Set to true when a scroll gesture being handled on the compositor has
-  // ended. i.e. When a GSE has arrived and any ongoing scroll animation has
-  // ended.
-  bool scroll_gesture_did_end_ = false;
-
   // True iff some of the delta has been consumed for the current scroll
   // sequence on the specific axis.
   bool did_scroll_x_for_scroll_gesture_ = false;
@@ -882,6 +891,9 @@ class CC_EXPORT InputHandler : public InputDelegateForCompositor {
   base::flat_set<ElementId> pending_scrollend_containers_;
 
   base::TimeTicks last_scroll_begin_time_;
+
+  // https://drafts.csswg.org/css-scroll-snap-1/#scroll-types.
+  ScrollSourceType last_latched_scroll_source_type_ = ScrollSourceType::kNone;
 
   // Must be the last member to ensure this is destroyed first in the
   // destruction order and invalidates all weak pointers.

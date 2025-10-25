@@ -205,12 +205,6 @@ void DarkModeFilter::ApplyFilterToImage(Image* image,
                                         const SkRect& src) {
   DCHECK(image);
   DCHECK(flags);
-  DCHECK_NE(GetDarkModeImagePolicy(), DarkModeImagePolicy::kFilterNone);
-
-  if (GetDarkModeImagePolicy() == DarkModeImagePolicy::kFilterAll) {
-    flags->setColorFilter(GetImageFilter());
-    return;
-  }
 
   // Raster-side dark mode path - Just set the dark mode on flags and dark
   // mode will be applied at compositor side during rasterization.
@@ -229,12 +223,6 @@ void DarkModeFilter::ApplyFilterToImage(Image* image,
 }
 
 bool DarkModeFilter::ShouldApplyFilterToImage(ImageType type) const {
-  DarkModeImagePolicy image_policy = GetDarkModeImagePolicy();
-  if (image_policy == DarkModeImagePolicy::kFilterNone)
-    return false;
-  if (image_policy == DarkModeImagePolicy::kFilterAll)
-    return true;
-
   // kIcon: Do not consider images being drawn into bigger rect as these
   // images are not meant for icons or representing smaller widgets. These
   // images are considered as photos which should be untouched.
@@ -248,7 +236,6 @@ bool DarkModeFilter::ShouldApplyFilterToImage(ImageType type) const {
 sk_sp<cc::ColorFilter> DarkModeFilter::GenerateImageFilter(
     const SkPixmap& pixmap,
     const SkIRect& src) const {
-  DCHECK(immutable_.settings.image_policy == DarkModeImagePolicy::kFilterSmart);
   DCHECK(immutable_.image_filter);
 
   return (immutable_.image_classifier->Classify(pixmap, src) ==

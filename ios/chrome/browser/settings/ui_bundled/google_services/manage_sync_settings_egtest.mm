@@ -10,11 +10,11 @@
 #import "components/strings/grit/components_strings.h"
 #import "components/sync/base/features.h"
 #import "components/sync/base/user_selectable_type.h"
-#import "ios/chrome/browser/authentication/ui_bundled/account_menu/account_menu_constants.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_app_interface.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_earl_grey_ui_test_util.h"
-#import "ios/chrome/browser/authentication/ui_bundled/signin_matchers.h"
+#import "ios/chrome/browser/authentication/account_menu/public/account_menu_constants.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_app_interface.h"
+#import "ios/chrome/browser/authentication/test/signin_earl_grey_ui_test_util.h"
+#import "ios/chrome/browser/authentication/test/signin_matchers.h"
 #import "ios/chrome/browser/authentication/ui_bundled/views/views_constants.h"
 #import "ios/chrome/browser/bookmarks/model/bookmark_storage_type.h"
 #import "ios/chrome/browser/bookmarks/ui_bundled/bookmark_earl_grey.h"
@@ -41,6 +41,7 @@
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/web_http_server_chrome_test_case.h"
+#import "ios/chrome/test/scoped_eg_synchronization_disabler.h"
 #import "ios/testing/earl_grey/earl_grey_test.h"
 #import "ui/base/l10n/l10n_util.h"
 
@@ -57,9 +58,9 @@ void SignInWithPromoFromAccountSettings(FakeSystemIdentity* fake_identity,
   // Sign in with fake identity using the settings sign-in promo.
   [ChromeEarlGreyUI
       tapSettingsMenuButton:chrome_test_util::SettingsSignInRowMatcher()];
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          kIdentityButtonControlIdentifier)]
-      performAction:grey_tap()];
+  [[EarlGrey
+      selectElementWithMatcher:chrome_test_util::AccountChooserButtonMatcher(
+                                   fake_identity)] performAction:grey_tap()];
   [[EarlGrey
       selectElementWithMatcher:chrome_test_util::IdentityCellMatcherForEmail(
                                    fake_identity.userEmail)]
@@ -72,6 +73,10 @@ void SignInWithPromoFromAccountSettings(FakeSystemIdentity* fake_identity,
                       IDS_IOS_FIRST_RUN_SIGNIN_CONTINUE_AS,
                       base::SysNSStringToUTF16(fake_identity.userGivenName))),
               grey_sufficientlyVisible(), nil)] performAction:grey_tap()];
+
+  [SigninEarlGreyUI dismissSigninConfirmationSnackbarForIdentity:fake_identity
+                                                   assertVisible:NO];
+
   if (expect_history_sync_ui) {
     [[EarlGrey selectElementWithMatcher:chrome_test_util::
                                             PromoScreenPrimaryButtonMatcher()]
@@ -101,8 +106,9 @@ void SignOutFromAccountSettings() {
 
   // Tap the "Sign out" button.
   [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(l10n_util::GetNSString(
-                     IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_SIGN_OUT_ITEM))]
+                 grey_allOf(grey_accessibilityLabel(l10n_util::GetNSString(
+                                IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_SIGN_OUT_ITEM)),
+                            grey_userInteractionEnabled(), nil)]
       performAction:grey_tap()];
 }
 
@@ -170,16 +176,9 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
         std::string("--") + switches::kSearchEngineChoiceCountry + "=BE");
     config.features_enabled.push_back(kLinkedServicesSettingIos);
   }
-  if ([self isRunningTest:@selector(testSignOutFromManageAccountsSettings)]) {
-    // Once kIdentityDiscAccountMenu is launched, the sign out button in
-    // ManageAccountsSettings will be removed. It will be safe to remove this
-    // test at that point.
-    config.features_disabled.push_back(kIdentityDiscAccountMenu);
-  }
 
-  if ([self isRunningTest:@selector(testSwitchAccountFromAccountMenu)] ||
+  if ([self isRunningTest:@selector(DISABLED_testSwitchAccountFromAccountMenu)] ||
       [self isRunningTest:@selector(testSignOutFromAccountFromAccountMenu)]) {
-    config.features_enabled.push_back(kIdentityDiscAccountMenu);
     config.features_enabled.push_back(kSeparateProfilesForManagedAccounts);
   }
 
@@ -239,59 +238,6 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   [ChromeEarlGreyUI waitForAppToIdle];
 
   [SigninEarlGrey verifySignedOut];
-
-  // Verify the "manage sync" view is popped.
-  [[EarlGrey
-      selectElementWithMatcher:grey_accessibilityID(
-                                   kManageSyncTableViewAccessibilityIdentifier)]
-      assertWithMatcher:grey_notVisible()];
-
-  // Verify the account settings row is not showing in the settings menu.
-  [[EarlGrey selectElementWithMatcher:SettingsAccountButton()]
-      assertWithMatcher:grey_notVisible()];
-}
-
-// Tests sign out from the manage accounts on device page.
-- (void)testSignOutFromManageAccountsSettings {
-  // Signing out from the manage accounts settings is not possible unless opened
-  // from the web.
-  if ([SigninEarlGrey areSeparateProfilesForManagedAccountsEnabled]) {
-    return;
-  }
-  FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
-  [SigninEarlGrey addFakeIdentity:fakeIdentity];
-
-  [SigninEarlGrey signinWithFakeIdentity:fakeIdentity];
-  [ChromeEarlGreyUI openSettingsMenu];
-
-  // Open the "manage sync" view.
-  [ChromeEarlGreyUI tapSettingsMenuButton:SettingsAccountButton()];
-
-  // Scroll to the bottom to view the "manage accounts" button.
-  id<GREYMatcher> scrollViewMatcher =
-      grey_accessibilityID(kManageSyncTableViewAccessibilityIdentifier);
-  [[EarlGrey selectElementWithMatcher:scrollViewMatcher]
-      performAction:grey_scrollToContentEdge(kGREYContentEdgeBottom)];
-
-  // Tap the "manage accounts on This Device" button.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(l10n_util::GetNSString(
-                     IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_MANAGE_ACCOUNTS_ITEM))]
-      performAction:grey_tap()];
-
-  // The "manage accounts" view should be shown, tap on "Sign Out" button on
-  // that page.
-  [[EarlGrey
-      selectElementWithMatcher:grey_accessibilityID(
-                                   kSettingsAccountsTableViewSignoutCellId)]
-      performAction:grey_tap()];
-
-  [SigninEarlGrey verifySignedOut];
-
-  // Verify the "manage accounts" view is popped.
-  [[EarlGrey selectElementWithMatcher:grey_accessibilityID(
-                                          kSettingsLegacyAccountsTableViewId)]
-      assertWithMatcher:grey_notVisible()];
 
   // Verify the "manage sync" view is popped.
   [[EarlGrey
@@ -402,9 +348,9 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   SaveBookmark(@"foo", @"https://www.foo.com");
 
   SignOutFromAccountSettings();
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_CANCEL)] performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:
+                 chrome_test_util::AlertItemWithAccessibilityLabelId(
+                     IDS_CANCEL)] performAction:grey_tap()];
 
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity];
 
@@ -436,7 +382,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 
   SignOutFromAccountSettings();
   [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::ButtonWithAccessibilityLabelId(
+                 chrome_test_util::AlertItemWithAccessibilityLabelId(
                      IDS_IOS_SIGNOUT_DIALOG_SIGN_OUT_AND_DELETE_BUTTON)]
       performAction:grey_tap()];
 
@@ -1170,12 +1116,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // Tests that bulk upload moves the following data types to account:
 // - Passwords
 // TODO(crbug.com/407020882): Remove FLAKY_ from this test.
-#if TARGET_IPHONE_SIMULATOR
-#define MAYBE_testBulkUploadForPasswords FLAKY_testBulkUploadForPasswords
-#else
-#define MAYBE_testBulkUploadForPasswords testBulkUploadForPasswords
-#endif
-- (void)MAYBE_testBulkUploadForPasswords {
+- (void)FLAKY_testBulkUploadForPasswords {
   // Add local data.
   password_manager_test_utils::SavePasswordFormToProfileStore(
       @"password", @"user", @"https://example.com");
@@ -1258,8 +1199,6 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   ExpectBatchUploadRecommendationItem(
       IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_BATCH_UPLOAD_ITEMS_ITEM, 2,
       fakeIdentity.userEmail);
-
-  // TODO(crbug.com/40072328): Test that items were actually moved.
 }
 
 // Tests that bulk upload moves the following data types to account:
@@ -1314,17 +1253,25 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
                      kBulkUploadTableViewPasswordsItemAccessibilityIdentifer)]
       performAction:chrome_test_util::TurnTableViewSwitchOn(NO)];
 
-  // Tap on the save button.
-  [[EarlGrey
-      selectElementWithMatcher:grey_accessibilityID(
-                                   kBulkUploadSaveButtonAccessibilityIdentifer)]
-      performAction:grey_tap()];
+  {
+    // Workaround for Earl Grey synchronization bug on iOS 26 that prevents
+    // snackbar detection. Temporarily disabling synchronization allows the
+    // view to be found.
+    ScopedSynchronizationDisabler disabler;
+
+    // Tap on the save button.
+    [[EarlGrey
+        selectElementWithMatcher:
+            grey_accessibilityID(kBulkUploadSaveButtonAccessibilityIdentifer)]
+        performAction:grey_tap()];
+
+    // Ensure the correct snackbar appears.
+    ExpectBatchUploadConfirmationSnackbar(2, fakeIdentity.userEmail);
+  }
 
   [ChromeEarlGrey
       waitForSufficientlyVisibleElementWithMatcher:
           grey_accessibilityID(kManageSyncTableViewAccessibilityIdentifier)];
-  // Ensure the correct snackbar appears.
-  ExpectBatchUploadConfirmationSnackbar(2, fakeIdentity.userEmail);
 
   [ChromeEarlGreyUI waitForAppToIdle];
 
@@ -1333,8 +1280,6 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
   ExpectBatchUploadRecommendationItem(
       IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_BATCH_UPLOAD_PASSWORDS_ITEM, 1,
       fakeIdentity.userEmail);
-
-  // TODO(crbug.com/40072328): Test that items were actually moved.
 }
 
 // Tests that bulk upload moves the following data types to account:
@@ -1438,8 +1383,6 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
                                        kBatchUploadAccessibilityIdentifier),
                                    grey_minimumVisiblePercent(0.05), nil)]
       assertWithMatcher:grey_nil()];
-
-  // TODO(crbug.com/40072328): Test that items were actually moved.
 }
 
 // Tests that the batch upload card in account settings can be displayed without
@@ -1590,13 +1533,13 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 // Tests the custom passphrase is remembered per account, kept across signout,
 // and cleared when account is removed from device.
 // TODO(crbug.com/384646508): This test is flaky on the iPad simulator.
-#if TARGET_IPHONE_SIMULATOR
+#if TARGET_OS_SIMULATOR
 #define MAYBE_testRememberCustomPassphraseAfterSignout \
   FLAKY_testRememberCustomPassphraseAfterSignout
 #else
 #define MAYBE_testRememberCustomPassphraseAfterSignout \
   testRememberCustomPassphraseAfterSignout
-#endif  // TARGET_IPHONE_SIMULATOR
+#endif  // TARGET_OS_SIMULATOR
 - (void)MAYBE_testRememberCustomPassphraseAfterSignout {
   // Enable custom passphrase.
   [ChromeEarlGrey addSyncPassphrase:kPassphrase];
@@ -1712,12 +1655,7 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
 }
 
 // Test switching account from the account menu.
-- (void)testSwitchAccountFromAccountMenu {
-  // Separate profiles are only available in iOS 17+.
-  if (!@available(iOS 17, *)) {
-    return;
-  }
-
+- (void)DISABLED_testSwitchAccountFromAccountMenu {
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   FakeSystemIdentity* fakeIdentity2 = [FakeSystemIdentity fakeIdentity2];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
@@ -1735,9 +1673,11 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
       performAction:grey_scrollToContentEdge(kGREYContentEdgeBottom)];
 
   // Tap on switch account item.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(l10n_util::GetNSString(
-                     IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_SWITCH_ACCOUNT_ITEM))]
+  [[EarlGrey
+      selectElementWithMatcher:
+          grey_allOf(grey_accessibilityLabel(l10n_util::GetNSString(
+                         IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_SWITCH_ACCOUNT_ITEM)),
+                     grey_userInteractionEnabled(), nil)]
       performAction:grey_tap()];
 
   // Verify the account menu is shown.
@@ -1767,23 +1707,28 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
                  base::Seconds(5), wait_for_disappearance),
              @"Account menu did not disappear.");
 
-  // Verify the account settings view is popped.
+  // Verify the account settings view remains on top of screen.
   [[EarlGrey
       selectElementWithMatcher:grey_accessibilityID(
                                    kManageSyncTableViewAccessibilityIdentifier)]
-      assertWithMatcher:grey_notVisible()];
+      assertWithMatcher:grey_sufficientlyVisible()];
 
-  // Verfiy account is switched.
+  [[EarlGrey selectElementWithMatcher:scroll_view_matcher]
+      performAction:grey_scrollToContentEdgeWithStartPoint(kGREYContentEdgeTop,
+                                                           0.5, 0.25)];
+  // And it displays the new account.
+  [[EarlGrey
+      selectElementWithMatcher:grey_accessibilityID(
+                                   CentralAccountViewAccessibilityIdentifier(
+                                       fakeIdentity2.userEmail))]
+      assertWithMatcher:grey_sufficientlyVisible()];
+
+  // Verify account is switched.
   [SigninEarlGrey verifySignedInWithFakeIdentity:fakeIdentity2];
 }
 
 // Test signing out from the account menu.
 - (void)testSignOutFromAccountFromAccountMenu {
-  // Separate profiles are only available in iOS 17+.
-  if (!@available(iOS 17, *)) {
-    return;
-  }
-
   FakeSystemIdentity* fakeIdentity = [FakeSystemIdentity fakeIdentity1];
   FakeSystemIdentity* fakeIdentity2 = [FakeSystemIdentity fakeIdentity2];
   [SigninEarlGrey addFakeIdentity:fakeIdentity];
@@ -1801,9 +1746,11 @@ void ExpectBatchUploadConfirmationSnackbar(int count, NSString* email) {
       performAction:grey_scrollToContentEdge(kGREYContentEdgeBottom)];
 
   // Tap on switch account item.
-  [[EarlGrey selectElementWithMatcher:
-                 grey_accessibilityLabel(l10n_util::GetNSString(
-                     IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_SWITCH_ACCOUNT_ITEM))]
+  [[EarlGrey
+      selectElementWithMatcher:
+          grey_allOf(grey_accessibilityLabel(l10n_util::GetNSString(
+                         IDS_IOS_GOOGLE_ACCOUNT_SETTINGS_SWITCH_ACCOUNT_ITEM)),
+                     grey_userInteractionEnabled(), nil)]
       performAction:grey_tap()];
 
   // Verify the account menu is shown.

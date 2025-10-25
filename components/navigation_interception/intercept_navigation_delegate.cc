@@ -19,6 +19,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/page_visibility_state.h"
 #include "mojo/public/cpp/bindings/self_owned_receiver.h"
+#include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/http/http_util.h"
 #include "net/url_request/redirect_info.h"
@@ -84,7 +85,8 @@ class RedirectURLLoader : public network::mojom::URLLoader {
         net::RedirectInfo::ComputeRedirectInfo(
             request_.method, request_.url, request_.site_for_cookies,
             first_party_url_policy, request_.referrer_policy,
-            request_.referrer.spec(), response_code, *url, std::nullopt,
+            request_.referrer.spec(), request_.request_initiator, response_code,
+            *url, std::nullopt,
             /*insecure_scheme_was_upgraded=*/false,
             /*copy_fragment=*/false),
         std::move(response_head));
@@ -270,6 +272,24 @@ void InterceptNavigationDelegate::HandleSubframeExternalProtocol(
     bool has_user_gesture,
     const std::optional<url::Origin>& initiating_origin,
     mojo::PendingRemote<network::mojom::URLLoaderFactory>* out_factory) {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ScopedJavaLocalRef<jobject> jdelegate = weak_jdelegate_.get(env);
+
+  if (jdelegate.is_null()) {
+    return;
+  }
+
+  // We don't support checking for subframes and main frames in parallel. Try to
+  // finish the main frame check.
+  if (should_ignore_result_callback_) {
+    Java_InterceptNavigationDelegate_requestFinishPendingShouldIgnoreCheck(
+        env, jdelegate);
+    // If we are still doing a main frame check, block the subframe check.
+    if (should_ignore_result_callback_) {
+      return;
+    }
+  }
+
   // If there's a pending async subframe action, don't consider external
   // navigation for the current navigation.
   if (subframe_redirect_url_ || url_loader_) {
@@ -283,12 +303,6 @@ void InterceptNavigationDelegate::HandleSubframeExternalProtocol(
     return;
   }
 
-  JNIEnv* env = base::android::AttachCurrentThread();
-  ScopedJavaLocalRef<jobject> jdelegate = weak_jdelegate_.get(env);
-
-  if (jdelegate.is_null()) {
-    return;
-  }
   ScopedJavaLocalRef<jobject> j_gurl =
       Java_InterceptNavigationDelegate_handleSubframeExternalProtocol(
           env, jdelegate, url::GURLAndroid::FromNativeGURL(env, escaped_url),

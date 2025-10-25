@@ -37,6 +37,7 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "third_party/blink/public/mojom/fetch/fetch_api_request.mojom-blink.h"
 #include "third_party/blink/public/web/web_frame_serializer.h"
+#include "third_party/blink/renderer/bindings/core/v8/v8_observable_array_css_style_sheet.h"
 #include "third_party/blink/renderer/core/css/css_font_face_rule.h"
 #include "third_party/blink/renderer/core/css/css_font_face_src_value.h"
 #include "third_party/blink/renderer/core/css/css_image_value.h"
@@ -113,7 +114,7 @@
 namespace blink {
 
 namespace internal {
-// TODO(crbug.com/363289333): Try to add this functionality to wtf::String.
+// TODO(crbug.com/363289333): Try to add this functionality to blink::String.
 String ReplaceAllCaseInsensitive(
     String source,
     const String& from,
@@ -151,8 +152,8 @@ const char kShadowDelegatesFocusAttributeName[] = "shadowdelegatesfocus";
 using mojom::blink::FormControlType;
 
 KURL MakePseudoUrl(StringView type) {
-  return KURL(WTF::StrCat(
-      {"cid:", type, "-", WTF::CreateCanonicalUUIDString(), "@mhtml.blink"}));
+  return KURL(
+      StrCat({"cid:", type, "-", CreateCanonicalUUIDString(), "@mhtml.blink"}));
 }
 
 KURL MakePseudoCSSUrl() {
@@ -492,7 +493,7 @@ class SerializerMarkupAccumulator : public MarkupAccumulator {
       center_y = page->GetChromeClient().WindowToViewportScalar(
           window->GetFrame(), center_y);
     }
-    if (!PhysicalRect(box->PhysicalLocation(), box->Size())
+    if (!PhysicalRect(box->PhysicalLocation(), box->StitchedSize())
              .Contains(LayoutUnit(center_x), LayoutUnit(center_y))) {
       return false;
     }
@@ -815,7 +816,7 @@ class SerializerMarkupAccumulator : public MarkupAccumulator {
     // page.
     auto metadata = std::make_unique<JSONObject>();
     auto custom_elements = std::make_unique<JSONArray>();
-    CustomElementRegistry* custom_registry = CustomElement::Registry(document);
+    CustomElementRegistry* custom_registry = document.customElementRegistry();
     if (custom_registry) {
       for (const AtomicString& name : custom_registry->DefinedNames()) {
         CustomElementDefinition* definition =
@@ -980,8 +981,8 @@ function main(metadata) {
   }
 
   void AppendAttributeValue(const String& attribute_value) {
-    MarkupFormatter::AppendAttributeValue(
-        markup_, attribute_value, IsA<HTMLDocument>(document_), *document_);
+    MarkupFormatter::AppendAttributeValue(markup_, attribute_value,
+                                          IsA<HTMLDocument>(document_));
   }
 
   void AppendRewrittenAttribute(const Element& element,
@@ -1093,7 +1094,7 @@ function main(metadata) {
     return blink::internal::ReplaceAllCaseInsensitive(
         css_text.ToString(), "</style", [](const String& text) {
           // \3C = '<'.
-          return WTF::StrCat({"\\3C/", text.Substring(2)});
+          return StrCat({"\\3C/", text.Substring(2)});
         });
   }
 
@@ -1159,12 +1160,14 @@ function main(metadata) {
       String text_string = css_text.ToString();
       std::string text;
       if (charset.IsValid()) {
-        WTF::TextEncoding text_encoding(charset);
-        text = text_encoding.Encode(text_string,
-                                    WTF::kCSSEncodedEntitiesForUnencodables);
+        TextEncoding text_encoding(charset);
+        text = text_encoding.Encode(
+            text_string,
+            UnencodableHandling::kCSSEncodedEntitiesForUnencodables);
       } else {
-        text = WTF::UTF8Encoding().Encode(
-            text_string, WTF::kCSSEncodedEntitiesForUnencodables);
+        text = Utf8Encoding().Encode(
+            text_string,
+            UnencodableHandling::kCSSEncodedEntitiesForUnencodables);
       }
 
       resource_serializer_->AddToResources(String("text/css"),
@@ -1212,6 +1215,8 @@ function main(metadata) {
       // Rules inheriting CSSGroupingRule
       case CSSRule::kNestedDeclarationsRule:
       case CSSRule::kMediaRule:
+      case CSSRule::kMixinRule:
+      case CSSRule::kRouteRule:
       case CSSRule::kSupportsRule:
       case CSSRule::kContainerRule:
       case CSSRule::kLayerBlockRule:
@@ -1260,6 +1265,13 @@ function main(metadata) {
       case CSSRule::kPositionTryRule:
       case CSSRule::kFunctionDeclarationsRule:
       case CSSRule::kFunctionRule:
+      case CSSRule::kCustomMediaRule:
+      case CSSRule::kContentsMixinRule:
+        break;
+
+      // FIXME(sesse): We can reference external resources in a @contents
+      // argument.
+      case CSSRule::kApplyMixinRule:
         break;
     }
   }
@@ -1364,8 +1376,8 @@ void FrameSerializer::SerializeFrame(
     String text =
         accumulator.SerializeNodes<EditingStrategy>(document, kIncludeNode);
 
-    std::string frame_html =
-        document.Encoding().Encode(text, WTF::kEntitiesForUnencodables);
+    std::string frame_html = document.Encoding().Encode(
+        text, UnencodableHandling::kEntitiesForUnencodables);
     resource_serializer->AddMainResource(document.SuggestedMIMEType(),
                                          SharedBuffer::Create(frame_html), url);
     resource_serializer->Finish(std::move(callback));
@@ -1397,8 +1409,7 @@ String FrameSerializer::MarkOfTheWebDeclaration(const KURL& url) {
 // static
 String FrameSerializer::GetContentID(Frame* frame) {
   DCHECK(frame);
-  return WTF::StrCat(
-      {"<frame-", frame->GetFrameIdForTracing(), "@mhtml.blink>"});
+  return StrCat({"<frame-", frame->GetFrameIdForTracing(), "@mhtml.blink>"});
 }
 
 }  // namespace blink

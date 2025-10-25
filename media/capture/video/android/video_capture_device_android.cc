@@ -2,11 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/40285824): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "media/capture/video/android/video_capture_device_android.h"
 
 #include <stdint.h>
@@ -17,6 +12,7 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/containers/heap_array.h"
 #include "base/functional/bind.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string_number_conversions.h"
@@ -286,8 +282,7 @@ void VideoCaptureDeviceAndroid::SetPhotoOptions(
 
 void VideoCaptureDeviceAndroid::OnFrameAvailable(
     JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jbyteArray>& data,
+    const base::android::JavaRef<jbyteArray>& data,
     jint length,
     jint rotation) {
   if (!IsClientConfigured())
@@ -306,7 +301,7 @@ void VideoCaptureDeviceAndroid::OnFrameAvailable(
     return;
   }
 
-  jbyte* buffer = env->GetByteArrayElements(data, NULL);
+  jbyte* buffer = env->GetByteArrayElements(data.obj(), NULL);
   if (!buffer) {
     LOG(ERROR) << "VideoCaptureDeviceAndroid::OnFrameAvailable: "
                   "failed to GetByteArrayElements";
@@ -322,21 +317,21 @@ void VideoCaptureDeviceAndroid::OnFrameAvailable(
   SendIncomingDataToClient(reinterpret_cast<uint8_t*>(buffer), length, rotation,
                            current_time, capture_time);
 
-  env->ReleaseByteArrayElements(data, buffer, JNI_ABORT);
+  env->ReleaseByteArrayElements(data.obj(), buffer, JNI_ABORT);
 }
 
-void VideoCaptureDeviceAndroid::OnI420FrameAvailable(JNIEnv* env,
-                                                     jobject obj,
-                                                     jobject y_buffer,
-                                                     jint y_stride,
-                                                     jobject u_buffer,
-                                                     jobject v_buffer,
-                                                     jint uv_row_stride,
-                                                     jint uv_pixel_stride,
-                                                     jint width,
-                                                     jint height,
-                                                     jint rotation,
-                                                     jlong timestamp) {
+void VideoCaptureDeviceAndroid::OnI420FrameAvailable(
+    JNIEnv* env,
+    const base::android::JavaRef<jobject>& y_buffer,
+    jint y_stride,
+    const base::android::JavaRef<jobject>& u_buffer,
+    const base::android::JavaRef<jobject>& v_buffer,
+    jint uv_row_stride,
+    jint uv_pixel_stride,
+    jint width,
+    jint height,
+    jint rotation,
+    jlong timestamp) {
   if (!IsClientConfigured())
     return;
   const int64_t absolute_micro =
@@ -353,34 +348,39 @@ void VideoCaptureDeviceAndroid::OnI420FrameAvailable(JNIEnv* env,
   }
 
   uint8_t* const y_src =
-      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(y_buffer));
+      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(y_buffer.obj()));
   CHECK(y_src);
   uint8_t* const u_src =
-      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(u_buffer));
+      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(u_buffer.obj()));
   CHECK(u_src);
   uint8_t* const v_src =
-      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(v_buffer));
+      reinterpret_cast<uint8_t*>(env->GetDirectBufferAddress(v_buffer.obj()));
   CHECK(v_src);
 
   const int y_plane_length = width * height;
   const int uv_plane_length = y_plane_length / 4;
   const int buffer_length = y_plane_length + uv_plane_length * 2;
-  auto buffer = std::make_unique<uint8_t[]>(buffer_length);
+  auto buffer = base::HeapArray<uint8_t>::Uninit(
+      base::checked_cast<size_t>(buffer_length));
+
+  auto dst_y_span = buffer.subspan(0, y_plane_length);
+  auto dst_u_span = buffer.subspan(y_plane_length, uv_plane_length);
+  auto dst_v_span =
+      buffer.subspan(y_plane_length + uv_plane_length, uv_plane_length);
 
   libyuv::Android420ToI420(y_src, y_stride, u_src, uv_row_stride, v_src,
-                           uv_row_stride, uv_pixel_stride, buffer.get(), width,
-                           buffer.get() + y_plane_length, width / 2,
-                           buffer.get() + y_plane_length + uv_plane_length,
-                           width / 2, width, height);
+                           uv_row_stride, uv_pixel_stride, dst_y_span.data(),
+                           width, dst_u_span.data(), width / 2,
+                           dst_v_span.data(), width / 2, width, height);
 
-  SendIncomingDataToClient(buffer.get(), buffer_length, rotation, current_time,
+  SendIncomingDataToClient(buffer.data(), buffer_length, rotation, current_time,
                            capture_time);
 }
 
-void VideoCaptureDeviceAndroid::OnError(JNIEnv* env,
-                                        const JavaParamRef<jobject>& obj,
-                                        int android_video_capture_error,
-                                        const JavaParamRef<jstring>& message) {
+void VideoCaptureDeviceAndroid::OnError(
+    JNIEnv* env,
+    int android_video_capture_error,
+    const base::android::JavaRef<jstring>& message) {
   SetErrorState(
       static_cast<media::VideoCaptureError>(android_video_capture_error),
       FROM_HERE, base::android::ConvertJavaStringToUTF8(env, message));
@@ -393,7 +393,6 @@ void VideoCaptureDeviceAndroid::OnError(JNIEnv* env,
 
 void VideoCaptureDeviceAndroid::OnFrameDropped(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj,
     int android_video_capture_frame_drop_reason) {
   base::AutoLock lock(lock_);
   if (!client_)
@@ -404,16 +403,15 @@ void VideoCaptureDeviceAndroid::OnFrameDropped(
 
 void VideoCaptureDeviceAndroid::OnGetPhotoCapabilitiesReply(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj,
     jlong callback_id,
-    jobject result) {
+    const base::android::JavaRef<jobject>& result) {
   base::AutoLock lock(photo_callbacks_lock_);
 
   const auto reference_it = get_photo_state_callbacks_.find(callback_id);
   if (reference_it == get_photo_state_callbacks_.end()) {
     NOTREACHED() << "|callback_id| not found.";
   }
-  if (result == nullptr) {
+  if (result.is_null()) {
     get_photo_state_callbacks_.erase(reference_it);
     return;
   }
@@ -557,9 +555,8 @@ void VideoCaptureDeviceAndroid::OnGetPhotoCapabilitiesReply(
 
 void VideoCaptureDeviceAndroid::OnPhotoTaken(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj,
     jlong callback_id,
-    const base::android::JavaParamRef<jbyteArray>& data) {
+    const base::android::JavaRef<jbyteArray>& data) {
   DCHECK(callback_id);
   TRACE_EVENT_INSTANT0(TRACE_DISABLED_BY_DEFAULT("video_and_image_capture"),
                        "VideoCaptureDeviceAndroid::OnPhotoTaken",
@@ -578,12 +575,12 @@ void VideoCaptureDeviceAndroid::OnPhotoTaken(
     // Since it only happens when an error occurs with the camera device, you
     // won't get `OnPhotoTaken` with the same `callback_id` invoked with photo
     // data twice.
-    if (data != nullptr) {
+    if (!data.is_null()) {
       NOTREACHED() << "|callback_id| not found.";
     }
     return;
   }
-  if (data != nullptr) {
+  if (!data.is_null()) {
     mojom::BlobPtr blob = mojom::Blob::New();
     base::android::JavaByteArrayToByteVector(env, data, &blob->data);
     blob->mime_type = blob->data.empty() ? "" : "image/jpeg";
@@ -593,15 +590,13 @@ void VideoCaptureDeviceAndroid::OnPhotoTaken(
   take_photo_callbacks_.erase(reference_it);
 }
 
-void VideoCaptureDeviceAndroid::OnStarted(JNIEnv* env,
-                                          const JavaParamRef<jobject>& obj) {
+void VideoCaptureDeviceAndroid::OnStarted(JNIEnv* env) {
   if (client_)
     client_->OnStarted();
 }
 
 void VideoCaptureDeviceAndroid::DCheckCurrentlyOnIncomingTaskRunner(
-    JNIEnv* env,
-    const base::android::JavaParamRef<jobject>& obj) {
+    JNIEnv* env) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
 }
 

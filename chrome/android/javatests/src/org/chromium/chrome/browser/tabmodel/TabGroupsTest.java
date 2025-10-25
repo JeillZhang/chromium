@@ -28,8 +28,10 @@ import org.mockito.junit.MockitoRule;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Batch;
 import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.Features.DisableFeatures;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
+import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.flags.ChromeSwitches;
 import org.chromium.chrome.browser.layouts.LayoutTestUtils;
 import org.chromium.chrome.browser.layouts.LayoutType;
@@ -69,19 +71,18 @@ public class TabGroupsTest {
     @Mock private TabModelObserver mTabGroupModelFilterObserver;
 
     private TabModel mTabModel;
-    private TabGroupModelFilterImpl mTabGroupModelFilter;
+    private TabGroupModelFilter mTabGroupModelFilter;
+    private TabGroupModelFilterImpl mTabGroupModelFilterImpl;
     private WebPageStation mPage;
 
     @Before
     public void setUp() {
         mPage = mActivityTestRule.startOnBlankPage();
-        mTabModel = mPage.getActivity().getTabModelSelector().getModel(false);
-        mTabGroupModelFilter =
-                (TabGroupModelFilterImpl)
-                        mPage.getActivity()
-                                .getTabModelSelector()
-                                .getTabGroupModelFilterProvider()
-                                .getTabGroupModelFilter(false);
+        mTabModel = mPage.getTabModel();
+        mTabGroupModelFilter = mPage.getTabGroupModelFilter();
+        if (mTabGroupModelFilter instanceof TabGroupModelFilterImpl tabGroupModelFilterImpl) {
+            mTabGroupModelFilterImpl = tabGroupModelFilterImpl;
+        }
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
                     mTabGroupModelFilter.addObserver(mTabGroupModelFilterObserver);
@@ -110,13 +111,19 @@ public class TabGroupsTest {
             }
             ThreadUtils.runOnUiThreadBlocking(
                     () -> {
-                        mTabGroupModelFilter.mergeListOfTabsToGroup(tabs, tabs.get(0), false);
+                        mTabGroupModelFilter.mergeListOfTabsToGroup(
+                                tabs,
+                                tabs.get(0),
+                                TabGroupModelFilter.MergeNotificationType.DONT_NOTIFY);
                     });
         }
     }
 
     @Test
     @SmallTest
+    // TODO(crbug.com/454344854): Remove assertOrderValid and assertFixedTabGroupRootIdCount
+    // as part of feature cleanup.
+    @DisableFeatures(ChromeFeatureList.TAB_COLLECTION_ANDROID)
     public void testPreventAddingUngroupedTabInsideTabGroup() {
         prepareTabs(Arrays.asList(new Integer[] {3, 1}));
         List<Tab> tabs = getCurrentTabs();
@@ -134,6 +141,9 @@ public class TabGroupsTest {
 
     @Test
     @SmallTest
+    // TODO(crbug.com/454344854): Remove assertOrderValid and assertFixedTabGroupRootIdCount
+    // as part of feature cleanup.
+    @DisableFeatures(ChromeFeatureList.TAB_COLLECTION_ANDROID)
     public void testPreventAddingGroupedTabAwayFromGroup_BeforeGroup() {
         prepareTabs(Arrays.asList(new Integer[] {3, 1}));
         List<Tab> tabs = getCurrentTabs();
@@ -150,6 +160,9 @@ public class TabGroupsTest {
 
     @Test
     @SmallTest
+    // TODO(crbug.com/454344854): Remove assertOrderValid and assertFixedTabGroupRootIdCount
+    // as part of feature cleanup.
+    @DisableFeatures(ChromeFeatureList.TAB_COLLECTION_ANDROID)
     public void testPreventAddingGroupedTabAwayFromGroup_AfterGroup() {
         prepareTabs(Arrays.asList(new Integer[] {3, 1}));
         List<Tab> tabs = getCurrentTabs();
@@ -166,6 +179,9 @@ public class TabGroupsTest {
 
     @Test
     @SmallTest
+    // TODO(crbug.com/454344854): Remove assertOrderValid and assertFixedTabGroupRootIdCount
+    // as part of feature cleanup.
+    @DisableFeatures(ChromeFeatureList.TAB_COLLECTION_ANDROID)
     public void testAllowAddingGroupedTabInsideGroup() {
         prepareTabs(Arrays.asList(new Integer[] {3, 1}));
         List<Tab> tabs = getCurrentTabs();
@@ -182,6 +198,9 @@ public class TabGroupsTest {
 
     @Test
     @SmallTest
+    // TODO(crbug.com/454344854): Remove assertOrderValid and assertFixedTabGroupRootIdCount
+    // as part of feature cleanup.
+    @DisableFeatures(ChromeFeatureList.TAB_COLLECTION_ANDROID)
     public void testOrderValid_WithIncorrectOrder() {
         prepareTabs(Arrays.asList(new Integer[] {3, 1}));
         List<Tab> tabs = getCurrentTabs();
@@ -191,7 +210,7 @@ public class TabGroupsTest {
         // Tab 4
         // Move tab 2 here still grouped with tab 1
         Tab tab2 = tabs.get(2);
-        moveTab(tab2, 5);
+        moveTab(tab2, 4);
         tabs.remove(tab2);
         tabs.add(tab2);
         assertEquals(tabs, getCurrentTabs());
@@ -201,6 +220,9 @@ public class TabGroupsTest {
 
     @Test
     @SmallTest
+    // TODO(crbug.com/454344854): Remove assertOrderValid and assertFixedTabGroupRootIdCount
+    // as part of feature cleanup.
+    @DisableFeatures(ChromeFeatureList.TAB_COLLECTION_ANDROID)
     public void testOrderValid_WithIncorrectOrder_NestedGroup() {
         prepareTabs(Arrays.asList(new Integer[] {3, 2, 1}));
         List<Tab> tabs = getCurrentTabs();
@@ -223,6 +245,9 @@ public class TabGroupsTest {
 
     @Test
     @SmallTest
+    // TODO(crbug.com/454344854): Remove assertOrderValid and assertFixedTabGroupRootIdCount
+    // as part of feature cleanup.
+    @DisableFeatures(ChromeFeatureList.TAB_COLLECTION_ANDROID)
     public void testOrderValid_WithValidOrder() {
         prepareTabs(Arrays.asList(new Integer[] {3, 1}));
         List<Tab> tabs = getCurrentTabs();
@@ -231,11 +256,11 @@ public class TabGroupsTest {
         // Tab 4
         // Move tab 0 here
         Tab tab0 = tabs.get(0);
-        moveTab(tab0, 5);
+        moveTab(tab0, 4);
         tabs.remove(tab0);
         tabs.add(tab0);
         Tab tab1 = tabs.get(0);
-        moveTab(tab1, 3);
+        moveTab(tab1, 2);
         tabs.remove(tab1);
         tabs.add(2, tab1);
         assertEquals(tabs, getCurrentTabs());
@@ -245,6 +270,8 @@ public class TabGroupsTest {
 
     @Test
     @SmallTest
+    // TODO(crbug.com/454344854): Delete this test as part of feature cleanup; root id is obsolete.
+    @DisableFeatures(ChromeFeatureList.TAB_COLLECTION_ANDROID)
     public void testFixTabGroupRootIds() {
         prepareTabs(Arrays.asList(new Integer[] {3, 2, 1}));
         List<Tab> tabs = getCurrentTabs();
@@ -262,9 +289,9 @@ public class TabGroupsTest {
         Tab tab6 = tabs.get(6);
 
         // All of the old roots have titles set.
-        TabGroupTitleUtils.storeTabGroupTitle(tab0.getId(), "0");
-        TabGroupTitleUtils.storeTabGroupTitle(tab1.getId(), "1");
-        TabGroupTitleUtils.storeTabGroupTitle(tab6.getId(), "6");
+        TabGroupVisualDataStore.storeTabGroupTitle(tab0.getId(), "0");
+        TabGroupVisualDataStore.storeTabGroupTitle(tab1.getId(), "1");
+        TabGroupVisualDataStore.storeTabGroupTitle(tab6.getId(), "6");
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -275,7 +302,7 @@ public class TabGroupsTest {
                     tab4.setRootId(tab5.getId());
                     tab5.setRootId(tab5.getId());
                     tab6.setRootId(tab1.getId());
-                    mTabGroupModelFilter.resetFilterState();
+                    mTabGroupModelFilterImpl.resetFilterState();
                 });
 
         // This should move:
@@ -293,13 +320,15 @@ public class TabGroupsTest {
         assertEquals(tab6.getId(), tab6.getRootId());
 
         // The three titles should have been rotated around.
-        assertEquals("0", mTabGroupModelFilter.getTabGroupTitle(tab1.getRootId()));
-        assertEquals("1", mTabGroupModelFilter.getTabGroupTitle(tab6.getRootId()));
-        assertEquals("6", mTabGroupModelFilter.getTabGroupTitle(tab0.getRootId()));
+        assertEquals("0", mTabGroupModelFilterImpl.getTabGroupTitle(tab1.getRootId()));
+        assertEquals("1", mTabGroupModelFilterImpl.getTabGroupTitle(tab6.getRootId()));
+        assertEquals("6", mTabGroupModelFilterImpl.getTabGroupTitle(tab0.getRootId()));
     }
 
     @Test
     @SmallTest
+    // TODO(crbug.com/454344854): Delete this test as part of feature cleanup; root id is obsolete.
+    @DisableFeatures(ChromeFeatureList.TAB_COLLECTION_ANDROID)
     public void testFixTabGroupRootIds_movesMetadata() {
         prepareTabs(Arrays.asList(new Integer[] {3, 2, 1}));
         List<Tab> tabs = getCurrentTabs();
@@ -316,8 +345,8 @@ public class TabGroupsTest {
         Tab tab5 = tabs.get(5);
         Tab tab6 = tabs.get(6);
 
-        TabGroupTitleUtils.storeTabGroupTitle(OTHER_ROOT_ID_1, "together");
-        TabGroupTitleUtils.storeTabGroupTitle(tab4.getRootId(), "split");
+        TabGroupVisualDataStore.storeTabGroupTitle(OTHER_ROOT_ID_1, "together");
+        TabGroupVisualDataStore.storeTabGroupTitle(tab4.getRootId(), "split");
 
         ThreadUtils.runOnUiThreadBlocking(
                 () -> {
@@ -329,7 +358,7 @@ public class TabGroupsTest {
                     // Split this group in half, one of the tabs was updated while one wasn't.
                     tab4.setRootId(OTHER_ROOT_ID_2);
 
-                    mTabGroupModelFilter.resetFilterState();
+                    mTabGroupModelFilterImpl.resetFilterState();
                 });
 
         // This should move:
@@ -347,11 +376,11 @@ public class TabGroupsTest {
         assertEquals(tab6.getId(), tab6.getRootId());
 
         // Should have been completely moved.
-        assertEquals("together", mTabGroupModelFilter.getTabGroupTitle(tab1.getRootId()));
-        assertTrue(TextUtils.isEmpty(mTabGroupModelFilter.getTabGroupTitle(OTHER_ROOT_ID_1)));
+        assertEquals("together", mTabGroupModelFilterImpl.getTabGroupTitle(tab1.getRootId()));
+        assertTrue(TextUtils.isEmpty(mTabGroupModelFilterImpl.getTabGroupTitle(OTHER_ROOT_ID_1)));
         // Should now be duplicated.
-        assertEquals("split", mTabGroupModelFilter.getTabGroupTitle(tab4.getRootId()));
-        assertEquals("split", mTabGroupModelFilter.getTabGroupTitle(tab5.getRootId()));
+        assertEquals("split", mTabGroupModelFilterImpl.getTabGroupTitle(tab4.getRootId()));
+        assertEquals("split", mTabGroupModelFilterImpl.getTabGroupTitle(tab5.getRootId()));
     }
 
     @Test
@@ -438,12 +467,13 @@ public class TabGroupsTest {
 
     private void assertOrderValid(boolean expectedState) {
         boolean isOrderValid =
-                ThreadUtils.runOnUiThreadBlocking(mTabGroupModelFilter::isOrderValid);
+                ThreadUtils.runOnUiThreadBlocking(mTabGroupModelFilterImpl::isOrderValid);
         assertEquals(expectedState, isOrderValid);
     }
 
     private void assertFixedTabGroupRootIdCount(int expectedCount) {
-        int fixedRootIdCount = ThreadUtils.runOnUiThreadBlocking(mTabGroupModelFilter::fixRootIds);
+        int fixedRootIdCount =
+                ThreadUtils.runOnUiThreadBlocking(mTabGroupModelFilterImpl::fixRootIds);
         assertEquals(expectedCount, fixedRootIdCount);
     }
 

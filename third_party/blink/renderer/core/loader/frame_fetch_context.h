@@ -92,9 +92,17 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
                       WebScopedVirtualTimePauser&,
                       ResourceType) override;
 
+  void FillInitiatorInfo(FetchInitiatorInfo& initiator_info) override;
+
   void AddResourceTiming(mojom::blink::ResourceTimingInfoPtr,
                          const AtomicString& initiator_type) override;
   bool AllowImage() const override;
+
+  void CheckGuardrailsPolicyForRequest(
+      ResourceType resource_type,
+      mojom::blink::RequestContextType request_context,
+      const ResourceResponse& response,
+      const KURL& url) override;
 
   void ModifyRequestForMixedContentUpgrade(ResourceRequest&) override;
 
@@ -110,9 +118,7 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
       ResourceRequest&,
       const ResourceLoaderOptions&) override;
 
-  bool StartSpeculativeImageDecode(Resource* resource,
-                                   base::OnceClosure callback) override;
-  bool SpeculativeDecodeRequestInFlight() const override;
+  bool StartSpeculativeImageDecode(Resource* resource) override;
 
   bool IsPrerendering() const override;
 
@@ -208,6 +214,8 @@ class CORE_EXPORT FrameFetchContext final : public BaseFetchContext,
   void AddCSPHashReport(
       const String& url,
       const HashMap<HashAlgorithm, String>& integrity_hashes) override;
+  String GetSVGCacheIdentifier() const override;
+
   const ClientHintsPreferences GetClientHintsPreferences() const;
   float GetDevicePixelRatio() const;
   String GetReducedAcceptLanguage() const;

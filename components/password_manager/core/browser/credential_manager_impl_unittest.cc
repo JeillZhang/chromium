@@ -47,12 +47,11 @@
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
-#if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-#include "components/os_crypt/sync/os_crypt_mocker.h"
-#endif
-
 using ::testing::_;
+using ::testing::AllOf;
 using ::testing::ElementsAre;
+using ::testing::Eq;
+using ::testing::Field;
 using ::testing::NiceMock;
 using ::testing::Pair;
 using ::testing::Pointee;
@@ -69,11 +68,10 @@ const char kTestAndroidRealm2[] = "android://hash@com.example.two.android/";
 
 class MockLeakDetectionCheck : public LeakDetectionCheck {
  public:
-  MOCK_METHOD(
-      void,
-      Start,
-      (LeakDetectionInitiator, const GURL&, std::u16string, std::u16string),
-      (override));
+  MOCK_METHOD(void,
+              Start,
+              (LeakDetectionInitiator, const PasswordForm&),
+              (override));
 };
 
 class MockPasswordManagerClient : public StubPasswordManagerClient {
@@ -107,6 +105,9 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
                (base::span<const PasswordForm>),
                bool was_autofilled_on_pageload),
               (override));
+#if !BUILDFLAG(IS_ANDROID)
+  MOCK_METHOD(bool, IsActorTaskActive, (), (override));
+#endif
 
   explicit MockPasswordManagerClient(PasswordStoreInterface* profile_store,
                                      PasswordStoreInterface* account_store)
@@ -123,7 +124,6 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
     prefs_->registry()->RegisterBooleanPref(::prefs::kSafeBrowsingEnhanced,
                                             false);
 #if BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)
-    OSCryptMocker::SetUp();
     prefs_->registry()->RegisterIntegerPref(
         password_manager::prefs::kRelaunchChromeBubbleDismissedCounter, 0);
 #endif
@@ -196,8 +196,8 @@ class MockPasswordManagerClient : public StubPasswordManagerClient {
 
  private:
   std::unique_ptr<TestingPrefServiceSimple> prefs_;
-  raw_ptr<PasswordStoreInterface> profile_store_;
-  raw_ptr<PasswordStoreInterface> account_store_;
+  raw_ptr<PasswordStoreInterface, DanglingUntriaged> profile_store_;
+  raw_ptr<PasswordStoreInterface, DanglingUntriaged> account_store_;
   PasswordManager password_manager_;
   GURL last_committed_url_{kTestWebOrigin};
   bool auto_sign_in_enabled_ = true;
@@ -241,12 +241,11 @@ class CredentialManagerImplTest : public testing::Test,
         std::make_unique<NiceMock<MockAffiliatedMatchHelper>>(
             fake_affiliation_service_.get());
     mock_match_helper_ = owning_mock_match_helper.get();
-    store_->Init(/*prefs=*/nullptr, std::move(owning_mock_match_helper));
+    store_->Init(std::move(owning_mock_match_helper));
 
     if (GetParam()) {
       account_store_ = new TestPasswordStore(IsAccountStore(true));
-      account_store_->Init(/*prefs=*/nullptr,
-                           /*affiliated_match_helper=*/nullptr);
+      account_store_->Init(/*affiliated_match_helper=*/nullptr);
     }
     client_ = std::make_unique<testing::NiceMock<MockPasswordManagerClient>>(
         store_.get(), account_store_.get());
@@ -1020,7 +1019,7 @@ TEST_P(CredentialManagerImplTest,
   federated.federation_origin =
       url::SchemeHostPort(GURL("https://google.com/"));
   federated.signon_realm =
-      "federation://" + federated.url.host() + "/google.com";
+      "federation://" + federated.url.GetHost() + "/google.com";
   store_->AddLogin(federated);
 
   form_.match_type = PasswordForm::MatchType::kExact;
@@ -1352,6 +1351,50 @@ TEST_P(CredentialManagerImplTest,
   EXPECT_NE(CredentialType::CREDENTIAL_TYPE_EMPTY, credential_1->type);
 }
 
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+TEST_P(CredentialManagerImplTest, CredentialManagerRequestWhenActorIsActive) {
+  store_->AddLogin(form_);
+
+  std::vector<GURL> federations;
+  EXPECT_CALL(*client_, PromptUserToChooseCredentialsPtr).Times(0);
+  EXPECT_CALL(*client_, NotifyUserAutoSigninPtr).Times(0);
+  ON_CALL(*client_, IsActorTaskActive()).WillByDefault(Return(true));
+
+  bool call = false;
+  CredentialManagerError error;
+  std::optional<CredentialInfo> credential;
+  CallGet(CredentialMediationRequirement::kOptional, true, federations,
+          base::BindOnce(&GetCredentialCallback, &call, &error, &credential));
+  RunAllPendingTasks();
+
+  EXPECT_TRUE(call);
+  EXPECT_EQ(CredentialManagerError::SUCCESS, error);
+  EXPECT_EQ(CredentialType::CREDENTIAL_TYPE_EMPTY, credential->type);
+}
+
+TEST_P(CredentialManagerImplTest,
+       CredentialManagerSucceedsWhenActorIsNotActive) {
+  store_->AddLogin(form_);
+
+  std::vector<GURL> federations;
+  EXPECT_CALL(*client_, PromptUserToChooseCredentialsPtr).Times(0);
+  EXPECT_CALL(*client_, NotifyUserAutoSigninPtr).Times(1);
+  ON_CALL(*client_, IsActorTaskActive()).WillByDefault(Return(false));
+
+  bool call = false;
+  CredentialManagerError error;
+  std::optional<CredentialInfo> credential;
+  CallGet(CredentialMediationRequirement::kOptional, true, federations,
+          base::BindOnce(&GetCredentialCallback, &call, &error, &credential));
+  RunAllPendingTasks();
+
+  EXPECT_TRUE(call);
+  EXPECT_EQ(CredentialManagerError::SUCCESS, error);
+  EXPECT_NE(CredentialType::CREDENTIAL_TYPE_EMPTY, credential->type);
+}
+
+#endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+
 TEST_P(CredentialManagerImplTest, ResetSkipZeroClickInProfileStoreAfterPrompt) {
   // Turn on the global zero-click flag, and add two credentials in separate
   // origins, both set to skip zero-click.
@@ -1585,7 +1628,7 @@ TEST_P(CredentialManagerImplTest, ZeroClickWithPSLCredential) {
 TEST_P(CredentialManagerImplTest, ZeroClickWithPSLAndNormalCredentials) {
   form_.password_value.clear();
   form_.federation_origin = url::SchemeHostPort(GURL("https://google.com/"));
-  form_.signon_realm = "federation://" + form_.url.host() + "/google.com";
+  form_.signon_realm = "federation://" + form_.url.GetHost() + "/google.com";
   form_.skip_zero_click = false;
   store_->AddLogin(form_);
   store_->AddLogin(subdomain_form_);
@@ -1756,7 +1799,7 @@ TEST_P(CredentialManagerImplTest,
   federated.federation_origin =
       url::SchemeHostPort(GURL("https://google.com/"));
   federated.signon_realm =
-      "federation://" + federated.url.host() + "/google.com";
+      "federation://" + federated.url.GetHost() + "/google.com";
   store_->AddLogin(federated);
 
   form_.username_value = u"username_value";
@@ -1807,9 +1850,14 @@ TEST_P(CredentialManagerImplTest, StorePasswordCredentialStartsLeakDetection) {
   cm_service_impl()->set_leak_factory(std::move(mock_factory));
 
   auto check_instance = std::make_unique<MockLeakDetectionCheck>();
-  EXPECT_CALL(*check_instance,
-              Start(LeakDetectionInitiator::kSignInCheck, form_.url,
-                    form_.username_value, form_.password_value));
+  EXPECT_CALL(
+      *check_instance,
+      Start(
+          Eq(LeakDetectionInitiator::kSignInCheck),
+          AllOf(
+              Field(&PasswordForm::url, Eq(form_.url)),
+              Field(&PasswordForm::username_value, Eq(form_.username_value)),
+              Field(&PasswordForm::password_value, Eq(form_.password_value)))));
   EXPECT_CALL(*weak_factory, TryCreateLeakCheck)
       .WillOnce(Return(testing::ByMove(std::move(check_instance))));
   CallStore(PasswordFormToCredentialInfo(form_), base::DoNothing());

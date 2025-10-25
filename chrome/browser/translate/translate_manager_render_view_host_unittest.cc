@@ -245,7 +245,8 @@ class TranslateManagerRenderViewHostTest
     // expiration delay to a large value by default (in case it was zeroed in a
     // previous test).
     TranslateService::InitializeForTesting(
-        network::mojom::ConnectionType::CONNECTION_WIFI);
+        network::mojom::ConnectionType::CONNECTION_WIFI,
+        /*wait_for_eula=*/false);
     translate::TranslateDownloadManager* download_manager =
         translate::TranslateDownloadManager::GetInstance();
     download_manager->ClearTranslateScriptForTesting();
@@ -315,7 +316,7 @@ class TranslateManagerRenderViewHostTest
   network::TestURLLoaderFactory test_url_loader_factory_;
   scoped_refptr<network::SharedURLLoaderFactory> test_shared_loader_factory_;
 
-  variations::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
+  variations::test::ScopedVariationsIdsProvider scoped_variations_ids_provider_{
       variations::VariationsIdsProvider::Mode::kUseSignedInState};
 
   std::unique_ptr<MockTranslateBubbleFactory> bubble_factory_;

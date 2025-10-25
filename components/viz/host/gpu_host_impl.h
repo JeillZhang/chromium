@@ -23,6 +23,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/discardable_memory/public/mojom/discardable_shared_memory_manager.mojom.h"
+#include "components/persistent_cache/backend_params.h"
 #include "components/viz/common/buildflags.h"
 #include "components/viz/host/viz_host_export.h"
 #include "components/viz/service/debugger/mojom/viz_debugger.mojom.h"
@@ -170,6 +171,7 @@ class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost,
 
   void SetProcessId(base::ProcessId pid);
   void OnProcessCrashed();
+  void NotifyWorkloadIncrease();
 
   // Adds a connection error handler for the GpuService.
   void AddConnectionErrorHandler(base::OnceClosure handler);
@@ -190,6 +192,7 @@ class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost,
   void EstablishGpuChannel(int client_id,
                            uint64_t client_tracing_id,
                            bool is_gpu_host,
+                           bool enable_extra_handles_validation,
                            bool sync,
                            EstablishChannelCallback callback);
   void SetChannelClientPid(int client_id, base::ProcessId client_pid);
@@ -225,6 +228,7 @@ class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost,
 #endif
 
   void MaybeSendFontRenderParams();
+  gpu::GpuProcessHostShmCount* GetShaderCacheShmCountForTesting();
 
  private:
   friend class GpuHostImplTestApi;
@@ -233,6 +237,12 @@ class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost,
   void InitOzone();
   void TerminateGpuProcess(const std::string& message);
 #endif  // BUILDFLAG(IS_OZONE)
+
+  void InitPersistentCache();
+  void SetChannelPersistentCacheParams(
+      int client_id,
+      const gpu::GpuDiskCacheHandle& handle,
+      std::optional<persistent_cache::BackendParams> backend_params);
 
   std::string GetShaderPrefixKey();
 
@@ -330,6 +340,11 @@ class VIZ_HOST_EXPORT GpuHostImpl : public mojom::GpuHost,
   base::flat_map<int, EstablishChannelCallback> channel_requests_;
 
   base::OneShotTimer shutdown_timeout_;
+
+  // Opened persistent cache files for GraphiteDawn.
+  std::optional<persistent_cache::BackendParams>
+      graphite_dawn_persistent_cache_files_;
+  bool pending_graphite_dawn_persistent_cache_files_request_ = false;
 
   SEQUENCE_CHECKER(sequence_checker_);
 

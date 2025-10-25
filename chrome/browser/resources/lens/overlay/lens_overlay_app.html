@@ -193,10 +193,12 @@
   }
 
   :host([is-lens-overlay-contextual-searchbox-enabled][enable-close-button-tweaks]) #closeButton {
-    background-color: #00000060;
+    --cr-icon-button-icon-size: 20px;
+    --cr-icon-button-size: 36px;
+    --cr-icon-button-fill-color: white;
+    background-color: #00000099;
     height: 36px;
     width: 36px;
-    --cr-icon-button-fill-color: white;
   }
 
   :host([is-lens-overlay-contextual-searchbox-enabled][enable-close-button-tweaks])
@@ -211,6 +213,7 @@
 
   #toast {
     justify-content: space-between;
+    z-index: 7;
   }
 
   :host([is-lens-overlay-contextual-searchbox-enabled]) #moreOptions {
@@ -290,6 +293,10 @@
     display: none;
   }
 
+  :host([overlay-reshow-in-progress]) lens-selection-overlay {
+    opacity: 0;
+  }
+
   .app-container :not(lens-selection-overlay) {
     transition: opacity 150ms linear;
   }
@@ -325,9 +332,21 @@
     --cr-searchbox-height: 48px;
     --cr-searchbox-icon-size-in-searchbox: 28px;
     --cr-searchbox-icon-top-position: 0px;
+    /* Colors for searchbox ghost loader */
+    --color-searchbox-ghost-loader-loading-bar-1: #F1F3F4;
+    --color-searchbox-ghost-loader-loading-bar-2: #ECEDEF;
+    /* The size of the searchbox container doesn't match the searchbox and ghost
+       loader, so don't allow pointer events on the searchbox container. Only
+       allow pointer events on the searchbox and ghost loader. */
+    pointer-events: none;
     position: absolute;
     inset-block-start: 40px;
     inset-inline-end: 140px;
+  }
+
+  #searchboxContainer > * {
+    /* Allow pointer events on the searchbox and ghost loader. */
+    pointer-events: all;
   }
 
   :host(:not([is-translate-button-enabled])) #searchboxContainer {
@@ -479,7 +498,7 @@
       tabindex="-1"
       show-error-state="{{showErrorState}}"
       page-content-type="[[pageContentType]]"
-      suggestion-count="[[searchboxSuggestionCount]]"
+      suggestion-count="[[searchboxSuggestionCount]]">
     </cr-searchbox-ghost-loader>
   </div>
   <div id="translateButtonContainer" class="button-container">

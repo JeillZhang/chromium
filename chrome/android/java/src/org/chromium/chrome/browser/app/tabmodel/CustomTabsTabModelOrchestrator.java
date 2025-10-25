@@ -7,6 +7,7 @@ package org.chromium.chrome.browser.app.tabmodel;
 import android.content.Context;
 
 import org.chromium.base.supplier.OneshotSupplier;
+import org.chromium.build.annotations.NullMarked;
 import org.chromium.chrome.browser.app.tabwindow.TabWindowManagerSingleton;
 import org.chromium.chrome.browser.crypto.CipherFactory;
 import org.chromium.chrome.browser.flags.ActivityType;
@@ -18,11 +19,13 @@ import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorImpl;
 import org.chromium.chrome.browser.tabmodel.TabPersistencePolicy;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore;
+import org.chromium.chrome.browser.tabmodel.TabPersistentStoreImpl;
 
 /**
  * Glue-level class that manages lifetime of root .tabmodel objects: {@link TabPersistentStore} and
  * {@link TabModelSelectorImpl} for custom tabs.
  */
+@NullMarked
 public class CustomTabsTabModelOrchestrator extends TabModelOrchestrator {
     public CustomTabsTabModelOrchestrator() {}
 
@@ -44,6 +47,7 @@ public class CustomTabsTabModelOrchestrator extends TabModelOrchestrator {
                         profileProviderSupplier,
                         tabCreatorManager,
                         nextTabPolicySupplier,
+                        /* multiInstanceManager= */ null,
                         asyncTabParamsManager,
                         false,
                         activityType,
@@ -52,8 +56,8 @@ public class CustomTabsTabModelOrchestrator extends TabModelOrchestrator {
         // Instantiate TabPersistentStore
         mTabPersistencePolicy = persistencePolicy;
         mTabPersistentStore =
-                new TabPersistentStore(
-                        TabPersistentStore.CLIENT_TAG_CUSTOM,
+                new TabPersistentStoreImpl(
+                        TabPersistentStoreImpl.CLIENT_TAG_CUSTOM,
                         mTabPersistencePolicy,
                         mTabModelSelector,
                         tabCreatorManager,

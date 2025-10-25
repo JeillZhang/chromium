@@ -32,7 +32,6 @@ import org.chromium.base.Callback;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.metrics.RecordHistogram;
-import org.chromium.base.metrics.ScopedSysTraceEvent;
 import org.chromium.components.embedder_support.util.UrlConstants;
 import org.chromium.components.embedder_support.util.WebResourceResponseInfo;
 import org.chromium.content_public.common.ContentUrlConstants;
@@ -94,18 +93,15 @@ public abstract class AwContentsClient {
         this(Looper.myLooper());
     }
 
-    /**
-     *
-     * See {@link android.webkit.WebChromeClient}. */
+    /** See {@link android.webkit.WebChromeClient}. */
     public interface CustomViewCallback {
-        /* See {@link android.webkit.WebChromeClient}. */
-        public void onCustomViewHidden();
+        /** See {@link android.webkit.WebChromeClient}. */
+        void onCustomViewHidden();
     }
 
     // Alllow injection of the callback thread, for testing.
     public AwContentsClient(Looper looper) {
-        try (ScopedSysTraceEvent e =
-                ScopedSysTraceEvent.scoped("AwContentsClient.constructorOneArg")) {
+        try (DualTraceEvent e = DualTraceEvent.scoped("AwContentsClient.constructorOneArg")) {
             mCallbackHelper = new AwContentsClientCallbackHelper(looper, this);
         }
     }
@@ -241,11 +237,10 @@ public abstract class AwContentsClient {
         // security (only access to BROWSABLE activities).
         intent.addCategory(Intent.CATEGORY_BROWSABLE);
         intent.setComponent(null);
-        Intent selector = intent.getSelector();
-        if (selector != null) {
-            selector.addCategory(Intent.CATEGORY_BROWSABLE);
-            selector.setComponent(null);
-        }
+
+        // Intent Selectors allow intents to bypass the intent filter and potentially send apps URIs
+        // they were not expecting to handle. https://crbug.com/1254422
+        intent.setSelector(null);
 
         // Pass the package name as application ID so that the intent from the
         // same application can be opened in the same tab.

@@ -2,17 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include "third_party/blink/renderer/modules/indexeddb/idb_value_wrapping.h"
 
 #include <algorithm>
 #include <limits>
 #include <memory>
 
+#include "base/compiler_specific.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/strings/strcat.h"
 #include "base/strings/stringprintf.h"
@@ -62,41 +58,41 @@ TEST(IDBValueWrapperTest, WriteVarIntMultiByte) {
   IDBValueWrapper::WriteVarInt(0xff, output);
   ASSERT_EQ(2U, output.size());
   EXPECT_EQ('\xff', output.data()[0]);
-  EXPECT_EQ('\x01', output.data()[1]);
+  UNSAFE_TODO(EXPECT_EQ('\x01', output.data()[1]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0x100, output);
   ASSERT_EQ(2U, output.size());
   EXPECT_EQ('\x80', output.data()[0]);
-  EXPECT_EQ('\x02', output.data()[1]);
+  UNSAFE_TODO(EXPECT_EQ('\x02', output.data()[1]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0x1234, output);
   ASSERT_EQ(2U, output.size());
   EXPECT_EQ('\xb4', output.data()[0]);
-  EXPECT_EQ('\x24', output.data()[1]);
+  UNSAFE_TODO(EXPECT_EQ('\x24', output.data()[1]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0xabcd, output);
   ASSERT_EQ(3U, output.size());
   EXPECT_EQ('\xcd', output.data()[0]);
-  EXPECT_EQ('\xd7', output.data()[1]);
-  EXPECT_EQ('\x2', output.data()[2]);
+  UNSAFE_TODO(EXPECT_EQ('\xd7', output.data()[1]));
+  UNSAFE_TODO(EXPECT_EQ('\x2', output.data()[2]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0x123456, output);
   ASSERT_EQ(3U, output.size());
   EXPECT_EQ('\xd6', output.data()[0]);
-  EXPECT_EQ('\xe8', output.data()[1]);
-  EXPECT_EQ('\x48', output.data()[2]);
+  UNSAFE_TODO(EXPECT_EQ('\xe8', output.data()[1]));
+  UNSAFE_TODO(EXPECT_EQ('\x48', output.data()[2]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0xabcdef, output);
   ASSERT_EQ(4U, output.size());
   EXPECT_EQ('\xef', output.data()[0]);
-  EXPECT_EQ('\x9b', output.data()[1]);
-  EXPECT_EQ('\xaf', output.data()[2]);
-  EXPECT_EQ('\x05', output.data()[3]);
+  UNSAFE_TODO(EXPECT_EQ('\x9b', output.data()[1]));
+  UNSAFE_TODO(EXPECT_EQ('\xaf', output.data()[2]));
+  UNSAFE_TODO(EXPECT_EQ('\x05', output.data()[3]));
   output.clear();
 }
 
@@ -106,62 +102,62 @@ TEST(IDBValueWrapperTest, WriteVarIntMultiByteEdgeCases) {
   IDBValueWrapper::WriteVarInt(0x80, output);
   ASSERT_EQ(2U, output.size());
   EXPECT_EQ('\x80', output.data()[0]);
-  EXPECT_EQ('\x01', output.data()[1]);
+  UNSAFE_TODO(EXPECT_EQ('\x01', output.data()[1]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0x3fff, output);
   ASSERT_EQ(2U, output.size());
   EXPECT_EQ('\xff', output.data()[0]);
-  EXPECT_EQ('\x7f', output.data()[1]);
+  UNSAFE_TODO(EXPECT_EQ('\x7f', output.data()[1]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0x4000, output);
   ASSERT_EQ(3U, output.size());
   EXPECT_EQ('\x80', output.data()[0]);
-  EXPECT_EQ('\x80', output.data()[1]);
-  EXPECT_EQ('\x01', output.data()[2]);
+  UNSAFE_TODO(EXPECT_EQ('\x80', output.data()[1]));
+  UNSAFE_TODO(EXPECT_EQ('\x01', output.data()[2]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0x1fffff, output);
   ASSERT_EQ(3U, output.size());
   EXPECT_EQ('\xff', output.data()[0]);
-  EXPECT_EQ('\xff', output.data()[1]);
-  EXPECT_EQ('\x7f', output.data()[2]);
+  UNSAFE_TODO(EXPECT_EQ('\xff', output.data()[1]));
+  UNSAFE_TODO(EXPECT_EQ('\x7f', output.data()[2]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0x200000, output);
   ASSERT_EQ(4U, output.size());
   EXPECT_EQ('\x80', output.data()[0]);
-  EXPECT_EQ('\x80', output.data()[1]);
-  EXPECT_EQ('\x80', output.data()[2]);
-  EXPECT_EQ('\x01', output.data()[3]);
+  UNSAFE_TODO(EXPECT_EQ('\x80', output.data()[1]));
+  UNSAFE_TODO(EXPECT_EQ('\x80', output.data()[2]));
+  UNSAFE_TODO(EXPECT_EQ('\x01', output.data()[3]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0xfffffff, output);
   ASSERT_EQ(4U, output.size());
   EXPECT_EQ('\xff', output.data()[0]);
-  EXPECT_EQ('\xff', output.data()[1]);
-  EXPECT_EQ('\xff', output.data()[2]);
-  EXPECT_EQ('\x7f', output.data()[3]);
+  UNSAFE_TODO(EXPECT_EQ('\xff', output.data()[1]));
+  UNSAFE_TODO(EXPECT_EQ('\xff', output.data()[2]));
+  UNSAFE_TODO(EXPECT_EQ('\x7f', output.data()[3]));
   output.clear();
 
   IDBValueWrapper::WriteVarInt(0x10000000, output);
   ASSERT_EQ(5U, output.size());
   EXPECT_EQ('\x80', output.data()[0]);
-  EXPECT_EQ('\x80', output.data()[1]);
-  EXPECT_EQ('\x80', output.data()[2]);
-  EXPECT_EQ('\x80', output.data()[3]);
-  EXPECT_EQ('\x01', output.data()[4]);
+  UNSAFE_TODO(EXPECT_EQ('\x80', output.data()[1]));
+  UNSAFE_TODO(EXPECT_EQ('\x80', output.data()[2]));
+  UNSAFE_TODO(EXPECT_EQ('\x80', output.data()[3]));
+  UNSAFE_TODO(EXPECT_EQ('\x01', output.data()[4]));
   output.clear();
 
   // Maximum value of unsigned on 32-bit platforms.
   IDBValueWrapper::WriteVarInt(0xffffffff, output);
   ASSERT_EQ(5U, output.size());
   EXPECT_EQ('\xff', output.data()[0]);
-  EXPECT_EQ('\xff', output.data()[1]);
-  EXPECT_EQ('\xff', output.data()[2]);
-  EXPECT_EQ('\xff', output.data()[3]);
-  EXPECT_EQ('\x0f', output.data()[4]);
+  UNSAFE_TODO(EXPECT_EQ('\xff', output.data()[1]));
+  UNSAFE_TODO(EXPECT_EQ('\xff', output.data()[2]));
+  UNSAFE_TODO(EXPECT_EQ('\xff', output.data()[3]));
+  UNSAFE_TODO(EXPECT_EQ('\x0f', output.data()[4]));
   output.clear();
 }
 
@@ -173,8 +169,8 @@ class IDBValueUnwrapperReadTestHelper {
   void ReadVarInt(const char* start, uint32_t buffer_size) {
     IDBValueUnwrapper unwrapper;
 
-    base::span<const uint8_t> parse_span(
-        reinterpret_cast<const uint8_t*>(start), buffer_size);
+    base::span<const uint8_t> UNSAFE_TODO(
+        parse_span(reinterpret_cast<const uint8_t*>(start), buffer_size));
     unwrapper.parse_span_ = parse_span;
     success_ = unwrapper.ReadVarInt(read_varint_);
 
@@ -188,8 +184,8 @@ class IDBValueUnwrapperReadTestHelper {
   void ReadBytes(const char* start, uint32_t buffer_size) {
     IDBValueUnwrapper unwrapper;
 
-    base::span<const uint8_t> parse_span(
-        reinterpret_cast<const uint8_t*>(start), buffer_size);
+    base::span<const uint8_t> UNSAFE_TODO(
+        parse_span(reinterpret_cast<const uint8_t*>(start), buffer_size));
     unwrapper.parse_span_ = parse_span;
     success_ = unwrapper.ReadBytes(read_bytes_);
 
@@ -421,8 +417,9 @@ TEST(IDBValueUnwrapperTest, ReadBytes) {
   EXPECT_TRUE(helper.success());
   ASSERT_EQ(256U, helper.read_bytes().size());
   ASSERT_EQ(long_output.size() - 1, helper.consumed_bytes());
-  EXPECT_TRUE(std::equal(helper.read_bytes().begin(), helper.read_bytes().end(),
-                         long_output.data() + 2));
+  UNSAFE_TODO(EXPECT_TRUE(std::equal(helper.read_bytes().begin(),
+                                     helper.read_bytes().end(),
+                                     long_output.data() + 2)));
 
   helper.ReadBytes("\x01\x42\x01", 2);
   EXPECT_TRUE(helper.success());
@@ -460,10 +457,10 @@ TEST(IDBValueUnwrapperTest, IsWrapped) {
   v8::Local<v8::Value> v8_true = v8::True(scope.GetIsolate());
   IDBValueWrapper wrapper(scope.GetIsolate(), v8_true,
                           SerializedScriptValue::SerializeOptions::kSerialize,
-                          non_throwable_exception_state);
+                          non_throwable_exception_state,
+                          /*backend_uses_sqlite=*/false);
   wrapper.set_wrapping_threshold_for_test(0);
   wrapper.DoneCloning();
-  IDBKeyPath key_path(String("primaryKey"));
 
   std::unique_ptr<IDBValue> wrapped_value = std::move(wrapper).Build();
 
@@ -498,6 +495,39 @@ TEST(IDBValueUnwrapperTest, IsWrapped) {
       mutant_value.SetIsolate(scope.GetIsolate());
       EXPECT_FALSE(IDBValueUnwrapper::IsWrapped(&mutant_value));
     }
+  }
+}
+
+TEST(IDBValueUnwrapperTest, SqliteDoesntWrapOrCompress) {
+  for (const bool use_sqlite : {true, false}) {
+    test::TaskEnvironment task_environment;
+    V8TestingScope scope;
+    NonThrowableExceptionState non_throwable_exception_state;
+    v8::Local<v8::Value> v8_value =
+        v8::String::NewFromUtf8(
+            scope.GetIsolate(),
+            base::StrCat(std::vector<std::string>(500, "abcd")).c_str(),
+            v8::NewStringType::kNormal)
+            .ToLocalChecked();
+    IDBValueWrapper wrapper(scope.GetIsolate(), v8_value,
+                            SerializedScriptValue::SerializeOptions::kSerialize,
+                            non_throwable_exception_state, use_sqlite);
+    wrapper.set_wrapping_threshold_for_test(0);
+    wrapper.set_compression_threshold_for_test(0);
+    wrapper.DoneCloning();
+
+    std::unique_ptr<IDBValue> wrapped_value = std::move(wrapper).Build();
+
+    wrapped_value->SetIsolate(scope.GetIsolate());
+    EXPECT_NE(use_sqlite, IDBValueUnwrapper::IsWrapped(wrapped_value.get()));
+
+    auto is_compressed = [](base::span<const uint8_t> data) {
+      return data.size() >= 3 && data[0] == kVersionTag && data[1] == 0x11 &&
+             data[2] == 2;
+    };
+    // Even with compression enabled, the data won't look compressed if it's
+    // wrapped.
+    EXPECT_FALSE(is_compressed(wrapped_value->Data()));
   }
 }
 
@@ -542,7 +572,8 @@ TEST(IDBValueUnwrapperTest, Compression) {
             .ToLocalChecked();
     IDBValueWrapper wrapper(scope.GetIsolate(), v8_value,
                             SerializedScriptValue::SerializeOptions::kSerialize,
-                            non_throwable_exception_state);
+                            non_throwable_exception_state,
+                            /*backend_uses_sqlite=*/false);
     wrapper.set_wrapping_threshold_for_test(test_case.wrapping_threshold);
     wrapper.set_compression_threshold_for_test(test_case.compression_threshold);
     wrapper.DoneCloning();
@@ -617,7 +648,8 @@ TEST(IDBValueUnwrapperTest, Decompression) {
                    .ToLocalChecked();
     IDBValueWrapper wrapper(scope.GetIsolate(), v8_value,
                             SerializedScriptValue::SerializeOptions::kSerialize,
-                            non_throwable_exception_state);
+                            non_throwable_exception_state,
+                            /*backend_uses_sqlite=*/false);
     wrapper.DoneCloning();
     value = std::move(wrapper).Build();
   }

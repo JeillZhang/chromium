@@ -17,17 +17,12 @@
 namespace optimization_guide::features::internal {
 
 // Settings visibility features.
-BASE_FEATURE(kComposeSettingsVisibility,
-             "ComposeSettingsVisibility",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kComposeSettingsVisibility, base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kTabOrganizationSettingsVisibility,
-             "TabOrganizationSettingsVisibility",
              base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kWallpaperSearchSettingsVisibility,
-             "WallpaperSearchSettingsVisibility",
              base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kHistorySearchSettingsVisibility,
-             "HistorySearchSettingsVisibility",
              base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kPasswordChangeSubmission,
              "PasswordChangeSubmissionSettingsVisibility",
@@ -42,27 +37,14 @@ const base::FeatureParam<std::string> kPerformanceClassListForHistorySearch(
 
 // Note: ComposeGraduated is enabled by default because the feature is
 // country-restricted at runtime.
-BASE_FEATURE(kComposeGraduated,
-             "ComposeGraduated",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(kTabOrganizationGraduated,
-             "TabOrganizationGraduated",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(kWallpaperSearchGraduated,
-             "WallpaperSearchGraduated",
-             base::FEATURE_ENABLED_BY_DEFAULT);
-
-BASE_FEATURE(kExperimentalAIIPHPromoRampUp,
-             "ExperimentalAIIPHPromoRampUp",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kComposeGraduated, base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kTabOrganizationGraduated, base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kWallpaperSearchGraduated, base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kModelExecutionCapabilityDisable,
-             "ModelExecutionCapabilityDisable",
              base::FEATURE_DISABLED_BY_DEFAULT);
 
-BASE_FEATURE(kOnDeviceModelTestFeature,
-             "OnDeviceModelTestFeature",
-             base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kOnDeviceModelTestFeature, base::FEATURE_DISABLED_BY_DEFAULT);
 
 bool IsGraduatedFeature(UserVisibleFeatureKey feature) {
   bool is_graduated = false;
@@ -162,6 +144,9 @@ std::optional<proto::OptimizationTarget> GetOptimizationTargetForCapability(
           OPTIMIZATION_TARGET_MODEL_EXECUTION_FEATURE_WRITING_ASSISTANCE_API;
     case ModelBasedCapabilityKey::kProofreaderApi:
       return proto::OPTIMIZATION_TARGET_MODEL_EXECUTION_FEATURE_PROOFREADER_API;
+    case ModelBasedCapabilityKey::kOnDeviceSpeechRecognition:
+      return proto::
+          OPTIMIZATION_TARGET_MODEL_EXECUTION_FEATURE_ON_DEVICE_SPEECH_RECOGNITION;
     // The below capabilities never support on-device execution.
     case ModelBasedCapabilityKey::kFormsClassifications:
     case ModelBasedCapabilityKey::kTabOrganization:
@@ -171,6 +156,8 @@ std::optional<proto::OptimizationTarget> GetOptimizationTargetForCapability(
     case ModelBasedCapabilityKey::kPasswordChangeSubmission:
     case ModelBasedCapabilityKey::kEnhancedCalendar:
     case ModelBasedCapabilityKey::kZeroStateSuggestions:
+    case ModelBasedCapabilityKey::kWalletablePassExtraction:
+    case ModelBasedCapabilityKey::kAmountExtraction:
       return std::nullopt;
   }
 }

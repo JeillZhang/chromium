@@ -4,19 +4,21 @@
 
 #include "android_webview/browser/gfx/overlay_processor_webview.h"
 
+#include <android/hardware_buffer.h>
+
 #include <cstdlib>
 #include <variant>
 
 #include "android_webview/browser/gfx/gpu_service_webview.h"
 #include "android_webview/browser/gfx/viz_compositor_thread_runner_webview.h"
-#include "base/android/android_hardware_buffer_compat.h"
-#include "base/android/build_info.h"
+#include "base/android/android_info.h"
 #include "base/android/scoped_hardware_buffer_fence_sync.h"
 #include "base/feature_list.h"
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/task/bind_post_task.h"
+#include "base/task/common/task_annotator.h"
 #include "base/task/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_restrictions.h"
@@ -88,8 +90,7 @@ class OverlayProcessorWebView::Manager
       }
 
       AHardwareBuffer_Desc desc;
-      base::AndroidHardwareBufferCompat::GetInstance().Describe(
-          GetAHardwareBuffer(), &desc);
+      AHardwareBuffer_describe(GetAHardwareBuffer(), &desc);
       gfx::RectF scaled_rect = gfx::ScaleRect(uv_rect, desc.width, desc.height);
       crop_rect_ = gfx::ToEnclosedRect(scaled_rect);
     }
@@ -605,8 +606,8 @@ class OverlayProcessorWebView::Manager
       // OnComplete callback. To workaround it we create 1x1 buffer instead of
       // setting empty one.
       const bool need_empty_buffer_workaround =
-          base::android::BuildInfo::GetInstance()->sdk_int() >=
-          base::android::SDK_VERSION_T;
+          base::android::android_info::sdk_int() >=
+          base::android::android_info::SDK_VERSION_T;
       if (need_empty_buffer_workaround) {
         // We never delete this buffer.
         static AHardwareBuffer* fake_buffer = nullptr;
@@ -620,8 +621,7 @@ class OverlayProcessorWebView::Manager
           hwb_desc.layers = 1;
 
           // Allocate an AHardwareBuffer.
-          base::AndroidHardwareBufferCompat::GetInstance().Allocate(
-              &hwb_desc, &fake_buffer);
+          AHardwareBuffer_allocate(&hwb_desc, &fake_buffer);
           if (!fake_buffer) {
             LOG(ERROR) << "Failed to allocate AHardwareBuffer";
           }
@@ -743,8 +743,7 @@ OverlayProcessorWebView::TakeSurfaceTransactionOnRT() {
 }
 
 void OverlayProcessorWebView::CheckOverlaySupportImpl(
-    const viz::OverlayProcessorInterface::OutputSurfaceOverlayPlane*
-        primary_plane,
+    const std::optional<viz::OverlayCandidate>& primary_plane,
     viz::OverlayCandidateList* candidates) {
   // If HWUI doesn't want us to overlay, we shouldn't.
   if (!overlays_enabled_by_hwui_)
@@ -979,7 +978,8 @@ bool OverlayProcessorWebView::ProcessForFrameSinkId(
       }
       if (frame_interval &&
           frame_interval_inputs.has_only_content_frame_interval_updates) {
-        frame_rate = frame_interval->ToHz();
+        float interval_s = frame_interval->InSecondsF();
+        frame_rate = interval_s == 0 ? 0 : (1 / interval_s);
       }
       constexpr float kEpsilon = 0.005;
       if (std::abs(frame_rate - frame_rate_) > kEpsilon) {

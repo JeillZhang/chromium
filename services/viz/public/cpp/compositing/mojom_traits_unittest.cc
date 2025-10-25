@@ -2,25 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifdef UNSAFE_BUFFERS_BUILD
-// TODO(crbug.com/351564777): Remove this and convert code to safer constructs.
-#pragma allow_unsafe_buffers
-#endif
-
 #include <utility>
 
+#include "base/compiler_specific.h"
 #include "base/functional/bind.h"
 #include "base/run_loop.h"
 #include "base/test/gtest_util.h"
 #include "base/test/task_environment.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
+#include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "components/viz/common/quads/compositor_frame.h"
 #include "components/viz/common/quads/compositor_render_pass.h"
 #include "components/viz/common/quads/debug_border_draw_quad.h"
 #include "components/viz/common/quads/offset_tag.h"
 #include "components/viz/common/quads/solid_color_draw_quad.h"
 #include "components/viz/common/quads/texture_draw_quad.h"
+#include "components/viz/common/quads/trees_in_viz_timing.h"
 #include "components/viz/common/resources/returned_resource.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "components/viz/common/resources/transferable_resource.h"
@@ -33,7 +32,7 @@
 #include "gpu/ipc/common/mailbox_holder_mojom_traits.h"
 #include "gpu/ipc/common/mailbox_mojom_traits.h"
 #include "gpu/ipc/common/sync_token_mojom_traits.h"
-#include "ipc/ipc_message_utils.h"
+#include "ipc/param_traits_utils.h"
 #include "mojo/public/cpp/base/time_mojom_traits.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "mojo/public/cpp/test_support/test_utils.h"
@@ -63,6 +62,7 @@
 #include "services/viz/public/mojom/compositing/surface_info.mojom.h"
 #include "services/viz/public/mojom/compositing/surface_range.mojom.h"
 #include "services/viz/public/mojom/compositing/transferable_resource.mojom.h"
+#include "services/viz/public/mojom/compositing/trees_in_viz_timing.mojom.h"
 #include "skia/public/mojom/bitmap_skbitmap_mojom_traits.h"
 #include "skia/public/mojom/tile_mode_mojom_traits.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -326,7 +326,7 @@ TEST_F(StructTraitsTest, CopyOutputRequest_TextureRequest) {
 
   const auto result_format = CopyOutputRequest::ResultFormat::RGBA;
   const auto result_destination =
-      CopyOutputRequest::ResultDestination::kNativeTextures;
+      CopyOutputRequest::ResultDestination::kSharedImage;
 
   const int8_t mailbox_name[GL_MAILBOX_SIZE_CHROMIUM] = {
       0, 9, 8, 7, 6, 5, 4, 3, 2, 1, 9, 7, 5, 3, 1, 3};
@@ -359,8 +359,7 @@ TEST_F(StructTraitsTest, CopyOutputRequest_TextureRequest) {
 
   base::RunLoop run_loop_for_release;
 
-  CopyOutputResult::ReleaseCallbacks release_callbacks;
-  release_callbacks.push_back(base::BindOnce(
+  ReleaseCallback release_callback = base::BindOnce(
       [](base::OnceClosure quit_closure,
          const gpu::SyncToken& expected_sync_token,
          const gpu::SyncToken& sync_token, bool is_lost) {
@@ -368,12 +367,11 @@ TEST_F(StructTraitsTest, CopyOutputRequest_TextureRequest) {
         EXPECT_FALSE(is_lost);
         std::move(quit_closure).Run();
       },
-      run_loop_for_release.QuitClosure(), sync_token));
+      run_loop_for_release.QuitClosure(), sync_token);
 
-  output->SendResult(std::make_unique<CopyOutputTextureResult>(
-      result_format, result_rect,
-      CopyOutputResult::TextureResult(mailbox, gfx::ColorSpace::CreateSRGB()),
-      std::move(release_callbacks)));
+  output->SendResult(std::make_unique<CopyOutputSharedImageResult>(
+      result_format, result_rect, mailbox, gfx::ColorSpace::CreateSRGB(),
+      "CopyOutputRequest_TextureRequest", std::move(release_callback)));
 
   // Wait for the result to be delivered to the other side: The
   // CopyOutputRequest callback will be called, at which point
@@ -1022,6 +1020,40 @@ TEST_F(StructTraitsTest, RenderPassWithEmptySharedQuadStateList) {
   EXPECT_EQ(kHasTransparentBackground, output->has_transparent_background);
 }
 
+// Verifies that backdrop filters with null (no) crop rect still work correctly.
+// This ensures that null backdrop_filter_bounds means "don't apply bounds"
+// rather than "don't show any backdrop-filter".
+TEST_F(StructTraitsTest, BackdropFilterWithNullBounds) {
+  base::test::TaskEnvironment task_environment;
+
+  // Create a null backdrop filter bounds
+  const std::optional<SkPath> kBackdropFilterBounds;
+
+  cc::FilterOperations backdrop_filters;
+  backdrop_filters.Append(cc::FilterOperation::CreateBlurFilter(5.0f));
+
+  auto input = CompositorRenderPass::Create();
+  input->SetAll(CompositorRenderPassId{1u}, gfx::Rect(100, 100), gfx::Rect(),
+                gfx::Transform(), cc::FilterOperations(), backdrop_filters,
+                kBackdropFilterBounds, SubtreeCaptureId(), gfx::Size(100, 100),
+                ViewTransitionElementResourceId(), true, false, false, false,
+                false);
+
+  std::unique_ptr<CompositorRenderPass> output;
+  mojo::test::SerializeAndDeserialize<mojom::CompositorRenderPass>(input,
+                                                                   output);
+
+  // backdrop_filter_bounds should remain nullopt after serialization
+  EXPECT_EQ(kBackdropFilterBounds, output->backdrop_filter_bounds);
+  EXPECT_FALSE(output->backdrop_filter_bounds.has_value());
+
+  // Verify backdrop filters should still be present and valid
+  EXPECT_FALSE(output->backdrop_filters.IsEmpty());
+  EXPECT_EQ(1u, output->backdrop_filters.size());
+  EXPECT_EQ(cc::FilterOperation::BLUR, output->backdrop_filters.at(0).type());
+  EXPECT_EQ(5.0f, output->backdrop_filters.at(0).amount());
+}
+
 TEST_F(StructTraitsTest, QuadListBasic) {
   auto render_pass = CompositorRenderPass::Create();
   render_pass->SetNew(CompositorRenderPassId{1}, gfx::Rect(), gfx::Rect(),
@@ -1343,7 +1375,7 @@ TEST_F(StructTraitsTest, CopyOutputResult_EmptyBitmap) {
   auto scoped_bitmap = output->ScopedAccessSkBitmap();
   auto bitmap = scoped_bitmap.bitmap();
   EXPECT_FALSE(bitmap.readyToDraw());
-  EXPECT_EQ(output->GetTextureResult(), nullptr);
+  EXPECT_EQ(output->GetSharedImage().get(), nullptr);
 }
 
 TEST_F(StructTraitsTest, CopyOutputResult_EmptyTexture) {
@@ -1351,8 +1383,7 @@ TEST_F(StructTraitsTest, CopyOutputResult_EmptyTexture) {
 
   auto input = std::make_unique<CopyOutputResult>(
       CopyOutputRequest::ResultFormat::RGBA,
-      CopyOutputRequest::ResultDestination::kNativeTextures, gfx::Rect(),
-      false);
+      CopyOutputRequest::ResultDestination::kSharedImage, gfx::Rect(), false);
   EXPECT_TRUE(input->IsEmpty());
 
   std::unique_ptr<CopyOutputResult> output;
@@ -1360,10 +1391,9 @@ TEST_F(StructTraitsTest, CopyOutputResult_EmptyTexture) {
 
   EXPECT_TRUE(output->IsEmpty());
   EXPECT_EQ(output->format(), CopyOutputResult::Format::RGBA);
-  EXPECT_EQ(output->destination(),
-            CopyOutputResult::Destination::kNativeTextures);
+  EXPECT_EQ(output->destination(), CopyOutputResult::Destination::kSharedImage);
   EXPECT_TRUE(output->rect().IsEmpty());
-  EXPECT_EQ(output->GetTextureResult(), nullptr);
+  EXPECT_EQ(output->GetSharedImage().get(), nullptr);
 }
 
 TEST_F(StructTraitsTest, CopyOutputResult_Bitmap) {
@@ -1385,7 +1415,7 @@ TEST_F(StructTraitsTest, CopyOutputResult_Bitmap) {
   EXPECT_EQ(output->destination(),
             CopyOutputResult::Destination::kSystemMemory);
   EXPECT_EQ(output->rect(), result_rect);
-  EXPECT_EQ(output->GetTextureResult(), nullptr);
+  EXPECT_EQ(output->GetSharedImage().get(), nullptr);
 
   auto scoped_bitmap = output->ScopedAccessSkBitmap();
   auto out_bitmap = scoped_bitmap.bitmap();
@@ -1399,8 +1429,9 @@ TEST_F(StructTraitsTest, CopyOutputResult_Bitmap) {
   expected_bitmap.allocPixels(SkImageInfo::MakeN32Premul(7, 8, adobe_rgb));
   expected_bitmap.eraseARGB(123, 213, 77, 33);
   EXPECT_EQ(expected_bitmap.computeByteSize(), out_bitmap.computeByteSize());
-  EXPECT_EQ(0, std::memcmp(expected_bitmap.getPixels(), out_bitmap.getPixels(),
-                           expected_bitmap.computeByteSize()));
+  UNSAFE_TODO(EXPECT_EQ(
+      0, std::memcmp(expected_bitmap.getPixels(), out_bitmap.getPixels(),
+                     expected_bitmap.computeByteSize())));
   EXPECT_TRUE(SkColorSpace::Equals(expected_bitmap.colorSpace(),
                                    out_bitmap.colorSpace()));
 }
@@ -1418,8 +1449,7 @@ TEST_F(StructTraitsTest, CopyOutputResult_Texture) {
                             71234838);
   sync_token.SetVerifyFlush();
   base::RunLoop run_loop;
-  CopyOutputResult::ReleaseCallbacks release_callbacks;
-  release_callbacks.push_back(base::BindOnce(
+  ReleaseCallback release_callback = base::BindOnce(
       [](base::OnceClosure quit_closure,
          const gpu::SyncToken& expected_sync_token,
          const gpu::SyncToken& sync_token, bool is_lost) {
@@ -1427,38 +1457,76 @@ TEST_F(StructTraitsTest, CopyOutputResult_Texture) {
         EXPECT_TRUE(is_lost);
         std::move(quit_closure).Run();
       },
-      run_loop.QuitClosure(), sync_token));
+      run_loop.QuitClosure(), sync_token);
   gpu::Mailbox mailbox;
   mailbox.SetName(mailbox_name);
   std::unique_ptr<CopyOutputResult> input =
-      std::make_unique<CopyOutputTextureResult>(
-          CopyOutputResult::Format::RGBA, result_rect,
-          CopyOutputResult::TextureResult(mailbox, result_color_space),
-          std::move(release_callbacks));
+      std::make_unique<CopyOutputSharedImageResult>(
+          CopyOutputResult::Format::RGBA, result_rect, mailbox,
+          result_color_space, "CopyOutputResult_Texture",
+          std::move(release_callback));
 
   std::unique_ptr<CopyOutputResult> output;
   mojo::test::SerializeAndDeserialize<mojom::CopyOutputResult>(input, output);
 
   EXPECT_FALSE(output->IsEmpty());
   EXPECT_EQ(output->format(), CopyOutputResult::Format::RGBA);
-  EXPECT_EQ(output->destination(),
-            CopyOutputResult::Destination::kNativeTextures);
+  EXPECT_EQ(output->destination(), CopyOutputResult::Destination::kSharedImage);
   EXPECT_EQ(output->rect(), result_rect);
-  ASSERT_NE(output->GetTextureResult(), nullptr);
-  EXPECT_EQ(output->GetTextureResult()->mailbox, mailbox);
-  EXPECT_EQ(output->GetTextureResult()->color_space, result_color_space);
+  ASSERT_NE(output->GetSharedImage().get(), nullptr);
+  EXPECT_EQ(output->GetSharedImage()->mailbox(), mailbox);
+  EXPECT_EQ(output->GetSharedImage()->color_space(), result_color_space);
 
-  CopyOutputResult::ReleaseCallbacks out_callbacks =
-      output->TakeTextureOwnership();
+  ReleaseCallback out_callback = output->TakeSharedImageOwnership();
 
-  EXPECT_EQ(1u, out_callbacks.size());
-  for (auto& cb : out_callbacks) {
-    std::move(cb).Run(sync_token, true /* is_lost */);
-  }
+  ASSERT_TRUE(out_callback);
+  std::move(out_callback).Run(sync_token, true /* is_lost */);
 
   // If the CopyOutputResult callback is called (which is the intended
   // behaviour), this will exit. Otherwise, this test will time out and fail.
   run_loop.Run();
+}
+
+TEST_F(StructTraitsTest, TreesInVizTimingTest) {
+  // Set some appropriately ordered ttimestamps.
+  const base::TimeTicks start_update_display_tree = base::TimeTicks::Now();
+  const base::TimeTicks start_prepare_to_draw =
+      start_update_display_tree + base::Seconds(1);
+  const base::TimeTicks start_draw_layers =
+      start_prepare_to_draw + base::Seconds(2);
+  const base::TimeTicks submit_compositor_frame =
+      start_draw_layers + base::Seconds(3);
+  TreesInVizTiming timestamps = {start_update_display_tree,
+                                 start_prepare_to_draw, start_draw_layers,
+                                 submit_compositor_frame};
+  TreesInVizTiming out;
+  EXPECT_TRUE(mojo::test::SerializeAndDeserialize<mojom::TreesInVizTiming>(
+      timestamps, out));
+  EXPECT_EQ(start_update_display_tree, out.start_update_display_tree);
+  EXPECT_EQ(start_prepare_to_draw, out.start_prepare_to_draw);
+  EXPECT_EQ(start_draw_layers, out.start_draw_layers);
+  EXPECT_EQ(submit_compositor_frame, out.submit_compositor_frame);
+}
+
+TEST_F(StructTraitsTest, TreesInVizUnsetTest) {
+  TreesInVizTiming timestamps;
+  TreesInVizTiming out;
+  EXPECT_TRUE(mojo::test::SerializeAndDeserialize<mojom::TreesInVizTiming>(
+      timestamps, out));
+}
+
+TEST_F(StructTraitsTest, TreesInVizBadTimestampOrderTest) {
+  const base::TimeTicks start_update_display_tree = base::TimeTicks::Now();
+  const base::TimeTicks start_prepare_to_draw =
+      start_update_display_tree + base::Seconds(1);
+  const base::TimeTicks start_draw_layers;  // imagine we didn't set these
+  const base::TimeTicks submit_compositor_frame;
+  TreesInVizTiming timestamps = {start_update_display_tree,
+                                 start_prepare_to_draw, start_draw_layers,
+                                 submit_compositor_frame};
+  TreesInVizTiming out;
+  EXPECT_FALSE(mojo::test::SerializeAndDeserialize<mojom::TreesInVizTiming>(
+      timestamps, out));
 }
 
 }  // namespace viz

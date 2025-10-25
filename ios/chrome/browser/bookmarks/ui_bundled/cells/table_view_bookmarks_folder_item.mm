@@ -43,7 +43,7 @@ const CGFloat kFolderCellHorizonalInset = 17.0;
   return self;
 }
 
-- (void)configureCell:(TableViewCell*)cell
+- (void)configureCell:(LegacyTableViewCell*)cell
            withStyler:(ChromeTableViewStyler*)styler {
   [super configureCell:cell withStyler:styler];
   TableViewBookmarksFolderCell* folderCell =
@@ -254,7 +254,7 @@ const CGFloat kFolderCellHorizonalInset = 17.0;
   [self stopEdit];
 }
 
-#pragma mark Accessibility
+#pragma mark - UIAccessibility
 
 - (NSString*)accessibilityLabel {
   if (!self.cloudSlashedView.hidden) {

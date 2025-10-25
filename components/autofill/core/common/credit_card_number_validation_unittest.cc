@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <string>
 
+#include "base/strings/utf_ostream_operators.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/scoped_feature_list.h"
 #include "components/autofill/core/common/autofill_payments_features.h"
@@ -146,7 +147,6 @@ INSTANTIATE_TEST_SUITE_P(
         GetCardNetworkTestCase{"5478050000000007", kMasterCard, true},
         GetCardNetworkTestCase{"5112345112345114", kMasterCard, true},
         GetCardNetworkTestCase{"5115915115915118", kMasterCard, true},
-        GetCardNetworkTestCase{"6247130048162403", kUnionPay, true},
         GetCardNetworkTestCase{"6247130048162403", kUnionPay, true},
         GetCardNetworkTestCase{"622384452162063648", kUnionPay, true},
         GetCardNetworkTestCase{"2204883716636153", kMirCard, true},

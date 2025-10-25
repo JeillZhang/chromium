@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_GLIC_TEST_SUPPORT_INTERACTIVE_TEST_UTIL_H_
 #define CHROME_BROWSER_GLIC_TEST_SUPPORT_INTERACTIVE_TEST_UTIL_H_
 
+#include "base/memory/raw_ptr.h"
 #include "base/scoped_observation_traits.h"
 #include "chrome/browser/glic/fre/glic_fre_controller.h"
 #include "chrome/browser/glic/host/glic.mojom.h"
@@ -36,7 +37,7 @@ namespace internal {
 class GlicFreShowingDialogObserver
     : public ui::test::PollingStateObserver<bool> {
  public:
-  explicit GlicFreShowingDialogObserver(GlicFreController* controller);
+  explicit GlicFreShowingDialogObserver(const GlicFreController& controller);
   ~GlicFreShowingDialogObserver() override;
 };
 
@@ -55,6 +56,17 @@ class GlicWindowControllerStateObserver
 DECLARE_STATE_IDENTIFIER_VALUE(GlicWindowControllerStateObserver,
                                kGlicWindowControllerState);
 
+// Observes `controller` for changes to animation state.
+class GlicWindowContorllerResizeObserver
+    : public ui::test::PollingStateObserver<bool> {
+ public:
+  explicit GlicWindowContorllerResizeObserver(GlicWindowController& controller);
+  ~GlicWindowContorllerResizeObserver() override;
+};
+
+DECLARE_STATE_IDENTIFIER_VALUE(GlicWindowContorllerResizeObserver,
+                               kGlicWindowControllerResizeState);
+
 // Observers the glic app internal state.
 class GlicAppStateObserver
     : public ui::test::
@@ -71,8 +83,8 @@ DECLARE_STATE_IDENTIFIER_VALUE(GlicAppStateObserver, kGlicAppState);
 // True when the timer is not running. Use `Start()` to start the timer.
 class WaitingStateObserver : public ui::test::StateObserver<bool> {
  public:
-  WaitingStateObserver() { OnStateObserverStateChanged(true); }
-  ~WaitingStateObserver() override = default;
+  WaitingStateObserver();
+  ~WaitingStateObserver() override;
 
   void Start(base::TimeDelta timeout) {
     OnStateObserverStateChanged(false);
@@ -106,6 +118,25 @@ class WebUiStateObserver : public ui::test::StateObserver<mojom::WebUiState>,
 };
 
 DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(WebUiStateObserver, kWebUiState);
+
+class OnViewChangedObserver
+    : public ui::test::StateObserver<mojom::CurrentView>,
+      public Host::Observer {
+ public:
+  explicit OnViewChangedObserver(Host* host);
+
+  ~OnViewChangedObserver() override;
+
+  mojom::CurrentView GetStateObserverInitialState() const override;
+
+  void OnViewChanged(mojom::CurrentView state) override;
+
+ private:
+  base::ScopedObservation<Host, Host::Observer> observation_{this};
+  raw_ptr<Host> host_;
+};
+
+DEFINE_LOCAL_STATE_IDENTIFIER_VALUE(OnViewChangedObserver, kFloatyViewState);
 
 }  // namespace internal
 

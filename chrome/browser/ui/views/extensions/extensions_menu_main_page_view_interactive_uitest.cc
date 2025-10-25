@@ -14,11 +14,12 @@
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_element_identifiers.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
-#include "chrome/browser/ui/extensions/extensions_dialogs.h"
+#include "chrome/browser/ui/extensions/reload_page_dialog_controller.h"
+#include "chrome/browser/ui/interaction/browser_elements.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_coordinator.h"
 #include "chrome/browser/ui/views/extensions/extensions_menu_main_page_view.h"
-#include "chrome/browser/ui/views/extensions/extensions_menu_view_controller.h"
+#include "chrome/browser/ui/views/extensions/extensions_menu_view_platform_delegate_views.h"
 #include "chrome/browser/ui/views/extensions/extensions_request_access_button.h"
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_button.h"
 #include "chrome/browser/ui/views/extensions/extensions_toolbar_container.h"
@@ -239,10 +240,10 @@ void ExtensionsMenuMainPageViewInteractiveUITest::ClickSiteSettingToggle() {
 
 ExtensionsMenuMainPageView*
 ExtensionsMenuMainPageViewInteractiveUITest::main_page() {
-  ExtensionsMenuViewController* menu_controller =
-      menu_coordinator()->GetControllerForTesting();
-  DCHECK(menu_controller);
-  return menu_controller->GetMainPageViewForTesting();
+  ExtensionsMenuViewPlatformDelegateViews* menu_delegate =
+      menu_coordinator()->GetDelegateForTesting();
+  DCHECK(menu_delegate);
+  return menu_delegate->GetMainPageViewForTesting();
 }
 
 std::vector<ExtensionMenuItemView*>
@@ -578,7 +579,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsMenuMainPageViewInteractiveUITest,
 }
 
 class ExtensionsMenuMainPageViewInteractiveTest
-    : public InteractiveBrowserTestT<extensions::ExtensionBrowserTest> {
+    : public InteractiveBrowserTestMixin<extensions::ExtensionBrowserTest> {
  public:
   ExtensionsMenuMainPageViewInteractiveTest() {
     scoped_feature_list_.InitAndEnableFeature(
@@ -744,7 +745,7 @@ class ExtensionsMenuMainPageViewInteractiveTest
     ExtensionsMenuMainPageView* main_page =
         extensions_container()
             ->GetExtensionsMenuCoordinatorForTesting()
-            ->GetControllerForTesting()
+            ->GetDelegateForTesting()
             ->GetMainPageViewForTesting();
     if (!main_page) {
       return nullptr;
@@ -761,7 +762,7 @@ class ExtensionsMenuMainPageViewInteractiveTest
 
  protected:
   void SetUpOnMainThread() override {
-    InteractiveBrowserTestT<
+    InteractiveBrowserTestMixin<
         extensions::ExtensionBrowserTest>::SetUpOnMainThread();
     ASSERT_TRUE(embedded_test_server()->Start());
   }
@@ -1209,7 +1210,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionsMenuMainPageViewInteractiveTest,
                     {.allow_in_incognito = true});
 
   RunTestSequence(InContext(
-      incognito_browser->window()->GetElementContext(),
+      BrowserElements::From(incognito_browser)->GetContext(),
       Steps(InstrumentTab(kTab), OpenExtensionsMenu(),
             // Verify toggle visibility entry in context menu is disabled.
             CheckResult(
@@ -1413,19 +1414,15 @@ IN_PROC_BROWSER_TEST_F(ExtensionsMenuMainPageViewInteractiveTest,
 
   auto extension =
       InstallExtensionWithHostPermissions("All Urls Extension", "<all_urls>");
+  // Automatically accept the reload page dialog that appears when changing site
+  // access.
+  auto reload_page_dialog_reset =
+      extensions::ReloadPageDialogController::AcceptDialogForTesting(true);
 
   RunTestSequence(
       InstrumentTab(kTab),
       NavigateWebContents(
           kTab, embedded_test_server()->GetURL("example.com", "/title1.html")),
-      // Automatically accept the reload page dialog that appears when
-      // changing site access.
-      Do([&]() {
-        content::WebContents* web_contents =
-            browser()->tab_strip_model()->GetActiveWebContents();
-        extensions::ExtensionActionRunner::GetForWebContents(web_contents)
-            ->accept_bubble_for_testing(true);
-      }),
 
       OpenExtensionsMenu(),
       CheckView(

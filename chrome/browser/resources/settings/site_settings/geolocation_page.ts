@@ -11,22 +11,25 @@ import 'chrome://resources/cr_elements/icons.html.js';
 import './category_setting_exceptions.js';
 import './settings_category_default_radio_group.js';
 import './site_settings_shared.css.js';
+import '../controls/collapse_radio_button.js';
 import '../controls/settings_radio_group.js';
 import '../privacy_icons.html.js';
-import '../privacy_page/collapse_radio_button.js';
+import '../settings_page/settings_subpage.js';
 import '../settings_shared.css.js';
 
 import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
 import {PolymerElement} from 'chrome://resources/polymer/v3_0/polymer/polymer_bundled.min.js';
 
 import {loadTimeData} from '../i18n_setup.js';
+import {SettingsViewMixin} from '../settings_page/settings_view_mixin.js';
 
 import {ContentSetting, ContentSettingsTypes, SettingsState} from './constants.js';
 import {getTemplate} from './geolocation_page.html.js';
-import type {SiteSettingsPrefsBrowserProxy} from './site_settings_prefs_browser_proxy.js';
-import {SiteSettingsPrefsBrowserProxyImpl} from './site_settings_prefs_browser_proxy.js';
+import type {SiteSettingsBrowserProxy} from './site_settings_browser_proxy.js';
+import {SiteSettingsBrowserProxyImpl} from './site_settings_browser_proxy.js';
 
-const GeolocationPageElementBase = PrefsMixin(PolymerElement);
+const GeolocationPageElementBase =
+    SettingsViewMixin(PrefsMixin(PolymerElement));
 
 export class GeolocationPageElement extends GeolocationPageElementBase {
   static get is() {
@@ -39,6 +42,12 @@ export class GeolocationPageElement extends GeolocationPageElementBase {
 
   static get properties() {
     return {
+      searchTerm: {
+        type: String,
+        notify: true,
+        value: '',
+      },
+
       enablePermissionSiteSettingsRadioButton_: {
         type: Boolean,
         value: () =>
@@ -67,10 +76,11 @@ export class GeolocationPageElement extends GeolocationPageElementBase {
     };
   }
 
+  declare searchTerm: string;
   declare private enablePermissionSiteSettingsRadioButton_: boolean;
   declare private isLocationAllowed_: boolean;
-  private siteSettingsPrefsBrowserProxy_: SiteSettingsPrefsBrowserProxy =
-      SiteSettingsPrefsBrowserProxyImpl.getInstance();
+  private siteSettingsBrowserProxy_: SiteSettingsBrowserProxy =
+      SiteSettingsBrowserProxyImpl.getInstance();
 
   override ready() {
     super.ready();
@@ -79,7 +89,7 @@ export class GeolocationPageElement extends GeolocationPageElementBase {
 
   private async updateLocationState_() {
     const [locationDefaultValue] = await Promise.all([
-      this.siteSettingsPrefsBrowserProxy_.getDefaultValueForContentType(
+      this.siteSettingsBrowserProxy_.getDefaultValueForContentType(
           ContentSettingsTypes.GEOLOCATION),
     ]);
     this.isLocationAllowed_ =
@@ -110,6 +120,11 @@ export class GeolocationPageElement extends GeolocationPageElementBase {
       this.setPrefValue('generated.geolocation', SettingsState.BLOCK);
       this.isLocationAllowed_ = false;
     }
+  }
+
+  // SettingsViewMixin implementation.
+  override focusBackButton() {
+    this.shadowRoot!.querySelector('settings-subpage')!.focusBackButton();
   }
 }
 

@@ -23,10 +23,12 @@
 #include "content/public/common/content_features.h"
 #include "content/public/common/url_constants.h"
 #include "third_party/blink/public/common/security/protocol_handler_security_level.h"
+#include "third_party/blink/public/mojom/input/pointer_lock_result.mojom.h"
 #include "third_party/blink/public/mojom/mediastream/media_stream.mojom.h"
 #include "ui/base/mojom/window_show_state.mojom.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/geometry/rect.h"
+#include "url/gurl.h"
 
 namespace content {
 
@@ -53,6 +55,10 @@ WebContents* WebContentsDelegate::AddNewContents(
     bool user_gesture,
     bool* was_blocked) {
   return nullptr;
+}
+
+bool WebContentsDelegate::IsContentsActive(WebContents* contents) {
+  return true;
 }
 
 bool WebContentsDelegate::CanOverscrollContent() {
@@ -106,12 +112,6 @@ void WebContentsDelegate::CanDownload(const GURL& url,
 
 bool WebContentsDelegate::HandleContextMenu(RenderFrameHost& render_frame_host,
                                             const ContextMenuParams& params) {
-  return false;
-}
-
-bool WebContentsDelegate::PreHandleMouseEvent(
-    WebContents* source,
-    const blink::WebMouseEvent& event) {
   return false;
 }
 
@@ -413,13 +413,11 @@ PreloadingEligibility WebContentsDelegate::IsPrerender2Supported(
 }
 
 int WebContentsDelegate::AllowedPrerenderingCount(WebContents& web_contents) {
-  return base::GetFieldTrialParamByFeatureAsInt(
-      features::kPrerender2NewLimitAndScheduler,
-      "max_num_of_running_embedder_prerenders", 2);
+  return 2;
 }
 
 NavigationController::UserAgentOverrideOption
-WebContentsDelegate::ShouldOverrideUserAgentForPrerender2() {
+WebContentsDelegate::ShouldOverrideUserAgentForPreloading(const GURL& url) {
   return NavigationController::UA_OVERRIDE_INHERIT;
 }
 
@@ -477,6 +475,11 @@ WebContentsDelegate::GetBackForwardTransitionFallbackUXConfig() {
 std::vector<blink::mojom::RelatedApplicationPtr>
 WebContentsDelegate::GetSavedRelatedApplications(WebContents* web_contents) {
   return {};
+}
+
+WebContents* WebContentsDelegate::GetResponsibleWebContents(
+    WebContents* web_contents) {
+  return nullptr;
 }
 
 }  // namespace content

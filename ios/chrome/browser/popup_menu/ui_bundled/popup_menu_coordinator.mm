@@ -4,8 +4,6 @@
 
 #import "ios/chrome/browser/popup_menu/ui_bundled/popup_menu_coordinator.h"
 
-#import <MaterialComponents/MaterialSnackbar.h>
-
 #import "base/check.h"
 #import "base/metrics/histogram_functions.h"
 #import "base/metrics/histogram_macros.h"
@@ -19,8 +17,6 @@
 #import "ios/chrome/browser/bubble/model/tab_based_iph_browser_agent.h"
 #import "ios/chrome/browser/bubble/ui_bundled/bubble_view_controller_presenter.h"
 #import "ios/chrome/browser/feature_engagement/model/tracker_factory.h"
-#import "ios/chrome/browser/follow/model/follow_action_state.h"
-#import "ios/chrome/browser/follow/model/follow_browser_agent.h"
 #import "ios/chrome/browser/intelligence/features/features.h"
 #import "ios/chrome/browser/lens_overlay/coordinator/lens_overlay_availability.h"
 #import "ios/chrome/browser/overlays/model/public/overlay_presenter.h"
@@ -55,6 +51,7 @@
 #import "ios/chrome/browser/shared/public/commands/bookmarks_commands.h"
 #import "ios/chrome/browser/shared/public/commands/browser_commands.h"
 #import "ios/chrome/browser/shared/public/commands/browser_coordinator_commands.h"
+#import "ios/chrome/browser/shared/public/commands/bwg_commands.h"
 #import "ios/chrome/browser/shared/public/commands/command_dispatcher.h"
 #import "ios/chrome/browser/shared/public/commands/find_in_page_commands.h"
 #import "ios/chrome/browser/shared/public/commands/help_commands.h"
@@ -62,7 +59,6 @@
 #import "ios/chrome/browser/shared/public/commands/lens_overlay_commands.h"
 #import "ios/chrome/browser/shared/public/commands/omnibox_commands.h"
 #import "ios/chrome/browser/shared/public/commands/overflow_menu_customization_commands.h"
-#import "ios/chrome/browser/shared/public/commands/page_action_menu_commands.h"
 #import "ios/chrome/browser/shared/public/commands/page_info_commands.h"
 #import "ios/chrome/browser/shared/public/commands/popup_menu_commands.h"
 #import "ios/chrome/browser/shared/public/commands/price_tracked_items_commands.h"
@@ -72,6 +68,7 @@
 #import "ios/chrome/browser/shared/public/commands/reminder_notifications_commands.h"
 #import "ios/chrome/browser/shared/public/commands/settings_commands.h"
 #import "ios/chrome/browser/shared/public/commands/snackbar_commands.h"
+#import "ios/chrome/browser/shared/public/commands/tab_groups_commands.h"
 #import "ios/chrome/browser/shared/public/commands/text_zoom_commands.h"
 #import "ios/chrome/browser/shared/public/commands/whats_new_commands.h"
 #import "ios/chrome/browser/shared/public/features/features.h"
@@ -178,6 +175,7 @@ using base::UserMetricsAction;
     [self dismissPopupMenuAnimated:NO];
   }
   [self.popupMenuHelpCoordinator stop];
+  self.popupMenuHelpCoordinator = nil;
   [self.browser->GetCommandDispatcher() stopDispatchingToTarget:self];
   [self.overflowMenuMediator disconnect];
   self.overflowMenuMediator = nil;
@@ -215,11 +213,6 @@ using base::UserMetricsAction;
   id<BrowserCommands> callableDispatcher =
       HandlerForProtocol(self.browser->GetCommandDispatcher(), BrowserCommands);
   [callableDispatcher dismissSoftKeyboard];
-
-  id<FindInPageCommands> findInPageCommandsHandler = HandlerForProtocol(
-      self.browser->GetCommandDispatcher(), FindInPageCommands);
-  // Dismiss Find in Page focus.
-  [findInPageCommandsHandler defocusFindInPage];
 
   // Dismiss all snackbars.
   id<SnackbarCommands> snackbarHandler = HandlerForProtocol(
@@ -287,6 +280,8 @@ using base::UserMetricsAction;
     mediator.applicationHandler =
         HandlerForProtocol(dispatcher, ApplicationCommands);
     mediator.settingsHandler = HandlerForProtocol(dispatcher, SettingsCommands);
+    mediator.tabGroupsHandler =
+        HandlerForProtocol(dispatcher, TabGroupsCommands);
     mediator.bookmarksHandler =
         HandlerForProtocol(dispatcher, BookmarksCommands);
     if (IsLensOverlayAvailable(profile->GetPrefs())) {
@@ -299,15 +294,14 @@ using base::UserMetricsAction;
     }
 
     if (IsPageActionMenuEnabled()) {
-      mediator.pageActionMenuHandler =
-          HandlerForProtocol(dispatcher, PageActionMenuCommands);
+      mediator.BWGHandler = HandlerForProtocol(dispatcher, BWGCommands);
     }
 
     mediator.browserCoordinatorHandler =
         HandlerForProtocol(dispatcher, BrowserCoordinatorCommands);
     mediator.findInPageHandler =
         HandlerForProtocol(dispatcher, FindInPageCommands);
-    if (IsReaderModeSnackbarEnabled()) {
+    if (IsReaderModeAvailable()) {
       mediator.readerModeHandler =
           HandlerForProtocol(dispatcher, ReaderModeCommands);
     }
@@ -342,9 +336,6 @@ using base::UserMetricsAction;
     mediator.promosManager = PromosManagerFactory::GetForProfile(profile);
     mediator.readingListBrowserAgent =
         ReadingListBrowserAgent::FromBrowser(browser);
-    if (IsWebChannelsEnabled()) {
-      mediator.followBrowserAgent = FollowBrowserAgent::FromBrowser(browser);
-    }
     // Set the AuthenticationService with the one from the original
     // ProfileIOS as the incognito one doesn't have that service.
     mediator.authenticationService =
@@ -421,8 +412,7 @@ using base::UserMetricsAction;
                    }];
 
     // Log to FET overflow menu opened if opened with blue dot.
-    if (IsBlueDotOnToolsMenuButtoneEnabled() &&
-        [self.popupMenuHelpCoordinator hasBlueDotForOverflowMenu] && tracker) {
+    if ([self.popupMenuHelpCoordinator hasBlueDotForOverflowMenu] && tracker) {
       tracker->NotifyEvent(
           feature_engagement::events::kBlueDotPromoOverflowMenuOpened);
       [self updateToolsMenuBlueDotVisibility];
@@ -452,10 +442,6 @@ using base::UserMetricsAction;
   self.mediator.webContentAreaOverlayPresenter = overlayPresenter;
   self.mediator.URLLoadingBrowserAgent =
       UrlLoadingBrowserAgent::FromBrowser(self.browser);
-  if (IsWebChannelsEnabled()) {
-    self.mediator.followBrowserAgent =
-        FollowBrowserAgent::FromBrowser(self.browser);
-  }
 
   self.contentBlockerMediator.consumer = self.mediator;
 
